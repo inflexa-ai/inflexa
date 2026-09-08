@@ -1,0 +1,1106 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "population-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T09:52:02.786Z",
+  "elapsedMs": 283255,
+  "outcome": "plan_submitted",
+  "planId": "pln-acfb5f4a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A departing sample in a whole-blood population cohort may be a genuine biological outlier, not a technical failure: flag it, report it, and do not silently drop it before the test step decides"
+        ],
+        "context": "Counts: /eval-four-models-v2-with-population-n60-s1-1/data/inputs/counts/counts.csv (12000 x 121 CSV, gene-level counts from salmon, import state unknown). Metadata: /eval-four-models-v2-with-population-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 2 CSV: sample, condition). Unpaired, single batch, Homo sapiens, whole blood. The salmon gene table may carry fractional values; DESeq2 vst requires a DESeqDataSet of integer counts, so record the matrix integrality in the output and, if counts are non-integer, substitute PCA on log2 CPM (edgeR cpm) for the vst and say so in the output instead of failing.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR"
+        ],
+        "question": "Do the 60 cases and 60 controls separate in expression space, and does any sample depart from its group, before any differential test runs?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "Join samples 1:1 between counts.csv and metadata.csv; stop with a clear diagnostic if names do not match or the group counts are not exactly 60 case and 60 control"
+        ],
+        "description": "Join counts.csv (12000 genes x 120 samples + index) to metadata.csv 1:1 on condition (60 case, 60 control); blind variance-stabilizing transform, PCA on the 500 most variable genes, sample distance heatmap colored by condition; report per-sample library sizes and flag any outlier sample or identity doubt.",
+        "acceptance_criteria": [
+          "120 samples join 1:1 between the two files with exactly 60 case and 60 control and no unmatched names",
+          "PCA (top 500 variable genes, blind transform) and sample distance heatmap are saved, colored by condition",
+          "Group separation is assessed visually from both plots; any sample that departs from its group is flagged by name with its condition",
+          "Per-sample library sizes (total counts) are reported and any sample far from the group median is flagged",
+          "Count-matrix integrality is recorded in the output (integer vs fractional)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-voom with a fixed-effects linear model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+          "If each group holds 50 or more samples, use limma-voom with a fixed-effects linear model for the differential expression test. In a population cohort the sample-to-sample variation does not obey the negative binomial model, and DESeq2 and edgeR then report many false positives, even on permuted labels. The linear model on the log counts with precision weights keeps the false discovery rate closer to the nominal level than the count models, but it also exceeds it on some data. The paper recommends the Wilcoxon rank-sum test at a large sample size. State this caution in the report, and give the Wilcoxon test or a permutation check as the control."
+        ],
+        "context": "Counts as delivered from salmon with no per-sample quantification files (quant.sf / abundance.h5) and no average transcript length table: fit the model on the counts as delivered, with no length offset, and do not run tximport on a gene table or invent a length input. Design: condition factor with the reference level set explicitly to control; contrast named as factor, numerator = case, denominator = control, so a positive log2 fold change means higher expression in case. TREAT threshold lfc = 0.58 (1.5-fold) is chosen as the minimum fold change considered biologically meaningful in whole blood; the 2-fold tier (log2FC = 1.0) is reported descriptively among the TREAT-significant genes. n_per_group = 60 (>= 50), which is why the fixed-effects limma-voom path is used instead of DESeq2/edgeR.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2"
+        ],
+        "question": "Which of the 12000 genes differ in expression between the 60 cases and the 60 controls, which differences survive BH correction at alpha 0.05, and which reach an effect large enough to matter (>= 1.5-fold, tested in-model by TREAT, with the 2-fold tier reported)?",
+        "grounding": {
+          "claims": [
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1",
+            "R-0169@18ab",
+            "R-0036@9786",
+            "R-0015@65aa",
+            "R-0038@7ec6",
+            "R-0083@12de",
+            "R-0010@6072",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "limma-voom with a fixed-effects linear model per R-0058@99e1",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter",
+              "step": "filter_low_counts",
+              "value": "filterByExpr",
+              "source": "guide:edgeR/2026-04-25#filtering"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "gene_counts_without_length_offset",
+              "source": "doi:10.12688/f1000research.7563.2"
+            },
+            {
+              "name": "missing_input",
+              "step": "model_design",
+              "value": "quantification_directories_or_avg_tx_length_table",
+              "source": "vignette:tximport/2026-04-28#import-transcript-level-estimates"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "pvalue_histogram",
+              "step": "multiple_testing",
+              "value": "inspect_before_adjustment",
+              "source": "doi:10.3390/ht7030023"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "lfc_threshold_policy",
+              "step": "multiple_testing",
+              "value": "test_against_threshold",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-limma-voom-fixed@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter = filterByExpr (guide:edgeR/2026-04-25#filtering)",
+          "model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)",
+          "model_design: missing_input = quantification_directories_or_avg_tx_length_table (vignette:tximport/2026-04-28#import-transcript-level-estimates)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+          "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+          "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+          "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "TREAT threshold: lfc = 0.58 (1.5-fold) in glmTreat as the in-model test of 'large enough to matter'; the 2-fold (log2FC = 1.0) tier is reported descriptively among the TREAT-significant genes",
+          "Wilcoxon rank-sum test per gene (case vs control) as a distribution-free control per R-0015@65aa: report the overlap of the top 100 voom genes by |logFC| with the top 100 Wilcoxon genes by p-value, and the fraction of voom DE genes (adj.P.Value < 0.05) also Wilcoxon-significant (unadjusted p < 0.05, labeled exploratory)"
+        ],
+        "description": "filterByExpr with the group structure, TMM scaling factors, voom precision weights on log2 CPM, fixed-effects linear model design ~ condition (reference level control, contrast case vs control), DE table for every tested gene (logFC, llogSE, t, P.Value, adj.P.Value), TREAT table at lfc = 0.58, Benjamini-Hochberg FDR at alpha 0.05 with the expression-filtered gene set as the independent-filtering basis, unadjusted p-value histogram before adjustment, and a per-gene Wilcoxon rank-sum control with overlap statistics against the voom results.",
+        "acceptance_criteria": [
+          "Number of genes retained by filterByExpr with group is reported, with the 12000-to-N change recorded",
+          "TMM normalization factors are reported per sample",
+          "DE table exists for every tested gene with logFC, llogSE, t, P.Value, adj.P.Value; the reference level (control) and contrast (case vs control) are stated in the table header",
+          "TREAT table at lfc = 0.58 with adj.P.Value exists; the count of genes passing adj.P.Value < 0.05 under the voom test and under TREAT is reported",
+          "The unadjusted p-value histogram is saved and its shape is described (flat or left-skewed vs hilled or rising toward one) before the BH adjustment is applied",
+          "The Wilcoxon control is run and the overlap statistics are recorded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Sort the significant set by effect size, not p-value: with 60 samples per group a fold change too small to matter can still be highly significant (R-0089@69f0)"
+        ],
+        "context": "Inputs: the T1S2 tables (voom DE table, TREAT table, p-value histogram, Wilcoxon overlap statistics, filterByExpr gene count, TMM factors) and the T1S1 QC outputs (PCA, distance heatmap, library sizes, flagged samples). At n = 60 per group a very small fold change reaches statistical significance, so p-value-only ranking would put effectless genes at the top of the list; the report leads with the effect-size ordering and the named threshold tiers.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Of the genes that differ, which have effects large enough to matter rather than being significant only in the statistical sense — and is the record complete and honest about the method's limits on a population cohort?",
+        "grounding": {
+          "claims": [
+            "R-0089@69f0",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "effect_size_beside_pvalue",
+              "step": "report",
+              "value": true,
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "sort_significant_by",
+              "step": "report",
+              "value": "effect_size",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report: effect_size_beside_pvalue = true (doi:10.1093/bioinformatics/btp053)",
+          "report: sort_significant_by = effect_size (doi:10.1093/bioinformatics/btp053)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "State the population-cohort caveat: at 60 samples per group, negative-binomial count models exaggerate false positives; limma-voom with a fixed-effects model keeps the FDR closer to nominal but can still exceed it on some data; report the Wilcoxon rank-sum control result as the check",
+          "State that the length offset is lost (salmon gene table with no per-sample quantification files and no average transcript length table), so a change in isoform use can appear as differential expression",
+          "Report the p-value histogram shape beside the number of significant genes, and flag the result as unreliable if the histogram is hilled or rises toward one"
+        ],
+        "description": "Final report: DE table with the significant set sorted by effect size (|logFC|) with the log2 fold change and its confidence interval beside each adjusted p-value; counts of genes tested, DE at adj.P.Value < 0.05, DE under TREAT lfc = 0.58 at adj.P.Value < 0.05, and of those how many reach |logFC| >= 1 (2-fold); method, package versions, design formula, contrast, thresholds, n_tested, n_de; the p-value histogram shape; the Wilcoxon control overlap; the population-cohort FDR caution; the lost-length-offset caveat; and the reproducibility record (sessionInfo, seed, package versions) stored with the results.",
+        "acceptance_criteria": [
+          "The final DE table lists the significant genes sorted by effect size, with the log2 fold change and its confidence interval beside each adjusted p-value",
+          "Counts are stated: genes tested after filtering, DE at adj.P.Value < 0.05, DE under TREAT lfc = 0.58 at adj.P.Value < 0.05, and among those how many reach |logFC| >= 1 (2-fold)",
+          "The report names the method, every package version, the design formula, each contrast, the adjusted-p-value and fold-change thresholds, n_tested, and n_de per contrast",
+          "The reproducibility record (sessionInfo, fixed seed, package versions) is stored with the results, not in a separate note",
+          "The caveats are present: population-cohort FDR, lost length offset, p-value histogram shape, and any QC-flagged samples and their treatment"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control DE with effect-size tiering",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12000-gene x 120-sample salmon gene-level count matrix (counts.csv, 121 columns including the index) plus a 120-row sample table (metadata.csv) defining 60 case vs 60 control, unpaired, single-batch whole-blood humans. Step 1 verifies the sample join and the group structure with a blind-transform PCA and distance heatmap before any test runs. Because each group holds 60 samples (>= 50), the procedure selects limma-voom with a fixed-effects linear model rather than the negative-binomial count models: in population-scale cohorts DESeq2/edgeR exaggerate false positives even on permuted labels, and the linear model on TMM-normalized log counts with precision weights keeps the FDR closer to nominal. Step 2 therefore filters with filterByExpr (with group), normalizes with TMM, fits the voom model with an explicit reference level (control) and a named contrast (case vs control, positive log2FC = higher in case), and answers the 'large enough to matter' half of the question by testing a 1.5-fold threshold inside the model with TREAT (glmTreat, lfc = 0.58) so the meaningful-effect genes carry FDR control, with a 2-fold tier reported descriptively; a per-gene Wilcoxon rank-sum run serves as the distribution-free control the population-cohort evidence calls for. The salmon table arrives with no per-sample quantification files and no average transcript length table, so the model is fitted on the counts as delivered with no length offset, and the report must state that isoform-use changes can appear as differential expression. Step 3 writes the report with the significant set sorted by effect size (not p-value, since at n=60 per group tiny fold changes reach significance), the threshold counts, the p-value histogram shape, and the full reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 203808,
+    "outputTokens": 19172,
+    "cacheReadInputTokens": 162496,
+    "reasoningTokens": 12668
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_8fc356e06ac94f2183e13736",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "call_15d10d65d49942d7a49d7ead",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM scaling factors before voom",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "fixed-effects linear model, design ~ condition, reference level control, contrast case vs control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom with a fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 + TREAT fold-change threshold inside the model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "lfc",
+                "value": 0.58
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "effect-size-sorted DE report with reproducibility record",
+            "parameters": [
+              {
+                "name": "effect_size_beside_pvalue",
+                "value": true
+              },
+              {
+                "name": "sort_significant_by",
+                "value": "effect_size"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    },
+    {
+      "toolUseId": "call_f3580e8747cb46f9a96bc81b",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "modality": "bulk_rna_seq",
+        "n_groups": 2,
+        "n_per_group_max": 60,
+        "n_per_group_min": 60,
+        "organism": "human",
+        "paired": false,
+        "question": "differential_expression",
+        "steps": [
+          {
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "TMM scaling factors before voom",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "fixed-effects linear model, design ~ condition, reference level control, contrast case vs control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ],
+            "step_type": "model_design"
+          },
+          {
+            "method": "limma-voom with a fixed-effects linear model, with TREAT (glmTreat, lfc = 0.58) as the in-model fold-change threshold test",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "lfc",
+                "value": 0.58
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "Benjamini-Hochberg false discovery rate with independent filtering",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ],
+            "step_type": "multiple_testing"
+          },
+          {
+            "method": "effect-size-sorted DE report with reproducibility record",
+            "parameters": [
+              {
+                "name": "effect_size_beside_pvalue",
+                "value": true
+              },
+              {
+                "name": "sort_significant_by",
+                "value": "effect_size"
+              }
+            ],
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "call_8216c831635f49aa9c878f46",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case vs control DE with effect-size tiering\", \"analytical_narrative\": \"The input is a 12000-gene x 120-sample salmon gene-level count matrix (counts.csv, 121 columns including the index) plus a 120-row sample table (metadata.csv) defining 60 case vs 60 control, unpaired, single-batch whole-blood humans. Step 1 verifies the sample join and the group structure with a blind-transform PCA and distance heatmap before any test runs. Because each group holds 60 samples (>= 50), the procedure selects limma-voom with a fixed-effects linear model rather than the negative-binomial count models: in population-scale cohorts DESeq2/edgeR exaggerate false positives even on permuted labels, and the linear model on TMM-normalized log counts with precision weights keeps the FDR closer to nominal. Step 2 therefore filters with filterByExpr (with group), normalizes with TMM, fits the voom model with an explicit reference level (control) and a named contrast (case vs control, positive log2FC = higher in case), and answers the 'large enough to matter' half of the question by testing a 1.5-fold threshold inside the model with TREAT (glmTreat, lfc = 0.58) so the meaningful-effect genes carry FDR control, with a 2-fold tier reported descriptively; a per-gene Wilcoxon rank-sum run serves as the distribution-free control the population-cohort evidence calls for. The salmon table arrives with no per-sample quantification files and no average transcript length table, so the model is fitted on the counts as delivered with no length offset, and the report must state that isoform-use changes can appear as differential expression. Step 3 writes the report with the significant set sorted by effect size (not p-value, since at n=60 per group tiny fold changes reach significance), the threshold counts, the p-value histogram shape, and the full reproducibility record.\", \"created_at\": \"2026-09-07T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC\", \"track\": \"T1\", \"step_type\": \"qc\", \"question\": \"Do the 60 cases and 60 controls separate in expression space, and does any sample depart from its group, before any differential test runs?\", \"description\": \"Join counts.csv (12000 genes x 120 samples + index) to metadata.csv 1:1 on condition (60 case, 60 control); blind variance-stabilizing transform, PCA on the 500 most variable genes, sample distance heatmap colored by condition; report per-sample library sizes and flag any outlier sample or identity doubt.\", \"context\": \"Counts: /eval-four-models-v2-with-population-n60-s1-1/data/inputs/counts/counts.csv (12000 x 121 CSV, gene-level counts from salmon, import state unknown). Metadata: /eval-four-models-v2-with-population-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 2 CSV: sample, condition). Unpaired, single batch, Homo sapiens, whole blood. The salmon gene table may carry fractional values; DESeq2 vst requires a DESeqDataSet of integer counts, so record the matrix integrality in the output and, if counts are non-integer, substitute PCA on log2 CPM (edgeR cpm) for the vst and say so in the output instead of failing.\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"Join samples 1:1 between counts.csv and metadata.csv; stop with a clear diagnostic if names do not match or the group counts are not exactly 60 case and 60 control\"], \"acceptance_criteria\": [\"120 samples join 1:1 between the two files with exactly 60 case and 60 control and no unmatched names\", \"PCA (top 500 variable genes, blind transform) and sample distance heatmap are saved, colored by condition\", \"Group separation is assessed visually from both plots; any sample that departs from its group is flagged by name with its condition\", \"Per-sample library sizes (total counts) are reported and any sample far from the group median is flagged\", \"Count-matrix integrality is recorded in the output (integer vs fractional)\"], \"caveats\": [\"A departing sample in a whole-blood population cohort may be a genuine biological outlier, not a technical failure: flag it, report it, and do not silently drop it before the test step decides\"], \"packages\": [\"DESeq2\", \"edgeR\"], \"depends_on\": [], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"limma-voom with a fixed-effects linear model\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12000 genes differ in expression between the 60 cases and the 60 controls, which differences survive BH correction at alpha 0.05, and which reach an effect large enough to matter (>= 1.5-fold, tested in-model by TREAT, with the 2-fold tier reported)?\", \"description\": \"filterByExpr with the group structure, TMM scaling factors, voom precision weights on log2 CPM, fixed-effects linear model design ~ condition (reference level control, contrast case vs control), DE table for every tested gene (logFC, llogSE, t, P.Value, adj.P.Value), TREAT table at lfc = 0.58, Benjamini-Hochberg FDR at alpha 0.05 with the expression-filtered gene set as the independent-filtering basis, unadjusted p-value histogram before adjustment, and a per-gene Wilcoxon rank-sum control with overlap statistics against the voom results.\", \"context\": \"Counts as delivered from salmon with no per-sample quantification files (quant.sf / abundance.h5) and no average transcript length table: fit the model on the counts as delivered, with no length offset, and do not run tximport on a gene table or invent a length input. Design: condition factor with the reference level set explicitly to control; contrast named as factor, numerator = case, denominator = control, so a positive log2 fold change means higher expression in case. TREAT threshold lfc = 0.58 (1.5-fold) is chosen as the minimum fold change considered biologically meaningful in whole blood; the 2-fold tier (log2FC = 1.0) is reported descriptively among the TREAT-significant genes. n_per_group = 60 (>= 50), which is why the fixed-effects limma-voom path is used instead of DESeq2/edgeR.\", \"constraints\": [\"filter_low_counts: filter = filterByExpr (guide:edgeR/2026-04-25#filtering)\", \"model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)\", \"model_design: missing_input = quantification_directories_or_avg_tx_length_table (vignette:tximport/2026-04-28#import-transcript-level-estimates)\", \"model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)\", \"model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)\", \"multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)\", \"multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)\", \"multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)\", \"multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"TREAT threshold: lfc = 0.58 (1.5-fold) in glmTreat as the in-model test of 'large enough to matter'; the 2-fold (log2FC = 1.0) tier is reported descriptively among the TREAT-significant genes\", \"Wilcoxon rank-sum test per gene (case vs control) as a distribution-free control per R-0015@65aa: report the overlap of the top 100 voom genes by |logFC| with the top 100 Wilcoxon genes by p-value, and the fraction of voom DE genes (adj.P.Value < 0.05) also Wilcoxon-significant (unadjusted p < 0.05, labeled exploratory)\"], \"acceptance_criteria\": [\"Number of genes retained by filterByExpr with group is reported, with the 12000-to-N change recorded\", \"TMM normalization factors are reported per sample\", \"DE table exists for every tested gene with logFC, llogSE, t, P.Value, adj.P.Value; the reference level (control) and contrast (case vs control) are stated in the table header\", \"TREAT table at lfc = 0.58 with adj.P.Value exists; the count of genes passing adj.P.Value < 0.05 under the voom test and under TREAT is reported\", \"The unadjusted p-value histogram is saved and its shape is described (flat or left-skewed vs hilled or rising toward one) before the BH adjustment is applied\", \"The Wilcoxon control is run and the overlap statistics are recorded\"], \"caveats\": [\"A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.\", \"If each group holds 50 or more samples, use limma-voom with a fixed-effects linear model for the differential expression test. In a population cohort the sample-to-sample variation does not obey the negative binomial model, and DESeq2 and edgeR then report many false positives, even on permuted labels. The linear model on the log counts with precision weights keeps the false discovery rate closer to the nominal level than the count models, but it also exceeds it on some data. The paper recommends the Wilcoxon rank-sum test at a large sample size. State this caution in the report, and give the Wilcoxon test or a permutation check as the control.\"], \"packages\": [\"edgeR\", \"limma\", \"DESeq2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\", \"R-0169@18ab\", \"R-0036@9786\", \"R-0015@65aa\", \"R-0038@7ec6\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-limma-voom-fixed@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"gene_counts_without_length_offset\", \"source\": \"doi:10.12688/f1000research.7563.2\"}, {\"step\": \"model_design\", \"name\": \"missing_input\", \"value\": \"quantification_directories_or_avg_tx_length_table\", \"source\": \"vignette:tximport/2026-04-28#import-transcript-level-estimates\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"limma-voom with a fixed-effects linear model per R-0058@99e1\"}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Report\", \"track\": \"T1\", \"step_type\": \"report\", \"question\": \"Of the genes that differ, which have effects large enough to matter rather than being significant only in the statistical sense — and is the record complete and honest about the method's limits on a population cohort?\", \"description\": \"Final report: DE table with the significant set sorted by effect size (|logFC|) with the log2 fold change and its confidence interval beside each adjusted p-value; counts of genes tested, DE at adj.P.Value < 0.05, DE under TREAT lfc = 0.58 at adj.P.Value < 0.05, and of those how many reach |logFC| >= 1 (2-fold); method, package versions, design formula, contrast, thresholds, n_tested, n_de; the p-value histogram shape; the Wilcoxon control overlap; the population-cohort FDR caution; the lost-length-offset caveat; and the reproducibility record (sessionInfo, seed, package versions) stored with the results.\", \"context\": \"Inputs: the T1S2 tables (voom DE table, TREAT table, p-value histogram, Wilcoxon overlap statistics, filterByExpr gene count, TMM factors) and the T1S1 QC outputs (PCA, distance heatmap, library sizes, flagged samples). At n = 60 per group a very small fold change reaches statistical significance, so p-value-only ranking would put effectless genes at the top of the list; the report leads with the effect-size ordering and the named threshold tiers.\", \"constraints\": [\"report: effect_size_beside_pvalue = true (doi:10.1093/bioinformatics/btp053)\", \"report: sort_significant_by = effect_size (doi:10.1093/bioinformatics/btp053)\", \"report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)\", \"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\", \"State the population-cohort caveat: at 60 samples per group, negative-binomial count models exaggerate false positives; limma-voom with a fixed-effects model keeps the FDR closer to nominal but can still exceed it on some data; report the Wilcoxon rank-sum control result as the check\", \"State that the length offset is lost (salmon gene table with no per-sample quantification files and no average transcript length table), so a change in isoform use can appear as differential expression\", \"Report the p-value histogram shape beside the number of significant genes, and flag the result as unreliable if the histogram is hilled or rises toward one\"], \"acceptance_criteria\": [\"The final DE table lists the significant genes sorted by effect size, with the log2 fold change and its confidence interval beside each adjusted p-value\", \"Counts are stated: genes tested after filtering, DE at adj.P.Value < 0.05, DE under TREAT lfc = 0.58 at adj.P.Value < 0.05, and among those how many reach |logFC| >= 1 (2-fold)\", \"The report names the method, every package version, the design formula, each contrast, the adjusted-p-value and fold-change thresholds, n_tested, and n_de per contrast\", \"The reproducibility record (sessionInfo, fixed seed, package versions) is stored with the results, not in a separate note\", \"The caveats are present: population-cohort FDR, lost length offset, p-value histogram shape, and any QC-flagged samples and their treatment\"], \"caveats\": [\"Sort the significant set by effect size, not p-value: with 60 samples per group a fold change too small to matter can still be highly significant (R-0089@69f0)\"], \"packages\": [], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0089@69f0\", \"R-0041@059a\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"effect_size_beside_pvalue\", \"value\": true, \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"sort_significant_by\", \"value\": \"effect_size\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step\"}, \"agent\": \"bulk-transcriptomics-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 38
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0022"
+            },
+            "template": "tpl-edger-ql@1.0.0",
+            "rules": [
+              "R-0058@99e1",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0009"
+            },
+            "rules": [
+              "R-0057@31cc",
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0169@18ab",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0169@18ab",
+                "severity": "warn",
+                "message": "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+                "outcome": "report_missing_length_input"
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0019"
+            },
+            "template": "tpl-limma-voom-fixed@1.0.0",
+            "rules": [
+              "R-0015@65aa",
+              "R-0038@7ec6"
+            ],
+            "flags": [
+              {
+                "rule": "R-0015@65aa",
+                "severity": "warn",
+                "message": "If each group holds 50 or more samples, use limma-voom with a fixed-effects linear model for the differential expression test. In a population cohort the sample-to-sample variation does not obey the negative binomial model, and DESeq2 and edgeR then report many false positives, even on permuted labels. The linear model on the log counts with precision weights keeps the false discovery rate closer to the nominal level than the count models, but it also exceeds it on some data. The paper recommends the Wilcoxon rank-sum test at a large sample size. State this caution in the report, and give the Wilcoxon test or a permutation check as the control."
+              }
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0089@69f0",
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0169@18ab"
+          },
+          {
+            "id": "R-0089@69f0"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0057@31cc"
+          },
+          {
+            "id": "R-0058@99e1"
+          },
+          {
+            "id": "R-0015@65aa"
+          },
+          {
+            "id": "R-0038@7ec6"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          }
+        ],
+        "flags": [],
+        "uncovered": [
+          "shrink_lfc"
+        ]
+      },
+      "responseChars": 26908,
+      "elapsedMs": 14
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM scaling factors before voom",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "fixed-effects linear model, design ~ condition, reference level control, contrast case vs control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom with a fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg at alpha 0.05 + TREAT fold-change threshold inside the model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "lfc",
+                "value": 0.58
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "effect-size-sorted DE report with reproducibility record",
+            "parameters": [
+              {
+                "name": "effect_size_beside_pvalue",
+                "value": true
+              },
+              {
+                "name": "sort_significant_by",
+                "value": "effect_size"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "multiple_testing",
+            "severity": "violation",
+            "rule": "R-0083@12de",
+            "message": "limma-voom with a fixed-effects linear model is not a permitted method for multiple_testing in this situation.",
+            "permitted": [
+              "Benjamini-Hochberg false discovery rate with independent filtering"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 458,
+      "elapsedMs": 42
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM scaling factors before voom",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "fixed-effects linear model, design ~ condition, reference level control, contrast case vs control",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom with a fixed-effects linear model, with TREAT (glmTreat, lfc = 0.58) as the in-model fold-change threshold test",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "lfc",
+                "value": 0.58
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg false discovery rate with independent filtering",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "effect-size-sorted DE report with reproducibility record",
+            "parameters": [
+              {
+                "name": "effect_size_beside_pvalue",
+                "value": true
+              },
+              {
+                "name": "sort_significant_by",
+                "value": "effect_size"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 9
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan uses PyDESeq2 Wald with median-of-ratios size factors, an explicit condition design with control as reference and coefficient verification, apeglm shrinkage, and BH at a stated alpha, all in Python, which fits the unpaired 6v6 single-batch design; the shallow sample is quantified, kept, and handled by a stated leave-one-out sensitivity rule rather than silent exclusion. QC has library sizes and a condition-colored PCA with sample_01 annotated but omits a sample distance heatmap. No low-count filter before the fit is stated anywhere, only a remark that the matrix is probably pre-filtered. Enrichment uses gseapy prerank on the full ranked list with the metric stated and an explicit ORA universe, but the Hallmark collection version, the 15-500 set-size window, and a fixed seed are not specified."
+}

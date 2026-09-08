@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: tximport at gene level with the named tx2gene map, countsFromAbundance='no', average transcript length carried as an offset into DESeq2, fractional NumReads kept unrounded, unmapped transcripts reported, and a two-group Wald test with median-of-ratios inside the model, explicit control reference, named contrast, minimal filter tied to the smallest group, BH at 0.05, and apeglm shrinkage. QC is blind VST PCA on top 500 genes plus a distance heatmap colored by condition, with an outlier flag and a sensitivity rerun policy. Small gaps: the edgeR robustness run does not state that the tximport length offset (scaleOffset) is applied, and DESeqDataSetFromTximport is not named explicitly though clearly implied. Enrichment is correctly omitted and the report lists method, versions, design, thresholds, tested/significant counts, sessionInfo and annotation release."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with apeglm and BH at 0.05 on raw Salmon counts for an unpaired 6v6 single-batch design, with edgeR QL as a stated robustness check and the lost length offset explicitly caveated. QC is complete (blind VST, PCA on top 500, distance heatmap, per-sample library size and detected genes) with a stated keep-and-report policy for sample_01 and removal only with a QC reason. The pre-filter (10 counts in >= smallest group size) plus independent filtering is minimal and justified, normalization stays inside the model, the reference level and contrast triple are explicit, and enrichment uses fgsea on the full tested list ranked by the Wald statistic against Hallmark 2026.1 with a 15-500 size window, seed, and unmapped share reported. Minor deductions: the design formula is described rather than written as ~condition, and the 'test_against_threshold' constraint is listed but never operationalized, leaving a small ambiguity about whether an LFC threshold is in the test."
+}

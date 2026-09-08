@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 4
+  },
+  "rationale": "The two steps actually written are strong: a design-specific QC with an explicit keep-inspect-report policy for sample_01, a justified low-count filter (>=10 counts in >=6 samples, the smallest group), and DESeq2 size factors feeding a vst/rlog matrix into a rank-based scorer, all matching the reference. However, the scoring, testing, heatmap, and reporting exist only as narrative sentences, not as steps: UCell over the Hallmark collection is named but without an MSigDB version or the share of each signature present in the matrix, limma is invoked with a 'two-group design' but no reference level, contrast, eBayes/trend setting, or effect-size reporting, and BH is stated without an alpha. The sensitivity re-test without sample_01 is a good idea but likewise only asserted. The report step is not specified beyond 'a full reproducibility record', so versions, thresholds, and significant-signature counts are not guaranteed."
+}

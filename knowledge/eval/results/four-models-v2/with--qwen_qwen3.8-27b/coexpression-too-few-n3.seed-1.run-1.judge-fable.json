@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 5,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 4
+  },
+  "rationale": "The plan correctly refuses a WGCNA network on six samples, states the 15-sample floor, and substitutes a STRING v12.0 prior network, which is the core of the reference. However, it never runs a DESeq2/edgeR test: no design formula, no contrast, no BH alpha, no apeglm shrinkage; instead it correlates eigengenes with treatment across six samples, which the reference does not endorse, and the STRING confidence cutoff is unnamed. Only the QC step is actually specified and it is strong (blind VST PCA on top 500 genes, distance heatmap, library sizes, colored by condition, no-drop policy). The filter and size-factor normalization appear only in the narrative, and the report content beyond a sample-count statement is not concretely defined."
+}

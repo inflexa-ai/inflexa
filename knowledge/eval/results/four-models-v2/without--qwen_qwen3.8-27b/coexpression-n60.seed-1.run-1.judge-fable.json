@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan follows the core WGCNA recipe correctly: signed adjacency, power chosen as the smallest with scale-free R^2 >= 0.85 with all fit statistics reported, TOM, dynamic tree cut at minModuleSize 30, mergeDepth 0.25, and eigengene vs a 0/1 case trait with BH across modules. It departs from the reference by running the network on all ~11k retained genes rather than the top ~5000 variable genes, using plain library-size CPM rather than TMM-normalized log CPM or vst, and only flagging rather than resolving outliers, with no sample clustering tree and no statement that PCA is colored by condition. The filter is stated and roughly justified but the wording is garbled. Enrichment names an explicit universe and collections but uses GO BP and WikiPathways instead of MSigDB Hallmark, with no collection version or gene-set size window; reporting covers power, fit, module sizes, and the trait table but names only one package version."
+}

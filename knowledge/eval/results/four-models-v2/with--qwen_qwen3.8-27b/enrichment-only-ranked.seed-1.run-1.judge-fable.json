@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 5
+  },
+  "rationale": "The narrative correctly declines to refit DE and specifies preranked fgsea on the full 12,000-gene list ranked by the Wald statistic against Hallmark 2026.1 with a 15-500 window, BH, seed, and leading edges, which matches the reference; however the only concrete step is the QC, so the enrichment, symbol mapping, permutation setting, and report are asserted in prose rather than planned as executable steps. The QC step is strong and dataset-specific, with an explicit keep-and-inspect policy for sample_01. The plan never states the BH alpha, does not verify the contrast direction or reference level in the delivered table, and does not explicitly check that no padj cutoff was applied to the results before ranking. The added Reactome/WikiPathways pass is unrequested and, combined with an absent enrichment step, leaves the deliverable underspecified relative to what the narrative promises."
+}

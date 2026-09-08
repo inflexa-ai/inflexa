@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 2,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly runs the partition on vst values rather than raw counts, flags the 8-residual-df noise, tabulates sex/age balance, and fits DESeq2 with ~ sex + age + condition, apeglm shrinkage and padj < 0.05, so the core method and model are sound even though it uses per-gene type-II ANOVA plus vegan varpart instead of variancePartition and never allows a near-zero term to leave the design. It has no sample-structure QC at all (no PCA, distances, library sizes, or outlier policy) and explicitly refuses a low-count filter, leaning only on DESeq2 independentFiltering, which is weak for vst and unjustified. BH is implied but not named, age is not centered, and the reference level is only implied by factor ordering. The enrichment step was not asked for; as specified it states the ranking metric and collections but omits an explicit ORA universe, set-size window, and collection versions, and package versions are not recorded in the report."
+}

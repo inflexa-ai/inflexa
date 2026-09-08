@@ -1,0 +1,190 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "batch-balanced-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:32:40.248Z",
+  "elapsedMs": 204589,
+  "outcome": "plan_submitted",
+  "planId": "pln-6e0b1c78",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression, treated vs control, batch-adjusted",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "The length-correction ambiguity is the main silent-error risk here: do not assume, check integrality, and document the verdict in the results file.",
+          "With only 6 samples per condition, do not over-filter and do not call outliers aggressively; use DESeq2 outlier replacement only for points clearly extreme on the MA plot and report any replaced (gene, sample) pairs.",
+          "Small n means padj calibration is coarse; report the number of genes passing padj < 0.05 and say plainly if the significant set is small."
+        ],
+        "context": "Counts: /eval-four-models-v2-without-batch-balanced-n6-s1-1/data/inputs/counts/counts.csv — 12,000 genes x 13 columns (12 samples + 1 gene-ID column), gene-level salmon quantifications. Sample table: /eval-four-models-v2-without-batch-balanced-n6-s1-1/data/inputs/metadata/metadata.csv — 12 rows, one row per sample, carrying condition and batch. Design: 6 treated vs 6 control, two processing batches, balanced so each batch holds both conditions (expected 3 samples per batch x condition cell). Organism: Homo sapiens, tissue: kidney. IMPORTANT: the record says the counts are 'as delivered by salmon' and does NOT state whether length correction was applied; the design statement says raw counts. Treat as raw counts per the design, but verify.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "SummarizedExperiment",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes are differentially expressed between treated and control in this human kidney bulk RNA-seq (6 vs 6, two processing batches balanced across conditions), with batch adjusted in the model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Join counts.csv and metadata.csv on the sample identifier; confirm exactly 12 samples, 6 per condition, and 3 per (batch x condition) cell before fitting any model; use the actual condition and batch values as they appear in metadata.csv.",
+          "Fit DESeq2 with design ~ batch + condition, condition as the last term (treatment coefficient is the estimand); do not drop or reorder away the batch term.",
+          "Verify the count matrix values are integers (raw counts). If a material fraction of entries is non-integer (length-corrected or TPM-like, e.g. per-sample sums near 1e6), state which case applies in the output and proceed under the documented design assumption of raw counts rather than silently assuming.",
+          "Estimate size factors with the default median-of-ratios; report the size factors and check they do not track batch.",
+          "Shrink log2 fold changes with apeglm after the Wald test.",
+          "If row identifiers are Ensembl IDs rather than symbols, map to HGNC symbols with org.Hs.eg.db and keep the original identifier in the output.",
+          "Filter minimally (e.g. retain genes with total counts across samples >= 10); report how many of the 12,000 genes were dropped."
+        ],
+        "description": "Build the DESeq2 experiment from the salmon gene-level count matrix and sample table, verify design balance and count character, run the batch-adjusted Wald test with apeglm-shrunk LFCs, and deliver the full ranked results table plus volcano and top-gene heatmap.",
+        "acceptance_criteria": [
+          "A results table covering all retained genes with baseMean, log2FoldChange, Wald p-value, padj, and apeglm-shrunk log2FC, plus gene symbol where available.",
+          "Balance check result: 3 samples per (batch x condition) cell confirmed from metadata.csv, or a clear report if not.",
+          "Reported verdict on count character (integer raw counts vs length-corrected), with the fraction of non-integer entries.",
+          "PCA plot colored by condition and separately by batch, plus MA plots; batch tracking of size factors assessed and stated.",
+          "Volcano plot and a top-50-gene (by padj) heatmap saved as PNG."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-voom sensitivity analysis with batch covariate",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "Do not fabricate a gene-length or effective-length matrix for voom — standard voom on the gene-level matrix is the intended sensitivity check.",
+          "If T1S1 documented non-integer (length-corrected) counts, note that voom on such values is a secondary check only and say so."
+        ],
+        "context": "Same two input files as T1S1: counts.csv (12,000 x 12 samples) and metadata.csv (condition, batch). Reuse the verified sample-condition-batch mapping and the T1S1 verdict on count character (raw vs length-corrected) — apply the same documented assumption here; do not re-litigate it. DESeq2 results from T1S1 are the comparison baseline.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "ggplot2"
+        ],
+        "question": "Does the set of genes differentiating treated from control hold under an alternative count model (edgeR/limma-voom with batch as a covariate), and how concordant is it with the DESeq2 result?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "sensitivity-analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Normalize with edgeR TMM, transform with voom, and fit the linear model with design ~ batch + condition (condition last); obtain eBayes statistics for all genes in the matrix.",
+          "Apply the same gene filter as T1S1 so the two methods test the same gene set.",
+          "Compute concordance with T1S1: Spearman correlation of log2FC over all tested genes and separately over T1S1's padj < 0.05 set; and overlap of the significant sets (T1S1 padj < 0.05 vs voom adjusted p < 0.05), reporting both list sizes.",
+          "List the top 20 genes that are significant in one method only, with both methods' statistics for each."
+        ],
+        "description": "Re-run the same treated-vs-control comparison with edgeR TMM normalization and voom linear modeling (design ~ batch + condition), then quantify agreement with T1S1's DESeq2 results: rank correlation of fold changes and overlap of significant sets.",
+        "acceptance_criteria": [
+          "A voom results table (logFC, t, p, adj.P.Val) for all tested genes.",
+          "A concordance report: Spearman correlation figures and significant-set overlap (counts and a short characterisation, e.g. 'methods agree well' or 'discrepancy concentrated in low-count genes').",
+          "The method-specific top-20 list with values from both methods."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway and GO enrichment for up/down DE gene sets",
+        "agent": "enrichment-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "Small directional lists (n = 6 per arm makes large significant sets unlikely) yield unstable NES for small gene sets; report but do not over-interpret sets with fewer than ~15 members.",
+          "WikiPathways coverage in a kidney treatment context may be sparse; an empty significant set is a valid finding and should be reported as such, not 'fixed' by relaxing thresholds without saying so."
+        ],
+        "context": "Input: T1S1's DE results table with gene symbols, log2FC (Wald), and padj. Reference: a human WikiPathways gene-set collection (GMT) is provisioned in this environment — resolve its location at runtime and confirm the species tag is human (Homo sapiens, HGNC symbols); the same inventory also holds mouse and rat WikiPathways sets that must NOT be used on this human data. Gene-set enrichment via fgsea on the full ranked gene list; over-representation via clusterProfiler enrichGO (BP) using the human org package (org.Hs.eg.db).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "enrichplot",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which human pathways and biological processes are enriched among the genes up-regulated vs down-regulated by treatment, relative to the 12,000-gene background?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only human gene sets for this human dataset; verify the species before running and state it in the output.",
+          "Define directional lists from T1S1: up = padj < 0.05 and log2FC > 0; down = padj < 0.05 and log2FC < 0. Do not re-run differential expression in this step.",
+          "Run fgsea on the full ranked list of all tested genes (ranked by sign(log2FC) x -log10(padj), genes without FDR last) for each directional context, and run enrichGO (BP) on each directional list.",
+          "Report the number of genes in each directional list; if a list has fewer than ~20 genes or no set passes padj < 0.05, state that explicitly as an underpowered or empty result rather than treating it as a failure.",
+          "Parse the GMT correctly: the first field is '%'-delimited (name % Wikipathways ID % species) — split on '%' to recover readable set names."
+        ],
+        "description": "Take the T1S1 DE results (symbol-annotated), split into up-regulated and down-regulated significant genes, and run over-representation and gene-set enrichment analysis against a provisioned human WikiPathways gene-set collection and GO biological process terms.",
+        "acceptance_criteria": [
+          "Enrichment tables for the up and down lists: WikiPathways sets with NES and adjusted p-value, and GO BP terms with count, p, and adjusted p.",
+          "Top-10 dot plots per direction saved as PNG.",
+          "Species-match statement (human sets on human data) and per-list gene counts in the output."
+        ]
+      }
+    ],
+    "title": "Batch-adjusted kidney DE: treated vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-25T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Primary question: which of the 12,000 salmon gene-level features in this human kidney bulk RNA-seq (6 treated vs 6 control, two processing batches balanced across conditions) differ between conditions. Because the two batches each hold both conditions, batch is entered as a covariate in the count model (DESeq2, design ~ batch + condition) to reduce noise and guard against any residual imbalance, rather than being a confound of the treatment contrast itself. T1S1 runs that model with apeglm LFC shrinkage, verifies the batch-by-condition balance from metadata.csv, and — because the record does not say whether the salmon quantifications carry length correction while the design says raw counts — checks count integrality before modeling and documents the verdict. T1S2 re-tests the same design under limma-voom to confirm the DE list is not an artefact of the count model, reporting concordance between methods. T1S3 maps the DE gene sets (up and down separately) to human pathways: the provisioned human WikiPathways GMT (species-matched to this human dataset; the mouse/rat sets in the same inventory must not be used) plus GO BP via clusterProfiler. The data is small (12,000 x 12), so resources stay modest."
+  },
+  "usage": {
+    "inputTokens": 76336,
+    "outputTokens": 13788,
+    "cacheReadInputTokens": 42566,
+    "reasoningTokens": 8520
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_ca0fd0374aef47ed9d0315fc",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Batch-adjusted kidney DE: treated vs control\", \"analytical_narrative\": \"Primary question: which of the 12,000 salmon gene-level features in this human kidney bulk RNA-seq (6 treated vs 6 control, two processing batches balanced across conditions) differ between conditions. Because the two batches each hold both conditions, batch is entered as a covariate in the count model (DESeq2, design ~ batch + condition) to reduce noise and guard against any residual imbalance, rather than being a confound of the treatment contrast itself. T1S1 runs that model with apeglm LFC shrinkage, verifies the batch-by-condition balance from metadata.csv, and — because the record does not say whether the salmon quantifications carry length correction while the design says raw counts — checks count integrality before modeling and documents the verdict. T1S2 re-tests the same design under limma-voom to confirm the DE list is not an artefact of the count model, reporting concordance between methods. T1S3 maps the DE gene sets (up and down separately) to human pathways: the provisioned human WikiPathways GMT (species-matched to this human dataset; the mouse/rat sets in the same inventory must not be used) plus GO BP via clusterProfiler. The data is small (12,000 x 12), so resources stay modest.\", \"created_at\": \"2026-07-25T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DESeq2 differential expression, treated vs control, batch-adjusted\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which genes are differentially expressed between treated and control in this human kidney bulk RNA-seq (6 vs 6, two processing batches balanced across conditions), with batch adjusted in the model?\", \"description\": \"Build the DESeq2 experiment from the salmon gene-level count matrix and sample table, verify design balance and count character, run the batch-adjusted Wald test with apeglm-shrunk LFCs, and deliver the full ranked results table plus volcano and top-gene heatmap.\", \"context\": \"Counts: /eval-four-models-v2-without-batch-balanced-n6-s1-1/data/inputs/counts/counts.csv — 12,000 genes x 13 columns (12 samples + 1 gene-ID column), gene-level salmon quantifications. Sample table: /eval-four-models-v2-without-batch-balanced-n6-s1-1/data/inputs/metadata/metadata.csv — 12 rows, one row per sample, carrying condition and batch. Design: 6 treated vs 6 control, two processing batches, balanced so each batch holds both conditions (expected 3 samples per batch x condition cell). Organism: Homo sapiens, tissue: kidney. IMPORTANT: the record says the counts are 'as delivered by salmon' and does NOT state whether length correction was applied; the design statement says raw counts. Treat as raw counts per the design, but verify.\", \"constraints\": [\"Join counts.csv and metadata.csv on the sample identifier; confirm exactly 12 samples, 6 per condition, and 3 per (batch x condition) cell before fitting any model; use the actual condition and batch values as they appear in metadata.csv.\", \"Fit DESeq2 with design ~ batch + condition, condition as the last term (treatment coefficient is the estimand); do not drop or reorder away the batch term.\", \"Verify the count matrix values are integers (raw counts). If a material fraction of entries is non-integer (length-corrected or TPM-like, e.g. per-sample sums near 1e6), state which case applies in the output and proceed under the documented design assumption of raw counts rather than silently assuming.\", \"Estimate size factors with the default median-of-ratios; report the size factors and check they do not track batch.\", \"Shrink log2 fold changes with apeglm after the Wald test.\", \"If row identifiers are Ensembl IDs rather than symbols, map to HGNC symbols with org.Hs.eg.db and keep the original identifier in the output.\", \"Filter minimally (e.g. retain genes with total counts across samples >= 10); report how many of the 12,000 genes were dropped.\"], \"acceptance_criteria\": [\"A results table covering all retained genes with baseMean, log2FoldChange, Wald p-value, padj, and apeglm-shrunk log2FC, plus gene symbol where available.\", \"Balance check result: 3 samples per (batch x condition) cell confirmed from metadata.csv, or a clear report if not.\", \"Reported verdict on count character (integer raw counts vs length-corrected), with the fraction of non-integer entries.\", \"PCA plot colored by condition and separately by batch, plus MA plots; batch tracking of size factors assessed and stated.\", \"Volcano plot and a top-50-gene (by padj) heatmap saved as PNG.\"], \"caveats\": [\"The length-correction ambiguity is the main silent-error risk here: do not assume, check integrality, and document the verdict in the results file.\", \"With only 6 samples per condition, do not over-filter and do not call outliers aggressively; use DESeq2 outlier replacement only for points clearly extreme on the MA plot and report any replaced (gene, sample) pairs.\", \"Small n means padj calibration is coarse; report the number of genes passing padj < 0.05 and say plainly if the significant set is small.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"SummarizedExperiment\", \"org.Hs.eg.db\", \"ggplot2\", \"pheatmap\"], \"depends_on\": [], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}}, {\"id\": \"T1S2\", \"name\": \"limma-voom sensitivity analysis with batch covariate\", \"track\": \"differential-expression\", \"step_type\": \"sensitivity-analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Does the set of genes differentiating treated from control hold under an alternative count model (edgeR/limma-voom with batch as a covariate), and how concordant is it with the DESeq2 result?\", \"description\": \"Re-run the same treated-vs-control comparison with edgeR TMM normalization and voom linear modeling (design ~ batch + condition), then quantify agreement with T1S1's DESeq2 results: rank correlation of fold changes and overlap of significant sets.\", \"context\": \"Same two input files as T1S1: counts.csv (12,000 x 12 samples) and metadata.csv (condition, batch). Reuse the verified sample-condition-batch mapping and the T1S1 verdict on count character (raw vs length-corrected) — apply the same documented assumption here; do not re-litigate it. DESeq2 results from T1S1 are the comparison baseline.\", \"constraints\": [\"Normalize with edgeR TMM, transform with voom, and fit the linear model with design ~ batch + condition (condition last); obtain eBayes statistics for all genes in the matrix.\", \"Apply the same gene filter as T1S1 so the two methods test the same gene set.\", \"Compute concordance with T1S1: Spearman correlation of log2FC over all tested genes and separately over T1S1's padj < 0.05 set; and overlap of the significant sets (T1S1 padj < 0.05 vs voom adjusted p < 0.05), reporting both list sizes.\", \"List the top 20 genes that are significant in one method only, with both methods' statistics for each.\"], \"acceptance_criteria\": [\"A voom results table (logFC, t, p, adj.P.Val) for all tested genes.\", \"A concordance report: Spearman correlation figures and significant-set overlap (counts and a short characterisation, e.g. 'methods agree well' or 'discrepancy concentrated in low-count genes').\", \"The method-specific top-20 list with values from both methods.\"], \"caveats\": [\"Do not fabricate a gene-length or effective-length matrix for voom — standard voom on the gene-level matrix is the intended sensitivity check.\", \"If T1S1 documented non-integer (length-corrected) counts, note that voom on such values is a secondary check only and say so.\"], \"packages\": [\"edgeR\", \"limma\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}}, {\"id\": \"T1S3\", \"name\": \"Pathway and GO enrichment for up/down DE gene sets\", \"track\": \"differential-expression\", \"step_type\": \"enrichment\", \"agent\": \"enrichment-agent\", \"question\": \"Which human pathways and biological processes are enriched among the genes up-regulated vs down-regulated by treatment, relative to the 12,000-gene background?\", \"description\": \"Take the T1S1 DE results (symbol-annotated), split into up-regulated and down-regulated significant genes, and run over-representation and gene-set enrichment analysis against a provisioned human WikiPathways gene-set collection and GO biological process terms.\", \"context\": \"Input: T1S1's DE results table with gene symbols, log2FC (Wald), and padj. Reference: a human WikiPathways gene-set collection (GMT) is provisioned in this environment — resolve its location at runtime and confirm the species tag is human (Homo sapiens, HGNC symbols); the same inventory also holds mouse and rat WikiPathways sets that must NOT be used on this human data. Gene-set enrichment via fgsea on the full ranked gene list; over-representation via clusterProfiler enrichGO (BP) using the human org package (org.Hs.eg.db).\", \"constraints\": [\"Use only human gene sets for this human dataset; verify the species before running and state it in the output.\", \"Define directional lists from T1S1: up = padj < 0.05 and log2FC > 0; down = padj < 0.05 and log2FC < 0. Do not re-run differential expression in this step.\", \"Run fgsea on the full ranked list of all tested genes (ranked by sign(log2FC) x -log10(padj), genes without FDR last) for each directional context, and run enrichGO (BP) on each directional list.\", \"Report the number of genes in each directional list; if a list has fewer than ~20 genes or no set passes padj < 0.05, state that explicitly as an underpowered or empty result rather than treating it as a failure.\", \"Parse the GMT correctly: the first field is '%'-delimited (name % Wikipathways ID % species) — split on '%' to recover readable set names.\"], \"acceptance_criteria\": [\"Enrichment tables for the up and down lists: WikiPathways sets with NES and adjusted p-value, and GO BP terms with count, p, and adjusted p.\", \"Top-10 dot plots per direction saved as PNG.\", \"Species-match statement (human sets on human data) and per-list gene counts in the output.\"], \"caveats\": [\"Small directional lists (n = 6 per arm makes large significant sets unlikely) yield unstable NES for small gene sets; report but do not over-interpret sets with fewer than ~15 members.\", \"WikiPathways coverage in a kidney treatment context may be sparse; an empty significant set is a valid finding and should be reported as such, not 'fixed' by relaxing thresholds without saying so.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"enrichplot\", \"org.Hs.eg.db\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}]"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_d13125a27fb3419cb903b283",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"analytical_narrative\": \"Primary question: which of the 12,000 salmon gene-level features in this human kidney bulk RNA-seq (6 treated vs 6 control, two processing batches balanced across conditions) differ between conditions. Because the two batches each hold both conditions, batch is entered as a covariate in the count model (DESeq2, design ~ batch + condition) to reduce noise and guard against any residual imbalance, rather than being a confound of the treatment contrast itself. T1S1 runs that model with apeglm LFC shrinkage, verifies the batch-by-condition balance from metadata.csv, and — because the record does not say whether the salmon quantifications carry length correction while the design says raw counts — checks count integrality before modeling and documents the verdict. T1S2 re-tests the same design under limma-voom to confirm the DE list is not an artefact of the count model, reporting concordance between methods. T1S3 maps the DE gene sets (up and down separately) to human pathways: the provisioned human WikiPathways GMT (species-matched to this human dataset; the mouse/rat sets in the same inventory must not be used) plus GO BP via clusterProfiler. The data is small (12,000 x 12), so resources stay modest.\", \"created_at\": \"2026-07-25T12:00:00Z\", \"omicsSubtype\": \"bulk-rna-seq\", \"omicsType\": \"transcriptomics\", \"steps\": [{\"acceptance_criteria\": [\"A results table covering all retained genes with baseMean, log2FoldChange, Wald p-value, padj, and apeglm-shrunk log2FC, plus gene symbol where available.\", \"Balance check result: 3 samples per (batch x condition) cell confirmed from metadata.csv, or a clear report if not.\", \"Reported verdict on count character (integer raw counts vs length-corrected), with the fraction of non-integer entries.\", \"PCA plot colored by condition and separately by batch, plus MA plots; batch tracking of size factors assessed and stated.\", \"Volcano plot and a top-50-gene (by padj) heatmap saved as PNG.\"], \"agent\": \"bulk-transcriptomics-agent\", \"constraints\": [\"Join counts.csv and metadata.csv on the sample identifier; confirm exactly 12 samples, 6 per condition, and 3 per (batch x condition) cell before fitting any model; use the actual condition and batch values as they appear in metadata.csv.\", \"Fit DESeq2 with design ~ batch + condition, condition as the last term (treatment coefficient is the estimand); do not drop or reorder away the batch term.\", \"Verify the count matrix values are integers (raw counts). If a material fraction of entries is non-integer (length-corrected or TPM-like, e.g. per-sample sums near 1e6), state which case applies in the output and proceed under the documented design assumption of raw counts rather than silently assuming.\", \"Estimate size factors with the default median-of-ratios; report the size factors and check they do not track batch.\", \"Shrink log2 fold changes with apeglm after the Wald test.\", \"If row identifiers are Ensembl IDs rather than symbols, map to HGNC symbols with org.Hs.eg.db and keep the original identifier in the output.\", \"Filter minimally (e.g. retain genes with total counts across samples >= 10); report how many of the 12,000 genes were dropped.\"], \"context\": \"Counts: /eval-four-models-v2-without-batch-balanced-n6-s1-1/data/inputs/counts/counts.csv — 12,000 genes x 13 columns (12 samples + 1 gene-ID column), gene-level salmon quantifications. Sample table: /eval-four-models-v2-without-batch-balanced-n6-s1-1/data/inputs/metadata/metadata.csv — 12 rows, one row per sample, carrying condition and batch. Design: 6 treated vs 6 control, two processing batches, balanced so each batch holds both conditions (expected 3 samples per batch x condition cell). Organism: Homo sapiens, tissue: kidney. IMPORTANT: the record says the counts are 'as delivered by salmon' and does NOT state whether length correction was applied; the design statement says raw counts. Treat as raw counts per the design, but verify.\", \"caveats\": [\"The length-correction ambiguity is the main silent-error risk here: do not assume, check integrality, and document the verdict in the results file.\", \"With only 6 samples per condition, do not over-filter and do not call outliers aggressively; use DESeq2 outlier replacement only for points clearly extreme on the MA plot and report any replaced (gene, sample) pairs.\", \"Small n means padj calibration is coarse; report the number of genes passing padj < 0.05 and say plainly if the significant set is small.\"], \"depends_on\": [], \"description\": \"Build the DESeq2 experiment from the salmon gene-level count matrix and sample table, verify design balance and count character, run the batch-adjusted Wald test with apeglm-shrunk LFCs, and deliver the full ranked results table plus volcano and top-gene heatmap.\", \"id\": \"T1S1\", \"name\": \"DESeq2 differential expression, treated vs control, batch-adjusted\", \"packages\": [\"DESeq2\", \"apeglm\", \"SummarizedExperiment\", \"org.Hs.eg.db\", \"ggplot2\", \"pheatmap\"], \"question\": \"Which genes are differentially expressed between treated and control in this human kidney bulk RNA-seq (6 vs 6, two processing batches balanced across conditions), with batch adjusted in the model?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"step_type\": \"analysis\", \"track\": \"differential-expression\"}, {\"acceptance_criteria\": [\"A voom results table (logFC, t, p, adj.P.Val) for all tested genes.\", \"A concordance report: Spearman correlation figures and significant-set overlap (counts and a short characterisation, e.g. 'methods agree well' or 'discrepancy concentrated in low-count genes').\", \"The method-specific top-20 list with values from both methods.\"], \"agent\": \"bulk-transcriptomics-agent\", \"constraints\": [\"Normalize with edgeR TMM, transform with voom, and fit the linear model with design ~ batch + condition (condition last); obtain eBayes statistics for all genes in the matrix.\", \"Apply the same gene filter as T1S1 so the two methods test the same gene set.\", \"Compute concordance with T1S1: Spearman correlation of log2FC over all tested genes and separately over T1S1's padj < 0.05 set; and overlap of the significant sets (T1S1 padj < 0.05 vs voom adjusted p < 0.05), reporting both list sizes.\", \"List the top 20 genes that are significant in one method only, with both methods' statistics for each.\"], \"context\": \"Same two input files as T1S1: counts.csv (12,000 x 12 samples) and metadata.csv (condition, batch). Reuse the verified sample-condition-batch mapping and the T1S1 verdict on count character (raw vs length-corrected) — apply the same documented assumption here; do not re-litigate it. DESeq2 results from T1S1 are the comparison baseline.\", \"caveats\": [\"Do not fabricate a gene-length or effective-length matrix for voom — standard voom on the gene-level matrix is the intended sensitivity check.\", \"If T1S1 documented non-integer (length-corrected) counts, note that voom on such values is a secondary check only and say so.\"], \"depends_on\": [\"T1S1\"], \"description\": \"Re-run the same treated-vs-control comparison with edgeR TMM normalization and voom linear modeling (design ~ batch + condition), then quantify agreement with T1S1's DESeq2 results: rank correlation of fold changes and overlap of significant sets.\", \"id\": \"T1S2\", \"name\": \"limma-voom sensitivity analysis with batch covariate\", \"packages\": [\"edgeR\", \"limma\", \"ggplot2\"], \"question\": \"Does the set of genes differentiating treated from control hold under an alternative count model (edgeR/limma-voom with batch as a covariate), and how concordant is it with the DESeq2 result?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"step_type\": \"sensitivity-analysis\", \"track\": \"differential-expression\"}, {\"acceptance_criteria\": [\"Enrichment tables for the up and down lists: WikiPathways sets with NES and adjusted p-value, and GO BP terms with count, p, and adjusted p.\", \"Top-10 dot plots per direction saved as PNG.\", \"Species-match statement (human sets on human data) and per-list gene counts in the output.\"], \"agent\": \"enrichment-agent\", \"constraints\": [\"Use only human gene sets for this human dataset; verify the species before running and state it in the output.\", \"Define directional lists from T1S1: up = padj < 0.05 and log2FC > 0; down = padj < 0.05 and log2FC < 0. Do not re-run differential expression in this step.\", \"Run fgsea on the full ranked list of all tested genes (ranked by sign(log2FC) x -log10(padj), genes without FDR last) for each directional context, and run enrichGO (BP) on each directional list.\", \"Report the number of genes in each directional list; if a list has fewer than ~20 genes or no set passes padj < 0.05, state that explicitly as an underpowered or empty result rather than treating it as a failure.\", \"Parse the GMT correctly: the first field is '%'-delimited (name % Wikipathways ID % species) — split on '%' to recover readable set names.\"], \"context\": \"Input: T1S1's DE results table with gene symbols, log2FC (Wald), and padj. Reference: a human WikiPathways gene-set collection (GMT) is provisioned in this environment — resolve its location at runtime and confirm the species tag is human (Homo sapiens, HGNC symbols); the same inventory also holds mouse and rat WikiPathways sets that must NOT be used on this human data. Gene-set enrichment via fgsea on the full ranked gene list; over-representation via clusterProfiler enrichGO (BP) using the human org package (org.Hs.eg.db).\", \"caveats\": [\"Small directional lists (n = 6 per arm makes large significant sets unlikely) yield unstable NES for small gene sets; report but do not over-interpret sets with fewer than ~15 members.\", \"WikiPathways coverage in a kidney treatment context may be sparse; an empty significant set is a valid finding and should be reported as such, not 'fixed' by relaxing thresholds without saying so.\"], \"depends_on\": [\"T1S1\"], \"description\": \"Take the T1S1 DE results (symbol-annotated), split into up-regulated and down-regulated significant genes, and run over-representation and gene-set enrichment analysis against a provisioned human WikiPathways gene-set collection and GO biological process terms.\", \"id\": \"T1S3\", \"name\": \"Pathway and GO enrichment for up/down DE gene sets\", \"packages\": [\"fgsea\", \"clusterProfiler\", \"enrichplot\", \"org.Hs.eg.db\", \"ggplot2\"], \"question\": \"Which human pathways and biological processes are enriched among the genes up-regulated vs down-regulated by treatment, relative to the 12,000-gene background?\", \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"step_type\": \"enrichment\", \"track\": \"differential-expression\"}], \"title\": \"Batch-adjusted kidney DE: treated vs control\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

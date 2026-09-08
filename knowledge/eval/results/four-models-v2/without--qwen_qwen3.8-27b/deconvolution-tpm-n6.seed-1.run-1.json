@@ -1,0 +1,202 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T16:27:16.604Z",
+  "elapsedMs": 277980,
+  "outcome": "plan_submitted",
+  "planId": "pln-2140b0eb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "TPM alignment, depth, and PCA QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "Sum of TPM is not a count-based library size; use it only as a relative depth proxy across samples quantified by the same Salmon pipeline.",
+          "Do not attempt differential expression here: no counts exist and TPM is not valid input for count-based DE models."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv (Salmon gene-level TPM, first column = gene symbol, 12,000 genes x 12 samples) and /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; anti-PD-1 treated vs untreated, 6 each). The data profile states sample_01 was sequenced at about a quarter of the median depth. No raw counts exist anywhere; single batch; unpaired design.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2",
+          "tidyr"
+        ],
+        "question": "Do the 12 sample columns of tpm.csv align 1:1 with the rows of metadata.csv, does the condition column define exactly 6 treated and 6 control samples, and how severe is sample_01's reduced sequencing depth relative to the other 11 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Verify the 12 sample columns of tpm.csv match the sample IDs in metadata.csv exactly 1:1; report any missing or extra column/row before producing other outputs.",
+          "Compute per sample: genes with TPM>0, genes with TPM>=1, median TPM over nonzero genes, sum of TPM; save a per-sample QC table (12 rows).",
+          "Quantify sample_01's depth proxies relative to the median of the other 11 samples (e.g., ratio) and confirm or refute the profiled ~1/4-of-median depth with a number.",
+          "PCA on log2(TPM+1) using the 500 most variable genes across the 12 samples; plot PC1 vs PC2 colored by condition, labeled by sample ID, annotating sample_01; state whether it is a spatial outlier.",
+          "Report the distinct condition values verbatim from metadata.csv and use those exact values (not renamed labels) in all outputs.",
+          "No network access in the sandbox; use only the two local files and installed packages."
+        ],
+        "description": "Per-sample depth/detection statistics, quantified depth deficit of sample_01, condition-label verification, and a condition-colored PCA of the 12 samples.",
+        "acceptance_criteria": [
+          "Per-sample QC table with the four depth/detection statistics for all 12 samples is saved.",
+          "sample_01's depth ratio vs the median of the other 11 is reported numerically.",
+          "Condition labels confirmed as 6 treated vs 6 control, or any mismatch is explicitly reported.",
+          "Column-to-row alignment between tpm.csv and metadata.csv is confirmed, or a mismatch is explicitly reported.",
+          "A condition-colored PCA plot with sample labels (sample_01 annotated) is produced."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Multi-method immune and stromal deconvolution",
+        "agent": "immune-profiling-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "Deconvolution from TPM rather than counts is an approximation; state this limitation in the outputs.",
+          "With only 6 samples per group, per-sample fractions are noisy - report values but do not interpret single-sample extremes as biology without cross-method corroboration.",
+          "If the 12,000-gene table lacks some signature genes (lowly expressed markers may be absent), affected estimates are less reliable; the coverage report makes this auditable."
+        ],
+        "context": "Input: the 12,000-gene x 12-sample TPM table in tpm.csv and the condition labels in metadata.csv. Normalize to log2(TPM+1) before deconvolution; raw counts were not delivered, so signature-based deconvolution from TPM is the intended route. Methods (R, immunedeconv package, signatures bundled with the package so no network is needed): xCell (64 cell types, including stromal lineages such as fibroblast, endothelial, smooth muscle, pericyte), MCPcounter, EPIC, TIMER (immune-only cross-checks), and CIBERSORTx if the installed version exposes it.",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "dplyr",
+          "tidyr",
+          "ggplot2"
+        ],
+        "question": "What is the estimated proportion of each immune and stromal cell type in each of the 12 melanoma samples, as estimated by several complementary deconvolution methods from the TPM table?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use log2(TPM+1) as the expression input for all methods.",
+          "Before running each method, verify its signature data loads from the installed package offline; if a method's data is absent, skip that method and say so explicitly - never attempt a download (no network).",
+          "Report, per method, the fraction of that method's signature genes present in the 12,000-gene symbol table (symbol matching).",
+          "Produce a sample x cell-type fraction table (12 rows) per method. For xCell, keep both immune and stromal cell-type clusters; for the immune-only methods, keep all types they return.",
+          "Compute cross-method concordance: Spearman correlation of per-sample proportions for shared immune cell types (at minimum CD8 T, CD4 T, B, NK, macrophage, dendritic - map method-specific names to these canonical labels).",
+          "Flag samples whose estimated fractions deviate strongly from the other 11, checking in particular whether sample_01's low depth destabilizes its estimates.",
+          "Save all outputs as local CSV/PDF files."
+        ],
+        "description": "Per-sample immune + stromal cell-type proportions from xCell (primary, covers stromal) with immune-only cross-checks (MCPcounter, EPIC, TIMER, CIBERSORTx if available), signature-gene coverage, and cross-method concordance.",
+        "acceptance_criteria": [
+          "Fraction tables for every method that ran (at minimum xCell, plus each immune-only method available in the installed package).",
+          "Per-method signature-gene coverage reported as a fraction.",
+          "A concordance table of Spearman correlations for the shared immune cell types is produced.",
+          "All 12 samples appear in every method's output, or an explicit per-method note lists which samples failed.",
+          "The xCell output includes the immune and stromal cell types, not only immune."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Treated vs control comparison and low-depth sensitivity",
+        "agent": "statistical-modeling-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group: the study is underpowered for small differences; report effect sizes alongside p-values.",
+          "Cell-type fractions are compositional (sum to 1 per sample); tests are marginal per cell type, not composition-aware (e.g. Aitchison) - state this limitation.",
+          "Fractions are estimated from the same 12 samples; the statistical unit is the sample (n=12), not genes or signature elements."
+        ],
+        "context": "Inputs: the sample x cell-type fraction tables from T1S2 (primary: xCell immune + stromal cell types; corroborating: the other methods' immune cell types) and the condition labels from metadata.csv (6 treated, 6 untreated, unpaired). T1S1 quantified sample_01's low depth.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Do the estimated cell-type proportions differ between the 6 anti-PD-1 treated and 6 untreated melanoma samples, and are the conclusions robust to excluding the low-depth sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_testing",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "For each cell type, compare treated vs control as unpaired groups (no pairing information exists): primary test = permutation test with >= 10,000 label shuffles (two-sided) on the per-sample fractions; secondary = Wilcoxon rank-sum. Effect sizes: difference of group medians and log2 ratio of medians (add a small constant, e.g. 1e-3, where a median is zero).",
+          "Apply Benjamini-Hochberg FDR correction across all cell types within each method.",
+          "Sensitivity analysis: repeat the full test set excluding sample_01 (groups as labels permit after exclusion); list the cell types whose FDR significance or direction changes relative to the full-cohort result; the full-cohort result is the primary result.",
+          "Visualizations: (a) heatmap of sample x cell-type fractions ordered by condition for the primary method; (b) box/violin plots for the cell types with the largest effect size or significant FDR.",
+          "No network access in the sandbox; use only local outputs of T1S1/T1S2 and installed packages."
+        ],
+        "description": "Per-cell-type unpaired treated-vs-control tests (permutation + Wilcoxon, BH FDR) on the deconvolution fractions, a mandatory sensitivity analysis excluding sample_01, and supporting visualizations.",
+        "acceptance_criteria": [
+          "A per-cell-type statistics table (primary method) with per-group n, per-group medians, permutation p, Wilcoxon p, BH FDR, and direction (enriched vs depleted in treated).",
+          "The same test summary is produced for the shared immune cell types of the immune-only methods as corroboration.",
+          "A sensitivity table (full cohort vs sample_01-excluded) exists, naming every cell type whose significance or direction changes.",
+          "At least the sample x cell-type heatmap and one set of per-cell-type plots are produced.",
+          "The report explicitly states that with n=6 per group power is limited and non-significant results do not establish absence of difference."
+        ]
+      }
+    ],
+    "title": "Melanoma anti-PD-1 TME deconvolution: immune/stromal composition",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-25T09:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core delivered Salmon gene-level TPM only (12,000 x 12, no raw counts), so count-based inference is off the table; the standard route for bulk TME composition from TPM is signature-based deconvolution on log2(TPM+1). Deconvolution is run with multiple complementary methods because they disagree on details and because xCell is the only bundled method covering both the immune and stromal lineages the question asks about; MCPcounter, EPIC and TIMER cross-check the immune estimates (CIBERSORTx if the installed immunedeconv exposes it). sample_01 is known from the data profile to sit at about a quarter of median depth, so T1S1 quantifies that before any inference, and T1S3 makes a sensitivity analysis excluding sample_01 mandatory. The treated-vs-control comparison is unpaired (no pairing information in the 12-row metadata), tested by permutation with FDR across cell types, with an explicit low-power caveat (n=6 per group). Signatures ship inside the immunedeconv package, so no reference files or network access are needed."
+  },
+  "usage": {
+    "inputTokens": 125070,
+    "outputTokens": 17762,
+    "cacheReadInputTokens": 78272,
+    "reasoningTokens": 14006
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_3d08e23b14754908bdafd87c",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "immunedeconv",
+        "query": "bulk RNA-seq immune deconvolution from log2 TPM: xCell MCPcounter EPIC TIMER CIBERSORTx function usage and bundled signatures"
+      },
+      "outcome": "error",
+      "durationMs": 1616
+    },
+    {
+      "toolUseId": "call_afe70aff790e4f9c8e0e83f5",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Melanoma anti-PD-1 TME deconvolution: immune/stromal composition\", \"analytical_narrative\": \"The core delivered Salmon gene-level TPM only (12,000 x 12, no raw counts), so count-based inference is off the table; the standard route for bulk TME composition from TPM is signature-based deconvolution on log2(TPM+1). Deconvolution is run with multiple complementary methods because they disagree on details and because xCell is the only bundled method covering both the immune and stromal lineages the question asks about; MCPcounter, EPIC and TIMER cross-check the immune estimates (CIBERSORTx if the installed immunedeconv exposes it). sample_01 is known from the data profile to sit at ~a quarter of median depth, so T1S1 quantifies that before any inference, and T1S3 makes a sensitivity analysis excluding sample_01 mandatory. The treated-vs-control comparison is unpaired (no pairing information in the 12-row metadata), tested by permutation with FDR across cell types, with an explicit low-power caveat (n=6 per group). Signatures ship inside the immunedeconv package, so no reference files or network access are needed.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-25T09:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"TPM alignment, depth, and PCA QC\", \"track\": \"tme-composition\", \"step_type\": \"quality_control\", \"question\": \"Do the 12 sample columns of tpm.csv align 1:1 with the rows of metadata.csv, does the condition column define exactly 6 treated and 6 control samples, and how severe is sample_01's reduced sequencing depth relative to the other 11 samples?\", \"context\": \"Inputs: /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv (Salmon gene-level TPM, first column = gene symbol, 12,000 genes x 12 samples) and /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; anti-PD-1 treated vs untreated, 6 each). The data profile states sample_01 was sequenced at about a quarter of the median depth. No raw counts exist anywhere; single batch; unpaired design.\", \"description\": \"Per-sample depth/detection statistics, quantified depth deficit of sample_01, condition-label verification, and a condition-colored PCA of the 12 samples.\", \"constraints\": [\"Verify the 12 sample columns of tpm.csv match the sample IDs in metadata.csv exactly 1:1; report any missing or extra column/row before producing other outputs.\", \"Compute per sample: genes with TPM>0, genes with TPM>=1, median TPM over nonzero genes, sum of TPM; save a per-sample QC table (12 rows).\", \"Quantify sample_01's depth proxies relative to the median of the other 11 samples (e.g., ratio) and confirm or refute the profiled ~1/4-of-median depth with a number.\", \"PCA on log2(TPM+1) using the 500 most variable genes across the 12 samples; plot PC1 vs PC2 colored by condition, labeled by sample ID, annotating sample_01; state whether it is a spatial outlier.\", \"Report the distinct condition values verbatim from metadata.csv and use those exact values (not renamed labels) in all outputs.\", \"No network access in the sandbox; use only the two local files and installed packages.\"], \"acceptance_criteria\": [\"Per-sample QC table with the four depth/detection statistics for all 12 samples is saved.\", \"sample_01's depth ratio vs the median of the other 11 is reported numerically.\", \"Condition labels confirmed as 6 treated vs 6 control, or any mismatch is explicitly reported.\", \"Column-to-row alignment between tpm.csv and metadata.csv is confirmed, or a mismatch is explicitly reported.\", \"A condition-colored PCA plot with sample labels (sample_01 annotated) is produced.\"], \"caveats\": [\"Sum of TPM is not a count-based library size; use it only as a relative depth proxy across samples quantified by the same Salmon pipeline.\", \"Do not attempt differential expression here: no counts exist and TPM is not valid input for count-based DE models.\"], \"packages\": [\"dplyr\", \"ggplot2\", \"tidyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}]}, \"steps_note\": null}"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_efd43188053e4c58942c9ed7",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Melanoma anti-PD-1 TME deconvolution: immune/stromal composition\", \"analytical_narrative\": \"The core delivered Salmon gene-level TPM only (12,000 x 12, no raw counts), so count-based inference is off the table; the standard route for bulk TME composition from TPM is signature-based deconvolution on log2(TPM+1). Deconvolution is run with multiple complementary methods because they disagree on details and because xCell is the only bundled method covering both the immune and stromal lineages the question asks about; MCPcounter, EPIC and TIMER cross-check the immune estimates (CIBERSORTx if the installed immunedeconv exposes it). sample_01 is known from the data profile to sit at about a quarter of median depth, so T1S1 quantifies that before any inference, and T1S3 makes a sensitivity analysis excluding sample_01 mandatory. The treated-vs-control comparison is unpaired (no pairing information in the 12-row metadata), tested by permutation with FDR across cell types, with an explicit low-power caveat (n=6 per group). Signatures ship inside the immunedeconv package, so no reference files or network access are needed.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-25T09:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"TPM alignment, depth, and PCA QC\", \"track\": \"tme-composition\", \"step_type\": \"quality_control\", \"question\": \"Do the 12 sample columns of tpm.csv align 1:1 with the rows of metadata.csv, does the condition column define exactly 6 treated and 6 control samples, and how severe is sample_01's reduced sequencing depth relative to the other 11 samples?\", \"context\": \"Inputs: /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv (Salmon gene-level TPM, first column = gene symbol, 12,000 genes x 12 samples) and /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; anti-PD-1 treated vs untreated, 6 each). The data profile states sample_01 was sequenced at about a quarter of the median depth. No raw counts exist anywhere; single batch; unpaired design.\", \"description\": \"Per-sample depth/detection statistics, quantified depth deficit of sample_01, condition-label verification, and a condition-colored PCA of the 12 samples.\", \"constraints\": [\"Verify the 12 sample columns of tpm.csv match the sample IDs in metadata.csv exactly 1:1; report any missing or extra column/row before producing other outputs.\", \"Compute per sample: genes with TPM>0, genes with TPM>=1, median TPM over nonzero genes, sum of TPM; save a per-sample QC table (12 rows).\", \"Quantify sample_01's depth proxies relative to the median of the other 11 samples (e.g., ratio) and confirm or refute the profiled ~1/4-of-median depth with a number.\", \"PCA on log2(TPM+1) using the 500 most variable genes across the 12 samples; plot PC1 vs PC2 colored by condition, labeled by sample ID, annotating sample_01; state whether it is a spatial outlier.\", \"Report the distinct condition values verbatim from metadata.csv and use those exact values (not renamed labels) in all outputs.\", \"No network access in the sandbox; use only the two local files and installed packages.\"], \"acceptance_criteria\": [\"Per-sample QC table with the four depth/detection statistics for all 12 samples is saved.\", \"sample_01's depth ratio vs the median of the other 11 is reported numerically.\", \"Condition labels confirmed as 6 treated vs 6 control, or any mismatch is explicitly reported.\", \"Column-to-row alignment between tpm.csv and metadata.csv is confirmed, or a mismatch is explicitly reported.\", \"A condition-colored PCA plot with sample labels (sample_01 annotated) is produced.\"], \"caveats\": [\"Sum of TPM is not a count-based library size; use it only as a relative depth proxy across samples quantified by the same Salmon pipeline.\", \"Do not attempt differential expression here: no counts exist and TPM is not valid input for count-based DE models.\"], \"packages\": [\"dplyr\", \"ggplot2\", \"tidyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Multi-method immune and stromal deconvolution\", \"track\": \"tme-composition\", \"step_type\": \"deconvolution\", \"question\": \"What is the estimated proportion of each immune and stromal cell type in each of the 12 melanoma samples, as estimated by several complementary deconvolution methods from the TPM table?\", \"context\": \"Input: the 12,000-gene x 12-sample TPM table in tpm.csv and the condition labels in metadata.csv. Normalize to log2(TPM+1) before deconvolution; raw counts were not delivered, so signature-based deconvolution from TPM is the intended route. Methods (R, immunedeconv package, signatures bundled with the package so no network is needed): xCell (64 cell types, including stromal lineages such as fibroblast, endothelial, smooth muscle, pericyte), MCPcounter, EPIC, TIMER (immune-only cross-checks), and CIBERSORTx if the installed version exposes it.\", \"description\": \"Per-sample immune + stromal cell-type proportions from xCell (primary, covers stromal) with immune-only cross-checks (MCPcounter, EPIC, TIMER, CIBERSORTx if available), signature-gene coverage, and cross-method concordance.\", \"constraints\": [\"Use log2(TPM+1) as the expression input for all methods.\", \"Before running each method, verify its signature data loads from the installed package offline; if a method's data is absent, skip that method and say so explicitly - never attempt a download (no network).\", \"Report, per method, the fraction of that method's signature genes present in the 12,000-gene symbol table (symbol matching).\", \"Produce a sample x cell-type fraction table (12 rows) per method. For xCell, keep both immune and stromal cell-type clusters; for the immune-only methods, keep all types they return.\", \"Compute cross-method concordance: Spearman correlation of per-sample proportions for shared immune cell types (at minimum CD8 T, CD4 T, B, NK, macrophage, dendritic - map method-specific names to these canonical labels).\", \"Flag samples whose estimated fractions deviate strongly from the other 11, checking in particular whether sample_01's low depth destabilizes its estimates.\", \"Save all outputs as local CSV/PDF files.\"], \"acceptance_criteria\": [\"Fraction tables for every method that ran (at minimum xCell, plus each immune-only method available in the installed package).\", \"Per-method signature-gene coverage reported as a fraction.\", \"A concordance table of Spearman correlations for the shared immune cell types is produced.\", \"All 12 samples appear in every method's output, or an explicit per-method note lists which samples failed.\", \"The xCell output includes the immune and stromal cell types, not only immune.\"], \"caveats\": [\"Deconvolution from TPM rather than counts is an approximation; state this limitation in the outputs.\", \"With only 6 samples per group, per-sample fractions are noisy - report values but do not interpret single-sample extremes as biology without cross-method corroboration.\", \"If the 12,000-gene table lacks some signature genes (lowly expressed markers may be absent), affected estimates are less reliable; the coverage report makes this auditable.\"], \"packages\": [\"immunedeconv\", \"dplyr\", \"tidyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"immune-profiling-agent\"}, {\"id\": \"T1S3\", \"name\": \"Treated vs control comparison and low-depth sensitivity\", \"track\": \"tme-composition\", \"step_type\": \"statistical_testing\", \"question\": \"Do the estimated cell-type proportions differ between the 6 anti-PD-1 treated and 6 untreated melanoma samples, and are the conclusions robust to excluding the low-depth sample_01?\", \"context\": \"Inputs: the sample x cell-type fraction tables from T1S2 (primary: xCell immune + stromal cell types; corroborating: the other methods' immune cell types) and the condition labels from metadata.csv (6 treated, 6 untreated, unpaired). T1S1 quantified sample_01's low depth.\", \"description\": \"Per-cell-type unpaired treated-vs-control tests (permutation + Wilcoxon, BH FDR) on the deconvolution fractions, a mandatory sensitivity analysis excluding sample_01, and supporting visualizations.\", \"constraints\": [\"For each cell type, compare treated vs control as unpaired groups (no pairing information exists): primary test = permutation test with >= 10,000 label shuffles (two-sided) on the per-sample fractions; secondary = Wilcoxon rank-sum. Effect sizes: difference of group medians and log2 ratio of medians (add a small constant, e.g. 1e-3, where a median is zero).\", \"Apply Benjamini-Hochberg FDR correction across all cell types within each method.\", \"Sensitivity analysis: repeat the full test set excluding sample_01 (groups as labels permit after exclusion); list the cell types whose FDR significance or direction changes relative to the full-cohort result; the full-cohort result is the primary result.\", \"Visualizations: (a) heatmap of sample x cell-type fractions ordered by condition for the primary method; (b) box/violin plots for the cell types with the largest effect size or significant FDR.\", \"No network access in the sandbox; use only local outputs of T1S1/T1S2 and installed packages.\"], \"acceptance_criteria\": [\"A per-cell-type statistics table (primary method) with per-group n, per-group medians, permutation p, Wilcoxon p, BH FDR, and direction (enriched vs depleted in treated).\", \"The same test summary is produced for the shared immune cell types of the immune-only methods as corroboration.\", \"A sensitivity table (full cohort vs sample_01-excluded) exists, naming every cell type whose significance or direction changes.\", \"At least the sample x cell-type heatmap and one set of per-cell-type plots are produced.\", \"The report explicitly states that with n=6 per group power is limited and non-significant results do not establish absence of difference.\"], \"caveats\": [\"n=6 per group: the study is underpowered for small differences; report effect sizes alongside p-values.\", \"Cell-type fractions are compositional (sum to 1 per sample); tests are marginal per cell type, not composition-aware (e.g. Aitchison) - state this limitation.\", \"Fractions are estimated from the same 12 samples; the statistical unit is the sample (n=12), not genes or signature elements.\"], \"packages\": [\"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"statistical-modeling-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

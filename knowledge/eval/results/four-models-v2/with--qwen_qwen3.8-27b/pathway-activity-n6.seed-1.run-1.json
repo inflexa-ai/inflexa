@@ -1,0 +1,965 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T12:45:42.530Z",
+  "elapsedMs": 782146,
+  "outcome": "plan_submitted",
+  "planId": "pln-bf56bc9d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and shallow-sample inspection",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If one sample has a library size several times below the median of the study, do not delete it in silence: keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default.",
+          "With only 12000 genes, the 500 top-variance genes for PCA cover a large fraction of the feature space; that is acceptable at this scale but note it."
+        ],
+        "context": "Design: 6 treated (cytokine stimulation) vs 6 control (vehicle), unpaired, single batch. Known caveat from the data profile: sample_01 has a library size about 4x below the median. Condition values must be read from the metadata file, not assumed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 bronchial epithelium bulk RNA-seq samples (6 cytokine stimulation, 6 vehicle) form two condition-consistent groups, and how does the shallow sample_01 — library size about 4x below the median — sit relative to its labeled condition?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf; low_depth_policy = keep_inspect_report per R-0008@440d for the shallow sample_01.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+          "The vst must be computed blind (design-free) so the sample structure is not conditioned on the comparison.",
+          "Do not remove sample_01 in this step; depth alone is not a removal reason (rule R-0030). If it looks like a technical outlier, state that as a recommendation with the reason; the sensitivity analysis T2S3 resolves the judgment.",
+          "Read condition labels from the metadata CSV; do not hard-code condition names."
+        ],
+        "description": "Sample-structure QC on the raw gene-level counts (12000 x 12) from Salmon in /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv with sample table /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Compute the variance-stabilizing transform blind to the design, PCA on the 500 most variable genes, and a Euclidean-distance heatmap of samples, each colored by condition. Report per-sample library size, detected-gene count, and ratio to the median; inspect sample_01 on the PCA and distance heatmap and report its metrics beside the others. Per the keep_inspect_report policy, sample_01 stays in the main analysis; its removal is addressed explicitly by the sensitivity step T2S3, never silently here.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap rendered, colored by condition, saved as figures.",
+          "Per-sample QC table: library size, detected genes, ratio to the median — sample_01 expected about 4x below the median.",
+          "Explicit statement of whether samples separate by condition and whether sample_01 sits with its labeled group.",
+          "sample_01 retained in the main analysis with the keep_inspect_report policy stated in the output."
+        ]
+      }
+    ],
+    "title": "Signaling pathway footprint activity: cytokine vs vehicle bronchial epithelium",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which signaling pathways are active, judged by the transcriptional footprint rather than by which pathway members are expressed. Primary inference: the PROGENy human footprint prior (14 signaling pathways with weighted perturbation-response genes, present in the reference store) is scored per sample with the multivariate linear model (decoupler mlm) on the log2-normalized expression matrix, and per-pathway differences between the 6 cytokine-stimulation and 6 vehicle samples are tested on the scores (Welch t-test — two-group design without covariates; BH across the 14 pathways), the method of record for footprint-based pathway activity (R-0115). A broader second view scores the human WikiPathways sets (2026.07.10) per sample with GSVA and tests the score matrix with limma (alternative M-0034 chosen per R-0133; score testing per R-0134), so signaling pathways outside the fixed PROGENy set are also assessed. Upstream, the service's two-group DESeq2 template filters low-count genes (>=10 counts in >=6 samples), estimates median-of-ratios size factors inside the negative-binomial model (no pre-scaling, R-0026), and supplies the log-normalized matrix plus the contrast statistic for a secondary mlm view and the STRING v12.0 (cutoff 0.7) neighborhood context. sample_01, about 4x below the median library size, is kept in the main analysis per the keep_inspect_report policy (R-0008/R-0030) and is explicitly stress-tested: both activity inferences are re-run without it and pathway-level judgments are compared (T2S3). The report consolidates the primary answer, the corroboration, the stability verdict, and the reproducibility record (R-0086). The salmon import state (length correction unknown) is verified by an integrality check in T1S2, with a limma-voom fallback if the values are fractional."
+  },
+  "usage": {
+    "inputTokens": 522463,
+    "outputTokens": 49265,
+    "cacheReadInputTokens": 434880,
+    "reasoningTokens": 45091
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_0a3f1639104c435ca218f2e2",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "qc",
+          "differential_expression"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_d07db627b2f54dc2b4cc958d",
+      "name": "knowledge_recommend",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "import_state": "unknown",
+        "n_groups": 2,
+        "n_per_group_max": 6,
+        "n_per_group_min": 6,
+        "organism": "human",
+        "paired": false,
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq"
+      },
+      "outcome": "ok",
+      "durationMs": 55
+    },
+    {
+      "toolUseId": "call_70877a2eb27e46fcb930ce9d",
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      },
+      "outcome": "ok",
+      "durationMs": 335
+    },
+    {
+      "toolUseId": "call_8a5503abcf7b40eab5befcb9",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupleR",
+        "query": "mlm multivariate linear model pathway activity from weighted PROGENy network per sample"
+      },
+      "outcome": "error",
+      "durationMs": 1738
+    },
+    {
+      "toolUseId": "call_b29a00d8b3cd42ce9c764080",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "import_state": "unknown",
+        "n_groups": 2,
+        "n_per_group_max": 6,
+        "n_per_group_min": 6,
+        "organism": "human",
+        "paired": false,
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind vst, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "DESeq2 pre-filter",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors inside the DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm LFC shrinkage",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "ppi_network",
+                "value": "string_from_reference_store"
+              },
+              {
+                "name": "string_confidence_cutoff",
+                "value": 0.7
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              },
+              {
+                "name": "topology_method",
+                "value": "spia_absent_footprint_or_enrichment_instead"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "GSVA per-sample pathway scores with limma on the scores",
+            "method_id": "M-0034",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "signature_provenance",
+                "value": "source_version_and_genes_present"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "consolidated report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": [
+                  "session_info",
+                  "seed",
+                  "package_versions",
+                  "collection_version",
+                  "annotation_release"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_77a3323f25ca4a9897426016",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "import_state": "unknown",
+        "n_groups": 2,
+        "n_per_group_max": 6,
+        "n_per_group_min": 6,
+        "organism": "human",
+        "paired": false,
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "steps": [
+          {
+            "method": "blind vst, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "DESeq2 pre-filter",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "median-of-ratios size factors inside the DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "DESeq2 Wald test with apeglm LFC shrinkage",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "ppi_network",
+                "value": "string_from_reference_store"
+              },
+              {
+                "name": "string_confidence_cutoff",
+                "value": 0.7
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              },
+              {
+                "name": "topology_method",
+                "value": "spia_absent_footprint_or_enrichment_instead"
+              }
+            ],
+            "step_type": "pathway_activity"
+          },
+          {
+            "method": "GSVA per-sample pathway scores with limma on the scores",
+            "method_id": "M-0034",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "signature_provenance",
+                "value": "source_version_and_genes_present"
+              }
+            ],
+            "step_type": "signature_scoring"
+          },
+          {
+            "method": "consolidated report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ],
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "call_859bf2646aba4243b5e90423",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "import_state": "unknown",
+        "n_groups": 2,
+        "n_per_group_max": 6,
+        "n_per_group_min": 6,
+        "organism": "human",
+        "paired": false,
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "steps": [
+          {
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_9111ae9bc24b4df69353c7cc",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Signaling pathway footprint activity: cytokine vs vehicle bronchial epithelium\", \"analytical_narrative\": \"The question asks which signaling pathways are active, judged by the transcriptional footprint rather than by which pathway members are expressed. Primary inference: the PROGENy human footprint prior (14 signaling pathways with weighted perturbation-response genes, present in the reference store) is scored per sample with the multivariate linear model (decoupler mlm) on the log2-normalized expression matrix, and per-pathway differences between the 6 cytokine-stimulation and 6 vehicle samples are tested on the scores (Welch t-test — two-group design without covariates; BH across the 14 pathways), the method of record for footprint-based pathway activity (R-0115). A broader second view scores the human WikiPathways sets (2026.07.10) per sample with GSVA and tests the score matrix with limma (alternative M-0034 chosen per R-0133; score testing per R-0134), so signaling pathways outside the fixed PROGENy set are also assessed. Upstream, the service's two-group DESeq2 template filters low-count genes (>=10 counts in >=6 samples), estimates median-of-ratios size factors inside the negative-binomial model (no pre-scaling, R-0026), and supplies the log-normalized matrix plus the contrast statistic for a secondary mlm view and the STRING v12.0 (cutoff 0.7) neighborhood context. sample_01, about 4x below the median library size, is kept in the main analysis per the keep_inspect_report policy (R-0008/R-0030) and is explicitly stress-tested: both activity inferences are re-run without it and pathway-level judgments are compared (T2S3). The report consolidates the primary answer, the corroboration, the stability verdict, and the reproducibility record (R-0086). The salmon import state (length correction unknown) is verified by an integrality check in T1S2, with a limma-voom fallback if the values are fractional.\", \"created_at\": \"2026-09-07T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC and shallow-sample inspection\", \"track\": \"T1\", \"step_type\": \"qc\", \"question\": \"Do the 12 bronchial epithelium bulk RNA-seq samples (6 cytokine stimulation, 6 vehicle) form two condition-consistent groups, and how does the shallow sample_01 — library size about 4x below the median — sit relative to its labeled condition?\", \"description\": \"Sample-structure QC on the raw gene-level counts (12000 x 12) from Salmon in /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv with sample table /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column). Compute the variance-stabilizing transform blind to the design, PCA on the 500 most variable genes, and a Euclidean-distance heatmap of samples, each colored by condition. Report per-sample library size, detected-gene count, and ratio to the median; inspect sample_01 on the PCA and distance heatmap and report its metrics beside the others. Per the keep_inspect_report policy, sample_01 stays in the main analysis; its removal is addressed explicitly by the sensitivity step T2S3, never silently here.\", \"context\": \"Design: 6 treated (cytokine stimulation) vs 6 control (vehicle), unpaired, single batch. Known caveat from the data profile: sample_01 has a library size about 4x below the median. Condition values must be read from the metadata file, not assumed.\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)\", \"The vst must be computed blind (design-free) so the sample structure is not conditioned on the comparison.\", \"Do not remove sample_01 in this step; depth alone is not a removal reason (rule R-0030). If it looks like a technical outlier, state that as a recommendation with the reason; the sensitivity analysis T2S3 resolves the judgment.\", \"Read condition labels from the metadata CSV; do not hard-code condition names.\"], \"acceptance_criteria\": [\"PCA plot and sample-distance heatmap rendered, colored by condition, saved as figures.\", \"Per-sample QC table: library size, detected genes, ratio to the median — sample_01 expected about 4x below the median.\", \"Explicit statement of whether samples separate by condition and whether sample_01 sits with its labeled group.\", \"sample_01 retained in the main analysis with the keep_inspect_report policy stated in the output.\"], \"caveats\": [\"If one sample has a library size several times below the median of the study, do not delete it in silence: keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default.\", \"With only 12000 genes, the 500 top-variance genes for PCA cover a large fraction of the feature space; that is acceptable at this scale but note it.\"], \"packages\": [\"DESeq2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\", \"R-0008@440d\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}, {\"step\": \"qc_sample_structure\", \"name\": \"low_depth_policy\", \"value\": \"keep_inspect_report\", \"source\": \"doi:10.1186/s13059-016-0881-8\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf; low_depth_policy = keep_inspect_report per R-0008@440d for the shallow sample_01.\"}}], \"planId\": null}"
+      },
+      "outcome": "ok",
+      "durationMs": 69
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "pathway_activity"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ],
+          "extra_analyses": [
+            "pathway_activity"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1",
+              "R-0030@2248"
+            ]
+          },
+          {
+            "step": "pathway_activity",
+            "method": {
+              "id": "M-0036"
+            },
+            "template": "tpl-progeny-pathway-activity@1.0.0",
+            "rules": [
+              "R-0123@5521",
+              "R-0115@1504",
+              "R-0122@08af"
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0045"
+            },
+            "template": "tpl-signature-scoring@1.0.0",
+            "rules": [
+              "R-0134@0f16",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0123@5521"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0030@2248"
+          },
+          {
+            "id": "R-0115@1504"
+          },
+          {
+            "id": "R-0122@08af"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 21884,
+      "elapsedMs": 9
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "pathway_activity"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind vst, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "DESeq2 pre-filter",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors inside the DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test with apeglm LFC shrinkage",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "decoupleR mlm on the PROGENy footprint model",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "ppi_network",
+                "value": "string_from_reference_store"
+              },
+              {
+                "name": "string_confidence_cutoff",
+                "value": 0.7
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              },
+              {
+                "name": "topology_method",
+                "value": "spia_absent_footprint_or_enrichment_instead"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "GSVA per-sample pathway scores with limma on the scores",
+            "method_id": "M-0034",
+            "package": "GSVA",
+            "parameters": [
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "signature_provenance",
+                "value": "source_version_and_genes_present"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "consolidated report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0029@22ca",
+            "message": "DESeq2 likelihood ratio test is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 478,
+      "elapsedMs": 11
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "pathway_activity"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 4
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

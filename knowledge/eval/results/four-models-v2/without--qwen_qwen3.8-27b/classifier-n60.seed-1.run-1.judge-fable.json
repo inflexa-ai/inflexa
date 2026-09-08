@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The core step is a correct nested cross-validation (5x10-fold stratified outer, inner tuning, penalized logistic models, feature selection and scaling fit per training fold, pooled-AUC bootstrap CI, permutation null, selection-frequency stability) that matches the reference, but it never refits a final model on all 120 samples with reported coefficients, and the top-1000 variance filter is computed on all samples outside the folds (acknowledged only as a caveat). QC, filtering, median-of-ratios normalization, and the ~condition DESeq2 model with apeglm shrinkage at padj<0.05 are sound, though the reference level and BH are only implicit. Enrichment is not warranted for a classifier question, and as specified it ranks by unsigned -log10(padj) for GSEA, states no ORA universe, size window, or collection versions. The report states the internal-estimate and same-population limitations but omits package versions and the depth-confound caution."
+}

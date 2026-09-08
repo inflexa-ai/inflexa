@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly consumes the existing DESeq2 table without refitting, ranks all 12,000 genes by the Wald statistic (fallback signed -log10 p) with explicit tie and non-finite rules, and runs gseapy prerank against a named local Hallmark GMT (v2026.1) with a 15-500 size window, reporting NES, nominal p, and FDR q with directional interpretation and a shallow-sample caveat. It falls short of the reference by not fixing the permutation count (>=1000) or a random seed, and by not reporting the leading-edge genes per set; the added ORA on padj<0.05 lists is framed as a secondary cross-check rather than the answer, which is tolerable but adds a method the reference considers uninformative here. The DE-pipeline criteria (QC, filtering, normalization, formula, shrinkage) are largely moot for an enrichment-only task; the plan states the contrast direction, BH thresholds, and a policy of flagging rather than re-estimating sample_01, but does no sample-structure QC and does not address counts versus tested-gene filtering beyond keeping the full list."
+}

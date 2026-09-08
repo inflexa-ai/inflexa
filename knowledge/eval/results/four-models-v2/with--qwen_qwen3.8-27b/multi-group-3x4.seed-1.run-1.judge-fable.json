@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: one DESeq2 fit on all twelve samples with ~ condition, an LRT against ~ 1 for the any-difference question, and two named Wald contrasts against an explicitly releveled control from the same fit, with ashr shrinkage and BH within each contrast at 0.05, keeping LRT and pairwise results in separate labeled tables. QC (blind vst PCA, distance heatmap, library sizes by condition) and a minimal justified filter (>=10 counts in >=4 samples) precede the model, with median-of-ratios normalization inside DESeq2. Minor deductions: the outlier policy is only 'flag for the report' rather than a stated decision rule, and one constraint line ('lfc_threshold_policy = test_against_threshold') contradicts the stated no-fold-change-threshold choice. Enrichment is correctly omitted, and the report specification covers method, versions, design, thresholds, counts, and the design caveats."
+}

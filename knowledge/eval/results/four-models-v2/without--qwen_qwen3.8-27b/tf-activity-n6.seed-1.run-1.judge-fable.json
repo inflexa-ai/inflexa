@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 6,
+    "low_count_filter": 0,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The count model (DESeq2 ~condition, apeglm, BH at 0.05) is appropriate for 6 vs 6 unpaired single-batch, though the fractional-count branch to limma-voom is unnecessary and the plan never states a low count filter. The core activity step is weak: it names non-existent estimators ('decoupler PRSS network propagation', 'RPMM'), never feeds the per-gene Wald/t statistic into ulm or mlm, sets no minimum regulon size, and treats the per-sample t-test as the primary rather than confirmatory analysis. It further cross-validates with ORA of TF target sets against DE gene lists, which the reference explicitly flags as wrong, and the pathway ORA lacks an explicit universe, collection versions, or size window. QC is reasonable (PCA by condition, MA, volcano) but lacks sample distances, library sizes, and an outlier policy, and the report omits regulon/collection versions and the minimum regulon size."
+}

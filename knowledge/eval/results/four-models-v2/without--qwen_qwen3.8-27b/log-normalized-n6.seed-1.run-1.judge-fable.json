@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses count models and voom and fits limma lmFit+eBayes directly to the log2(TPM+1) values with no re-normalization, an explicit two-group design and a treated-minus-control contrast, BH at 0.05, and a sample QC with a stated outlier policy. It misses two things the reference asks for: eBayes with trend=TRUE (the caveat even concedes heteroscedasticity is unmodeled) and an initial value-range check for hidden counts or a double log. No low-expression filter is stated anywhere, so all 12,000 genes are tested. Enrichment is not warranted here yet the narrative bolts on fgsea and ORA without a ranking metric, universe, collection version, or size window, and without a corresponding step; the |logFC| >= 0.58 cut is applied post hoc rather than via treat()."
+}

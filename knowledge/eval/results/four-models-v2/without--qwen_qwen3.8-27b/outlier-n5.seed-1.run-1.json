@@ -1,0 +1,102 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "outlier-n5",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T18:08:10.652Z",
+  "elapsedMs": 160937,
+  "outcome": "plan_submitted",
+  "planId": "pln-d6fbca4e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC + main DE: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "5 samples per group gives limited per-gene power; state that in the summary rather than over-interpreting borderline adjusted p values.",
+          "If the matrix turns out to be TPM-like (fractional, per-sample sums near 1e6), do not feed it to DESeq2.",
+          "sample_03's group membership must be read from metadata.csv, not assumed."
+        ],
+        "context": "Files: /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/counts/counts.csv (12000 x 11: gene ID column + 10 sample columns, raw Salmon gene-level output) and /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/metadata/metadata.csv (10 x 2: one row per sample with condition; expected 5 treated, 5 control). Organism Homo sapiens (taxon 9606), tissue muscle, unpaired single batch — no batch term. Data profile caveat: sample_03 separates from every other sample on PCA and the sample distance heatmap.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "limma",
+          "SummarizedExperiment",
+          "matrixStats",
+          "org.Hs.eg.db",
+          "dplyr",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes are differentially expressed between the 5 treated and 5 control human muscle bulk RNA-seq samples in the 12000-gene Salmon count table, and how does the flagged deviating sample (sample_03) sit in that picture?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Load counts.csv and metadata.csv; verify 12000 genes x 10 samples and that the 10 sample columns join 1:1 to metadata rows by sample ID, not by position. Report the actual condition factor levels and per-group counts.",
+          "Expect Salmon table layout: a 'Name' (gene ID) column followed by one count column per sample. If IDs are not gene symbols, map to HGNC symbols/Entrez via org.Hs.eg.db and report the mapping rate; keep unmapped genes in statistics, exclude them only from symbol-based reporting.",
+          "Count-type check before modeling: if essentially all entries are non-negative integers, treat as raw counts and run DESeq2 (design ~ condition, reference = control); if any entries are fractional (length-corrected/TPM-like), run edgeR TMM normalization + limma-voom with the same treated-vs-control contrast. Record which branch was taken and the fraction of non-integer entries.",
+          "Low-count filter before DE: keep genes with CPM >= 0.25 in at least 6 of 10 samples; report gene count before and after filtering.",
+          "In the DESeq2 branch only, apply apeglm log2FC shrinkage to reported log2FCs.",
+          "QC: per-sample total counts and detected-gene counts, PCA on log2-normalized counts, and a sample distance heatmap; explicitly characterize sample_03's separation (which PC(s) it drives, its nearest-neighbor distance) and report which condition it belongs to, read from metadata.",
+          "Do not exclude any sample from the main analysis; all 10 samples enter the model."
+        ],
+        "description": "Validate the count matrix and metadata join, characterize sample_03's deviation on QC plots, and run the main treated-vs-control DE on all 10 samples with a model chosen from the count type actually observed.",
+        "acceptance_criteria": [
+          "A DE table with gene ID, symbol, baseMean, log2FC (treated vs control, control as reference), p value, and BH-adjusted p value computed on all 10 samples.",
+          "A PCA plot, sample distance heatmap, and per-sample QC table in which sample_03's deviation is characterized and its condition is stated.",
+          "An explicit record of the count-type check outcome and the statistical model used (DESeq2/apeglm vs TMM/voom)."
+        ]
+      }
+    ],
+    "title": "Muscle treated vs control DE + outlier sensitivity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Input is a Salmon gene-level count table (12000 genes x 10 human muscle samples, 5 treated vs 5 control, single batch, unpaired) whose profile explicitly flags an ambiguity: the record does not state whether the counts are raw or length-corrected. T1S1 resolves that empirically (integrality check), confirms the flagged deviation of sample_03, and runs the main treated-vs-control DE — DESeq2 + apeglm if raw integer counts, edgeR TMM + limma-voom if length-corrected. T1S2 reruns the identical pipeline with sample_03 removed (4 vs 5) to quantify how much that single deviating sample drives gene-level results, which matters in a 5-vs-5 design. T1S3 maps the DE result to human pathways (human WikiPathways GMT from the reference store) and GO terms (GO.db, offline), annotating top hits for robustness against sample_03 exclusion."
+  },
+  "usage": {
+    "inputTokens": 29592,
+    "outputTokens": 9407,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 8166
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_2ce7ea812235449796fcbb4c",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Muscle treated vs control DE + outlier sensitivity\", \"analytical_narrative\": \"Input is a Salmon gene-level count table (12000 genes x 10 human muscle samples, 5 treated vs 5 control, single batch, unpaired) whose profile explicitly flags an ambiguity: the record does not state whether the counts are raw or length-corrected. T1S1 resolves that empirically (integrality check), confirms the flagged deviation of sample_03, and runs the main treated-vs-control DE — DESeq2 + apeglm if raw integer counts, edgeR TMM + limma-voom if length-corrected. T1S2 reruns the identical pipeline with sample_03 removed (4 vs 5) to quantify how much that single deviating sample drives gene-level results, which matters in a 5-vs-5 design. T1S3 maps the DE result to human pathways (human WikiPathways GMT from the reference store) and GO terms (GO.db, offline), annotating top hits for robustness against sample_03 exclusion.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC + main DE: treated vs control\", \"track\": \"T1\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which genes are differentially expressed between the 5 treated and 5 control human muscle bulk RNA-seq samples in the 12000-gene Salmon count table, and how does the flagged deviating sample (sample_03) sit in that picture?\", \"description\": \"Validate the count matrix and metadata join, characterize sample_03's deviation on QC plots, and run the main treated-vs-control DE on all 10 samples with a model chosen from the count type actually observed.\", \"context\": \"Files: /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/counts/counts.csv (12000 x 11: gene ID column + 10 sample columns, raw Salmon gene-level output) and /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/metadata/metadata.csv (10 x 2: one row per sample with condition; expected 5 treated, 5 control). Organism Homo sapiens (taxon 9606), tissue muscle, unpaired single batch — no batch term. Data profile caveat: sample_03 separates from every other sample on PCA and the sample distance heatmap.\", \"constraints\": [\"Load counts.csv and metadata.csv; verify 12000 genes x 10 samples and that the 10 sample columns join 1:1 to metadata rows by sample ID, not by position. Report the actual condition factor levels and per-group counts.\", \"Expect Salmon table layout: a 'Name' (gene ID) column followed by one count column per sample. If IDs are not gene symbols, map to HGNC symbols/Entrez via org.Hs.eg.db and report the mapping rate; keep unmapped genes in statistics, exclude them only from symbol-based reporting.\", \"Count-type check before modeling: if essentially all entries are non-negative integers, treat as raw counts and run DESeq2 (design ~ condition, reference = control); if any entries are fractional (length-corrected/TPM-like), run edgeR TMM normalization + limma-voom with the same treated-vs-control contrast. Record which branch was taken and the fraction of non-integer entries.\", \"Low-count filter before DE: keep genes with CPM >= 0.25 in at least 6 of 10 samples; report gene count before and after filtering.\", \"In the DESeq2 branch only, apply apeglm log2FC shrinkage to reported log2FCs.\", \"QC: per-sample total counts and detected-gene counts, PCA on log2-normalized counts, and a sample distance heatmap; explicitly characterize sample_03's separation (which PC(s) it drives, its nearest-neighbor distance) and report which condition it belongs to, read from metadata.\", \"Do not exclude any sample from the main analysis; all 10 samples enter the model.\"], \"acceptance_criteria\": [\"A DE table with gene ID, symbol, baseMean, log2FC (treated vs control, control as reference), p value, and BH-adjusted p value computed on all 10 samples.\", \"A PCA plot, sample distance heatmap, and per-sample QC table in which sample_03's deviation is characterized and its condition is stated.\", \"An explicit record of the count-type check outcome and the statistical model used (DESeq2/apeglm vs TMM/voom).\"], \"caveats\": [\"5 samples per group gives limited per-gene power; state that in the summary rather than over-interpreting borderline adjusted p values.\", \"If the matrix turns out to be TPM-like (fractional, per-sample sums near 1e6), do not feed it to DESeq2.\", \"sample_03's group membership must be read from metadata.csv, not assumed.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"edgeR\", \"limma\", \"SummarizedExperiment\", \"matrixStats\", \"org.Hs.eg.db\", \"dplyr\", \"ggplot2\", \"pheatmap\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}], \"steps_note\": \"placeholder-removed\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 67
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

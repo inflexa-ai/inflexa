@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core statistics: ~ sex + age + condition with control relevelled and age centered, covariates as design terms rather than count adjustments, median-of-ratios/TMM inside the model, a minimal >=10-in->=6 filter with independent filtering, BH at 0.05 and apeglm on the condition coefficient, and edgeR QL as a corroborating method. Enrichment is correctly omitted. QC covers blind-vst PCA, distance heatmap, library sizes, and a flag-not-remove policy colored by condition and sex, but it does not color by age and does not specify the XIST/Y-linked sex check the reference asks for. The plan reports per-group age distributions but does not state the explicit rule that a covariate aligned with condition is confounded and cannot be fitted, and the report step does not explicitly carry the covariate-balance caveat forward, though the length-offset limitation and reproducibility fields are thorough."
+}

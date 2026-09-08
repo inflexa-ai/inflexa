@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The core classifier step matches the reference closely: lasso glmnet with 10-fold stratified outer CV repeated three times with recorded seeds, 5-fold inner CV for lambda, TMM/log-CPM/filter/standardization all fitted on the training fold, pooled held-out ROC with DeLong CI plus sensitivity/specificity, selection frequency across folds, and a full-data refit explicitly labeled in-sample; caveats cover the within-cohort limit and the absence of external validation, though balanced accuracy/Brier and a depth-confound check are not named. QC has PCA, distances, library sizes by condition and an explicit outlier keep/exclude rule but no stated policy for a shallow sample. The optional DE arm uses filterByExpr with group, TMM inside voom, explicit control reference and case-vs-control contrast, BH at 0.05 with a p-value histogram; limma reports CIs rather than shrunken fold changes, and the 1.5-fold count is a post hoc tally rather than a treat test. Enrichment is correctly omitted, and the report specification is thorough with versions, seeds, thresholds and counts."
+}

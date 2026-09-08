@@ -6,22 +6,562 @@
   "run": 1,
   "seed": 1,
   "split": "development",
-  "startedAt": "2026-09-08T04:53:56.969Z",
-  "elapsedMs": 1463174,
-  "outcome": "error",
-  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-v2-with-pathway-activity-n6-s1-1: Network connection lost.",
+  "startedAt": "2026-09-08T17:42:04.245Z",
+  "elapsedMs": 957908,
+  "outcome": "plan_submitted",
+  "planId": "pln-34072270",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 12 bronchial-epithelium samples (6 cytokine-stimulated vs 6 vehicle, single batch) separate by condition, and how does the shallow sample sample_01 (library size ~4x below median) behave on the PCA and distance heatmap?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; low-depth sample_01 kept and inspected per R-0008@440d",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)"
+        ],
+        "description": "Blind variance-stabilizing transformation of the 12000-gene count matrix, PCA on the top-500 most variable genes, and a sample Euclidean-distance heatmap, colored by condition; per-sample library sizes and detected-gene counts reported with sample_01 called out.",
+        "acceptance_criteria": [
+          "PCA on 500 top-variance genes from vst(blind=TRUE) and a sample distance heatmap are produced, both colored by condition",
+          "Per-sample library sizes and detected-gene counts reported for all 12 samples, with sample_01's depth explicitly reported beside the median",
+          "A keep-or-remove decision for sample_01 is stated with a reason (depth alone is not a reason); by default it is kept",
+          "No differential testing or activity inference happens in this step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald DE, cytokine-stimulated vs vehicle, apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Import state: the counts are a Salmon gene-level table with no per-sample quantification files and no average-transcript-length table, so the length correction cannot be established. Fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table and do not invent a length input (R-0169@18ab).",
+          "A quantifier name alone does not establish that the length correction occurred.",
+          "DESeq2 sets p and padj to NA for count outliers in cells with <7 replicates; count and report these NAs separately from independent-filtering NAs (R-0039@968d)."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes change in the cytokine-stimulated samples relative to vehicle controls, on the 6-vs-6 unpaired design, producing the full ranked Wald statistic that the PROGENy footprint step consumes?",
+        "grounding": {
+          "claims": [
+            "R-0029@22ca",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0169@18ab",
+            "R-0036@9786",
+            "R-0001@9a17",
+            "R-0039@968d",
+            "R-0009@310d",
+            "R-0166@bbcd",
+            "R-0083@12de",
+            "R-0010@6072",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca; Salmon gene-level counts with unknown length correction fitted as delivered without offset per R-0169@18ab",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter_policy",
+              "step": "filter_low_counts",
+              "value": "minimal_then_independent",
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "depth_policy",
+              "step": "normalize",
+              "value": "size_factors_account_for_depth",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "gene_counts_without_length_offset",
+              "source": "doi:10.12688/f1000research.7563.2"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "test",
+              "step": "differential_expression",
+              "value": "Wald",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "count_outlier_policy",
+              "step": "differential_expression",
+              "value": "flag_and_report_na",
+              "source": "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+            },
+            {
+              "name": "lfc_shrink",
+              "step": "shrink_lfc",
+              "value": "apeglm",
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "independent_filtering",
+              "step": "multiple_testing",
+              "value": true,
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "pvalue_histogram",
+              "step": "multiple_testing",
+              "value": "inspect_before_adjustment",
+              "source": "doi:10.3390/ht7030023"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "lfc_threshold_policy",
+              "step": "multiple_testing",
+              "value": "test_against_threshold",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-two-group@1.1.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+          "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+          "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+          "normalize: depth_policy = size_factors_account_for_depth (doi:10.1186/s13059-014-0550-8)",
+          "model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+          "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+          "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+          "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+          "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)"
+        ],
+        "description": "Minimal pre-filter (>=10 counts in >= smallest group size = 6 samples), median-of-ratios size factors, design ~ condition with vehicle as the explicit reference level, Wald test of the cytokine-stimulated-vs-vehicle contrast, apeglm-shrunken log2 fold changes, BH at alpha 0.05 with DESeq2 independent filtering. Outputs the full results table with the unshrunken Wald statistic kept for the activity step, and the VST log matrix for per-sample pathway scores.",
+        "acceptance_criteria": [
+          "Results table carries, per gene: unshrunken log2FoldChange, shrunken log2FoldChange (apeglm), lfcSE, stat, pvalue, padj; ranked/plotted on the shrunken value only",
+          "Reference level (vehicle) set explicitly and the contrast named as factor numerator/denominator so positive LFC means higher in cytokine-stimulated",
+          "Counts enter the model raw (no scaling/normalization before the model); median-of-ratios size factors named in the report",
+          "Number of genes tested after filtering, number with NA p from Cook's-distance outlier flagging, and number of DE genes at padj < 0.05 reported",
+          "The complete ranked statistic vector (all tested genes, NAs excluded) and the VST log matrix are exported for T2S1"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The two-method robustness overlap (DESeq2 Wald vs edgeR QL) applies when edgeR is also run; with a single-method run, state that the intersection rule was not exercised and label results accordingly."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "What does the cytokine-stimulated-vs-vehicle differential expression test show, with its fit diagnostics and reproducibility record, before the pathway footprints are read on top of it?",
+        "grounding": {
+          "claims": [
+            "R-0085@bb37",
+            "R-0087@3dcc",
+            "R-0042@54e1",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step as a standalone report; fields follow the cited report rules",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "effect_columns",
+              "step": "report",
+              "value": [
+                "log2FoldChange",
+                "shrunken_log2FoldChange",
+                "lfcSE"
+              ],
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "rank_genes_by",
+              "step": "report",
+              "value": "shrunken_log2FoldChange",
+              "source": "vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking"
+            },
+            {
+              "name": "fit_diagnostics",
+              "step": "report",
+              "value": [
+                "ma_plot",
+                "dispersion_plot"
+              ],
+              "source": "vignette:DESeq2/1.52.0#ma-plot"
+            },
+            {
+              "name": "robustness",
+              "step": "report",
+              "value": "overlap_of_two_methods",
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+          "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+        ],
+        "description": "MA plot and dispersion plot of the DESeq2 fit, histogram of unadjusted p-values inspected before trusting padj, and the DE gene table with unshrunken and apeglm-shrunken log2 fold change plus lfcSE; report header states method, package versions, design, contrast, thresholds, n_tested, n_de, and the missing-length-offset caveat; sessionInfo record stored with results.",
+        "acceptance_criteria": [
+          "MA plot and dispersion plot precede the gene tables and each is annotated with what it shows",
+          "p-value histogram of tested genes reported and its shape stated beside the number of significant genes",
+          "Gene table reports both unshrunken (named as test estimate) and shrunken log2 fold change with lfcSE; ranking and plots use the shrunken value",
+          "Report header carries method, package versions, design formula, contrast, thresholds, n_tested, n_de, the no-length-offset caveat, and a sessionInfo/seed reproducibility record",
+          "Volcano or ranked-gene display, if drawn, uses the shrunken log2 fold change"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "PROGENy pathway footprint activity, treated vs control",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Read the score as the transcriptional footprint of the pathway and not as the expression of its members: a pathway member can change without a change in pathway activity, and the reverse (R-0115@1504) — this distinction is the core of the research question.",
+          "SPIA is absent from this environment; footprint (PROGENy mlm) is the substitute and neither it nor any planned method uses pathway graph topology — state this in the report (R-0122@08af).",
+          "The decoupleR template is written for TF activity; the same activity-inference procedure is applied with the PROGENy network as the prior, and the limma-on-scores test of R-0112@f200 is applied across pathways instead of regulators — a stated adaptation of the returned setting value.",
+          "The skeleton's STRING PPI-neighborhood and JASPAR motif-complement sub-analyses are not planned: the question asks only for signaling-pathway footprints; the staged WikiPathways human GMT is deliberately not used because the question excludes judging activity by expressed pathway members.",
+          "The PROGENy model must be resolved from the reference store at run time (R serialized model_human_full). If it is absent, report the gap rather than substituting a membership GMT.",
+          "With 6 replicates per group the mlm/ulm scores are estimates from a prior network common to all tissues; a bronchial-epithelium-specific signaling pathway can be missed — state this caution (R-0114@9db7 context)."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "limma",
+          "org.Hs.eg.db",
+          "rpy2"
+        ],
+        "question": "Which of the PROGENy signaling pathways leave a differential transcriptional footprint in the cytokine-stimulated samples relative to vehicle, estimated from the weighted responsive-gene model on every tested gene's statistic — not from pathway-member expression — and which direction is each pathway pushed per sample?",
+        "grounding": {
+          "claims": [
+            "R-0115@1504",
+            "R-0112@f200",
+            "R-0119@5f4d",
+            "R-0122@08af"
+          ],
+          "reason": "Pathway activity as the question: PROGENy footprint mlm on the Wald statistic of every tested gene per R-0115@1504; per-sample scores on the log matrix with limma per R-0112@f200, score test applied across pathways instead of regulators (stated adaptation); SPIA absent, footprint substitute per R-0122@08af; report fields per R-0119@5f4d",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "activity_method",
+              "step": "pathway_activity",
+              "value": "mlm",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "footprint_model",
+              "step": "pathway_activity",
+              "value": "progeny_human",
+              "source": "doi:10.1038/s41467-017-02391-6"
+            },
+            {
+              "name": "top_responsive_genes",
+              "step": "pathway_activity",
+              "value": 500,
+              "source": "rule:R-0115"
+            },
+            {
+              "name": "interpretation",
+              "step": "pathway_activity",
+              "value": "footprint_not_membership",
+              "source": "doi:10.1038/s41467-017-02391-6"
+            },
+            {
+              "name": "topology_method",
+              "step": "pathway_activity",
+              "value": "spia_absent_footprint_or_enrichment_instead",
+              "source": "doi:10.1093/bioinformatics/btn577"
+            },
+            {
+              "name": "activity_input",
+              "step": "tf_activity",
+              "value": "per_sample_log_matrix",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "score_test",
+              "step": "tf_activity",
+              "value": "limma_on_scores_bh_across_pathways",
+              "source": "rule:R-0112"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-decoupler-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "pathway_activity: activity_method = mlm (doi:10.1093/bioadv/vbac016)",
+          "pathway_activity: footprint_model = progeny_human (doi:10.1038/s41467-017-02391-6)",
+          "pathway_activity: top_responsive_genes = 500 (rule:R-0115)",
+          "pathway_activity: interpretation = footprint_not_membership (doi:10.1038/s41467-017-02391-6)",
+          "pathway_activity: topology_method = spia_absent_footprint_or_enrichment_instead (doi:10.1093/bioinformatics/btn577)",
+          "tf_activity: activity_input = per_sample_log_matrix (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: score_test = limma_on_scores_bh_across_pathways (rule:R-0112)"
+        ],
+        "description": "Footprint-based pathway activity: load the PROGENy human full model (per-gene weights for 14 signaling pathways incl. EGFR, MAPK, PI3K, TNFa, p53, Hypoxia; R data frame from the reference store, loaded in R), keep the top 500 responsive genes per pathway by weight, and infer activity with decoupleR (R Bioconductor 2.17.0): (a) primary — mlm on the full ranked Wald statistic of every tested gene from T1S2 (not the significant-gene list); (b) second estimator — ulm on the same statistic; (c) per-sample scores — decoupleR on the VST log matrix for one score per sample and pathway, then limma on the score matrix with the 6-vs-6 design and BH across pathways. If count gene IDs are not HGNC symbols, map them offline (org.Hs.eg.db or the staged UniProt human idmapping) before scoring. Report the treated-vs-control activity table (score, BH-adjusted p per pathway), the per-sample score matrix, and the mlm/ulm overlap.",
+        "acceptance_criteria": [
+          "Per-pathway activity table for the cytokine-stimulated-vs-vehicle contrast with activity score and BH-adjusted p for each of the 14 PROGENy pathways, from mlm on the full Wald statistic",
+          "Second-estimator check (ulm) run on the same statistic; overlap and disagreement of significant pathways between mlm and ulm reported",
+          "Per-sample pathway score matrix produced on the log matrix with limma + BH across pathways; sample_01 included and its score position noted",
+          "Gene-identifier mapping reported: fraction of PROGENy weight genes present in the count matrix; a match below ~50% is flagged as a coverage caution in the output",
+          "Report fields: network name and version, input statistic and its contrast, estimator, top_responsive_genes used, n pathways tested, and the caution that a score is an inference from a prior network, not a measurement",
+          "No membership-based enrichment (WikiPathways/GO) is computed anywhere in this step"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Integrated DE + pathway-activity report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Do not translate pathway-activity scores into mechanism claims beyond the footprint evidence; a high activity score is a hypothesis for follow-up, not a proven finding (R-0119@5f4d)."
+        ],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Which signaling pathways are active in cytokine-stimulated bronchial epithelium versus vehicle, and how confident is each call given the DE fit, the sample-structure findings, and the estimator agreement?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf",
+            "R-0119@5f4d"
+          ],
+          "reason": "no rule covers a combined DE + pathway-activity report; fields follow the report rules R-0041@059a, R-0086@becf, R-0119@5f4d",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "activity_report_fields",
+              "step": "report",
+              "value": [
+                "network_name",
+                "network_version",
+                "input_statistic",
+                "contrast",
+                "estimator",
+                "top_responsive_genes",
+                "n_pathways_tested",
+                "inference_caution"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "report: activity_report_fields = network_name, network_version, input_statistic, contrast, estimator, top_responsive_genes, n_pathways_tested, inference_caution (doi:10.1371/journal.pcbi.1009935)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+        ],
+        "description": "Final report joining the two tracks: DE summary (design, thresholds, n_tested, n_de, fit diagnostics) beside the pathway-activity table (PROGENy network and version, input statistic, estimators, BH-adjusted activities, per-sample score direction), the sample_01 handling decision, the missing-length-offset caveat, the footprint-not-membership reading, and a full reproducibility record (sessionInfo, seeds, package versions, PROGENy collection version, annotation release).",
+        "acceptance_criteria": [
+          "Report states method, package versions, design, contrast, thresholds, n_tested and n_de for the DE test, and the length-offset caveat",
+          "Pathway-activity section states network name and version, input statistic and contrast, estimator(s), top_responsive_genes, n pathways tested, and the inference caution that a score is a hypothesis, not a measurement",
+          "mlm/ulm agreement and the per-sample score directions for the significant pathways are reported; disagreements are listed, not averaged away",
+          "sample_01 decision and its effect (if any) on the activity calls are stated",
+          "Reproducibility record (sessionInfo, seeds, package versions, PROGENy collection version, annotation release) stored with the results"
+        ]
+      }
+    ],
+    "title": "PROGENy pathway footprints in cytokine-stimulated bronchial epithelium",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which signaling pathways are ACTIVE in cytokine-stimulated versus vehicle-treated human bronchial epithelium, judged by the transcriptional footprint a pathway leaves rather than by which of its members are expressed. That maps directly onto the PROGENy footprint model estimated with decoupleR. The footprint needs a trustworthy per-gene statistic first, so the plan runs a grounded DESeq2 path on the 6-vs-6 unpaired, single-batch count matrix (12,000 genes x 12 samples, Salmon gene-level counts as delivered): blind-VST sample-structure QC (sample_01 is ~4x below the median library size — kept and inspected, not silently dropped), a minimal pre-filter, median-of-ratios size factors, a Wald test of cytokine-stimulated vs vehicle with an explicit reference level, apeglm shrinkage, and BH at alpha 0.05 with independent filtering. The full ranked Wald statistic of every tested gene (not a significant-genes list) then feeds the pathway-activity step: decoupleR mlm on the PROGENy human full model with the top 500 responsive genes per pathway, ulm as the second estimator, and per-sample pathway scores on the VST log matrix contrasted between groups with limma + BH. Membership-based enrichment (e.g. the staged WikiPathways human GMT) is deliberately NOT run — the question explicitly excludes judging activity by expressed pathway members. The Salmon import state is unknown, so the count model runs on the counts as delivered with no length offset and the plan says so; the length offset is lost and isoform-use changes can surface as DE. Small data: 12000x12 counts, low resources throughout."
+  },
   "usage": {
-    "inputTokens": 639942,
-    "outputTokens": 10342,
-    "cacheReadInputTokens": 410688,
-    "reasoningTokens": 3135
+    "inputTokens": 220318,
+    "outputTokens": 16391,
+    "cacheReadInputTokens": 125952,
+    "reasoningTokens": 7181
   },
   "toolCalls": [
     {
-      "toolUseId": "call_960028623a014928bee7716e",
+      "toolUseId": "call_2eae178fee99402d971de84d",
       "name": "knowledge_recommend",
       "input": {
-        "question": "full_plan",
+        "question": "differential_expression",
         "modality": "bulk_rna_seq",
         "data_state": "counts",
         "count_source": "salmon",
@@ -37,10 +577,10 @@
         ]
       },
       "outcome": "ok",
-      "durationMs": 73
+      "durationMs": 182
     },
     {
-      "toolUseId": "call_e69382053a30469fbed3a073",
+      "toolUseId": "call_b22d98ed0a2244f285361ba7",
       "name": "knowledge_recommend",
       "input": {
         "question": "tf_activity",
@@ -59,132 +599,496 @@
         ]
       },
       "outcome": "ok",
-      "durationMs": 57
+      "durationMs": 181
     },
     {
-      "toolUseId": "call_326e8d12f9d34f36b54feb17",
+      "toolUseId": "call_d3695c73061f45f8a4c13bfc",
       "name": "list_available_refs",
       "input": {
-        "query": "msigdb",
-        "limit": 30
+        "query": "progeny"
       },
       "outcome": "ok",
-      "durationMs": 57
+      "durationMs": 180
     },
     {
-      "toolUseId": "call_30b760ebc0644150a912bf92",
+      "toolUseId": "call_218a80bce90e4a0686fa8ab6",
       "name": "list_available_refs",
       "input": {
-        "limit": 20
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 182
+    },
+    {
+      "toolUseId": "call_0f1fad0f8c2245bb96ab2a93",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST sample structure QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter before DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors inside DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~ condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with DESeq2 independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DESeq2 DE report with MA and dispersion diagnostics",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange,shrunken_log2FoldChange,lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version,annotation_release"
+              }
+            ]
+          }
+        ]
       },
       "outcome": "ok",
       "durationMs": 41
     },
     {
-      "toolUseId": "call_b5716841bdec416eb918551e",
-      "name": "list_available_refs",
+      "toolUseId": "call_802e41721cd04065a121e0c6",
+      "name": "knowledge_check",
       "input": {
-        "limit": 20
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "pathway_activity",
+            "method": "PROGENy footprint pathway activity with decoupleR mlm and ulm on the Wald statistic, plus per-sample scores on the vst log matrix with limma",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "second_estimator",
+                "value": "ulm"
+              },
+              {
+                "name": "score_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_pathways"
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              },
+              {
+                "name": "topology_method",
+                "value": "spia_absent_footprint_or_enrichment_instead"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Activity inference report with network version, estimator, contrast, and inference caution",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version,annotation_release"
+              },
+              {
+                "name": "activity_report_fields",
+                "value": "network_name,network_version,input_statistic,contrast,estimator,n_pathways_tested,inference_caution"
+              }
+            ]
+          }
+        ]
       },
       "outcome": "ok",
-      "durationMs": 40
+      "durationMs": 41
     },
     {
-      "toolUseId": "call_ff64bf8dd06249f49ba98542",
-      "name": "list_available_refs",
+      "toolUseId": "call_ba4b804802cd4cd2af4f93e5",
+      "name": "knowledge_check",
       "input": {
-        "limit": 20
-      },
-      "outcome": "error",
-      "durationMs": 1
-    },
-    {
-      "toolUseId": "call_a26712599d6440cdb353e77f",
-      "name": "list_available_refs",
-      "input": {
-        "limit": 20
-      },
-      "outcome": "error",
-      "durationMs": 0
-    },
-    {
-      "toolUseId": "call_e8f9d8fabaa8444d8ba8d3ee",
-      "name": "list_available_refs",
-      "input": {
-        "limit": 20
-      },
-      "outcome": "error",
-      "durationMs": 0
-    },
-    {
-      "toolUseId": "call_9f9bd4629ba14ae2a9332bc7",
-      "name": "list_available_refs",
-      "input": {
-        "limit": 20
-      },
-      "outcome": "error",
-      "durationMs": 0
-    },
-    {
-      "toolUseId": "call_f436aacc101442b6b88c0ce2",
-      "name": "list_available_refs",
-      "input": {
-        "query": "progeny",
-        "limit": 20
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST sample structure QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors inside DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~ condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with DESeq2 independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DESeq2 DE report with MA and dispersion diagnostics",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange,shrunken_log2FoldChange,lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version,annotation_release"
+              }
+            ]
+          }
+        ]
       },
       "outcome": "ok",
-      "durationMs": 39
+      "durationMs": 16
     },
     {
-      "toolUseId": "call_59811c9d5f5d4b65ac1f6e72",
-      "name": "list_available_refs",
-      "input": {
-        "limit": 20
-      },
-      "outcome": "error",
-      "durationMs": 0
-    },
-    {
-      "toolUseId": "call_b71001d03dc34648a05bb5b1",
-      "name": "list_available_refs",
-      "input": {
-        "limit": 20
-      },
-      "outcome": "error",
-      "durationMs": 0
-    },
-    {
-      "toolUseId": "call_e7fdfc7d9fd140c88bec8d73",
+      "toolUseId": "call_00bc400adee44315858df51e",
       "name": "submit_plan",
       "input": {
         "plan": {
-          "title": "Cytokine-induced signaling pathway activity in bronchial epithelium",
+          "title": "PROGENy pathway footprints in cytokine-stimulated bronchial epithelium",
           "omicsType": "transcriptomics",
-          "omicsSubType": "bulk-rna-seq",
-          "analytical_narrative": "The question asks which signaling pathways are ACTIVE in cytokine-stimulated vs vehicle-treated bronchial epithelium, judged by their transcriptional footprint rather than by member expression. That rules out a membership-only enrichment as the sole readout and calls for footprint-based pathway activity (PROGENy with decoupleR) as the primary analysis, complemented by Hallmark preranked GSEA on the same contrast and a signed regulon TF-activity pass (CollecTRI/DoRothEA via decoupleR ulm) to name upstream regulators. The data are 12,000 gene-level Salmon counts x 12 samples (6 treated vs 6 control, unpaired, single batch), so the DE layer is a DESeq2 Wald two-group model with median-of-ratios size factors, minimal pre-filtering, independent filtering at BH alpha 0.05, and apeglm shrinkage for reporting. Profiling flags sample_01 with a library size ~4x below the median: per the low-depth policy the sample is kept, inspected in QC (PCA, sample-distance heatmap, library size and detected genes), and down-weighted by its size factor rather than dropped silently; the DE fit is also reported with that sample excluded as a stated sensitivity analysis. Counts arrive as a gene-level table with no per-sample quant.sf or average-transcript-length table, so no length offset exists: the model runs on counts as delivered and the loss of length correction (isoform shifts can masquerade as DE) is stated in the report. The three activity readouts (pathway footprint, TF regulons, gene-set enrichment) are computed on the same DE contrast and converge in one synthesis.",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The question asks which signaling pathways are ACTIVE in cytokine-stimulated versus vehicle-treated human bronchial epithelium, judged by the transcriptional footprint a pathway leaves rather than by which of its members are expressed. That maps directly onto the PROGENy footprint model estimated with decoupleR. The footprint needs a trustworthy per-gene statistic first, so the plan runs a grounded DESeq2 path on the 6-vs-6 unpaired, single-batch count matrix (12,000 genes x 12 samples, Salmon gene-level counts as delivered): blind-VST sample-structure QC (sample_01 is ~4x below the median library size — kept and inspected, not silently dropped), a minimal pre-filter, median-of-ratios size factors, a Wald test of cytokine-stimulated vs vehicle with an explicit reference level, apeglm shrinkage, and BH at alpha 0.05 with independent filtering. The full ranked Wald statistic of every tested gene (not a significant-genes list) then feeds the pathway-activity step: decoupleR mlm on the PROGENy human full model with the top 500 responsive genes per pathway, ulm as the second estimator, and per-sample pathway scores on the VST log matrix contrasted between groups with limma + BH. Membership-based enrichment (e.g. the staged WikiPathways human GMT) is deliberately NOT run — the question explicitly excludes judging activity by expressed pathway members. The Salmon import state is unknown, so the count model runs on the counts as delivered with no length offset and the plan says so; the length offset is lost and isoform-use changes can surface as DE. Small data: 12000x12 counts, low resources throughout.",
+          "created_at": "2026-09-07T00:00:00Z",
           "steps": [
             {
               "id": "T1S1",
-              "name": "Sample structure QC",
+              "name": "Sample structure QC (blind VST, PCA, distances)",
               "track": "T1",
               "step_type": "qc",
               "agent": "bulk-transcriptomics-agent",
-              "question": "Do the 12 samples (6 cytokine-stimulated vs 6 vehicle) separate by condition on the transcriptome, and how does the shallow sample sample_01 behave before any test?",
-              "description": "Load counts.csv (12,000 genes x 13 cols) and metadata.csv (12 x 2, condition cytokine-stimulation vs vehicle). Compute blind VST on all samples, PCA on the 500 highest-variance genes, Euclidean sample-distance heatmap colored by condition. Report per-sample library sizes and detected genes, explicitly tabulating sample_01 (~4x below median) beside the others. No sample is dropped here; removal is only allowed downstream with a stated reason.",
+              "question": "Do the 12 bronchial-epithelium samples (6 cytokine-stimulated vs 6 vehicle, single batch) separate by condition, and how does the shallow sample sample_01 (library size ~4x below median) behave on the PCA and distance heatmap?",
+              "description": "Blind variance-stabilizing transformation of the 12000-gene count matrix, PCA on the top-500 most variable genes, and a sample Euclidean-distance heatmap, colored by condition; per-sample library sizes and detected-gene counts reported with sample_01 called out.",
               "acceptance_criteria": [
-                "VST computed blind to condition on raw counts; PCA colored by condition",
-                "Sample-distance heatmap present",
-                "sample_01 library size and detected-gene count reported numerically beside the cohort median",
-                "No sample removed in this step"
+                "PCA on 500 top-variance genes from vst(blind=TRUE) and a sample distance heatmap are produced, both colored by condition",
+                "Per-sample library sizes and detected-gene counts reported for all 12 samples, with sample_01's depth explicitly reported beside the median",
+                "A keep-or-remove decision for sample_01 is stated with a reason (depth alone is not a reason); by default it is kept",
+                "No differential testing or activity inference happens in this step"
               ],
               "packages": [
                 "DESeq2"
               ],
               "depends_on": [],
               "resources": {
-                "cpu": 4,
-                "memoryGb": 8
+                "cpu": 2,
+                "memoryGb": 4
               },
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+                "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)"
+              ],
+              "caveats": [
+                "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              ],
               "grounding": {
                 "status": "grounded",
                 "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
@@ -213,32 +1117,23 @@
                     "source": "doi:10.1186/s13059-016-0881-8"
                   }
                 ],
-                "reason": "Sample structure QC with vst(blind), PCA on 500 top genes, sample distances; keep_inspect_report policy for sample_01 per R-0008@440d"
-              },
-              "constraints": [
-                "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
-                "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
-                "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)"
-              ],
-              "caveats": [
-                "sample_01 has a library size about 4x below the median: keep it, inspect on PCA and sample-distance heatmap, report its library size and detected genes, remove only with a stated reason — the size factor down-weights it, so removal is a judgment, not a default (R-0008@440d)"
-              ]
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf; low-depth sample_01 kept and inspected per R-0008@440d"
+              }
             },
             {
               "id": "T1S2",
-              "name": "DESeq2 Wald contrast cytokine vs vehicle",
+              "name": "DESeq2 Wald DE, cytokine-stimulated vs vehicle, apeglm shrinkage",
               "track": "T1",
               "step_type": "analysis",
               "agent": "bulk-transcriptomics-agent",
-              "question": "Which genes are differentially expressed in cytokine-stimulated vs vehicle bronchial epithelium (6 vs 6, unpaired, single batch), and what does the fitted contrast statistic look like across all tested genes?",
-              "description": "Minimal pre-filter (>=10 counts in >= smallest group size of samples), DESeq2 with median-of-ratios size factors on raw counts as delivered (no length offset exists: no per-sample quant.sf and no average-transcript-length table accompanies the gene-level table; do not run tximport on a gene table and do not invent a length input). Condition factor with vehicle as explicit reference level; contrast cytokine-stimulation vs vehicle named factor, numerator, denominator. Wald test, Cook's-distance outlier flagging kept on (6 replicates per cell), p-value histogram inspected before adjustment, independent filtering on at alpha 0.05, BH adjustment. apeglm lfcShrink for reporting/ranking; unshrunken log2FC and lfcSE kept beside it. Sensitivity analysis: refit with sample_01 excluded and report the shift in the number of DE genes and in the sign agreement for the top genes.",
+              "question": "Which genes change in the cytokine-stimulated samples relative to vehicle controls, on the 6-vs-6 unpaired design, producing the full ranked Wald statistic that the PROGENy footprint step consumes?",
+              "description": "Minimal pre-filter (>=10 counts in >= smallest group size = 6 samples), median-of-ratios size factors, design ~ condition with vehicle as the explicit reference level, Wald test of the cytokine-stimulated-vs-vehicle contrast, apeglm-shrunken log2 fold changes, BH at alpha 0.05 with DESeq2 independent filtering. Outputs the full results table with the unshrunken Wald statistic kept for the activity step, and the VST log matrix for per-sample pathway scores.",
               "acceptance_criteria": [
-                "Size factors named median-of-ratios; counts not pre-normalized",
-                "Reference level explicit and contrast direction stated (positive LFC = higher in cytokine-stimulated)",
-                "p-value histogram and independent-filtering threshold reported; BH at alpha 0.05",
-                "Genes with NA p from Cook's outlier flagging counted and reported separately",
-                "Sensitivity refit without sample_01 reported with DE-gene overlap",
-                "Report states the length offset is lost and isoform shifts can appear as DE"
+                "Results table carries, per gene: unshrunken log2FoldChange, shrunken log2FoldChange (apeglm), lfcSE, stat, pvalue, padj; ranked/plotted on the shrunken value only",
+                "Reference level (vehicle) set explicitly and the contrast named as factor numerator/denominator so positive LFC means higher in cytokine-stimulated",
+                "Counts enter the model raw (no scaling/normalization before the model); median-of-ratios size factors named in the report",
+                "Number of genes tested after filtering, number with NA p from Cook's-distance outlier flagging, and number of DE genes at padj < 0.05 reported",
+                "The complete ranked statistic vector (all tested genes, NAs excluded) and the VST log matrix are exported for T2S1"
               ],
               "packages": [
                 "DESeq2",
@@ -248,9 +1143,33 @@
                 "T1S1"
               ],
               "resources": {
-                "cpu": 4,
-                "memoryGb": 8
+                "cpu": 2,
+                "memoryGb": 4
               },
+              "constraints": [
+                "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+                "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+                "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+                "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+                "normalize: depth_policy = size_factors_account_for_depth (doi:10.1186/s13059-014-0550-8)",
+                "model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)",
+                "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+                "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+                "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+                "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+                "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+                "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+                "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+                "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+                "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+                "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+                "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)"
+              ],
+              "caveats": [
+                "Import state: the counts are a Salmon gene-level table with no per-sample quantification files and no average-transcript-length table, so the length correction cannot be established. Fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table and do not invent a length input (R-0169@18ab).",
+                "A quantifier name alone does not establish that the length correction occurred.",
+                "DESeq2 sets p and padj to NA for count outliers in cells with <7 replicates; count and report these NAs separately from independent-filtering NAs (R-0039@968d)."
+              ],
               "grounding": {
                 "status": "grounded",
                 "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
@@ -307,12 +1226,6 @@
                     "name": "import",
                     "value": "gene_counts_without_length_offset",
                     "source": "doi:10.12688/f1000research.7563.2"
-                  },
-                  {
-                    "step": "model_design",
-                    "name": "missing_input",
-                    "value": "quantification_directories_or_avg_tx_length_table",
-                    "source": "vignette:tximport/2026-04-28#import-transcript-level-estimates"
                   },
                   {
                     "step": "model_design",
@@ -381,57 +1294,172 @@
                     "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
                   }
                 ],
-                "reason": "Two-group unpaired count design at 6 vs 6 replicates: DESeq2 Wald with apeglm shrinkage per R-0001@9a17; R-0169@18ab governs the Salmon gene-table import state"
-              },
-              "constraints": [
-                "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
-                "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
-                "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
-                "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
-                "model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)",
-                "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
-                "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
-                "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
-                "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
-                "multiple_testing: alpha = 0.05, adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)"
-              ],
-              "caveats": [
-                "Salmon gene-level table with no quant.sf / average-transcript-length input: the length offset is lost; state in the report that isoform-use changes can show as DE (R-0169@18ab)",
-                "6 replicates per cell: DESeq2 sets p and padj to NA for Cook's-distance outliers; count and report these separately (R-0039@968d)"
-              ]
+                "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca; Salmon gene-level counts with unknown length correction fitted as delivered without offset per R-0169@18ab"
+              }
             },
             {
-              "id": "T2S1",
-              "name": "PROGENy signaling pathway activity footprints",
-              "track": "T2",
-              "step_type": "activity",
-              "agent": "enrichment-agent",
-              "question": "Which of the 14 PROGENy signaling pathways show a changed transcriptional footprint in cytokine-stimulated vs vehicle samples?",
-              "description": "Load the PROGENy human full model (staged rda with per-gene pathway weights for 14 signaling pathways) and run decoupleR mlm on the per-sample VST/log2-normalized matrix (12 x ~14 pathway scores per sample) built from the DESeq2 fit of T1S2, and ulm on the Wald statistic of all tested genes as the second estimator. Compare per-sample pathway scores between conditions with limma on the score matrix using the study design, BH across pathways. Interpret scores as footprints of pathway activity, not member expression. Report both estimators with their overlap and disagreement at the top.",
+              "id": "T1S3",
+              "name": "Differential expression report",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "What does the cytokine-stimulated-vs-vehicle differential expression test show, with its fit diagnostics and reproducibility record, before the pathway footprints are read on top of it?",
+              "description": "MA plot and dispersion plot of the DESeq2 fit, histogram of unadjusted p-values inspected before trusting padj, and the DE gene table with unshrunken and apeglm-shrunken log2 fold change plus lfcSE; report header states method, package versions, design, contrast, thresholds, n_tested, n_de, and the missing-length-offset caveat; sessionInfo record stored with results.",
               "acceptance_criteria": [
-                "Scores produced per sample per pathway; n pathways tested stated",
-                "Condition comparison on scores uses the study design with BH across pathways",
-                "Both mlm and ulm run; overlap/disagreement of top pathways reported",
-                "Framing states footprint-not-membership"
+                "MA plot and dispersion plot precede the gene tables and each is annotated with what it shows",
+                "p-value histogram of tested genes reported and its shape stated beside the number of significant genes",
+                "Gene table reports both unshrunken (named as test estimate) and shrunken log2 fold change with lfcSE; ranking and plots use the shrunken value",
+                "Report header carries method, package versions, design formula, contrast, thresholds, n_tested, n_de, the no-length-offset caveat, and a sessionInfo/seed reproducibility record",
+                "Volcano or ranked-gene display, if drawn, uses the shrunken log2 fold change"
               ],
               "packages": [
-                "decoupleR",
-                "limma"
+                "DESeq2"
               ],
               "depends_on": [
                 "T1S2"
               ],
               "resources": {
-                "cpu": 4,
-                "memoryGb": 8
+                "cpu": 2,
+                "memoryGb": 4
               },
+              "constraints": [
+                "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+                "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+                "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+                "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)",
+                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+              ],
+              "caveats": [
+                "The two-method robustness overlap (DESeq2 Wald vs edgeR QL) applies when edgeR is also run; with a single-method run, state that the intersection rule was not exercised and label results accordingly."
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0085@bb37",
+                  "R-0087@3dcc",
+                  "R-0042@54e1",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "effect_columns",
+                    "value": [
+                      "log2FoldChange",
+                      "shrunken_log2FoldChange",
+                      "lfcSE"
+                    ],
+                    "source": "doi:10.1093/bioinformatics/bty895"
+                  },
+                  {
+                    "step": "report",
+                    "name": "rank_genes_by",
+                    "value": "shrunken_log2FoldChange",
+                    "source": "vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking"
+                  },
+                  {
+                    "step": "report",
+                    "name": "fit_diagnostics",
+                    "value": [
+                      "ma_plot",
+                      "dispersion_plot"
+                    ],
+                    "source": "vignette:DESeq2/1.52.0#ma-plot"
+                  },
+                  {
+                    "step": "report",
+                    "name": "robustness",
+                    "value": "overlap_of_two_methods",
+                    "source": "doi:10.1261/rna.053959.115"
+                  },
+                  {
+                    "step": "report",
+                    "name": "report_fields",
+                    "value": [
+                      "method",
+                      "versions",
+                      "design",
+                      "thresholds",
+                      "n_tested",
+                      "n_de",
+                      "session_info"
+                    ],
+                    "source": "doi:10.1093/bib/bbz124"
+                  },
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ],
+                "reason": "no rule covers this step as a standalone report; fields follow the cited report rules"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "PROGENy pathway footprint activity, treated vs control",
+              "track": "T2",
+              "step_type": "analysis",
+              "agent": "enrichment-agent",
+              "question": "Which of the PROGENy signaling pathways leave a differential transcriptional footprint in the cytokine-stimulated samples relative to vehicle, estimated from the weighted responsive-gene model on every tested gene's statistic — not from pathway-member expression — and which direction is each pathway pushed per sample?",
+              "description": "Footprint-based pathway activity: load the PROGENy human full model (per-gene weights for 14 signaling pathways incl. EGFR, MAPK, PI3K, TNFa, p53, Hypoxia; R data frame from the reference store, loaded in R), keep the top 500 responsive genes per pathway by weight, and infer activity with decoupleR (R Bioconductor 2.17.0): (a) primary — mlm on the full ranked Wald statistic of every tested gene from T1S2 (not the significant-gene list); (b) second estimator — ulm on the same statistic; (c) per-sample scores — decoupleR on the VST log matrix for one score per sample and pathway, then limma on the score matrix with the 6-vs-6 design and BH across pathways. If count gene IDs are not HGNC symbols, map them offline (org.Hs.eg.db or the staged UniProt human idmapping) before scoring. Report the treated-vs-control activity table (score, BH-adjusted p per pathway), the per-sample score matrix, and the mlm/ulm overlap.",
+              "acceptance_criteria": [
+                "Per-pathway activity table for the cytokine-stimulated-vs-vehicle contrast with activity score and BH-adjusted p for each of the 14 PROGENy pathways, from mlm on the full Wald statistic",
+                "Second-estimator check (ulm) run on the same statistic; overlap and disagreement of significant pathways between mlm and ulm reported",
+                "Per-sample pathway score matrix produced on the log matrix with limma + BH across pathways; sample_01 included and its score position noted",
+                "Gene-identifier mapping reported: fraction of PROGENy weight genes present in the count matrix; a match below ~50% is flagged as a coverage caution in the output",
+                "Report fields: network name and version, input statistic and its contrast, estimator, top_responsive_genes used, n pathways tested, and the caution that a score is an inference from a prior network, not a measurement",
+                "No membership-based enrichment (WikiPathways/GO) is computed anywhere in this step"
+              ],
+              "packages": [
+                "decoupleR",
+                "limma",
+                "org.Hs.eg.db",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "constraints": [
+                "pathway_activity: activity_method = mlm (doi:10.1093/bioadv/vbac016)",
+                "pathway_activity: footprint_model = progeny_human (doi:10.1038/s41467-017-02391-6)",
+                "pathway_activity: top_responsive_genes = 500 (rule:R-0115)",
+                "pathway_activity: interpretation = footprint_not_membership (doi:10.1038/s41467-017-02391-6)",
+                "pathway_activity: topology_method = spia_absent_footprint_or_enrichment_instead (doi:10.1093/bioinformatics/btn577)",
+                "tf_activity: activity_input = per_sample_log_matrix (doi:10.1093/bioadv/vbac016)",
+                "tf_activity: score_test = limma_on_scores_bh_across_pathways (rule:R-0112)"
+              ],
+              "caveats": [
+                "Read the score as the transcriptional footprint of the pathway and not as the expression of its members: a pathway member can change without a change in pathway activity, and the reverse (R-0115@1504) — this distinction is the core of the research question.",
+                "SPIA is absent from this environment; footprint (PROGENy mlm) is the substitute and neither it nor any planned method uses pathway graph topology — state this in the report (R-0122@08af).",
+                "The decoupleR template is written for TF activity; the same activity-inference procedure is applied with the PROGENy network as the prior, and the limma-on-scores test of R-0112@f200 is applied across pathways instead of regulators — a stated adaptation of the returned setting value.",
+                "The skeleton's STRING PPI-neighborhood and JASPAR motif-complement sub-analyses are not planned: the question asks only for signaling-pathway footprints; the staged WikiPathways human GMT is deliberately not used because the question excludes judging activity by expressed pathway members.",
+                "The PROGENy model must be resolved from the reference store at run time (R serialized model_human_full). If it is absent, report the gap rather than substituting a membership GMT.",
+                "With 6 replicates per group the mlm/ulm scores are estimates from a prior network common to all tissues; a bronchial-epithelium-specific signaling pathway can be missed — state this caution (R-0114@9db7 context)."
+              ],
               "grounding": {
                 "status": "grounded",
                 "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
                 "claims": [
                   "R-0115@1504",
-                  "R-0122@08af",
-                  "R-0121@5f27"
+                  "R-0112@f200",
+                  "R-0119@5f4d",
+                  "R-0122@08af"
                 ],
                 "template": "tpl-decoupler-tf-activity@1.0.0",
                 "settings": [
@@ -458,244 +1486,69 @@
                     "name": "interpretation",
                     "value": "footprint_not_membership",
                     "source": "doi:10.1038/s41467-017-02391-6"
-                  }
-                ],
-                "reason": "The question asks for pathway activity as a footprint: PROGENy weights with decoupleR mlm per R-0115@1504, the direct answer to footprint-not-membership"
-              },
-              "constraints": [
-                "pathway_activity: activity_method = mlm (doi:10.1093/bioadv/vbac016)",
-                "pathway_activity: footprint_model = progeny_human (doi:10.1038/s41467-017-02391-6)",
-                "pathway_activity: top_responsive_genes = 500 (rule:R-0115)",
-                "pathway_activity: interpretation = footprint_not_membership (doi:10.1038/s41467-017-02391-6)"
-              ],
-              "caveats": [
-                "SPIA (topology-aware) is absent from the environment; PROGENy footprints and enrichment are the substitutes and neither uses pathway graph topology — state this in the report (R-0122@08af)",
-                "12 samples do not support network inference from expression alone; a prior model like PROGENy is the only sound source (R-0121@5f27)"
-              ]
-            },
-            {
-              "id": "T2S2",
-              "name": "TF activity from CollecTRI/DoRothEA regulons",
-              "track": "T2",
-              "step_type": "activity",
-              "agent": "enrichment-agent",
-              "question": "Which transcription factors show changed activity between cytokine-stimulated and vehicle samples, upstream of the observed gene response?",
-              "description": "Run decoupleR ulm on the Wald statistic of every tested gene with the CollecTRI human signed regulons (edges keep mode of regulation), minimum 5 targets per regulator among tested genes. If a CollecTRI regulon table is not present in the environment, fall back to the installed dorothea package regulons at confidence A-C and state the substitution. Test the per-regulator scores between conditions (design of the study, BH across regulators). Report the number of regulators tested and the input statistic (Wald stat).",
-              "acceptance_criteria": [
-                "Signed regulons used (repressor targets lower the score)",
-                "Minimum regulon size 5 enforced; n regulators tested reported",
-                "Per-regulator BH-adjusted p-values against condition reported",
-                "Regulon source named with version; fallback to dorothea A-C only if CollecTRI is absent, and the substitution stated"
-              ],
-              "packages": [
-                "decoupleR",
-                "dorothea",
-                "limma"
-              ],
-              "depends_on": [
-                "T1S2"
-              ],
-              "resources": {
-                "cpu": 4,
-                "memoryGb": 8
-              },
-              "grounding": {
-                "status": "grounded",
-                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
-                "claims": [
-                  "R-0111@b668",
-                  "R-0113@7a4d",
-                  "R-0112@f200",
-                  "R-0121@5f27"
-                ],
-                "template": "tpl-decoupler-tf-activity@1.0.0",
-                "settings": [
+                  },
+                  {
+                    "step": "pathway_activity",
+                    "name": "topology_method",
+                    "value": "spia_absent_footprint_or_enrichment_instead",
+                    "source": "doi:10.1093/bioinformatics/btn577"
+                  },
                   {
                     "step": "tf_activity",
-                    "name": "activity_method",
-                    "value": "ulm",
+                    "name": "activity_input",
+                    "value": "per_sample_log_matrix",
                     "source": "doi:10.1093/bioadv/vbac016"
                   },
                   {
                     "step": "tf_activity",
-                    "name": "regulon_collection",
-                    "value": "collectri_human",
-                    "source": "doi:10.1093/nar/gkad841"
-                  },
-                  {
-                    "step": "tf_activity",
-                    "name": "alternative_regulon",
-                    "value": "dorothea_confidence_A_to_C",
-                    "source": "doi:10.1101/gr.240663.118"
-                  },
-                  {
-                    "step": "tf_activity",
-                    "name": "min_regulon_size",
-                    "value": 5,
-                    "source": "doi:10.1093/bioadv/vbac016"
-                  },
-                  {
-                    "step": "tf_activity",
-                    "name": "edge_sign",
-                    "value": "keep_mode_of_regulation",
-                    "source": "doi:10.1093/nar/gkad841"
+                    "name": "score_test",
+                    "value": "limma_on_scores_bh_across_pathways",
+                    "source": "rule:R-0112"
                   }
                 ],
-                "reason": "TF activity from a contrast: decoupleR ulm on the Wald statistic with CollecTRI signed regulons per R-0111@b668; dorothea A-C is the staged fallback per R-0113@7a4d"
-              },
-              "constraints": [
-                "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
-                "tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)",
-                "tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118)",
-                "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
-                "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)"
-              ],
-              "caveats": [
-                "VIPER/ARACNe absent; a prior network is tissue-agnostic, so a tissue-specific regulator may be missed and silent targets add noise — state the limitation (R-0114@9db7)",
-                "12 samples: do not infer a network from the study itself (R-0121@5f27)"
-              ]
-            },
-            {
-              "id": "T2S3",
-              "name": "Hallmark preranked GSEA on the contrast",
-              "track": "T2",
-              "step_type": "enrichment",
-              "agent": "enrichment-agent",
-              "question": "Which Hallmark biological states shift coherently, however weakly per gene, between cytokine-stimulated and vehicle samples?",
-              "description": "Rank ALL tested genes by the DESeq2 Wald statistic (stated choice from the disputed metric; not unshrunken LFC, not signed p) and run fgsea preranked against the MSigDB Hallmark human collection (50 sets, staged 2026.1 GMT), size window 15-500 after intersecting with tested genes, BH across sets. Map identifiers consistently with the gene symbols of the counts; report the unmapped share and never mix identifier spaces. Optionally run WikiPathways human as a second collection with the same window and universe, each with its release stated, not merged with Hallmark. Collapse overlapping significant sets before reporting; keep the full table as supplement.",
-              "acceptance_criteria": [
-                "Rank metric = Wald statistic, stated in the report",
-                "Full ranked list used, no threshold applied before the test",
-                "Size window 15-500 applied post-intersection; unmapped gene share reported",
-                "BH across sets; significant sets collapsed for the main readout with leading-edge genes listed",
-                "Each collection named with its release; collections not merged"
-              ],
-              "packages": [
-                "fgsea"
-              ],
-              "depends_on": [
-                "T1S2"
-              ],
-              "resources": {
-                "cpu": 4,
-                "memoryGb": 8
-              },
-              "grounding": {
-                "status": "grounded",
-                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
-                "claims": [
-                  "R-0107@976c",
-                  "R-0099@0e8a",
-                  "R-0108@409f",
-                  "R-0045@be9e",
-                  "R-0047@fd9d",
-                  "R-0052@620a",
-                  "R-0105@c4a8",
-                  "R-0101@06c8",
-                  "R-0165@e456"
-                ],
-                "template": "tpl-fgsea-preranked@1.0.0",
-                "settings": [
-                  {
-                    "step": "enrichment",
-                    "name": "rank_metric",
-                    "value": "stat",
-                    "source": "doi:10.1101/060012"
-                  },
-                  {
-                    "step": "enrichment",
-                    "name": "gene_set_collection",
-                    "value": "msigdb_hallmark_human",
-                    "source": "doi:10.1016/j.cels.2015.12.004"
-                  },
-                  {
-                    "step": "enrichment",
-                    "name": "min_size",
-                    "value": 15,
-                    "source": "doi:10.1073/pnas.0506580102"
-                  },
-                  {
-                    "step": "enrichment",
-                    "name": "max_size",
-                    "value": 500,
-                    "source": "doi:10.1073/pnas.0506580102"
-                  },
-                  {
-                    "step": "enrichment",
-                    "name": "rank_metric_not",
-                    "value": [
-                      "unshrunken_log2_fold_change_alone",
-                      "signed_p_value_with_ties"
-                    ],
-                    "source": "doi:10.1186/s12859-017-1674-0"
-                  }
-                ],
-                "reason": "Preranked fgsea on the full Wald-statistic list vs MSigDB Hallmark per R-0107@976c and R-0099@0e8a; the disputed rank metric resolves to the Wald statistic with the choice stated (R-0108@409f)"
-              },
-              "constraints": [
-                "enrichment: rank_metric = stat (doi:10.1101/060012)",
-                "enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)",
-                "enrichment: gsea_input = full_ranked_list (doi:10.1073/pnas.0506580102)",
-                "enrichment: min_size = 15, max_size = 500 (doi:10.1073/pnas.0506580102)",
-                "enrichment: id_mapping = to_entrez_with_orgdb, report_unmapped_share = true (doi:10.1038/nprot.2009.97)",
-                "enrichment: collapse_redundant = true (doi:10.1101/060012)",
-                "enrichment: rank_metric_not = unshrunken_log2_fold_change_alone, signed_p_value_with_ties (doi:10.1186/s12859-017-1674-0)"
-              ],
-              "caveats": [
-                "The rank metric is a disputed choice (R-0108@409f): this plan takes the Wald statistic and states it; a different choice can change the result",
-                "Enrichment methods disagree in general; present sets as hypotheses, not proven findings (R-0055@107a)"
-              ]
+                "reason": "Pathway activity as the question: PROGENy footprint mlm on the Wald statistic of every tested gene per R-0115@1504; per-sample scores on the log matrix with limma per R-0112@f200, score test applied across pathways instead of regulators (stated adaptation); SPIA absent, footprint substitute per R-0122@08af; report fields per R-0119@5f4d"
+              }
             },
             {
               "id": "T3S1",
-              "name": "Integrated pathway activity report",
+              "name": "Integrated DE + pathway-activity report",
               "track": "T3",
               "step_type": "report",
               "agent": "bulk-transcriptomics-agent",
-              "question": "Taken together, which signaling pathways are active in cytokine-stimulated vs vehicle bronchial epithelium, with what evidence from footprints, regulons, and gene sets?",
-              "description": "Synthesis step: integrate PROGENy pathway scores (T2S1), TF activities (T2S2), and Hallmark GSEA (T2S3) against the DE result (T1S2). Cross-read the three activity views (e.g., a PROGENy TNFa footprint corroborated by NF-kB regulon activity and TNFa-signaling hallmark enrichment is one coherent finding, not three). Report the DE layer with method/versions/design/thresholds/n_tested/n_de, MA and dispersion plots, p-value histogram, sample_01 handling and sensitivity refit, and the lost length-offset statement. Report each activity layer with network name/version, input statistic, contrast, estimator, minimum regulon size, number of regulators/pathways tested, the footprint-not-membership caution, and the reproducibility record (sessionInfo, seeds, package versions, collection versions).",
+              "question": "Which signaling pathways are active in cytokine-stimulated bronchial epithelium versus vehicle, and how confident is each call given the DE fit, the sample-structure findings, and the estimator agreement?",
+              "description": "Final report joining the two tracks: DE summary (design, thresholds, n_tested, n_de, fit diagnostics) beside the pathway-activity table (PROGENy network and version, input statistic, estimators, BH-adjusted activities, per-sample score direction), the sample_01 handling decision, the missing-length-offset caveat, the footprint-not-membership reading, and a full reproducibility record (sessionInfo, seeds, package versions, PROGENy collection version, annotation release).",
               "acceptance_criteria": [
-                "Single coherent readout of active pathways with converging/diverging evidence marked",
-                "DE report fields complete per R-0041 (method, versions, design, thresholds, n_tested, n_de, session info)",
-                "sample_01 handling documented with its sensitivity refit",
-                "Activity report fields complete per R-0119 (network, version, statistic, estimator, min regulon size, n regulators, caution)",
-                "Reproducibility record stored with results"
+                "Report states method, package versions, design, contrast, thresholds, n_tested and n_de for the DE test, and the length-offset caveat",
+                "Pathway-activity section states network name and version, input statistic and contrast, estimator(s), top_responsive_genes, n pathways tested, and the inference caution that a score is a hypothesis, not a measurement",
+                "mlm/ulm agreement and the per-sample score directions for the significant pathways are reported; disagreements are listed, not averaged away",
+                "sample_01 decision and its effect (if any) on the activity calls are stated",
+                "Reproducibility record (sessionInfo, seeds, package versions, PROGENy collection version, annotation release) stored with the results"
               ],
               "packages": [],
               "depends_on": [
-                "T2S1",
-                "T2S2",
-                "T2S3"
+                "T1S3",
+                "T2S1"
               ],
               "resources": {
-                "cpu": 2,
-                "memoryGb": 8
+                "cpu": 1,
+                "memoryGb": 2
               },
+              "constraints": [
+                "report: activity_report_fields = network_name, network_version, input_statistic, contrast, estimator, top_responsive_genes, n_pathways_tested, inference_caution (doi:10.1371/journal.pcbi.1009935)",
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+              ],
+              "caveats": [
+                "Do not translate pathway-activity scores into mechanism claims beyond the footprint evidence; a high activity score is a hypothesis for follow-up, not a proven finding (R-0119@5f4d)."
+              ],
               "grounding": {
                 "status": "ungrounded",
                 "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
                 "claims": [
                   "R-0041@059a",
-                  "R-0042@54e1",
-                  "R-0119@5f4d",
-                  "R-0055@107a",
-                  "R-0086@becf"
+                  "R-0086@becf",
+                  "R-0119@5f4d"
                 ],
                 "settings": [
-                  {
-                    "step": "report",
-                    "name": "report_fields",
-                    "value": [
-                      "method",
-                      "versions",
-                      "design",
-                      "thresholds",
-                      "n_tested",
-                      "n_de",
-                      "session_info"
-                    ],
-                    "source": "doi:10.1093/bib/bbz124"
-                  },
                   {
                     "step": "report",
                     "name": "activity_report_fields",
@@ -705,8 +1558,8 @@
                       "input_statistic",
                       "contrast",
                       "estimator",
-                      "min_regulon_size",
-                      "n_regulators_tested",
+                      "top_responsive_genes",
+                      "n_pathways_tested",
                       "inference_caution"
                     ],
                     "source": "doi:10.1371/journal.pcbi.1009935"
@@ -724,20 +1577,14 @@
                     "source": "doi:10.1371/journal.pcbi.1003285"
                   }
                 ],
-                "reason": "no rule covers this step"
-              },
-              "constraints": [
-                "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
-                "report: activity_report_fields = network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution (doi:10.1371/journal.pcbi.1009935)",
-                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
-              ],
-              "caveats": []
+                "reason": "no rule covers a combined DE + pathway-activity report; fields follow the report rules R-0041@059a, R-0086@becf, R-0119@5f4d"
+              }
             }
           ]
         }
       },
       "outcome": "ok",
-      "durationMs": 5
+      "durationMs": 63
     }
   ],
   "knowledgeCalls": [
@@ -746,7 +1593,7 @@
       "op": "recommend",
       "request": {
         "situation": {
-          "question": "full_plan",
+          "question": "differential_expression",
           "modality": "bulk_rna_seq",
           "data_state": "counts",
           "count_source": "salmon",
@@ -770,7 +1617,7 @@
           "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
         },
         "situation": {
-          "question": "full_plan",
+          "question": "differential_expression",
           "modality": "bulk_rna_seq",
           "data_state": "counts",
           "count_source": "salmon",
@@ -874,45 +1721,12 @@
             ]
           },
           {
-            "step": "enrichment",
-            "method": {
-              "id": "M-0010"
-            },
-            "template": "tpl-fgsea-preranked@1.0.0",
-            "rules": [
-              "R-0098@d01b",
-              "R-0165@e456",
-              "R-0107@976c",
-              "R-0048@500d",
-              "R-0097@a38e",
-              "R-0101@06c8",
-              "R-0103@93aa",
-              "R-0108@409f",
-              "R-0045@be9e",
-              "R-0046@a0ac",
-              "R-0054@801e",
-              "R-0047@fd9d",
-              "R-0052@620a",
-              "R-0099@0e8a"
-            ],
-            "flags": [
-              {
-                "rule": "R-0103@93aa",
-                "severity": "warn",
-                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
-              }
-            ]
-          },
-          {
             "step": "report",
             "rules": [
               "R-0085@bb37",
               "R-0087@3dcc",
               "R-0042@54e1",
               "R-0041@059a",
-              "R-0051@01ca",
-              "R-0055@107a",
-              "R-0105@c4a8",
               "R-0086@becf"
             ]
           }
@@ -940,12 +1754,6 @@
             "id": "R-0039@968d"
           },
           {
-            "id": "R-0098@d01b"
-          },
-          {
-            "id": "R-0165@e456"
-          },
-          {
             "id": "R-0009@310d"
           },
           {
@@ -955,37 +1763,10 @@
             "id": "R-0041@059a"
           },
           {
-            "id": "R-0051@01ca"
-          },
-          {
-            "id": "R-0107@976c"
-          },
-          {
             "id": "R-0166@bbcd"
           },
           {
-            "id": "R-0048@500d"
-          },
-          {
-            "id": "R-0055@107a"
-          },
-          {
             "id": "R-0083@12de"
-          },
-          {
-            "id": "R-0097@a38e"
-          },
-          {
-            "id": "R-0101@06c8"
-          },
-          {
-            "id": "R-0103@93aa"
-          },
-          {
-            "id": "R-0105@c4a8"
-          },
-          {
-            "id": "R-0108@409f"
           },
           {
             "id": "R-0010@6072"
@@ -1003,15 +1784,6 @@
             "id": "R-0043@4f55"
           },
           {
-            "id": "R-0045@be9e"
-          },
-          {
-            "id": "R-0046@a0ac"
-          },
-          {
-            "id": "R-0054@801e"
-          },
-          {
             "id": "R-0086@becf"
           },
           {
@@ -1022,22 +1794,13 @@
           },
           {
             "id": "R-0030@2248"
-          },
-          {
-            "id": "R-0047@fd9d"
-          },
-          {
-            "id": "R-0052@620a"
-          },
-          {
-            "id": "R-0099@0e8a"
           }
         ],
         "flags": [],
         "uncovered": []
       },
-      "responseChars": 60376,
-      "elapsedMs": 40
+      "responseChars": 35813,
+      "elapsedMs": 46
     },
     {
       "seq": 2,
@@ -1182,7 +1945,482 @@
         "uncovered": []
       },
       "responseChars": 23087,
-      "elapsedMs": 26
+      "elapsedMs": 110
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST sample structure QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter before DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors inside DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~ condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with DESeq2 independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DESeq2 DE report with MA and dispersion diagnostics",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange,shrunken_log2FoldChange,lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version,annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0029@22ca",
+            "message": "DESeq2 likelihood ratio test is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 478,
+      "elapsedMs": 41
+    },
+    {
+      "seq": 4,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "pathway_activity",
+            "method": "PROGENy footprint pathway activity with decoupleR mlm and ulm on the Wald statistic, plus per-sample scores on the vst log matrix with limma",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "second_estimator",
+                "value": "ulm"
+              },
+              {
+                "name": "score_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_pathways"
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              },
+              {
+                "name": "topology_method",
+                "value": "spia_absent_footprint_or_enrichment_instead"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Activity inference report with network version, estimator, contrast, and inference caution",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version,annotation_release"
+              },
+              {
+                "name": "activity_report_fields",
+                "value": "network_name,network_version,input_statistic,contrast,estimator,n_pathways_tested,inference_caution"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 41
+    },
+    {
+      "seq": 5,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST sample structure QC",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors inside DESeq2 model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~ condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg with DESeq2 independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DESeq2 DE report with MA and dispersion diagnostics",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "effect_columns",
+                "value": "log2FoldChange,shrunken_log2FoldChange,lfcSE"
+              },
+              {
+                "name": "rank_genes_by",
+                "value": "shrunken_log2FoldChange"
+              },
+              {
+                "name": "fit_diagnostics",
+                "value": "ma_plot,dispersion_plot"
+              },
+              {
+                "name": "report_fields",
+                "value": "method,versions,design,thresholds,n_tested,n_de,session_info"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info,seed,package_versions,collection_version,annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 15
     }
   ],
   "snapshot": {

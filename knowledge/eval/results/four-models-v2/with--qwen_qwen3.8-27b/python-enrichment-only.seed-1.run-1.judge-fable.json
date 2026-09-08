@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit the count model, ranks the full unthresholded list by the Wald statistic with an explicit tie rule and NA policy, runs gseapy.prerank offline against a pinned local MSigDB Hallmark 2026.1 GMT with a 15-500 window, a fixed seed, and BH FDR, and reports NES, FDR, and leading edges per set. Sample-structure QC (blind VST, PCA, distance heatmap, library sizes) is present with an explicit keep-and-report policy for the shallow sample_01, and the contrast, reference level, and sign convention are verified against metadata. The main gap is that the number of permutations is never stated (the reference requires at least 1000), and no low-count filter is mentioned even for the QC transform, though the exclusion of non-finite statistics is documented. Report content is thorough, naming tool versions, universe size, thresholds, and design caveats."
+}

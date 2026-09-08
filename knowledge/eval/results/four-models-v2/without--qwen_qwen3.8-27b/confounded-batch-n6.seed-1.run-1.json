@@ -1,0 +1,184 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "confounded-batch-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:43:03.774Z",
+  "elapsedMs": 270605,
+  "outcome": "plan_submitted",
+  "planId": "pln-18b50ff9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Treated vs control differential expression (confounded contrast)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If no genes pass padj<0.05, report the ranked table and top candidates by padj/|log2FC| — do not claim significance.",
+          "DESeq2 filters zero-variance genes; retain the filtered-gene list in the output.",
+          "n=6 per group gives limited power; treat small |log2FC| with high padj as noise."
+        ],
+        "context": "Files: /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/counts/counts.csv (12000 rows x 13 columns; first column expected to carry gene names, remaining 12 = samples; salmon gene-level counts as delivered — integer-ness not documented) and /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 3 columns: sample, condition, batch). Design: 6 treated vs 6 control; batch B1 = all controls, B2 = all treated (perfectly confounded). Organism: Homo sapiens. No other covariates exist in the metadata.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "SummarizedExperiment",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which of the 12000 genes in the lung bulk RNA-seq count matrix differ between treated and control (6 vs 6, labels as they appear in the condition column of metadata.csv), with what effect sizes and adjusted p-values — given that every treated sample was processed in batch B2 and every control in batch B1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use condition and batch labels exactly as they appear in metadata.csv; do not rename them.",
+          "Verify that all 12 sample columns of counts.csv match the 12 metadata sample rows and that the condition column contains exactly 6 treated and 6 control; abort with a clear message otherwise.",
+          "Check whether all counts are non-negative integers. If yes: DESeq2 with design ~ condition, reporting both raw and apeglm-shrunk log2FC. If no: limma-voom on the counts with design ~ condition. Record which path was taken and why. Do not silently round non-integer counts.",
+          "Do NOT include batch in the design matrix (it is identical to condition, so the coefficient is not identifiable) and do NOT run any batch-correction method (sva, RUV, ComBat, removeBatchEffect).",
+          "Emit the full results table for all genes (gene, baseMean/mean, log2FoldChange, shrunken log2FC where applicable, lfcSE, stat, pvalue, padj, zero-variance flag), a top-50 table by |log2FC| among padj<0.05 (or by overall rank if none pass), an MA plot, and a volcano plot.",
+          "Every output artifact must carry the note: 'Batch is perfectly confounded with condition (B1 = all controls, B2 = all treated); this contrast estimates the combined batch+treatment difference, not a pure treatment effect.'"
+        ],
+        "description": "Build a gene x sample count object from counts.csv (12000 genes x 12 samples after the gene-name column) joined to metadata.csv (12 rows: sample, condition, batch). Run the treated-vs-control DE test with DESeq2 if all counts are non-negative integers, otherwise limma-voom (salmon as-delivered quasi-counts may be length-normalized and non-integer). Output the full per-gene results table, a top-50 table, MA and volcano plots, and an explicit confounding caveat on every artifact.",
+        "acceptance_criteria": [
+          "A results table covering all 12000 input genes with effect size, SE, p and adjusted p (zero-variance genes flagged, not dropped silently).",
+          "The chosen method (DESeq2 vs limma-voom) and the integer-check outcome are documented in the step output.",
+          "All 12 sample columns matched to metadata; condition counts are exactly 6 per group.",
+          "MA and volcano plots produced, labeled by condition.",
+          "The confounding caveat is present in the emitted outputs."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Batch-confounding diagnostics: technical vs biological assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 samples per condition the variance partition is coarse — present it as characterization, not as a hypothesis test of 'the batch effect'.",
+          "A symmetric up/down pattern argues against a pure technical shift but does not prove a treatment effect, since a batch could still drive symmetric biological variation; state this limitation in the verdict."
+        ],
+        "context": "Same inputs as T1S1; reuses T1S1's count object and DE results table. Batch == condition, so a batch effect is not separately estimable — these diagnostics characterize the composite contrast and its shape, not a corrected treatment estimate.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Given that batch B1 holds all 6 controls and B2 holds all 6 treated samples, how much of the treated-vs-control signal is consistent with a technical batch effect rather than a biological treatment effect?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "diagnostic",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "PCA on DESeq2 vst (or rlog) transformed counts; save PC1/PC2 colored by batch (= condition); report variance explained by PC1 and the PC1-score-vs-batch association (one-way ANOVA F and p).",
+          "Fit a model with design ~ condition + batch (DESeq2 or limma) and record that the batch and/or condition coefficient is aliased (NA, dropped, or singular matrix) — the formal demonstration that the two factors cannot be separated in this design.",
+          "Variance partition per gene: within-condition (within-batch) variance vs between-condition difference; report the aggregate ratio and the fraction of genes whose within-condition SD exceeds the between-condition difference.",
+          "Technical-signature check on the T1S1 DE table (padj<0.05 genes, or the top 10% by |log2FC| if none pass): (a) up vs down gene counts (directionality); (b) fraction of those genes in a standard human ribosomal/proteasome/mitochondrial/housekeeping symbol set (RPS*, RPL*, RPLP*, RPP30, MT-*, ATP5*, TPIA, GAPDH, ACTB, HDAC1) vs that set's genome-wide fraction in the 12000-gene matrix; report the enrichment ratio. Embed the symbol list in the script — no network access.",
+          "Write a verdict — technical-batch-like, biological-response-like, or ambiguous — based on PCA, variance partition, directionality, and housekeeping bias; state the design change (balanced batches covering both conditions, or independent reprocessing) that would make a treatment effect estimable.",
+          "Do not correct for batch in this step; no correction is identifiable with one batch per condition."
+        ],
+        "description": "On the same count object and the T1S1 DE table: PCA on variance-stabilized counts with PC1 tested against batch; a formal demonstration that a condition+batch model is not identifiable (aliased coefficients); within- vs between-condition variance partition; and technical-signature checks on the DE table (log2FC directionality, ribosomal/proteasome/MT/housekeeping bias). Ends in a written verdict (technical / biological / ambiguous) and the design change that would make the treatment effect estimable.",
+        "acceptance_criteria": [
+          "PCA plot plus PC1–batch association statistic.",
+          "Documented aliasing demonstration for the condition+batch model.",
+          "Numeric within- vs between-condition variance partition.",
+          "Directionality and ribosomal/MT/housekeeping bias metrics with explicit ratios.",
+          "Written verdict (technical / biological / ambiguous) plus a concrete design-fix recommendation."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of the DE ranked list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not claim mechanism: n=12 samples and a confounded contrast support only pathway-level pattern description.",
+          "WikiPathways members are HGNC symbols; report any duplicate or ambiguous symbol mappings rather than silently dropping them."
+        ],
+        "context": "Input: T1S1's ranked gene list (all 12000 genes ranked by Wald stat or -log10 pvalue) and DE results table. Organism: Homo sapiens. Provisioned reference available in this environment: human WikiPathways pathway gene sets in GMT format (HGNC symbols). No network access at run time.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "dplyr"
+        ],
+        "question": "Which human pathways are enriched among the genes that differ between treated and control, and does the enriched pattern look technical (ribosome, translation, oxidative phosphorylation) or treatment-specific?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Resolve the human WikiPathways GMT from the provisioned reference store; verify its species label is human (Homo sapiens) before use. If it is absent at run time, fall back to clusterProfiler GO (BP) with org.Hs.eg.db and report the WikiPathways gap explicitly.",
+          "Map gene identifiers in counts.csv to HGNC symbols via org.Hs.eg.db if they are not already symbols; report the mapping success rate.",
+          "Run fgsea with minSize=15, maxSize=500 on the full ranked list; report the top 20 pathways by NES with p and q (FDR).",
+          "Run clusterProfiler enrichGO (BP) on DE genes at padj<0.05 (or the top 100 by |log2FC| if none pass); report the top 20 with q-value.",
+          "Flag each top pathway as plausibly technical (ribosome, oxidative phosphorylation, translation, proteasome, spliceosome) or plausibly treatment-related, and carry the caveat that enrichment describes a combined batch+treatment signal."
+        ],
+        "description": "fgsea on T1S1's full ranked gene list against the provisioned human WikiPathways pathway gene sets (GMT), plus a GO biological-process ORA (clusterProfiler with org.Hs.eg.db) on the significant DE genes. Map identifiers to HGNC symbols via org.Hs.eg.db if needed. Interpret with the confounding caveat: the enrichment describes the combined batch+treatment signal.",
+        "acceptance_criteria": [
+          "WikiPathways fgsea table with NES/p/q for top 20 pathways, or an explicit reference-gap statement with GO-only fallback.",
+          "GO-BP ORA table for the significant DE genes.",
+          "Identifier mapping success rate reported.",
+          "Technical-vs-specific flag on top pathways, with the confounding caveat attached."
+        ]
+      }
+    ],
+    "title": "Treated vs control lung RNA-seq DE under confounded batch",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The only condition contrast in this 6-vs-6 lung bulk RNA-seq dataset (treated vs control, 12000 genes x 12 salmon counts) is perfectly confounded with processing batch: batch B1 holds all controls and batch B2 holds all treated samples. No model can estimate a treatment effect separately from a batch effect here — including batch alongside condition makes the design matrix rank-deficient — so the plan (1) runs the requested treated-vs-control contrast with the standard count-based DE pipeline (DESeq2, or limma-voom if the salmon counts are non-integer quasi-counts), reporting it as the combined batch+treatment difference; (2) quantifies the confounding — PCA, a formal demonstration that a condition+batch model is not identifiable, within- vs between-condition variance partition, and technical-signature checks on the DE table (log2FC directionality, ribosomal/MT/housekeeping bias) — to assess how much of the signal plausibly originates from the batch; (3) enriches the ranked gene list against the provisioned human WikiPathways gene sets (plus GO) for functional context. No batch correction is attempted anywhere: with one batch per condition a batch effect is not identifiable, and every output artifact carries an explicit confounding caveat."
+  },
+  "usage": {
+    "inputTokens": 32724,
+    "outputTokens": 15544,
+    "cacheReadInputTokens": 9923,
+    "reasoningTokens": 12718
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_b81dfd7e9d1d41ef8872833d",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Treated vs control lung RNA-seq DE under confounded batch\", \"analytical_narrative\": \"The only condition contrast in this 6-vs-6 lung bulk RNA-seq dataset (treated vs control, 12000 genes x 12 salmon counts) is perfectly confounded with processing batch: batch B1 holds all controls and batch B2 holds all treated samples. No model can estimate a treatment effect separately from a batch effect here — including batch alongside condition makes the design matrix rank-deficient — so the plan (1) runs the requested treated-vs-control contrast with the standard count-based DE pipeline (DESeq2, or limma-voom if the salmon counts are non-integer quasi-counts), reporting it as the combined batch+treatment difference; (2) quantifies the confounding — PCA, a formal demonstration that a condition+batch model is not identifiable, within- vs between-condition variance partition, and technical-signature checks on the DE table (log2FC directionality, ribosomal/MT/housekeeping bias) — to assess how much of the signal plausibly originates from the batch; (3) enriches the ranked gene list against the provisioned human WikiPathways gene sets (plus GO) for functional context. No batch correction is attempted anywhere: with one batch per condition a batch effect is not identifiable, and every output artifact carries an explicit confounding caveat.\", \"created_at\": \"2026-07-10T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Treated vs control differential expression (confounded contrast)\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12000 genes in the lung bulk RNA-seq count matrix differ between treated and control (6 vs 6, labels as they appear in the condition column of metadata.csv), with what effect sizes and adjusted p-values — given that every treated sample was processed in batch B2 and every control in batch B1?\", \"description\": \"Build a gene x sample count object from counts.csv (12000 genes x 12 samples after the gene-name column) joined to metadata.csv (12 rows: sample, condition, batch). Run the treated-vs-control DE test with DESeq2 if all counts are non-negative integers, otherwise limma-voom (salmon as-delivered quasi-counts may be length-normalized and non-integer). Output the full per-gene results table, a top-50 table, MA and volcano plots, and an explicit confounding caveat on every artifact.\", \"context\": \"Files: /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/counts/counts.csv (12000 rows x 13 columns; first column expected to carry gene names, remaining 12 = samples; salmon gene-level counts as delivered — integer-ness not documented) and /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 3 columns: sample, condition, batch). Design: 6 treated vs 6 control; batch B1 = all controls, B2 = all treated (perfectly confounded). Organism: Homo sapiens. No other covariates exist in the metadata.\", \"constraints\": [\"Use condition and batch labels exactly as they appear in metadata.csv; do not rename them.\", \"Verify that all 12 sample columns of counts.csv match the 12 metadata sample rows and that the condition column contains exactly 6 treated and 6 control; abort with a clear message otherwise.\", \"Check whether all counts are non-negative integers. If yes: DESeq2 with design ~ condition, reporting both raw and apeglm-shrunk log2FC. If no: limma-voom on the counts with design ~ condition. Record which path was taken and why. Do not silently round non-integer counts.\", \"Do NOT include batch in the design matrix (it is identical to condition, so the coefficient is not identifiable) and do NOT run any batch-correction method (sva, RUV, ComBat, removeBatchEffect).\", \"Emit the full results table for all genes (gene, baseMean/mean, log2FoldChange, shrunken log2FC where applicable, lfcSE, stat, pvalue, padj, zero-variance flag), a top-50 table by |log2FC| among padj<0.05 (or by overall rank if none pass), an MA plot, and a volcano plot.\", \"Every output artifact must carry the note: 'Batch is perfectly confounded with condition (B1 = all controls, B2 = all treated); this contrast estimates the combined batch+treatment difference, not a pure treatment effect.'\"], \"acceptance_criteria\": [\"A results table covering all 12000 input genes with effect size, SE, p and adjusted p (zero-variance genes flagged, not dropped silently).\", \"The chosen method (DESeq2 vs limma-voom) and the integer-check outcome are documented in the step output.\", \"All 12 sample columns matched to metadata; condition counts are exactly 6 per group.\", \"MA and volcano plots produced, labeled by condition.\", \"The confounding caveat is present in the emitted outputs.\"], \"caveats\": [\"If no genes pass padj<0.05, report the ranked table and top candidates by padj/|log2FC| — do not claim significance.\", \"DESeq2 filters zero-variance genes; retain the filtered-gene list in the output.\", \"n=6 per group gives limited power; treat small |log2FC| with high padj as noise.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"SummarizedExperiment\", \"ggplot2\", \"dplyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Batch-confounding diagnostics: technical vs biological assessment\", \"track\": \"T1\", \"step_type\": \"diagnostic\", \"question\": \"Given that batch B1 holds all 6 controls and B2 holds all 6 treated samples, how much of the treated-vs-control signal is consistent with a technical batch effect rather than a biological treatment effect?\", \"description\": \"On the same count object and the T1S1 DE table: PCA on variance-stabilized counts with PC1 tested against batch; a formal demonstration that a condition+batch model is not identifiable (aliased coefficients); within- vs between-condition variance partition; and technical-signature checks on the DE table (log2FC directionality, ribosomal/proteasome/MT/housekeeping bias). Ends in a written verdict (technical / biological / ambiguous) and the design change that would make the treatment effect estimable.\", \"context\": \"Same inputs as T1S1; reuses T1S1's count object and DE results table. Batch == condition, so a batch effect is not separately estimable — these diagnostics characterize the composite contrast and its shape, not a corrected treatment estimate.\", \"constraints\": [\"PCA on DESeq2 vst (or rlog) transformed counts; save PC1/PC2 colored by batch (= condition); report variance explained by PC1 and the PC1-score-vs-batch association (one-way ANOVA F and p).\", \"Fit a model with design ~ condition + batch (DESeq2 or limma) and record that the batch and/or condition coefficient is aliased (NA, dropped, or singular matrix) — the formal demonstration that the two factors cannot be separated in this design.\", \"Variance partition per gene: within-condition (within-batch) variance vs between-condition difference; report the aggregate ratio and the fraction of genes whose within-condition SD exceeds the between-condition difference.\", \"Technical-signature check on the T1S1 DE table (padj<0.05 genes, or the top 10% by |log2FC| if none pass): (a) up vs down gene counts (directionality); (b) fraction of those genes in a standard human ribosomal/proteasome/mitochondrial/housekeeping symbol set (RPS*, RPL*, RPLP*, RPP30, MT-*, ATP5*, TPIA, GAPDH, ACTB, HDAC1) vs that set's genome-wide fraction in the 12000-gene matrix; report the enrichment ratio. Embed the symbol list in the script — no network access.\", \"Write a verdict — technical-batch-like, biological-response-like, or ambiguous — based on PCA, variance partition, directionality, and housekeeping bias; state the design change (balanced batches covering both conditions, or independent reprocessing) that would make a treatment effect estimable.\", \"Do not correct for batch in this step; no correction is identifiable with one batch per condition.\"], \"acceptance_criteria\": [\"PCA plot plus PC1–batch association statistic.\", \"Documented aliasing demonstration for the condition+batch model.\", \"Numeric within- vs between-condition variance partition.\", \"Directionality and ribosomal/MT/housekeeping bias metrics with explicit ratios.\", \"Written verdict (technical / biological / ambiguous) plus a concrete design-fix recommendation.\"], \"caveats\": [\"With 6 samples per condition the variance partition is coarse — present it as characterization, not as a hypothesis test of 'the batch effect'.\", \"A symmetric up/down pattern argues against a pure technical shift but does not prove a treatment effect, since a batch could still drive symmetric biological variation; state this limitation in the verdict.\"], \"packages\": [\"DESeq2\", \"ggplot2\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Pathway enrichment of the DE ranked list\", \"track\": \"T1\", \"step_type\": \"enrichment\", \"question\": \"Which human pathways are enriched among the genes that differ between treated and control, and does the enriched pattern look technical (ribosome, translation, oxidative phosphorylation) or treatment-specific?\", \"description\": \"fgsea on T1S1's full ranked gene list against the provisioned human WikiPathways pathway gene sets (GMT), plus a GO biological-process ORA (clusterProfiler with org.Hs.eg.db) on the significant DE genes. Map identifiers to HGNC symbols via org.Hs.eg.db if needed. Interpret with the confounding caveat: the enrichment describes the combined batch+treatment signal.\", \"context\": \"Input: T1S1's ranked gene list (all 12000 genes ranked by Wald stat or -log10 pvalue) and DE results table. Organism: Homo sapiens. Provisioned reference available in this environment: human WikiPathways pathway gene sets in GMT format (HGNC symbols). No network access at run time.\", \"constraints\": [\"Resolve the human WikiPathways GMT from the provisioned reference store; verify its species label is human (Homo sapiens) before use. If it is absent at run time, fall back to clusterProfiler GO (BP) with org.Hs.eg.db and report the WikiPathways gap explicitly.\", \"Map gene identifiers in counts.csv to HGNC symbols via org.Hs.eg.db if they are not already symbols; report the mapping success rate.\", \"Run fgsea with minSize=15, maxSize=500 on the full ranked list; report the top 20 pathways by NES with p and q (FDR).\", \"Run clusterProfiler enrichGO (BP) on DE genes at padj<0.05 (or the top 100 by |log2FC| if none pass); report the top 20 with q-value.\", \"Flag each top pathway as plausibly technical (ribosome, oxidative phosphorylation, translation, proteasome, spliceosome) or plausibly treatment-related, and carry the caveat that enrichment describes a combined batch+treatment signal.\"], \"acceptance_criteria\": [\"WikiPathways fgsea table with NES/p/q for top 20 pathways, or an explicit reference-gap statement with GO-only fallback.\", \"GO-BP ORA table for the significant DE genes.\", \"Identifier mapping success rate reported.\", \"Technical-vs-specific flag on top pathways, with the confounding caveat attached.\"], \"caveats\": [\"Do not claim mechanism: n=12 samples and a confounded contrast support only pathway-level pattern description.\", \"WikiPathways members are HGNC symbols; report any duplicate or ambiguous symbol mappings rather than silently dropping them.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 94
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

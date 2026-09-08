@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly uses DESeq2 with ~condition, apeglm shrinkage, padj<0.05, keeps sample_01 with a sensitivity run, and explicitly refuses to treat the >60% duplication as a reason to remove reads or samples, which matches the reference. It falls short of the reference on QC: it never quantifies the rRNA, mitochondrial, or intronic fractions that explain the duplication in rRNA-depleted total RNA, nor does it consider removing rRNA/mt genes if their share is large and uneven; sample distances are also absent. No explicit minimal low-count filter is stated (only default independent filtering), the reference level is not set, and the |LFC|>=1 list is a post hoc cutoff rather than an lfcThreshold test. Enrichment was not requested; it is included with named collections and versions but no ORA universe or set-size window, and package versions are not reported."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models for log2(TPM+1) input and specifies limma lmFit + eBayes with trend=TRUE (plus robust=TRUE) on the delivered values, with an explicit value-range check before fitting, though the check is less thorough than the reference (no explicit test for a double log). QC is concrete and design-specific (PCA/MDS on top 500 genes, distance heatmap, per-sample detected genes, named outlier policy without dropping). The low-abundance filter is label-independent and minimal but its floor is described only as 'low end of the distribution' rather than a stated value; normalization is explicitly none with no re-transform. Reference level, contrast direction, BH at 0.05 via topTable, correct omission of enrichment, and a report naming the producer transform, versions, design, thresholds, n_tested/n_de and sessionInfo are all stated."
+}

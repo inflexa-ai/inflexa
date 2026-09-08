@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 4
+  },
+  "rationale": "The plan recognizes that six samples leave gene-gene correlations at df=4 and the network underdetermined, but then builds the signed WGCNA network anyway, dressing it with leave-one-out refits that cannot rescue a correlation whose standard error is near 0.45; the reference requires stopping the network step or substituting a prior network (STRING or curated pathways) projected onto DE genes, and this plan does neither. The DE cross-check is reasonable in outline (TMM/voom, BH at 0.05, apeglm only in the DESeq2 sensitivity) but no design formula or reference level is written down, the |log2FC| >= 0.25 cutoff is applied post hoc rather than via treat, and DESeq2 is proposed on integerized Salmon values rather than via tximport. QC is a correlation heatmap and dendrogram without PCA, library sizes, or an outlier policy; the filter (CPM < 1 in all samples, capped at 30% removal) is acceptable. Enrichment names collections but no universe (module hypergeometric test uses 'genome background' instead of the filtered gene set), no version, and no size window; the report framing repeats 'exploratory' but does not state the sample size a network requires or replace the module answer with an honest refusal, and package versions are not requested."
+}

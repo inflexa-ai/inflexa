@@ -1,0 +1,144 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "rsem-counts-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:03:13.394Z",
+  "elapsedMs": 168040,
+  "outcome": "plan_submitted",
+  "planId": "pln-42e49020",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Treated vs control DE (edgeR QLF) + shallow-sample sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de-analysis",
+        "status": "pending",
+        "caveats": [
+          "Do NOT drop sample_01 from the primary analysis: the shallow library inflates its per-gene noise, but TMM normalization keeps it estimable; quantify its influence via the sensitivity re-run instead.",
+          "With 6 vs 6 samples, avoid over-filtering. If the padj < 0.05 set is empty, report the top genes by padj and state that no gene passed the FDR threshold — do not silently relax it.",
+          "The 12,000 rows are likely a pre-filtered gene set; do not assume whole-transcriptome completeness when interpreting the number of DE genes.",
+          "If any helper errors on fractional counts, fix the code path (edgeR accepts non-integers natively); never fall back to rounding."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-rsem-counts-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns; RSEM gene-level expected counts, i.e. fractional) and /eval-four-models-v2-without-rsem-counts-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample id + condition; per the design profile 6 treated vs 6 control, unpaired, single batch). Known caveat: the per-sample RSEM genes.results files with effective lengths were not delivered, so the matrix's length-correction status is unknown. The row ID space of counts.csv (symbols vs Entrez vs Ensembl) is not documented and must be detected from the file.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "apeglm",
+          "ggplot2",
+          "dplyr",
+          "Matrix"
+        ],
+        "question": "Which genes are differentially expressed between the 6 treated and 6 control colon samples, and how robust are those results to the shallow sample_01 (library size ~4x below the median)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Model the fractional RSEM expected counts with edgeR's negative-binomial GLM (glmQLFit + glmQLFTest). Do NOT round counts and do NOT use DESeq2/pydeseq2, which require integers.",
+          "Normalize with TMM (calcNormFactors). The design is one-way, unpaired, single batch: fit ~ 0 + condition with no batch or other covariates, contrasting treated vs control.",
+          "Use the actual condition values from metadata.csv (6 treated vs 6 control per the design profile).",
+          "Primary analysis uses all 12 samples. Apply a low-expression filter (keep genes with CPM above a small threshold in at least 6 of the 12 samples) identically in both analyses and report how many genes were removed.",
+          "Sensitivity analysis: re-run the identical pipeline with sample_01 removed; report sample_01's condition group from metadata.csv and the resulting group sizes.",
+          "Multiple testing: BH-adjusted FDR; primary DE set at padj < 0.05, and additionally list genes with raw p < 0.05 but padj >= 0.05 for reference.",
+          "Shrink log2FC with apeglm fitted to the edgeR GLM, and produce the full-gene ranked list (ordered by shrunk log2FC) for downstream GSEA.",
+          "Detect the row ID space of counts.csv and keep native IDs in the DE table; also provide an HGNC symbol mapping for downstream use.",
+          "State explicitly in the results that the length-correction status of the matrix is unknown (RSEM length files not delivered), so a gene-length bias cannot be ruled out."
+        ],
+        "description": "Primary deliverable: treated vs control DE table on RSEM expected counts (edgeR NB-GLM with QLF, TMM normalization, apeglm LFC shrinkage), per-sample QC documenting sample_01's ~4x library-size deficit, and a sensitivity re-run excluding sample_01 with DE-set overlap quantified.",
+        "acceptance_criteria": [
+          "A DE table with one row per gene (all 12,000 input genes) containing log2FC, raw P, padj (BH), shrunk log2FC, and a count/expression summary, produced for both the all-12 analysis and the 11-sample analysis without sample_01.",
+          "DE gene sets at padj < 0.05 for both analyses, plus the Jaccard overlap of the two DE sets and an explicit list of genes gained or lost (with fold-change direction) when sample_01 is excluded.",
+          "Per-sample QC: raw library sizes, TMM size factors, and an explicit statement of sample_01's deviation from the median library size.",
+          "PCA plot (first 2 PCs) colored by condition and an MA plot of the treated vs control contrast, as image files.",
+          "sample_01's condition group (treated or control) reported from metadata.csv."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway context: GSEA + GO on DE genes (human)",
+        "agent": "enrichment-agent",
+        "track": "de-analysis",
+        "status": "pending",
+        "caveats": [
+          "If the padj < 0.05 DE set is small or empty, GO over-representation is underpowered — report the GSEA results as the primary functional readout and say so explicitly.",
+          "WikiPathways GMT lines carry '%'-delimited descriptors; split on '%' so output carries readable set names.",
+          "This step is supplementary: a failed or empty enrichment result does not invalidate the T1S1 DE conclusions."
+        ],
+        "context": "Consumes T1S1 outputs: the full-gene ranked list ordered by apeglm-shrunk log2FC, and the padj < 0.05 DE sets (up-only, down-only). Provisioned human references: a WikiPathways human GMT (HGNC symbols, descriptor split on '%') in the reference store, and the local org.Hs.eg.db / GO.db annotation packages for symbol mapping and GO enrichment. The dataset is Homo sapiens; the mouse and rat WikiPathways collections must not be used.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "dplyr"
+        ],
+        "question": "Which pathways and biological processes are enriched among genes up- or down-regulated by treatment?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Run GSEA with fgsea on the ranked list (ordered by shrunk log2FC, directional) against the human WikiPathways GMT, with BH FDR within the assay.",
+          "Run GO over-representation (clusterProfiler, offline against local org.Hs.eg.db + GO.db) separately on the up-only, down-only, and combined padj < 0.05 DE sets.",
+          "First map T1S1's gene ID space to HGNC symbols via org.Hs.eg.db (fall back to the provisioned UniProt human ID-mapping table if needed); report the number and fraction of genes unmapped and continue with the mapped subset.",
+          "Use only the human reference data; do not use the mouse or rat pathway collections."
+        ],
+        "description": "Supplementary functional context: fgsea GSEA against the provisioned human WikiPathways GMT on the shrunk-log2FC ranked list, and GO over-representation (up/down/combined) on the DE gene sets, all on HGNC-mapped human symbols.",
+        "acceptance_criteria": [
+          "GSEA results table (WikiPathways sets, human): top up- and down-enriched sets with NES, nominal P, and FDR; the number of sets reaching FDR < 0.25 is reported.",
+          "GO enrichment tables (BP, CC, MF) for the up, down, and combined DE sets with BH-adjusted P values.",
+          "A statement of gene-ID mapping success: how many genes mapped to HGNC symbols and how many were unmapped."
+        ]
+      }
+    ],
+    "title": "Colon treated vs control DE on RSEM expected counts",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T09:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Two-step analysis of the delivered human colon bulk RNA-seq dataset: RSEM gene-level expected counts in counts.csv (12,000 genes x 12 samples, fractional values) plus a 12-row condition table in metadata.csv (6 treated vs 6 control, unpaired, single batch), with sample_01 ~4x below-median library size. Because the counts are fractional, integer-requiring models (DESeq2, pydeseq2) are ruled out; edgeR's negative-binomial GLM with quasi-likelihood F-testing models non-integer counts natively, and its TMM library-size normalization keeps the shallow sample_01 estimable rather than forcing an ad hoc exclusion. T1S1 therefore runs per-sample QC (library sizes, TMM factors, PCA, MA), a one-way GLM (treated vs control), BH FDR, apeglm LFC shrinkage for a ranked list, and a sensitivity re-run with sample_01 removed, reporting how the DE set changes. T1S2 then adds functional context — fgsea GSEA against the provisioned human WikiPathways GMT and GO over-representation via local org.Hs.eg.db/GO.db on the significant DE sets — after mapping the matrix's row ID space to HGNC symbols. The primary deliverable is the DE table with the shallow-sample sensitivity comparison; enrichment is supplementary."
+  },
+  "usage": {
+    "inputTokens": 32758,
+    "outputTokens": 8997,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 6836
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_8ab00ea42ab64267939d8a8a",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Colon treated vs control DE on RSEM expected counts\", \"analytical_narrative\": \"Two-step analysis of the delivered human colon bulk RNA-seq dataset: RSEM gene-level expected counts in counts.csv (12,000 genes x 12 samples, fractional values) plus a 12-row condition table in metadata.csv (6 treated vs 6 control, unpaired, single batch), with sample_01 ~4x below-median library size. Because the counts are fractional, integer-requiring models (DESeq2, pydeseq2) are ruled out; edgeR's negative-binomial GLM with quasi-likelihood F-testing models non-integer counts natively, and its TMM library-size normalization keeps the shallow sample_01 estimable rather than forcing an ad hoc exclusion. T1S1 therefore runs per-sample QC (library sizes, TMM factors, PCA, MA), a one-way GLM (treated vs control), BH FDR, apeglm LFC shrinkage for a ranked list, and a sensitivity re-run with sample_01 removed, reporting how the DE set changes. T1S2 then adds functional context — fgsea GSEA against the provisioned human WikiPathways GMT and GO over-representation via local org.Hs.eg.db/GO.db on the significant DE sets — after mapping the matrix's row ID space to HGNC symbols. The primary deliverable is the DE table with the shallow-sample sensitivity comparison; enrichment is supplementary.\", \"created_at\": \"2026-07-10T09:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Treated vs control DE (edgeR QLF) + shallow-sample sensitivity\", \"track\": \"de-analysis\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 6 treated and 6 control colon samples, and how robust are those results to the shallow sample_01 (library size ~4x below the median)?\", \"context\": \"Inputs: /eval-four-models-v2-without-rsem-counts-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns; RSEM gene-level expected counts, i.e. fractional) and /eval-four-models-v2-without-rsem-counts-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample id + condition; per the design profile 6 treated vs 6 control, unpaired, single batch). Known caveat: the per-sample RSEM genes.results files with effective lengths were not delivered, so the matrix's length-correction status is unknown. The row ID space of counts.csv (symbols vs Entrez vs Ensembl) is not documented and must be detected from the file.\", \"constraints\": [\"Model the fractional RSEM expected counts with edgeR's negative-binomial GLM (glmQLFit + glmQLFTest). Do NOT round counts and do NOT use DESeq2/pydeseq2, which require integers.\", \"Normalize with TMM (calcNormFactors). The design is one-way, unpaired, single batch: fit ~ 0 + condition with no batch or other covariates, contrasting treated vs control.\", \"Use the actual condition values from metadata.csv (6 treated vs 6 control per the design profile).\", \"Primary analysis uses all 12 samples. Apply a low-expression filter (keep genes with CPM above a small threshold in at least 6 of the 12 samples) identically in both analyses and report how many genes were removed.\", \"Sensitivity analysis: re-run the identical pipeline with sample_01 removed; report sample_01's condition group from metadata.csv and the resulting group sizes.\", \"Multiple testing: BH-adjusted FDR; primary DE set at padj < 0.05, and additionally list genes with raw p < 0.05 but padj >= 0.05 for reference.\", \"Shrink log2FC with apeglm fitted to the edgeR GLM, and produce the full-gene ranked list (ordered by shrunk log2FC) for downstream GSEA.\", \"Detect the row ID space of counts.csv and keep native IDs in the DE table; also provide an HGNC symbol mapping for downstream use.\", \"State explicitly in the results that the length-correction status of the matrix is unknown (RSEM length files not delivered), so a gene-length bias cannot be ruled out.\"], \"acceptance_criteria\": [\"A DE table with one row per gene (all 12,000 input genes) containing log2FC, raw P, padj (BH), shrunk log2FC, and a count/expression summary, produced for both the all-12 analysis and the 11-sample analysis without sample_01.\", \"DE gene sets at padj < 0.05 for both analyses, plus the Jaccard overlap of the two DE sets and an explicit list of genes gained or lost (with fold-change direction) when sample_01 is excluded.\", \"Per-sample QC: raw library sizes, TMM size factors, and an explicit statement of sample_01's deviation from the median library size.\", \"PCA plot (first 2 PCs) colored by condition and an MA plot of the treated vs control contrast, as image files.\", \"sample_01's condition group (treated or control) reported from metadata.csv.\"], \"caveats\": [\"Do NOT drop sample_01 from the primary analysis: the shallow library inflates its per-gene noise, but TMM normalization keeps it estimable; quantify its influence via the sensitivity re-run instead.\", \"With 6 vs 6 samples, avoid over-filtering. If the padj < 0.05 set is empty, report the top genes by padj and state that no gene passed the FDR threshold — do not silently relax it.\", \"The 12,000 rows are likely a pre-filtered gene set; do not assume whole-transcriptome completeness when interpreting the number of DE genes.\", \"If any helper errors on fractional counts, fix the code path (edgeR accepts non-integers natively); never fall back to rounding.\"], \"packages\": [\"edgeR\", \"apeglm\", \"ggplot2\", \"dplyr\", \"Matrix\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Primary deliverable: treated vs control DE table on RSEM expected counts (edgeR NB-GLM with QLF, TMM normalization, apeglm LFC shrinkage), per-sample QC documenting sample_01's ~4x library-size deficit, and a sensitivity re-run excluding sample_01 with DE-set overlap quantified.\"}, {\"id\": \"T1S2\", \"name\": \"Pathway context: GSEA + GO on DE genes (human)\", \"track\": \"de-analysis\", \"step_type\": \"analysis\", \"question\": \"Which pathways and biological processes are enriched among genes up- or down-regulated by treatment?\", \"context\": \"Consumes T1S1 outputs: the full-gene ranked list ordered by apeglm-shrunk log2FC, and the padj < 0.05 DE sets (up-only, down-only). Provisioned human references: a WikiPathways human GMT (HGNC symbols, descriptor split on '%') in the reference store, and the local org.Hs.eg.db / GO.db annotation packages for symbol mapping and GO enrichment. The dataset is Homo sapiens; the mouse and rat WikiPathways collections must not be used.\", \"constraints\": [\"Run GSEA with fgsea on the ranked list (ordered by shrunk log2FC, directional) against the human WikiPathways GMT, with BH FDR within the assay.\", \"Run GO over-representation (clusterProfiler, offline against local org.Hs.eg.db + GO.db) separately on the up-only, down-only, and combined padj < 0.05 DE sets.\", \"First map T1S1's gene ID space to HGNC symbols via org.Hs.eg.db (fall back to the provisioned UniProt human ID-mapping table if needed); report the number and fraction of genes unmapped and continue with the mapped subset.\", \"Use only the human reference data; do not use the mouse or rat pathway collections.\"], \"acceptance_criteria\": [\"GSEA results table (WikiPathways sets, human): top up- and down-enriched sets with NES, nominal P, and FDR; the number of sets reaching FDR < 0.25 is reported.\", \"GO enrichment tables (BP, CC, MF) for the up, down, and combined DE sets with BH-adjusted P values.\", \"A statement of gene-ID mapping success: how many genes mapped to HGNC symbols and how many were unmapped.\"], \"caveats\": [\"If the padj < 0.05 DE set is small or empty, GO over-representation is underpowered — report the GSEA results as the primary functional readout and say so explicitly.\", \"WikiPathways GMT lines carry '%'-delimited descriptors; split on '%' so output carries readable set names.\", \"This step is supplementary: a failed or empty enrichment result does not invalidate the T1S1 DE conclusions.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"GO.db\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"description\": \"Supplementary functional context: fgsea GSEA against the provisioned human WikiPathways GMT on the shrunk-log2FC ranked list, and GO over-representation (up/down/combined) on the DE gene sets, all on HGNC-mapped human symbols.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 83
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

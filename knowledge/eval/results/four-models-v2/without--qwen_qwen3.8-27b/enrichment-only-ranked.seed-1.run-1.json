@@ -1,0 +1,185 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:32:46.225Z",
+  "elapsedMs": 226649,
+  "outcome": "plan_submitted",
+  "planId": "pln-4aa7ee75",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE table QC and GSEA ranked list",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "gsea",
+        "status": "pending",
+        "caveats": [
+          "The profile does not record whether the salmon counts were length-corrected; if base_mean values in de_results.csv look scaled rather than count-like, note it in the QC note as an input caveat — do not re-derive DE here.",
+          "Condition labels in metadata.csv may read 'lesional'/'control' rather than 'treated'/'control'; resolve by reading the actual values.",
+          "sample_01's low library size is handled in T2S1, not here — do not drop it in this step."
+        ],
+        "context": "Input files: data/inputs/counts/counts.csv (salmon gene-level counts as delivered; the profile does not say whether the salmon length correction was applied — DE was already run on them), data/inputs/metadata/metadata.csv, data/inputs/results/de_results.csv (DESeq2 results, treated vs control contrast). Design: 6 treated vs 6 control, unpaired, single batch. Known caveat: sample_01 library size ~4x below the median — do not fix anything here, just carry the caveat forward.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "org.Hs.eg.db"
+        ],
+        "question": "Is the delivered DESeq2 results table (data/inputs/results/de_results.csv, 12000 x 8) complete (log2FC, lfcSE or stat, pvalue, padj) and directionally consistent with the 6 treated vs 6 control design in data/inputs/metadata.csv? What gene identifier space does it use, and what signed ranking statistic should feed pre-rank GSEA?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not re-run differential expression in this step; consume the delivered de_results.csv as-is.",
+          "Inspect the actual column names of de_results.csv before using any of them — the profile only shows gene, base_mean, log2_fold_change and a truncated 4th field.",
+          "The ranking statistic must be signed and finite for every retained gene; sort descending; report how many genes were dropped and why.",
+          "If gene IDs are not HGNC symbols, map to symbols with org.Hs.eg.db and report the unmapped count; do not silently drop unmapped genes from the ranking.",
+          "Report the contrast direction explicitly: which metadata condition corresponds to the numerator (positive log2FC) in de_results.csv."
+        ],
+        "description": "Load de_results.csv and metadata.csv (12 rows: sample, condition). Verify the actual column names of all 8 columns (the profile truncated them) before use. Confirm the two condition levels in metadata.csv and their sample counts (expect 6 vs 6); note that the profile calls the conditions 'treated'/'control' while the tissue context is psoriasis lesional vs control, so resolve the labels by reading the file, not by assumption, and state which condition is the numerator of the contrast. Determine the gene ID space from the 'gene' column (HGNC symbol vs Ensembl vs other) and cross-check that counts.csv rows (12000 x 13) use the same space. If IDs are not HGNC symbols, map to HGNC symbols via org.Hs.eg.db and report the number of unmapped IDs. Build the pre-rank GSEA list: use the 'stat' column if present, otherwise log2FC/lfcSE, signed, sorted descending; drop genes with NA or infinite statistic (e.g. zero variance) and report the dropped count. Also produce the ORA gene lists: padj<0.05 & |log2FC|>1, split into up- and down-regulated. Save the ranked list, ORA lists, and a short QC note as CSVs.",
+        "acceptance_criteria": [
+          "A ranked list CSV of >= 11,900 genes with a finite signed statistic, sorted descending, and the dropped-gene count reported.",
+          "The gene ID space is stated, and if a symbol mapping was applied the mapped/unmapped counts are reported.",
+          "The condition levels, per-level counts, and the contrast direction (numerator condition) are stated from metadata.csv.",
+          "Two ORA gene lists (up, down) for padj<0.05 & |log2FC|>1 with their counts.",
+          "A QC note flagging any anomaly (missing padj column, NAs in log2FC, ID mismatch between counts and DE table) instead of failing silently."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Hallmark GSEA and ORA",
+        "agent": "enrichment-agent",
+        "track": "gsea",
+        "status": "pending",
+        "caveats": [
+          "Leading-edge genes, not the full set, are what the test identifies as driving enrichment — present them for significant sets.",
+          "Enrichment on 50 broad hallmark states is a coarse readout; correlated sets (e.g. IL6/IL17/JAK-STAT axes) will both report significant, which is expected, not duplication of effort."
+        ],
+        "context": "Primary data objects are the T1S1 outputs (ranked list CSV, ORA gene lists) — generic tabular inputs. The hallmark GMT is provisioned for this environment in the human Hallmark collection (HGNC symbols); T1S1 output is already symbol space by construction. Background for ORA is the full 12000-gene DE table, not only expressed genes.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which of the 50 MSigDB human hallmark pathways are significantly enriched at the top of the treated-vs-control ranked gene list (pre-rank GSEA, fgsea), and which are over-represented among the thresholded DE genes (Fisher ORA)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the provisioned human hallmark GMT only — not the mouse file, not GO, not oncogenic signatures.",
+          "fgsea must run on the exact T1S1 ranked list (same statistic, same ordering); do not re-rank.",
+          "Report NES direction explicitly so up- vs down-regulated pathways are unambiguous.",
+          "Report the symbol-overlap QC number; if < 90% of hallmark members are present in the ranked list, state the mismatch prominently rather than reporting empty results silently."
+        ],
+        "description": "Load the ranked gene list and ORA gene lists from T1S1. Load the provisioned MSigDB human hallmark GMT (50 HALLMARK_* sets, HGNC symbols, v2026.1) and confirm it is the Homo sapiens file before use. Run fgsea pre-rank GSEA with the T1S1 statistic (permutations >= 1000; minSize/maxSize 15/500) and report per set: NES, NES direction, pvalue, BH-adjusted padj, core-enrichment size, and leading-edge gene count. Run Fisher's exact over-representation analysis for the up and down ORA lists separately, with background = all 12000 genes in the DE table. QC: report the fraction of hallmark-member symbols that are present in the ranked list. Output the full 50-set table sorted by padj (significant up and down separated), plus leading-edge genes for significant sets.",
+        "acceptance_criteria": [
+          "A complete 50-row hallmark table with NES, NES_direction, pvalue, padj, core_enrichment_size, and leading-edge count, sorted by padj.",
+          "Fisher ORA results (odds ratio, pvalue, BH padj) for the up and down DE gene lists against the 12,000-gene background.",
+          "Counts of significant (padj<0.05) pathways in each direction, with the top significant sets named.",
+          "The symbol-overlap QC fraction between hallmark members and the ranked list is reported."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Sensitivity: DE + hallmark GSEA without sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "robustness",
+        "status": "pending",
+        "caveats": [
+          "If sample_01 belongs to a condition group, that group drops to 5 samples — DESeq2 handles 5v6 fine, but say so in the output.",
+          "LFC shrinkage (apeglm) is optional; if applied, state it, and apply it to the delivered-style table in T1S1 terms only for the comparison if it materially changes rankings — otherwise compare unshrunk to unshrunk.",
+          "A low concordance could mean the delivered table is sample_01-driven; report that plainly rather than averaging the two runs."
+        ],
+        "context": "This step exists because of the profile's explicit caveat: sample_01's library size is ~4x below the median, and in a 6v6 unpaired design one under-sized library can materially shift fold-change estimates and p-values. The goal is a quantitative robustness statement for the T1S2 pathway list, not a new analysis question. The salmon length-correction caveat applies equally to the delivered table and this re-run, so it is not a confound between the two.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Do the hallmark pathway findings change when sample_01 — library size ~4x below the median — is excluded? How concordant are the 11-sample DESeq2 + fgsea results with the delivered 12-sample results?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Keep the contrast direction identical to the delivered table; if the re-run's sign convention differs, flip signs before any comparison.",
+          "Use exactly the T1S2 fgsea settings (statistic construction, permutations, minSize/maxSize, GMT file) so the comparison is apples-to-apples.",
+          "Do not modify or overwrite the delivered de_results.csv; write re-run outputs to new files.",
+          "State the resulting group sizes explicitly (which condition loses a sample)."
+        ],
+        "description": "Read metadata.csv to determine sample_01's condition. Re-run DESeq2 on counts.csv with sample_01 removed (group sizes become 5 vs 6, state which group loses the sample), using the same treated-vs-control contrast as the delivered table. Apply the same ranking rule as T1S1 (stat, or lfc/lfcSE, signed, descending) and re-run the identical fgsea configuration from T1S2 on the same 50-set human hallmark GMT. Compare the two GSEA results: Spearman rank correlation of NES across all 50 hallmark sets, overlap of significant sets (padj<0.05) between the two runs, overlap of top-10 |NES| sets, and any direction flips among the top-10. Output the 11-sample DE table, the full 50-row NES table for the re-run, and a concordance summary block.",
+        "acceptance_criteria": [
+          "An 11-sample DESeq2 results table (gene, log2FC, lfcSE, pvalue, padj) with the contrast direction stated.",
+          "A full 50-row hallmark NES table from the re-run, same columns as T1S2.",
+          "Concordance metrics: Spearman rho of NES across the 50 sets, count of significant sets shared/unique between runs, top-10 |NES| overlap, and number of direction flips in the top-10.",
+          "A one-paragraph robustness verdict: robust, materially changed, or direction-dependent findings."
+        ]
+      }
+    ],
+    "title": "Hallmark pathway GSEA in psoriasis treated vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-24T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which hallmark pathways change in human skin between 6 treated and 6 control samples, and the DESeq2 results table (de_results.csv, 12000 genes x 8 columns) is already delivered. The plan therefore starts from the results table rather than re-deriving DE: T1S1 validates the table (columns, contrast direction against metadata.csv, gene ID space) and builds the pre-rank GSEA statistic plus a thresholded ORA gene list. T1S2 runs fgsea pre-rank GSEA against the 50 MSigDB human hallmark sets (HGNC symbols, provisioned at /mnt/refs) plus Fisher over-representation analysis as a complementary cut, giving the primary answer. T2S1 addresses the flagged caveat — sample_01 has a library size ~4x below the median, which in a 6v6 unpaired design can move fold changes and p-values — by re-running DESeq2 on the 11 remaining samples, re-running the identical GSEA, and quantifying concordance, so the pathway list is reported as robust or sample-dependent."
+  },
+  "usage": {
+    "inputTokens": 74689,
+    "outputTokens": 11889,
+    "cacheReadInputTokens": 32768,
+    "reasoningTokens": 8980
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_d01ecb4aaae64ddcad0fbf66",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 73
+    },
+    {
+      "toolUseId": "call_b7a0be06cb3e4700969ad95b",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Hallmark pathway GSEA in psoriasis treated vs control\", \"analytical_narrative\": \"The question asks which hallmark pathways change in human skin between 6 treated and 6 control samples, and the DESeq2 results table (de_results.csv, 12000 genes x 8 columns) is already delivered. The plan therefore starts from the results table rather than re-deriving DE: T1S1 validates the table (columns, contrast direction against metadata.csv, gene ID space) and builds the pre-rank GSEA statistic plus a thresholded ORA gene list. T1S2 runs fgsea pre-rank GSEA against the 50 MSigDB human hallmark sets (HGNC symbols, provisioned at /mnt/refs) plus Fisher over-representation analysis as a complementary cut, giving the primary answer. T2S1 addresses the flagged caveat — sample_01 has a library size ~4x below the median, which in a 6v6 unpaired design can move fold changes and p-values — by re-running DESeq2 on the 11 remaining samples, re-running the identical GSEA, and quantifying concordance, so the pathway list is reported as robust or sample-dependent.\", \"created_at\": \"2026-07-24T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DE table QC and GSEA ranked list\", \"track\": \"gsea\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Is the delivered DESeq2 results table (data/inputs/results/de_results.csv, 12000 x 8) complete (log2FC, lfcSE or stat, pvalue, padj) and directionally consistent with the 6 treated vs 6 control design in data/inputs/metadata.csv? What gene identifier space does it use, and what signed ranking statistic should feed pre-rank GSEA?\", \"description\": \"Load de_results.csv and metadata.csv (12 rows: sample, condition). Verify the actual column names of all 8 columns (the profile truncated them) before use. Confirm the two condition levels in metadata.csv and their sample counts (expect 6 vs 6); note that the profile calls the conditions 'treated'/'control' while the tissue context is psoriasis lesional vs control, so resolve the labels by reading the file, not by assumption, and state which condition is the numerator of the contrast. Determine the gene ID space from the 'gene' column (HGNC symbol vs Ensembl vs other) and cross-check that counts.csv rows (12000 x 13) use the same space. If IDs are not HGNC symbols, map to HGNC symbols via org.Hs.eg.db and report the number of unmapped IDs. Build the pre-rank GSEA list: use the 'stat' column if present, otherwise log2FC/lfcSE, signed, sorted descending; drop genes with NA or infinite statistic (e.g. zero variance) and report the dropped count. Also produce the ORA gene lists: padj<0.05 & |log2FC|>1, split into up- and down-regulated. Save the ranked list, ORA lists, and a short QC note as CSVs.\", \"context\": \"Input files: data/inputs/counts/counts.csv (salmon gene-level counts as delivered; the profile does not say whether the salmon length correction was applied — DE was already run on them), data/inputs/metadata/metadata.csv, data/inputs/results/de_results.csv (DESeq2 results, treated vs control contrast). Design: 6 treated vs 6 control, unpaired, single batch. Known caveat: sample_01 library size ~4x below the median — do not fix anything here, just carry the caveat forward.\", \"constraints\": [\"Do not re-run differential expression in this step; consume the delivered de_results.csv as-is.\", \"Inspect the actual column names of de_results.csv before using any of them — the profile only shows gene, base_mean, log2_fold_change and a truncated 4th field.\", \"The ranking statistic must be signed and finite for every retained gene; sort descending; report how many genes were dropped and why.\", \"If gene IDs are not HGNC symbols, map to symbols with org.Hs.eg.db and report the unmapped count; do not silently drop unmapped genes from the ranking.\", \"Report the contrast direction explicitly: which metadata condition corresponds to the numerator (positive log2FC) in de_results.csv.\"], \"acceptance_criteria\": [\"A ranked list CSV of >= 11,900 genes with a finite signed statistic, sorted descending, and the dropped-gene count reported.\", \"The gene ID space is stated, and if a symbol mapping was applied the mapped/unmapped counts are reported.\", \"The condition levels, per-level counts, and the contrast direction (numerator condition) are stated from metadata.csv.\", \"Two ORA gene lists (up, down) for padj<0.05 & |log2FC|>1 with their counts.\", \"A QC note flagging any anomaly (missing padj column, NAs in log2FC, ID mismatch between counts and DE table) instead of failing silently.\"], \"packages\": [\"data.table\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"caveats\": [\"The profile does not record whether the salmon counts were length-corrected; if base_mean values in de_results.csv look scaled rather than count-like, note it in the QC note as an input caveat — do not re-derive DE here.\", \"Condition labels in metadata.csv may read 'lesional'/'control' rather than 'treated'/'control'; resolve by reading the actual values.\", \"sample_01's low library size is handled in T2S1, not here — do not drop it in this step.\"]}, {\"id\": \"T1S2\", \"name\": \"Hallmark GSEA and ORA\", \"track\": \"gsea\", \"step_type\": \"analysis\", \"agent\": \"enrichment-agent\", \"question\": \"Which of the 50 MSigDB human hallmark pathways are significantly enriched at the top of the treated-vs-control ranked gene list (pre-rank GSEA, fgsea), and which are over-represented among the thresholded DE genes (Fisher ORA)?\", \"description\": \"Load the ranked gene list and ORA gene lists from T1S1. Load the provisioned MSigDB human hallmark GMT (50 HALLMARK_* sets, HGNC symbols, v2026.1) and confirm it is the Homo sapiens file before use. Run fgsea pre-rank GSEA with the T1S1 statistic (permutations >= 1000; minSize/maxSize 15/500) and report per set: NES, NES direction, pvalue, BH-adjusted padj, core-enrichment size, and leading-edge gene count. Run Fisher's exact over-representation analysis for the up and down ORA lists separately, with background = all 12000 genes in the DE table. QC: report the fraction of hallmark-member symbols that are present in the ranked list. Output the full 50-set table sorted by padj (significant up and down separated), plus leading-edge genes for significant sets.\", \"context\": \"Primary data objects are the T1S1 outputs (ranked list CSV, ORA gene lists) — generic tabular inputs. The hallmark GMT is provisioned for this environment in the human Hallmark collection (HGNC symbols); T1S1 output is already symbol space by construction. Background for ORA is the full 12000-gene DE table, not only expressed genes.\", \"constraints\": [\"Use the provisioned human hallmark GMT only — not the mouse file, not GO, not oncogenic signatures.\", \"fgsea must run on the exact T1S1 ranked list (same statistic, same ordering); do not re-rank.\", \"Report NES direction explicitly so up- vs down-regulated pathways are unambiguous.\", \"Report the symbol-overlap QC number; if < 90% of hallmark members are present in the ranked list, state the mismatch prominently rather than reporting empty results silently.\"], \"acceptance_criteria\": [\"A complete 50-row hallmark table with NES, NES_direction, pvalue, padj, core_enrichment_size, and leading-edge count, sorted by padj.\", \"Fisher ORA results (odds ratio, pvalue, BH padj) for the up and down DE gene lists against the 12,000-gene background.\", \"Counts of significant (padj<0.05) pathways in each direction, with the top significant sets named.\", \"The symbol-overlap QC fraction between hallmark members and the ranked list is reported.\"], \"packages\": [\"fgsea\", \"data.table\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"caveats\": [\"Leading-edge genes, not the full set, are what the test identifies as driving enrichment — present them for significant sets.\", \"Enrichment on 50 broad hallmark states is a coarse readout; correlated sets (e.g. IL6/IL17/JAK-STAT axes) will both report significant, which is expected, not duplication of effort.\"]}, {\"id\": \"T2S1\", \"name\": \"Sensitivity: DE + hallmark GSEA without sample_01\", \"track\": \"robustness\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Do the hallmark pathway findings change when sample_01 — library size ~4x below the median — is excluded? How concordant are the 11-sample DESeq2 + fgsea results with the delivered 12-sample results?\", \"description\": \"Read metadata.csv to determine sample_01's condition. Re-run DESeq2 on counts.csv with sample_01 removed (group sizes become 5 vs 6, state which group loses the sample), using the same treated-vs-control contrast as the delivered table. Apply the same ranking rule as T1S1 (stat, or lfc/lfcSE, signed, descending) and re-run the identical fgsea configuration from T1S2 on the same 50-set human hallmark GMT. Compare the two GSEA results: Spearman rank correlation of NES across all 50 hallmark sets, overlap of significant sets (padj<0.05) between the two runs, overlap of top-10 |NES| sets, and any direction flips among the top-10. Output the 11-sample DE table, the full 50-row NES table for the re-run, and a concordance summary block.\", \"context\": \"This step exists because of the profile's explicit caveat: sample_01's library size is ~4x below the median, and in a 6v6 unpaired design one under-sized library can materially shift fold-change estimates and p-values. The goal is a quantitative robustness statement for the T1S2 pathway list, not a new analysis question. The salmon length-correction caveat applies equally to the delivered table and this re-run, so it is not a confound between the two.\", \"constraints\": [\"Keep the contrast direction identical to the delivered table; if the re-run's sign convention differs, flip signs before any comparison.\", \"Use exactly the T1S2 fgsea settings (statistic construction, permutations, minSize/maxSize, GMT file) so the comparison is apples-to-apples.\", \"Do not modify or overwrite the delivered de_results.csv; write re-run outputs to new files.\", \"State the resulting group sizes explicitly (which condition loses a sample).\"], \"acceptance_criteria\": [\"An 11-sample DESeq2 results table (gene, log2FC, lfcSE, pvalue, padj) with the contrast direction stated.\", \"A full 50-row hallmark NES table from the re-run, same columns as T1S2.\", \"Concordance metrics: Spearman rho of NES across the 50 sets, count of significant sets shared/unique between runs, top-10 |NES| overlap, and number of direction flips in the top-10.\", \"A one-paragraph robustness verdict: robust, materially changed, or direction-dependent findings.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"fgsea\", \"data.table\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"caveats\": [\"If sample_01 belongs to a condition group, that group drops to 5 samples — DESeq2 handles 5v6 fine, but say so in the output.\", \"LFC shrinkage (apeglm) is optional; if applied, state it, and apply it to the delivered-style table in T1S1 terms only for the comparison if it materially changes rankings — otherwise compare unshrunk to unshrunk.\", \"A low concordance could mean the delivered table is sample_01-driven; report that plainly rather than averaging the two runs.\"]}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 61
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

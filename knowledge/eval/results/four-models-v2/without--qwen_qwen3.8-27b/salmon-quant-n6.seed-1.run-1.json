@@ -1,0 +1,176 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "salmon-quant-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:06:01.449Z",
+  "elapsedMs": 138883,
+  "outcome": "plan_submitted",
+  "planId": "pln-8d112efc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "tximport gene-level matrix + per-sample QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "ad-skin-de",
+        "status": "pending",
+        "caveats": [
+          "quant.sf NumReads are non-integer (Salmon estimated counts) — expected; lengthScaledTPM is the correct import mode so the matrix is suitable for count-based modeling. Do not treat non-integer values as corrupted input.",
+          "If any sample's effective library size is an extreme outlier, report it and flag it for T1S2 rather than excluding it unilaterally."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/quant contains one directory per sample, each with quant.sf (30147 x 5 TSV: Name, Length, EffectiveLength, NumReads, TPM); the same folder holds tx2gene.csv (30147 rows, transcript -> gene). Sample table: /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: sample, condition). Organism: Homo sapiens. Design: 6 treated vs 6 control, unpaired, single batch.",
+        "maxSteps": 200,
+        "packages": [
+          "tximport",
+          "SummarizedExperiment"
+        ],
+        "question": "Can a valid gene-level abundance matrix be built from the 12 per-sample Salmon quant.sf files, and do all 12 samples (6 treated AD lesional vs 6 control) pass basic QC?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Import with R tximport: type='salmon', tximode='raw', countsFromAbundance='lengthScaledTPM', using tx2gene.csv for transcript-to-gene aggregation; do not use external gene-length tables.",
+          "Match quant.sf directory names to the sample column of metadata.csv exactly; fail loudly and report which samples mismatched if any of the 12 do not join.",
+          "Use the actual condition strings present in metadata.csv (do not assume 'treated'/'control' labels); verify and report that the two groups have exactly 6 samples each.",
+          "Map transcripts to genes only via the delivered tx2gene.csv; report how many of the 30147 transcripts were aggregated and the final gene count (expect ~20,000+ human genes).",
+          "QC per sample: total length-scaled effective counts, number of detected genes, and a 12x12 sample-distance plot (e.g. distM on log2-normalized matrix or DESeq2 rowVars-based distance); save one QC figure.",
+          "Save the gene x 12 lengthScaledTPM matrix as a SummarizedExperiment (assay + metadata, .rds) for reuse; later steps must not re-import the quant.sf files."
+        ],
+        "description": "Aggregate transcript-level Salmon output to a gene-level matrix with tximport, join metadata, run QC, and persist a SummarizedExperiment for downstream steps.",
+        "acceptance_criteria": [
+          "Gene-level matrix of all 12 samples with ~20,000+ human genes built from 30,147 transcripts each.",
+          "Condition balance confirmed 6 treated / 6 control from metadata.csv, with the actual condition strings reported.",
+          "Per-sample effective library sizes and distances reported; QC figure saved; no sample silently dropped."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 DE: treated vs control with apeglm",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "ad-skin-de",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 will warn that non-integer lengthScaledTPM values are rounded — expected with this import mode; report the warning, do not treat it as failure.",
+          "With n=6 per group, if the padj < 0.05 set is tiny or empty, report that honestly. An LFC-thresholded secondary list may be presented only if explicitly labeled as such — do not silently relax the FDR threshold.",
+          "Do not apply LFC shrinkage before the Wald test; shrink results after the test."
+        ],
+        "context": "Uses the gene x 12 SummarizedExperiment and condition labels produced by T1S1. Design is a simple two-group unpaired contrast in a single batch, so no batch or pairing covariate belongs in the model.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between the 6 treated (AD lesional) and 6 control skin samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter genes with no meaningful expression in either group (e.g. non-zero counts in at least 6 of 12 samples); report genes kept and removed.",
+          "Model: DESeq2 with design ~condition and the treated-vs-control contrast (treated = AD lesional level, as identified from metadata.csv in T1S1); do not add other covariates.",
+          "Shrink log2 fold changes with apeglm (lfcShrink type='apeglm'); keep both shrunken and unshrunken columns in the output.",
+          "Significance: BH-adjusted padj < 0.05 as the primary DE set; also list genes at padj < 0.10 as context, clearly labeled.",
+          "Deliverables: full DE table (gene, baseMean, log2FC, shrunken log2FC, pvalue, padj) for ALL genes; volcano plot; MA plot; top up- and down-regulated tables."
+        ],
+        "description": "Differential expression of treated vs control with DESeq2 (Wald test) and apeglm-shrunk log2 fold changes; outputs the full results table, the FDR-significant gene set, and volcano/MA plots.",
+        "acceptance_criteria": [
+          "Full DE table with padj for all genes, with shrunken and unshrunken log2FC columns.",
+          "Number of DE genes at padj < 0.05 reported, with top up- and down-regulated hits named.",
+          "Volcano and MA plots saved."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway and GO enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "ad-skin-de",
+        "status": "pending",
+        "caveats": [
+          "With 6 samples per group the significant DE set can be small; ORA on very small gene sets is unreliable, so keep ranked-list GSEA as the primary interpretation and say so.",
+          "Report enrichment results as annotation of the DE signal, not as independent biological validation."
+        ],
+        "context": "Consumes the ranked gene list (signed apeglm-shrunken log2FC for all genes) and the padj < 0.05 DE set from T1S2. Human gene-set resources: a provisioned human WikiPathways GMT with HGNC symbols (wikipathways-human, 2026.07.10, under /mnt/refs) and Gene Ontology via the installed org.Hs.eg.db and GO.db annotation packages. Organism must stay Homo sapiens throughout.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "ggplot2"
+        ],
+        "question": "Which human pathways and Gene Ontology terms are enriched among genes differentially expressed in treated vs control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Ensure all gene identifiers are HGNC symbols before enrichment (tx2gene.csv gene column if it already carries symbols, otherwise org.Hs.eg.db); report the symbol-mapping success rate and drop unmapped genes.",
+          "Primary: fgsea on the full ranked list (signed shrunken log2FC) against the human WikiPathways GMT, separately for up-regulated and down-regulated directions.",
+          "Secondary: over-representation analysis of the padj < 0.05 DE set — clusterProfiler enrichGO for BP, CC, MF, plus ORA on the human WikiPathways sets; split up- and down-regulated genes.",
+          "If the human WikiPathways file is missing at run time, report it explicitly and continue with GO only; never substitute the mouse or rat WikiPathways sets for this human data.",
+          "Report the top 10 enriched sets per direction with NES/padj (GSEA) or count/padj (ORA)."
+        ],
+        "description": "Ranked-list GSEA (fgsea) and over-representation analysis (clusterProfiler) of the DE results against human WikiPathways and GO, split by up- and down-regulation.",
+        "acceptance_criteria": [
+          "Ranked-list GSEA results (WikiPathways) with NES and padj for up and down directions; top 10 per direction listed.",
+          "GO enrichment (BP at minimum) on the significant DE set, up and down separated.",
+          "Symbol mapping rate reported; all results in HGNC symbols."
+        ]
+      }
+    ],
+    "title": "AD skin lesional vs control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is NOT a count matrix: 12 per-sample Salmon quant.sf files (30,147 transcripts each) for human skin, atopic dermatitis lesional (treated) vs control, 6 per group, unpaired, single batch, plus a transcript-to-gene map (tx2gene.csv) and a 12-row sample metadata table. Step T1S1 aggregates transcripts to genes with tximport (Salmon type, lengthScaledTPM so downstream count-based modeling is valid) and runs per-sample QC (library size, distances) to confirm all 12 samples are usable and the 6-vs-6 balance holds. Step T1S2 answers the core question — which genes are differentially expressed between treated and control — with DESeq2 (Wald test, design ~condition only, no batch term) and apeglm log2FC shrinkage, reporting the BH-FDR gene list. Step T1S3 interprets that list: ranked-list fgsea plus over-representation analysis against the provisioned human WikiPathways gene sets (HGNC symbols) and GO (installed org.Hs.eg.db/GO.db), up- and down-regulated separately. No translational/outcome modeling is included because the research question is purely differential expression with no outcome data."
+  },
+  "usage": {
+    "inputTokens": 32826,
+    "outputTokens": 8644,
+    "cacheReadInputTokens": 12096,
+    "reasoningTokens": 6298
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c027bdfc44c24fe594d2863d",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"AD skin lesional vs control DE + pathways\", \"analytical_narrative\": \"The input is NOT a count matrix: 12 per-sample Salmon quant.sf files (30,147 transcripts each) for human skin, atopic dermatitis lesional (treated) vs control, 6 per group, unpaired, single batch, plus a transcript-to-gene map (tx2gene.csv) and a 12-row sample metadata table. Step T1S1 aggregates transcripts to genes with tximport (Salmon type, lengthScaledTPM so downstream count-based modeling is valid) and runs per-sample QC (library size, distances) to confirm all 12 samples are usable and the 6-vs-6 balance holds. Step T1S2 answers the core question — which genes are differentially expressed between treated and control — with DESeq2 (Wald test, design ~condition only, no batch term) and apeglm log2FC shrinkage, reporting the BH-FDR gene list. Step T1S3 interprets that list: ranked-list fgsea plus over-representation analysis against the provisioned human WikiPathways gene sets (HGNC symbols) and GO (installed org.Hs.eg.db/GO.db), up- and down-regulated separately. No translational/outcome modeling is included because the research question is purely differential expression with no outcome data.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"tximport gene-level matrix + per-sample QC\", \"track\": \"ad-skin-de\", \"step_type\": \"analysis\", \"question\": \"Can a valid gene-level abundance matrix be built from the 12 per-sample Salmon quant.sf files, and do all 12 samples (6 treated AD lesional vs 6 control) pass basic QC?\", \"context\": \"Inputs: /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/quant contains one directory per sample, each with quant.sf (30147 x 5 TSV: Name, Length, EffectiveLength, NumReads, TPM); the same folder holds tx2gene.csv (30147 rows, transcript -> gene). Sample table: /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: sample, condition). Organism: Homo sapiens. Design: 6 treated vs 6 control, unpaired, single batch.\", \"description\": \"Aggregate transcript-level Salmon output to a gene-level matrix with tximport, join metadata, run QC, and persist a SummarizedExperiment for downstream steps.\", \"constraints\": [\"Import with R tximport: type='salmon', tximode='raw', countsFromAbundance='lengthScaledTPM', using tx2gene.csv for transcript-to-gene aggregation; do not use external gene-length tables.\", \"Match quant.sf directory names to the sample column of metadata.csv exactly; fail loudly and report which samples mismatched if any of the 12 do not join.\", \"Use the actual condition strings present in metadata.csv (do not assume 'treated'/'control' labels); verify and report that the two groups have exactly 6 samples each.\", \"Map transcripts to genes only via the delivered tx2gene.csv; report how many of the 30147 transcripts were aggregated and the final gene count (expect ~20,000+ human genes).\", \"QC per sample: total length-scaled effective counts, number of detected genes, and a 12x12 sample-distance plot (e.g. distM on log2-normalized matrix or DESeq2 rowVars-based distance); save one QC figure.\", \"Save the gene x 12 lengthScaledTPM matrix as a SummarizedExperiment (assay + metadata, .rds) for reuse; later steps must not re-import the quant.sf files.\"], \"acceptance_criteria\": [\"Gene-level matrix of all 12 samples with ~20,000+ human genes built from 30,147 transcripts each.\", \"Condition balance confirmed 6 treated / 6 control from metadata.csv, with the actual condition strings reported.\", \"Per-sample effective library sizes and distances reported; QC figure saved; no sample silently dropped.\"], \"caveats\": [\"quant.sf NumReads are non-integer (Salmon estimated counts) — expected; lengthScaledTPM is the correct import mode so the matrix is suitable for count-based modeling. Do not treat non-integer values as corrupted input.\", \"If any sample's effective library size is an extreme outlier, report it and flag it for T1S2 rather than excluding it unilaterally.\"], \"packages\": [\"tximport\", \"SummarizedExperiment\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"DESeq2 DE: treated vs control with apeglm\", \"track\": \"ad-skin-de\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 6 treated (AD lesional) and 6 control skin samples?\", \"context\": \"Uses the gene x 12 SummarizedExperiment and condition labels produced by T1S1. Design is a simple two-group unpaired contrast in a single batch, so no batch or pairing covariate belongs in the model.\", \"description\": \"Differential expression of treated vs control with DESeq2 (Wald test) and apeglm-shrunk log2 fold changes; outputs the full results table, the FDR-significant gene set, and volcano/MA plots.\", \"constraints\": [\"Pre-filter genes with no meaningful expression in either group (e.g. non-zero counts in at least 6 of 12 samples); report genes kept and removed.\", \"Model: DESeq2 with design ~condition and the treated-vs-control contrast (treated = AD lesional level, as identified from metadata.csv in T1S1); do not add other covariates.\", \"Shrink log2 fold changes with apeglm (lfcShrink type='apeglm'); keep both shrunken and unshrunken columns in the output.\", \"Significance: BH-adjusted padj < 0.05 as the primary DE set; also list genes at padj < 0.10 as context, clearly labeled.\", \"Deliverables: full DE table (gene, baseMean, log2FC, shrunken log2FC, pvalue, padj) for ALL genes; volcano plot; MA plot; top up- and down-regulated tables.\"], \"acceptance_criteria\": [\"Full DE table with padj for all genes, with shrunken and unshrunken log2FC columns.\", \"Number of DE genes at padj < 0.05 reported, with top up- and down-regulated hits named.\", \"Volcano and MA plots saved.\"], \"caveats\": [\"DESeq2 will warn that non-integer lengthScaledTPM values are rounded — expected with this import mode; report the warning, do not treat it as failure.\", \"With n=6 per group, if the padj < 0.05 set is tiny or empty, report that honestly. An LFC-thresholded secondary list may be presented only if explicitly labeled as such — do not silently relax the FDR threshold.\", \"Do not apply LFC shrinkage before the Wald test; shrink results after the test.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"EnhancedVolcano\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Pathway and GO enrichment of DE genes\", \"track\": \"ad-skin-de\", \"step_type\": \"analysis\", \"question\": \"Which human pathways and Gene Ontology terms are enriched among genes differentially expressed in treated vs control?\", \"context\": \"Consumes the ranked gene list (signed apeglm-shrunken log2FC for all genes) and the padj < 0.05 DE set from T1S2. Human gene-set resources: a provisioned human WikiPathways GMT with HGNC symbols (wikipathways-human, 2026.07.10, under /mnt/refs) and Gene Ontology via the installed org.Hs.eg.db and GO.db annotation packages. Organism must stay Homo sapiens throughout.\", \"description\": \"Ranked-list GSEA (fgsea) and over-representation analysis (clusterProfiler) of the DE results against human WikiPathways and GO, split by up- and down-regulation.\", \"constraints\": [\"Ensure all gene identifiers are HGNC symbols before enrichment (tx2gene.csv gene column if it already carries symbols, otherwise org.Hs.eg.db); report the symbol-mapping success rate and drop unmapped genes.\", \"Primary: fgsea on the full ranked list (signed shrunken log2FC) against the human WikiPathways GMT, separately for up-regulated and down-regulated directions.\", \"Secondary: over-representation analysis of the padj < 0.05 DE set — clusterProfiler enrichGO for BP, CC, MF, plus ORA on the human WikiPathways sets; split up- and down-regulated genes.\", \"If the human WikiPathways file is missing at run time, report it explicitly and continue with GO only; never substitute the mouse or rat WikiPathways sets for this human data.\", \"Report the top 10 enriched sets per direction with NES/padj (GSEA) or count/padj (ORA).\"], \"acceptance_criteria\": [\"Ranked-list GSEA results (WikiPathways) with NES and padj for up and down directions; top 10 per direction listed.\", \"GO enrichment (BP at minimum) on the significant DE set, up and down separated.\", \"Symbol mapping rate reported; all results in HGNC symbols.\"], \"caveats\": [\"With 6 samples per group the significant DE set can be small; ORA on very small gene sets is unreliable, so keep ranked-list GSEA as the primary interpretation and say so.\", \"Report enrichment results as annotation of the DE signal, not as independent biological validation.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"GO.db\", \"ggplot2\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}], \"created_at\": \"2026-07-10T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 64
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

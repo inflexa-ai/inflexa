@@ -1,0 +1,227 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "zebrafish-two-group-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:55:47.880Z",
+  "elapsedMs": 212820,
+  "outcome": "plan_submitted",
+  "planId": "pln-a5a40059",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 treated vs control differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group: many true effects will be missed (low power) and some padj<0.05 genes will be false positives; report effect sizes and do not overstate.",
+          "Salmon gene-level counts are transcript-summed; if they are length-corrected, rounding to integers is an approximation acceptable for a two-group design but must be disclosed.",
+          "Pools are larvae pools: within-pool pooling is embedded; treat the 3 pools per arm as the biological replicates as delivered.",
+          "If a gene symbol maps to multiple Ensembl IDs or vice versa in org.Dr.eg.db, keep the many-to-many mapping and note it; do not silently collapse."
+        ],
+        "context": "Danio rerio (taxon 7955) whole-larvae bulk RNA-seq, drug exposure vs control, 3 treated vs 3 control pools, unpaired, single batch. Counts are Salmon gene-level output on the Ensembl Danio rerio annotation; the profile record does not state whether the delivered column is raw integer counts or length-corrected — the integer check resolves this. R toolchain: DESeq2 1.52.0, apeglm 1.34.0, org.Dr.eg.db 3.22.0 (species-correct zebrafish annotation, includes ENSEMBL and SYMBOL columns), ggplot2 4.0.3, pheatmap 1.0.13.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "org.Dr.eg.db",
+          "ggplot2",
+          "pheatmap",
+          "dplyr"
+        ],
+        "question": "Which of the 12,000 genes in counts.csv differ in expression between the 3 treated zebrafish larvae pools and the 3 control pools (unpaired, single batch), and what is the reliability of that split?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the condition levels exactly as they appear in metadata.csv; name the treated and control levels explicitly in all outputs.",
+          "Counts must pass a non-negative check; handle fractional (length-corrected) counts by rounding to integer and documenting the assumption, or stop and report if values are otherwise non-integer.",
+          "Do not remove or exclude any sample; flag suspected outliers only.",
+          "LFC shrinkage must use apeglm; significance threshold padj < 0.05 via BH.",
+          "The ranked list must cover all 12,000 genes and be sorted by the direction-signed Wald statistic in descending order."
+        ],
+        "description": "Load /eval-four-models-v2-without-zebrafish-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 6 sample columns, first column a gene identifier from the Ensembl Danio rerio annotation; detect the namespace from the leading column, e.g. ENS... prefix = Ensembl) and /eval-four-models-v2-without-zebrafish-two-group-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows, sample + condition). Verify sample columns match metadata rows one-to-one. QC before modeling: per-sample total counts, check counts are non-negative; if any values are fractional (i.e. Salmon length-corrected gene counts rather than raw integers), round to integers after confirming and record this as an assumption. PCA on VST-transformed counts and a sample-distance heatmap to inspect the 3-vs-3 split — with 3 pools per group do NOT exclude outliers; flag any sample that departs from its group and report it. Run DESeq2 with design ~ condition using the observed condition levels verbatim (treated level as the numerator of log2FC). Use default independent filtering, apeglm LFC shrinkage, BH-adjusted p-values. Map gene identifiers to zebrafish symbols (and Entrez IDs) via org.Dr.eg.db (bitr on the detected ID namespace). Outputs: (a) full DE table for all 12,000 genes with shrunken log2FoldChange, pvalue, padj, baseMean, symbol; (b) counts of genes with padj<0.05 up- and down-regulated; (c) direction-signed ranked list for all genes (gene symbol as name, rank = Wald stat * sign(log2FC), sorted descending) for downstream GSEA; (d) QC plots (PCA, MA plot, count distribution) and a short QC note. State the power limitation of n=3 per group in the output summary.",
+        "acceptance_criteria": [
+          "DE table contains one row per gene present in counts.csv with log2FoldChange, pvalue, padj, baseMean, and a zebrafish gene symbol column.",
+          "Reported counts of padj<0.05 up- and down-regulated genes match the DE table.",
+          "Ranked list file exists, is sorted descending, and contains all genes with gene symbols.",
+          "PCA/distance QC confirms or explicitly flags the 3-vs-3 separation; no sample was dropped.",
+          "Output summary names the actual observed condition level values and states the n=3 power limitation."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Zebrafish-native GO overrepresentation and GSEA",
+        "agent": "enrichment-agent",
+        "track": "pathway-enrichment",
+        "status": "pending",
+        "caveats": [
+          "clusterProfiler enrichGO resolves term names through GO.db (human package) — this is fine because GO2ALL/ontology metadata is species-independent, but verify term names appear correctly for a few spot-checked GO IDs.",
+          "GO annotations for zebrafish are sparse relative to mouse/human; many larval drug-response genes may have no GO term — report the fraction of input genes carrying annotations.",
+          "Do not treat GO-BP term enrichment as equivalent to a named pathway; label results as GO terms."
+        ],
+        "context": "Depends on T1S1 outputs: full DE table (symbol, log2FoldChange, padj) and ranked list (symbol -> direction-signed Wald stat, descending). R toolchain: clusterProfiler 4.20.0, fgsea 1.38.0, GO.db 3.23.1, org.Dr.eg.db 3.22.0, ggplot2 4.0.3, dplyr. GO term ontology in GO.db is species-independent; the zebrafish-specific part is org.Dr.eg.db's gene-to-GO mapping, so no network access is needed.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Dr.eg.db",
+          "GO.db",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Among genes differentially expressed between treated and control zebrafish larvae, which GO terms (biological process, molecular function, cellular component) and coordinated gene-set signatures are enriched?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use ENTREZID or SYMBOL consistently — pass the explicit keyType to clusterProfiler; do not mix ID spaces in one call.",
+          "Universe for overrepresentation must be the full 12,000-gene gene set from counts.csv, not just detected/expressed genes, unless a filter is documented.",
+          "Run up- and down-regulated ORA separately; do not pool directions.",
+          "GSEA must run on the full 12,000-gene ranked list, not only significant genes.",
+          "If a direction's DE list is very small (<10 genes), say so explicitly and rely on GSEA for that direction rather than interpreting thin ORA tables."
+        ],
+        "description": "Consume the DE table and the direction-signed ranked list from T1S1 (plus the zebrafish symbol/Ensembl mapping). Run two complementary analyses with the species-correct zebrafish annotation org.Dr.eg.db: (1) Overrepresentation analysis — clusterProfiler::enrichGO (BP, MF, CC) on up-regulated DE genes (padj<0.05, log2FC>0) and down-regulated DE genes (padj<0.05, log2FC<0) separately, with the full 12,000-gene count matrix as the universe; (2) GSEA — clusterProfiler::GSEA (or fgsea against gene sets built from the org.Dr.eg.db GO columns) on the full ranked list of all 12,000 genes to capture coordinated sub-threshold changes. GO.db provides the species-independent GO term ontology (names, definitions) for annotation; org.Dr.eg.db supplies the zebrafish gene-to-GO mapping. Report for each ontology: top terms with GO ID, term, gene count, NES (GSEA) or pvalue/padj (ORA). Produce dot/bar plots per ontology and a volcano or up/down summary. Note in the output: no zebrafish-native pathway collection (KEGG/Reactome/MSigDB) is provisioned in this environment and the sandbox has no network, so GO is the species-native functional layer here and cross-species pathway context is provided separately in T2S2.",
+        "acceptance_criteria": [
+          "ORA results (BP, MF, CC) exist for both the up- and down-regulated DE gene lists, each row carrying GO ID, term, count, pvalue, padj.",
+          "GSEA results exist for all three ontologies on the full ranked list, with NES and padj.",
+          "Plots rendered per ontology.",
+          "Output states that zebrafish-native KEGG/Reactome/MSigDB collections are absent in this environment and cross-species pathway context is deferred to T2S2.",
+          "If no genes reach padj<0.05, the step reports that explicitly instead of failing."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Cross-species WikiPathways pathway context (mouse + human)",
+        "agent": "enrichment-agent",
+        "track": "pathway-enrichment",
+        "status": "pending",
+        "caveats": [
+          "Symbol identity misses zebrafish-specific naming and paralogs; results over-represent conserved core pathways (signaling, metabolism) and under-represent species-specific biology.",
+          "Do not merge mouse and human results into one table without a species column.",
+          "Pathway membership from WikiPathways is curation-dependent; a non-enriched major pathway is not evidence of inactivity."
+        ],
+        "context": "Depends on T1S1 outputs (DE table with symbols; direction-signed ranked list). Input reference data: the two WikiPathways GMTs under /mnt/refs/managed/wikipathways-mouse and /mnt/refs/managed/wikipathways-human (2026.07.10 release). No zebrafish WikiPathways collection is provisioned, so this step is by construction cross-species; that is the honest best available pathway layer. R toolchain: fgsea 1.38.0, clusterProfiler 4.20.0, org.Dr.eg.db 3.22.0, ggplot2 4.0.3.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which conserved pathways — from the provisioned mouse and human WikiPathways collections — do the differentially expressed zebrafish larvae genes point to, under a symbol-overlap orthology assumption?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Split the first GMT field on '%' and use only the first token as the readable pathway name; drop the URL field before member genes.",
+          "Report the symbol match rate per species and require it to be stated in the results header.",
+          "GSEA on the ranked list must preserve the original ranking order of matched genes; do not re-rank.",
+          "Label all outputs 'cross-species (symbol overlap)' — never present these as zebrafish-native pathways.",
+          "If fewer than ~20% of DE genes match a species gene set universe, report that the cross-species layer is uninformative for that species and say so."
+        ],
+        "description": "Provide pathway-level context using the two WikiPathways GMTs provisioned under /mnt/refs/managed: wikipathways_Mus_musculus.gmt (mouse) and wikipathways_Homo_sapiens.gmt (human), dated 2026.07.10. Parse each GMT line by splitting the first descriptor field on '%' to recover the readable set name (the field also carries the WikiPathways ID and species; drop the URL field before the member genes). Map DE zebrafish genes to symbols via org.Dr.eg.db (from the T1S1 DE table), then match those symbols against the GMT member symbols. Symbol identity is an orthology proxy biased toward conserved core genes — report the match rate (fraction of DE genes present in each species' gene universe) in the results. Run two analyses per species GMT: (1) fgsea GSEA on the direction-signed ranked list restricted to matched symbols, and (2) overrepresentation of the padj<0.05 DE genes against the matched gene universe. Report top pathways (NES/padj for GSEA; count/padj for ORA) for mouse and human separately, with bar plots. Label every result explicitly as cross-species inference (zebrafish genes read through conserved mouse/human pathway membership), not zebrafish-native pathway annotation, and note that the rat GMT is available in this environment but was not used (mouse/human are the closest and best-curated of the three).",
+        "acceptance_criteria": [
+          "GSEA results with NES and padj exist for both the mouse and human WikiPathways GMTs.",
+          "ORA results for padj<0.05 DE genes exist for both species GMTs.",
+          "Match rates (DE genes matched / total DE genes) are reported per species.",
+          "Every table and plot is labeled as cross-species symbol-overlap inference.",
+          "Rat GMT absence from the results is explained (available but not used)."
+        ]
+      }
+    ],
+    "title": "Zebrafish larvae treated vs control DE + pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Two-group bulk RNA-seq on Danio rerio whole larvae: 3 treated vs 3 control pools, unpaired, single batch, 12,000 gene-level Salmon counts from the Ensembl Danio rerio annotation (counts.csv) plus a 6-sample condition table (metadata.csv). The analysis proceeds in two stages. First, DESeq2 on the gene counts (bulk-transcriptomics-agent) gives the differential-expression evidence: size-factor normalization, independent filtering, Wald test with apeglm LFC shrinkage, BH correction, and a direction-signed ranked list for GSEA. Second, enrichment (enrichment-agent) asks what the DE genes point to: (1) zebrafish-native GO (BP/MF/CC) overrepresentation on significant genes and GSEA on the full ranked list, using org.Dr.eg.db (the only species-correct gene-set source available offline in this environment; GO.db supplies the species-independent GO term ontology); (2) pathway-level context via the mouse and human WikiPathways GMTs provisioned under /mnt/refs, run cross-species by symbol overlap with an explicit orthology proxy and a match-rate report — because no zebrafish-native pathway collection (KEGG/Reactome/MSigDB) is provisioned, and the sandbox has no network. n=3 per group is underpowered: the plan reports effect sizes and flags small-LFC findings rather than treating padj as a guarantee."
+  },
+  "usage": {
+    "inputTokens": 185146,
+    "outputTokens": 11589,
+    "cacheReadInputTokens": 144064,
+    "reasoningTokens": 6411
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_645027bca5bf412f89ba65bf",
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish"
+      },
+      "outcome": "ok",
+      "durationMs": 64
+    },
+    {
+      "toolUseId": "call_89d01e52e861434e832ebaae",
+      "name": "list_available_refs",
+      "input": {
+        "query": "danio"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "call_60e646cda2fc4d1d98b413cb",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_75911984359b41149f9afaaf",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Zebrafish larvae treated vs control DE + pathway enrichment\", \"analytical_narrative\": \"Two-group bulk RNA-seq on Danio rerio whole larvae: 3 treated vs 3 control pools, unpaired, single batch, 12,000 gene-level Salmon counts from the Ensembl Danio rerio annotation (counts.csv) plus a 6-sample condition table (metadata.csv). The analysis proceeds in two stages. First, DESeq2 on the integer gene counts (bulk-transcriptomics-agent) gives the differential-expression evidence: size-factor normalization, independent filtering, Wald test with apeglm LFC shrinkage, BH correction, and a direction-signed ranked list for GSEA. Second, enrichment (enrichment-agent) asks what the DE genes point to: (1) zebrafish-native GO (BP/MF/CC) overrepresentation on significant genes and GSEA on the full ranked list, using org.Dr.eg.db (the only species-correct gene-set source available offline in this environment; GO.db supplies the species-independent GO term ontology); (2) pathway-level context via the mouse and human WikiPathways GMTs provisioned under /mnt/refs, run cross-species by symbol overlap with an explicit orthology proxy and a match-rate report — because no zebrafish-native pathway collection (KEGG/Reactome/MSigDB) is provisioned, and the sandbox has no network. n=3 per group is underpowered: the plan reports effect sizes and flags small-LFC findings rather than treating padj as a guarantee.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DESeq2 treated vs control differential expression\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which of the 12,000 genes in counts.csv differ in expression between the 3 treated zebrafish larvae pools and the 3 control pools (unpaired, single batch), and what is the reliability of that split?\", \"description\": \"Load /eval-four-models-v2-without-zebrafish-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 6 sample columns, first column a gene identifier from the Ensembl Danio rerio annotation; detect the namespace from the leading column, e.g. ENS... prefix = Ensembl) and /eval-four-models-v2-without-zebrafish-two-group-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows, sample + condition). Verify sample columns match metadata rows one-to-one. QC before modeling: per-sample total counts, check counts are non-negative; if any values are fractional (i.e. Salmon length-corrected gene counts rather than raw integers), round to integers after confirming and record this as an assumption. PCA on VST-transformed counts and a sample-distance heatmap to inspect the 3-vs-3 split — with 3 pools per group do NOT exclude outliers; flag any sample that departs from its group and report it in the results. Run DESeq2 with design ~ condition using the observed condition levels verbatim (treated level as the numerator of log2FC). Use default independent filtering, apeglm LFC shrinkage, BH-adjusted p-values. Map gene identifiers to zebrafish symbols (and Entrez IDs) via org.Dr.eg.db (bitr on the detected ID namespace). Outputs: (a) full DE table for all 12,000 genes with log2FoldChange (shrunken), pvalue, padj, baseMean, symbol; (b) counts of genes with padj<0.05 up- and down-regulated; (c) direction-signed ranked list for all genes (gene symbol as name, rank = Wald stat * sign(log2FC), sorted descending) for downstream GSEA; (d) QC plots (PCA, MA plot, count distribution) and a short QC note. State the power limitation of n=3 per group in the output summary.\", \"context\": \"Danio rerio (taxon 7955) whole-larvae bulk RNA-seq, drug exposure vs control, 3 treated vs 3 control pools, unpaired, single batch. Counts are Salmon gene-level output on the Ensembl Danio rerio annotation; the profile record does not state whether the delivered column is raw integer counts or length-corrected — the integer check above resolves this. R toolchain: DESeq2 1.52.0, apeglm 1.34.0, org.Dr.eg.db 3.22.0 (species-correct zebrafish annotation, includes ENSEMBL and SYMBOL columns), ggplot2 4.0.3, pheatmap 1.0.13.\", \"constraints\": [\"Use the condition levels exactly as they appear in metadata.csv; name the treated level and the control level explicitly in all outputs.\", \"Counts must pass a non-negative check; handle fractional (length-corrected) counts by rounding to integer and documenting the assumption, or stop and report if values are otherwise non-integer.\", \"Do not remove or exclude any sample; flag suspected outliers only.\", \"LFC shrinkage must use apeglm; significance threshold padj < 0.05 via BH.\", \"The ranked list must cover all 12,000 genes and be sorted by the direction-signed Wald statistic in descending order.\"], \"acceptance_criteria\": [\"DE table contains one row per gene present in counts.csv with log2FoldChange, pvalue, padj, baseMean, and a zebrafish gene symbol column.\", \"Reported counts of padj<0.05 up- and down-regulated genes match the DE table.\", \"Ranked list file exists, is sorted descending, and contains all genes with gene symbols.\", \"PCA/distance QC confirms or explicitly flags the 3-vs-3 separation; no sample was dropped.\", \"Output summary names the actual observed condition level values and states the n=3 power limitation.\"], \"caveats\": [\"n=3 per group: many true effects will be missed (low power) and some padj<0.05 genes will be false positives; report effect sizes and do not overstate.\", \"Salmon gene-level counts are transcript-summed; if they are length-corrected, rounding to integers is an approximation acceptable for a two-group design but must be disclosed.\", \"Pools are larvae pools: within-pool pooling is embedded in the biology; treat the 3 pools per arm as the biological replicates as delivered.\", \"If a gene's symbol maps to multiple Ensembl IDs or vice versa in org.Dr.eg.db, keep the many-to-many mapping and note it; do not silently collapse.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"org.Dr.eg.db\", \"ggplot2\", \"pheatmap\", \"dplyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}]"
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_8020eb86dfba49e58f98c9ca",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Zebrafish larvae treated vs control DE + pathway enrichment\", \"analytical_narrative\": \"Two-group bulk RNA-seq on Danio rerio whole larvae: 3 treated vs 3 control pools, unpaired, single batch, 12,000 gene-level Salmon counts from the Ensembl Danio rerio annotation (counts.csv) plus a 6-sample condition table (metadata.csv). The analysis proceeds in two stages. First, DESeq2 on the gene counts (bulk-transcriptomics-agent) gives the differential-expression evidence: size-factor normalization, independent filtering, Wald test with apeglm LFC shrinkage, BH correction, and a direction-signed ranked list for GSEA. Second, enrichment (enrichment-agent) asks what the DE genes point to: (1) zebrafish-native GO (BP/MF/CC) overrepresentation on significant genes and GSEA on the full ranked list, using org.Dr.eg.db (the only species-correct gene-set source available offline in this environment; GO.db supplies the species-independent GO term ontology); (2) pathway-level context via the mouse and human WikiPathways GMTs provisioned under /mnt/refs, run cross-species by symbol overlap with an explicit orthology proxy and a match-rate report — because no zebrafish-native pathway collection (KEGG/Reactome/MSigDB) is provisioned, and the sandbox has no network. n=3 per group is underpowered: the plan reports effect sizes and flags small-LFC findings rather than treating padj as a guarantee.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DESeq2 treated vs control differential expression\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which of the 12,000 genes in counts.csv differ in expression between the 3 treated zebrafish larvae pools and the 3 control pools (unpaired, single batch), and what is the reliability of that split?\", \"description\": \"Load /eval-four-models-v2-without-zebrafish-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 6 sample columns, first column a gene identifier from the Ensembl Danio rerio annotation; detect the namespace from the leading column, e.g. ENS... prefix = Ensembl) and /eval-four-models-v2-without-zebrafish-two-group-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows, sample + condition). Verify sample columns match metadata rows one-to-one. QC before modeling: per-sample total counts, check counts are non-negative; if any values are fractional (i.e. Salmon length-corrected gene counts rather than raw integers), round to integers after confirming and record this as an assumption. PCA on VST-transformed counts and a sample-distance heatmap to inspect the 3-vs-3 split — with 3 pools per group do NOT exclude outliers; flag any sample that departs from its group and report it. Run DESeq2 with design ~ condition using the observed condition levels verbatim (treated level as the numerator of log2FC). Use default independent filtering, apeglm LFC shrinkage, BH-adjusted p-values. Map gene identifiers to zebrafish symbols (and Entrez IDs) via org.Dr.eg.db (bitr on the detected ID namespace). Outputs: (a) full DE table for all 12,000 genes with shrunken log2FoldChange, pvalue, padj, baseMean, symbol; (b) counts of genes with padj<0.05 up- and down-regulated; (c) direction-signed ranked list for all genes (gene symbol as name, rank = Wald stat * sign(log2FC), sorted descending) for downstream GSEA; (d) QC plots (PCA, MA plot, count distribution) and a short QC note. State the power limitation of n=3 per group in the output summary.\", \"context\": \"Danio rerio (taxon 7955) whole-larvae bulk RNA-seq, drug exposure vs control, 3 treated vs 3 control pools, unpaired, single batch. Counts are Salmon gene-level output on the Ensembl Danio rerio annotation; the profile record does not state whether the delivered column is raw integer counts or length-corrected — the integer check resolves this. R toolchain: DESeq2 1.52.0, apeglm 1.34.0, org.Dr.eg.db 3.22.0 (species-correct zebrafish annotation, includes ENSEMBL and SYMBOL columns), ggplot2 4.0.3, pheatmap 1.0.13.\", \"constraints\": [\"Use the condition levels exactly as they appear in metadata.csv; name the treated and control levels explicitly in all outputs.\", \"Counts must pass a non-negative check; handle fractional (length-corrected) counts by rounding to integer and documenting the assumption, or stop and report if values are otherwise non-integer.\", \"Do not remove or exclude any sample; flag suspected outliers only.\", \"LFC shrinkage must use apeglm; significance threshold padj < 0.05 via BH.\", \"The ranked list must cover all 12,000 genes and be sorted by the direction-signed Wald statistic in descending order.\"], \"acceptance_criteria\": [\"DE table contains one row per gene present in counts.csv with log2FoldChange, pvalue, padj, baseMean, and a zebrafish gene symbol column.\", \"Reported counts of padj<0.05 up- and down-regulated genes match the DE table.\", \"Ranked list file exists, is sorted descending, and contains all genes with gene symbols.\", \"PCA/distance QC confirms or explicitly flags the 3-vs-3 separation; no sample was dropped.\", \"Output summary names the actual observed condition level values and states the n=3 power limitation.\"], \"caveats\": [\"n=3 per group: many true effects will be missed (low power) and some padj<0.05 genes will be false positives; report effect sizes and do not overstate.\", \"Salmon gene-level counts are transcript-summed; if they are length-corrected, rounding to integers is an approximation acceptable for a two-group design but must be disclosed.\", \"Pools are larvae pools: within-pool pooling is embedded; treat the 3 pools per arm as the biological replicates as delivered.\", \"If a gene symbol maps to multiple Ensembl IDs or vice versa in org.Dr.eg.db, keep the many-to-many mapping and note it; do not silently collapse.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"org.Dr.eg.db\", \"ggplot2\", \"pheatmap\", \"dplyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T2S1\", \"name\": \"Zebrafish-native GO overrepresentation and GSEA\", \"track\": \"pathway-enrichment\", \"step_type\": \"analysis\", \"agent\": \"enrichment-agent\", \"question\": \"Among genes differentially expressed between treated and control zebrafish larvae, which GO terms (biological process, molecular function, cellular component) and coordinated gene-set signatures are enriched?\", \"description\": \"Consume the DE table and the direction-signed ranked list from T1S1 (plus the zebrafish symbol/Ensembl mapping). Run two complementary analyses with the species-correct zebrafish annotation org.Dr.eg.db: (1) Overrepresentation analysis — clusterProfiler::enrichGO (BP, MF, CC) on up-regulated DE genes (padj<0.05, log2FC>0) and down-regulated DE genes (padj<0.05, log2FC<0) separately, with the full 12,000-gene count matrix as the universe; (2) GSEA — clusterProfiler::GSEA (or fgsea against gene sets built from the org.Dr.eg.db GO columns) on the full ranked list of all 12,000 genes to capture coordinated sub-threshold changes. GO.db provides the species-independent GO term ontology (names, definitions) for annotation; org.Dr.eg.db supplies the zebrafish gene-to-GO mapping. Report for each ontology: top terms with GO ID, term, gene count, NES (GSEA) or pvalue/padj (ORA). Produce dot/bar plots per ontology and a volcano or up/down summary. Note in the output: no zebrafish-native pathway collection (KEGG/Reactome/MSigDB) is provisioned in this environment and the sandbox has no network, so GO is the species-native functional layer here and cross-species pathway context is provided separately in T2S2.\", \"context\": \"Depends on T1S1 outputs: full DE table (symbol, log2FoldChange, padj) and ranked list (symbol -> direction-signed Wald stat, descending). R toolchain: clusterProfiler 4.20.0, fgsea 1.38.0, GO.db 3.23.1, org.Dr.eg.db 3.22.0, ggplot2 4.0.3, dplyr. GO term ontology in GO.db is species-independent; the zebrafish-specific part is org.Dr.eg.db's gene-to-GO mapping, so no network access is needed.\", \"constraints\": [\"Use ENTREZID or SYMBOL consistently — pass the explicit keyType to clusterProfiler; do not mix ID spaces in one call.\", \"Universe for overrepresentation must be the full 12,000-gene gene set from counts.csv, not just detected/expressed genes, unless a filter is documented.\", \"Run up- and down-regulated ORA separately; do not pool directions.\", \"GSEA must run on the full 12,000-gene ranked list, not only significant genes.\", \"If a direction's DE list is very small (<10 genes), say so explicitly and rely on GSEA for that direction rather than interpreting thin ORA tables.\"], \"acceptance_criteria\": [\"ORA results (BP, MF, CC) exist for both the up- and down-regulated DE gene lists, each row carrying GO ID, term, count, pvalue, padj.\", \"GSEA results exist for all three ontologies on the full ranked list, with NES and padj.\", \"Plots rendered per ontology.\", \"Output states that zebrafish-native KEGG/Reactome/MSigDB collections are absent in this environment and cross-species pathway context is deferred to T2S2.\", \"If no genes reach padj<0.05, the step reports that explicitly instead of failing.\"], \"caveats\": [\"clusterProfiler enrichGO resolves term names through GO.db (human package) — this is fine because GO2ALL/ontology metadata is species-independent, but verify term names appear correctly for a few spot-checked GO IDs.\", \"GO annotations for zebrafish are sparse relative to mouse/human; many larval drug-response genes may have no GO term — report the fraction of input genes carrying annotations.\", \"Do not treat GO-BP term enrichment as equivalent to a named pathway; label results as GO terms.\"], \"packages\": [\"clusterProfiler\", \"fgsea\", \"org.Dr.eg.db\", \"GO.db\", \"ggplot2\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T2S2\", \"name\": \"Cross-species WikiPathways pathway context (mouse + human)\", \"track\": \"pathway-enrichment\", \"step_type\": \"analysis\", \"agent\": \"enrichment-agent\", \"question\": \"Which conserved pathways — from the provisioned mouse and human WikiPathways collections — do the differentially expressed zebrafish larvae genes point to, under a symbol-overlap orthology assumption?\", \"description\": \"Provide pathway-level context using the two WikiPathways GMTs provisioned under /mnt/refs/managed: wikipathways_Mus_musculus.gmt (mouse) and wikipathways_Homo_sapiens.gmt (human), dated 2026.07.10. Parse each GMT line by splitting the first descriptor field on '%' to recover the readable set name (the field also carries the WikiPathways ID and species; drop the URL field before the member genes). Map DE zebrafish genes to symbols via org.Dr.eg.db (from the T1S1 DE table), then match those symbols against the GMT member symbols. Symbol identity is an orthology proxy biased toward conserved core genes — report the match rate (fraction of DE genes present in each species' gene universe) in the results. Run two analyses per species GMT: (1) fgsea GSEA on the direction-signed ranked list restricted to matched symbols, and (2) overrepresentation of the padj<0.05 DE genes against the matched gene universe. Report top pathways (NES/padj for GSEA; count/padj for ORA) for mouse and human separately, with bar plots. Label every result explicitly as cross-species inference (zebrafish genes read through conserved mouse/human pathway membership), not zebrafish-native pathway annotation, and note that the rat GMT is available in this environment but was not used (mouse/human are the closest and best-curated of the three).\", \"context\": \"Depends on T1S1 outputs (DE table with symbols; direction-signed ranked list). Input reference data: the two WikiPathways GMTs under /mnt/refs/managed/wikipathways-mouse and /mnt/refs/managed/wikipathways-human (2026.07.10 release). No zebrafish WikiPathways collection is provisioned, so this step is by construction cross-species; that is the honest best available pathway layer. R toolchain: fgsea 1.38.0, clusterProfiler 4.20.0, org.Dr.eg.db 3.22.0, ggplot2 4.0.3.\", \"constraints\": [\"Split the first GMT field on '%' and use only the first token as the readable pathway name; drop the URL field before member genes.\", \"Report the symbol match rate per species and require it to be stated in the results header.\", \"GSEA on the ranked list must preserve the original ranking order of matched genes; do not re-rank.\", \"Label all outputs 'cross-species (symbol overlap)' — never present these as zebrafish-native pathways.\", \"If fewer than ~20% of DE genes match a species gene set universe, report that the cross-species layer is uninformative for that species and say so.\"], \"acceptance_criteria\": [\"GSEA results with NES and padj exist for both the mouse and human WikiPathways GMTs.\", \"ORA results for padj<0.05 DE genes exist for both species GMTs.\", \"Match rates (DE genes matched / total DE genes) are reported per species.\", \"Every table and plot is labeled as cross-species symbol-overlap inference.\", \"Rat GMT absence from the results is explained (available but not used).\"], \"caveats\": [\"Symbol identity misses zebrafish-specific naming and paralogs; results over-represent conserved core pathways (signaling, metabolism) and under-represent species-specific biology.\", \"Do not merge mouse and human results into one table without a species column.\", \"Pathway membership from WikiPathways is curation-dependent; a non-enriched major pathway is not evidence of inactivity.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Dr.eg.db\", \"ggplot2\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

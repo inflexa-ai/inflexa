@@ -614,6 +614,62 @@ deconvolution step that the user did not ask for. The judge scored that
 padding, not the classifier step. A question kind for a classifier would
 remove the padding, and the tree has none yet.
 
+## The four-model comparison
+
+Campaign `four-models-v2` in `results/`: eight arms, 48 tasks, one run per task,
+seed 1, the Fable judge, frozen in a manifest before the first lane. Each lane
+ran alone, in the order Sonnet 5, Opus 5, GLM 5.3 Flash, and Qwen 3.8 27B, with
+the judge after each lane. GLM and Qwen ran through OpenRouter on fp8 upstreams
+that honor a forced tool choice. Eight runs failed on the transport, and they
+ran again under the same manifest. The corpus is the snapshot of 2026-09-07,
+with 165 rules, 53 methods, and 40 templates.
+
+| Arm | Rubric | Expectations | Recommend rate | Grounded steps | Fabricated claims | Fabricated references | Seconds per plan | Output tokens per plan |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Opus with the plane | 88.9 | 99% | 100% | 77% | 0 of 936 | 0 | 117 | 10,170 |
+| GLM with the plane | 87.0 | 98% | 96% | 69% | 2 of 998 | 1 | 356 | 10,094 |
+| Qwen with the plane | 84.8 | 96% | 98% | 74% | 1 of 843 | 0 | 396 | 26,774 |
+| Sonnet with the plane | 84.4 | 97% | 100% | 77% | 0 of 1,283 | 0 | 112 | 10,083 |
+| Opus alone | 80.1 | 96% | 0% | 0% | 0 | 0 | 101 | 7,468 |
+| GLM alone | 69.3 | 93% | 0% | 0% | 0 | 0 | 140 | 5,004 |
+| Qwen alone | 63.2 | 89% | 0% | 0% | 0 | 0 | 250 | 14,148 |
+| Sonnet alone | 61.6 | 94% | 0% | 0% | 0 | 0 | 86 | 5,005 |
+
+The contrasts pair the arms by pattern cluster, 17 clusters, with the paired
+bootstrap and the Holm step-down over the family of 16. The margin is 5 points.
+
+| Contrast | Difference | Lower bound, one-sided 97.5% | Upper |
+| --- | --- | --- | --- |
+| GLM with the plane minus Opus alone | +9.8 | +6.2 | +14.3 |
+| Qwen with the plane minus Opus alone | +11.4 | +7.1 | +16.3 |
+| Sonnet with the plane minus Opus alone | +7.1 | +4.2 | +10.1 |
+| GLM with minus GLM alone | +20.4 | +15.6 | +24.9 |
+| Qwen with minus Qwen alone | +24.3 | +21.0 | +28.3 |
+| Sonnet with minus Sonnet alone | +26.0 | +23.5 | +28.7 |
+| Opus with minus Opus alone | +13.5 | +9.8 | +17.8 |
+| GLM with minus Opus with | -3.7 | -7.1 | -0.6 |
+| Qwen with minus Opus with | -2.1 | -3.9 | -0.5 |
+| GLM with minus Sonnet with | +2.7 | -1.4 | +6.4 |
+| Qwen with minus Sonnet with | +4.3 | +0.9 | +7.8 |
+
+Read the table this way. The plane lifts each model, by 13 points for Opus and
+by 20 to 26 points for the three others. Each small model with the plane
+exceeds Opus alone by about ten points, with the lower bound above the margin.
+Against Opus with the plane, Qwen holds the margin and GLM does not: the lower
+bound of GLM is 7 points below. Every decision reads uncalibrated, because no
+expert calibration exists.
+
+The cost side is not a saving in time. GLM and Qwen take three times the wall
+clock of Opus per plan on their upstreams. Qwen writes 27 thousand output
+tokens per plan, most of it reasoning. Sonnet reads 1.2 million input tokens
+per plan, because it searches with 16 tool calls where Opus makes four. A price
+basis is not set, thus this section states no cost per plan.
+
+Two arms show a fault of the small models that the frontier models do not
+show: GLM cited two claims that the snapshot does not hold and one reference
+that does not resolve, and Qwen cited one such claim. The scorer counts each
+one, and the counts are in the table.
+
 ## What the campaign does not show
 
 - One frontier model and one mid-size model, two runs per task. The design

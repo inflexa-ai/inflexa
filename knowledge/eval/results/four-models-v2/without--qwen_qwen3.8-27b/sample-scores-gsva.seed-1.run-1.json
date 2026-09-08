@@ -1,0 +1,193 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "sample-scores-gsva",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:57:03.664Z",
+  "elapsedMs": 200341,
+  "outcome": "plan_submitted",
+  "planId": "pln-27d6bff8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization and DE: UC inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "The counts are Salmon output 'as delivered'; the profile does not state whether gene-length correction was applied. Treat them as raw counts for DESeq2 and note this assumption in the step report.",
+          "sample_01's ~4x lower library size will appear as a PCA outlier; DESeq2 size factors correct library size but not other technical artifacts — assess from PCA and the MA plot and report, do not silently down-weight or exclude in the primary analysis.",
+          "n=6 per arm limits power; report effect sizes alongside significance."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-sample-scores-gsva-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 sample columns, 13 columns total, gene-level counts from Salmon 'as delivered') and /eval-four-models-v2-without-sample-scores-gsva-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column: 6 ulcerative colitis inflamed vs 6 control). Design is unpaired, single batch. Downstream steps need the rlog-normalized matrix and the DE ranking, so both must be persisted.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "SummarizedExperiment"
+        ],
+        "question": "Which genes are differentially expressed in colon between the 6 ulcerative colitis (inflamed) samples and the 6 controls after QC, and does the low-depth sample_01 (~4x below median library size) distort the contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Read counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples, 6 vs 6 by condition) and join them 1:1 on sample ID; if any sample ID is missing from either file, stop and report the mismatch instead of guessing.",
+          "Use DESeq2 with design ~ condition only (single batch, unpaired, no other covariates), median-of-ratios size factors; do not drop any sample from the primary analysis.",
+          "Shrink log2 fold changes with apeglm; report the full DE table (gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj).",
+          "Sensitivity: re-run DE excluding sample_01 and report the overlap of the top 100 genes by |shrunken log2FC| between the full (12) and reduced (11) runs, plus how far sample_01's size factor deviates from 1.",
+          "Persist to disk: (a) the rlog variance-stabilized gene x sample matrix with sample names matching metadata.csv, (b) the DE results table, (c) a PCA plot of the rlog matrix colored by condition."
+        ],
+        "description": "DESeq2-based normalization, QC (PCA, size factors), differential expression for inflamed vs control with apeglm LFC shrinkage, a sensitivity re-run excluding sample_01, and persistence of the rlog matrix and DE table for the GSVA and GSEA steps.",
+        "acceptance_criteria": [
+          "DE results table with shrunken log2FC, pvalue and padj for all tested genes, persisted to disk.",
+          "PCA of the rlog matrix shows sample clustering by condition; sample_01's position and its size factor are explicitly reported.",
+          "Sensitivity comparison (full vs without sample_01) reported: top-100 |log2FC| overlap and direction agreement of top hits.",
+          "rlog matrix and DE table persisted with sample names consistent with metadata.csv."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GSVA per-sample hallmark activity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "GSVA scores are relative per-sample enrichment values, not expression units; downstream tests should use group differences or ranks, not absolute magnitudes.",
+          "If the reference store lacks the human hallmark collection at run time, the step must fail loudly with a clear report rather than proceed with a substitute."
+        ],
+        "context": "Input: the rlog variance-stabilized gene x sample matrix persisted by T1S1. The MSigDB human hallmark gene set collection (50 HALLMARK_* sets, MSigDB 2026.1, HGNC symbols) is provisioned in the reference environment; verify it is present and organism-matched (Homo sapiens) before relying on it. The mouse hallmark set also exists in the environment and must not be used on this human data.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "SummarizedExperiment",
+          "org.Hs.eg.db"
+        ],
+        "question": "What is the GSVA activity score of each of the 50 MSigDB human hallmark pathways for each of the 12 colon samples, computed from the QC-normalized expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Confirm the MSigDB human hallmark gene set collection is present in the reference environment (50 HALLMARK_* sets, human/HGNC symbols) before relying on it; if it is absent at run time, report the missing reference and stop the step — do not substitute a different collection (especially not the mouse hallmark set) or fabricate scores.",
+          "Inspect the row identifier space of counts.csv (gene symbols vs Ensembl IDs) before GSVA; if not HGNC symbols, convert to symbols using the human gene annotation available in the environment (org.Hs.eg.db).",
+          "Run GSVA (gsva method, Gaussian kernel, default k=2) on the T1S1 rlog matrix restricted to genes present in at least one hallmark set; report the fraction of matrix genes matched to the hallmark sets.",
+          "Persist the 50 x 12 score matrix as CSV (pathway x sample) with sample names consistent with metadata.csv."
+        ],
+        "description": "GSVA (gsva method, Gaussian kernel) of the rlog expression matrix against the 50 human hallmark sets, producing and persisting a 50 pathway x 12 sample activity score matrix.",
+        "acceptance_criteria": [
+          "50 HALLMARK_* pathway x 12 sample score matrix persisted to disk with sample names consistent with metadata.csv.",
+          "Fraction of matrix genes matched/unmatched to hallmark sets reported; no samples dropped during scoring."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Hallmark heatmap + pathway-level separation tests",
+        "agent": "enrichment-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group, per-pathway tests have limited resolution (Wilcoxon on 6 vs 6 is coarse); treat p-values as directional evidence and interpret them together with the heatmap pattern.",
+          "fgsea on a DE ranking derived from the same 12 samples is a cross-check of the same contrast, not an independent validation — report it as such.",
+          "Do not substitute a different gene set collection if the hallmark sets are unavailable; report the gap instead."
+        ],
+        "context": "Inputs: the 50 x 12 GSVA score matrix from T1S2, the DE results table from T1S1, and condition labels from metadata.csv. The same human hallmark sets used in T1S2 are the gene sets for the GSEA cross-check.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "limma",
+          "ComplexHeatmap",
+          "ggplot2"
+        ],
+        "question": "Which hallmark pathways separate the 6 ulcerative colitis inflamed samples from the 6 controls, judged from (a) a per-pathway two-group test on the GSVA scores and (b) pre-ranked GSEA on the DE ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Build the heatmap: rows = 50 hallmark pathways, columns = the 12 samples annotated by condition (inflamed vs control), rows ordered by mean score difference (inflamed minus control), with per-pathway p-value annotation; save the figure to disk.",
+          "Per-pathway two-group test on the GSVA scores: Wilcoxon rank-sum and ordinary two-sample t-test (inflamed vs control), with Benjamini-Hochberg FDR across the 50 pathways.",
+          "Pre-ranked GSEA (fgsea): rank DE genes by sign(shrunken log2FC) x -log10(padj), using -log10(pvalue) where padj is NA; run against the same human hallmark sets used in T1S2; report NES and FDR q-value per pathway.",
+          "Quantify concordance (Spearman rank correlation) between the GSVA-difference ranking and the fgsea NES ranking across the 50 pathways, and list the top 10 pathways by each method."
+        ],
+        "description": "Heatmap of the 50 hallmark x 12 sample score matrix with condition annotation and rows ordered by the inflamed-minus-control score difference; per-pathway two-group tests on the scores (Wilcoxon and t-test, BH-FDR); fgsea pre-ranked GSEA on the DE ranking; concordance between the two pathway rankings and top-10 lists per method.",
+        "acceptance_criteria": [
+          "Heatmap figure saved to disk: 50 rows x 12 columns, condition annotation, rows ordered by the inflamed-minus-control difference, p-values annotated.",
+          "Pathway table with per-pathway GSVA group means, both two-group p-values (Wilcoxon, t-test) with BH-FDR, and fgsea NES with FDR.",
+          "Spearman concordance between the two pathway rankings and the top-10 pathway list per method reported."
+        ]
+      }
+    ],
+    "title": "UC colon hallmark GSVA activity heatmap",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are gene-level Salmon counts (12000 genes x 12 samples) from human colon, 6 ulcerative colitis (inflamed) vs 6 control, unpaired, single batch, with sample_01 at ~4x below median library size. The plan runs three steps. T1S1 normalizes with DESeq2, performs QC (including a sample_01 sensitivity check since its low depth is the main data-quality risk at n=6 per arm), and produces the DE ranking — this anchors the condition contrast and supplies the ranked list for pre-ranked GSEA. T1S2 runs GSVA on the rlog matrix against the 50 MSigDB human hallmark sets provisioned in the reference environment (MSigDB 2026.1, HGNC symbols), yielding the requested per-sample pathway activity scores. T1S3 builds the hallmark x sample heatmap sorted by the inflamed-minus-control score difference and answers 'which pathways separate treated from control' with two complementary tests — a per-pathway two-group test on the GSVA scores and fgsea pre-ranked GSEA on the DE ranking — plus a concordance comparison between the two pathway rankings. Everything is small (12000 x 12), so resource needs are modest."
+  },
+  "usage": {
+    "inputTokens": 118654,
+    "outputTokens": 12709,
+    "cacheReadInputTokens": 73408,
+    "reasoningTokens": 8965
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c18e64a3f4214b248ef413b3",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 73
+    },
+    {
+      "toolUseId": "call_2806ae760e7a47939ef0a41b",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"UC colon hallmark GSVA activity heatmap\", \"analytical_narrative\": \"The data are gene-level Salmon counts (12000 genes x 12 samples) from human colon, 6 ulcerative colitis (inflamed) vs 6 control, unpaired, single batch, with sample_01 at ~4x below median library size. The plan runs three steps. T1S1 normalizes with DESeq2, performs QC (including a sample_01 sensitivity check since its low depth is the main data-quality risk at n=6 per arm), and produces the DE ranking — this anchors the condition contrast and supplies the ranked list for pre-ranked GSEA. T1S2 runs GSVA on the rlog matrix against the 50 MSigDB human hallmark sets provisioned in the reference environment (MSigDB 2026.1, HGNC symbols), yielding the requested per-sample pathway activity scores. T1S3 builds the hallmark x sample heatmap sorted by the inflamed-minus-control score difference and answers 'which pathways separate treated from control' with two complementary tests — a per-pathway two-group test on the GSVA scores and fgsea pre-ranked GSEA on the DE ranking — plus a concordance comparison between the two pathway rankings. Everything is small (12000 x 12), so resource needs are modest.\", \"created_at\": \"2026-07-22T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization and DE: UC inflamed vs control\", \"track\": \"1\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed in colon between the 6 ulcerative colitis (inflamed) samples and the 6 controls after QC, and does the low-depth sample_01 (~4x below median library size) distort the contrast?\", \"context\": \"Inputs: /eval-four-models-v2-without-sample-scores-gsva-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 sample columns, 13 columns total, gene-level counts from Salmon 'as delivered') and /eval-four-models-v2-without-sample-scores-gsva-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column: 6 ulcerative colitis inflamed vs 6 control). Design is unpaired, single batch. Downstream steps need the rlog-normalized matrix and the DE ranking, so both must be persisted.\", \"description\": \"DESeq2-based normalization, QC (PCA, size factors), differential expression for inflamed vs control with apeglm LFC shrinkage, a sensitivity re-run excluding sample_01, and persistence of the rlog matrix and DE table for the GSVA and GSEA steps.\", \"constraints\": [\"Read counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples, 6 vs 6 by condition) and join them 1:1 on sample ID; if any sample ID is missing from either file, stop and report the mismatch instead of guessing.\", \"Use DESeq2 with design ~ condition only (single batch, unpaired, no other covariates), median-of-ratios size factors; do not drop any sample from the primary analysis.\", \"Shrink log2 fold changes with apeglm; report the full DE table (gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj).\", \"Sensitivity: re-run DE excluding sample_01 and report the overlap of the top 100 genes by |shrunken log2FC| between the full (12) and reduced (11) runs, plus how far sample_01's size factor deviates from 1.\", \"Persist to disk: (a) the rlog variance-stabilized gene x sample matrix with sample names matching metadata.csv, (b) the DE results table, (c) a PCA plot of the rlog matrix colored by condition.\"], \"acceptance_criteria\": [\"DE results table with shrunken log2FC, pvalue and padj for all tested genes, persisted to disk.\", \"PCA of the rlog matrix shows sample clustering by condition; sample_01's position and its size factor are explicitly reported.\", \"Sensitivity comparison (full vs without sample_01) reported: top-100 |log2FC| overlap and direction agreement of top hits.\", \"rlog matrix and DE table persisted with sample names consistent with metadata.csv.\"], \"caveats\": [\"The counts are Salmon output 'as delivered'; the profile does not state whether gene-length correction was applied. Treat them as raw counts for DESeq2 and note this assumption in the step report.\", \"sample_01's ~4x lower library size will appear as a PCA outlier; DESeq2 size factors correct library size but not other technical artifacts — assess from PCA and the MA plot and report, do not silently down-weight or exclude in the primary analysis.\", \"n=6 per arm limits power; report effect sizes alongside significance.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"ggplot2\", \"SummarizedExperiment\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}]"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_2bd540f578c641d99437d4f1",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"created_at\": \"2026-07-22T00:00:00Z\", \"analytical_narrative\": \"The data are gene-level Salmon counts (12000 genes x 12 samples) from human colon, 6 ulcerative colitis (inflamed) vs 6 control, unpaired, single batch, with sample_01 at ~4x below median library size. The plan runs three steps. T1S1 normalizes with DESeq2, performs QC (including a sample_01 sensitivity check since its low depth is the main data-quality risk at n=6 per arm), and produces the DE ranking — this anchors the condition contrast and supplies the ranked list for pre-ranked GSEA. T1S2 runs GSVA on the rlog matrix against the 50 MSigDB human hallmark sets provisioned in the reference environment (MSigDB 2026.1, HGNC symbols), yielding the requested per-sample pathway activity scores. T1S3 builds the hallmark x sample heatmap sorted by the inflamed-minus-control score difference and answers 'which pathways separate treated from control' with two complementary tests — a per-pathway two-group test on the GSVA scores and fgsea pre-ranked GSEA on the DE ranking — plus a concordance comparison between the two pathway rankings. Everything is small (12000 x 12), so resource needs are modest.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization and DE: UC inflamed vs control\", \"track\": \"1\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed in colon between the 6 ulcerative colitis (inflamed) samples and the 6 controls after QC, and does the low-depth sample_01 (~4x below median library size) distort the contrast?\", \"context\": \"Inputs: /eval-four-models-v2-without-sample-scores-gsva-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 sample columns, 13 columns total, gene-level counts from Salmon 'as delivered') and /eval-four-models-v2-without-sample-scores-gsva-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column: 6 ulcerative colitis inflamed vs 6 control). Design is unpaired, single batch. Downstream steps need the rlog-normalized matrix and the DE ranking, so both must be persisted.\", \"description\": \"DESeq2-based normalization, QC (PCA, size factors), differential expression for inflamed vs control with apeglm LFC shrinkage, a sensitivity re-run excluding sample_01, and persistence of the rlog matrix and DE table for the GSVA and GSEA steps.\", \"constraints\": [\"Read counts.csv (12000 genes x 12 samples) and metadata.csv (12 samples, 6 vs 6 by condition) and join them 1:1 on sample ID; if any sample ID is missing from either file, stop and report the mismatch instead of guessing.\", \"Use DESeq2 with design ~ condition only (single batch, unpaired, no other covariates), median-of-ratios size factors; do not drop any sample from the primary analysis.\", \"Shrink log2 fold changes with apeglm; report the full DE table (gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj).\", \"Sensitivity: re-run DE excluding sample_01 and report the overlap of the top 100 genes by |shrunken log2FC| between the full (12) and reduced (11) runs, plus how far sample_01's size factor deviates from 1.\", \"Persist to disk: (a) the rlog variance-stabilized gene x sample matrix with sample names matching metadata.csv, (b) the DE results table, (c) a PCA plot of the rlog matrix colored by condition.\"], \"acceptance_criteria\": [\"DE results table with shrunken log2FC, pvalue and padj for all tested genes, persisted to disk.\", \"PCA of the rlog matrix shows sample clustering by condition; sample_01's position and its size factor are explicitly reported.\", \"Sensitivity comparison (full vs without sample_01) reported: top-100 |log2FC| overlap and direction agreement of top hits.\", \"rlog matrix and DE table persisted with sample names consistent with metadata.csv.\"], \"caveats\": [\"The counts are Salmon output 'as delivered'; the profile does not state whether gene-length correction was applied. Treat them as raw counts for DESeq2 and note this assumption in the step report.\", \"sample_01's ~4x lower library size will appear as a PCA outlier; DESeq2 size factors correct library size but not other technical artifacts — assess from PCA and the MA plot and report, do not silently down-weight or exclude in the primary analysis.\", \"n=6 per arm limits power; report effect sizes alongside significance.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"ggplot2\", \"SummarizedExperiment\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"GSVA per-sample hallmark activity\", \"track\": \"1\", \"step_type\": \"analysis\", \"question\": \"What is the GSVA activity score of each of the 50 MSigDB human hallmark pathways for each of the 12 colon samples, computed from the QC-normalized expression?\", \"context\": \"Input: the rlog variance-stabilized gene x sample matrix persisted by T1S1. The MSigDB human hallmark gene set collection (50 HALLMARK_* sets, MSigDB 2026.1, HGNC symbols) is provisioned in the reference environment; verify it is present and organism-matched (Homo sapiens) before relying on it. The mouse hallmark set also exists in the environment and must not be used on this human data.\", \"description\": \"GSVA (gsva method, Gaussian kernel) of the rlog expression matrix against the 50 human hallmark sets, producing and persisting a 50 pathway x 12 sample activity score matrix.\", \"constraints\": [\"Confirm the MSigDB human hallmark gene set collection is present in the reference environment (50 HALLMARK_* sets, human/HGNC symbols) before relying on it; if it is absent at run time, report the missing reference and stop the step — do not substitute a different collection (especially not the mouse hallmark set) or fabricate scores.\", \"Inspect the row identifier space of counts.csv (gene symbols vs Ensembl IDs) before GSVA; if not HGNC symbols, convert to symbols using the human gene annotation available in the environment (org.Hs.eg.db).\", \"Run GSVA (gsva method, Gaussian kernel, default k=2) on the T1S1 rlog matrix restricted to genes present in at least one hallmark set; report the fraction of matrix genes matched to the hallmark sets.\", \"Persist the 50 x 12 score matrix as CSV (pathway x sample) with sample names consistent with metadata.csv.\"], \"acceptance_criteria\": [\"50 HALLMARK_* pathway x 12 sample score matrix persisted to disk with sample names consistent with metadata.csv.\", \"Fraction of matrix genes matched/unmatched to hallmark sets reported; no samples dropped during scoring.\"], \"caveats\": [\"GSVA scores are relative per-sample enrichment values, not expression units; downstream tests should use group differences or ranks, not absolute magnitudes.\", \"If the reference store lacks the human hallmark collection at run time, the step must fail loudly with a clear report rather than proceed with a substitute.\"], \"packages\": [\"GSVA\", \"SummarizedExperiment\", \"org.Hs.eg.db\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Hallmark heatmap + pathway-level separation tests\", \"track\": \"1\", \"step_type\": \"analysis\", \"question\": \"Which hallmark pathways separate the 6 ulcerative colitis inflamed samples from the 6 controls, judged from (a) a per-pathway two-group test on the GSVA scores and (b) pre-ranked GSEA on the DE ranking?\", \"context\": \"Inputs: the 50 x 12 GSVA score matrix from T1S2, the DE results table from T1S1, and condition labels from metadata.csv. The same human hallmark sets used in T1S2 are the gene sets for the GSEA cross-check.\", \"description\": \"Heatmap of the 50 hallmark x 12 sample score matrix with condition annotation and rows ordered by the inflamed-minus-control score difference; per-pathway two-group tests on the scores (Wilcoxon and t-test, BH-FDR); fgsea pre-ranked GSEA on the DE ranking; concordance between the two pathway rankings and top-10 lists per method.\", \"constraints\": [\"Build the heatmap: rows = 50 hallmark pathways, columns = the 12 samples annotated by condition (inflamed vs control), rows ordered by mean score difference (inflamed minus control), with per-pathway p-value annotation; save the figure to disk.\", \"Per-pathway two-group test on the GSVA scores: Wilcoxon rank-sum and ordinary two-sample t-test (inflamed vs control), with Benjamini-Hochberg FDR across the 50 pathways.\", \"Pre-ranked GSEA (fgsea): rank DE genes by sign(shrunken log2FC) x -log10(padj), using -log10(pvalue) where padj is NA; run against the same human hallmark sets used in T1S2; report NES and FDR q-value per pathway.\", \"Quantify concordance (Spearman rank correlation) between the GSVA-difference ranking and the fgsea NES ranking across the 50 pathways, and list the top 10 pathways by each method.\"], \"acceptance_criteria\": [\"Heatmap figure saved to disk: 50 rows x 12 columns, condition annotation, rows ordered by the inflamed-minus-control difference, p-values annotated.\", \"Pathway table with per-pathway GSVA group means, both two-group p-values (Wilcoxon, t-test) with BH-FDR, and fgsea NES with FDR.\", \"Spearman concordance between the two pathway rankings and the top-10 pathway list per method reported.\"], \"caveats\": [\"With n=6 per group, per-pathway tests have limited resolution (Wilcoxon on 6 vs 6 is coarse); treat p-values as directional evidence and interpret them together with the heatmap pattern.\", \"fgsea on a DE ranking derived from the same 12 samples is a cross-check of the same contrast, not an independent validation — report it as such.\", \"Do not substitute a different gene set collection if the hallmark sets are unavailable; report the gap instead.\"], \"packages\": [\"fgsea\", \"limma\", \"ComplexHeatmap\", \"ggplot2\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}], \"title\": \"UC colon hallmark GSVA activity heatmap\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 38
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

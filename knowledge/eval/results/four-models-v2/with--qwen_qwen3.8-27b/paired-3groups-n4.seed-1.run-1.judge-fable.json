@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: a single DESeq2 fit with subject as the blocking term, an LRT of ~ subject + condition against ~ subject for any condition effect, then three named pairwise contrasts including the two-coefficient A vs B contrast shrunk with ashr (correctly noting apeglm cannot take it), BH at 0.05 within contrast, and no post hoc fold-change cutoff. The low count filter (10 counts in at least 4 samples, the smallest group) is minimal and justified, and median-of-ratios normalization is explicitly inside the model with no pre-normalization. QC is complete (blind VST PCA, distance heatmap, library sizes, colored by subject and condition) though the outlier policy is only to flag rather than a stated decision rule. Enrichment is correctly omitted, and the report specifies method, versions, design, thresholds, tested and DE counts, sessionInfo, per-contrast FDR caveats, the small-n caveat, and an edgeR QL robustness check."
+}

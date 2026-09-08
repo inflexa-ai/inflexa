@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats two time points as a 2x2 factorial rather than a time course, models time as a two-level factor (explicitly rejecting time_hours), fits ~ condition + time + condition:time, and makes the interaction Wald test primary with simple effects of condition at each time beside it, matching the reference. QC (blind vst, PCA top-500, distance heatmap, library sizes, colored by both factors) precedes the model with a sensible flag-don't-drop outlier policy given n=3 per cell; the filter is minimal and justified, and normalization is median-of-ratios inside the model with no pre-normalized values. BH at 0.05 within contrast with ashr shrinkage for multi-coefficient contrasts is explicit and correct; reference levels are to be set and reported but not named in the plan itself, a minor gap since the metadata level names are not yet read. Enrichment is correctly omitted, and the report step lists method, versions, design, thresholds, tested/significant counts, power and length-offset caveats, and sessionInfo."
+}

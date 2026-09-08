@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 5
+  },
+  "rationale": "The narrative names the right core method (consensus clustering, 80% subsampling, k=2..10, delta-area, ARI/NMI and contingency against condition, within-condition re-clustering), but only Step 1 is actually specified; the clustering steps lack a permuted/null comparison, use only 200 resamples, omit PAC and item/cluster consensus, and never tabulate library size or depth against clusters as confounders, nor explicitly select top-variable genes. QC is solid (library sizes, centroid distance, flag-not-drop policy, PCA by condition) and the CPM>=1 in 10% filter is reasonable, but the integer-fraction test is fragile since Salmon raw counts are commonly fractional and could wrongly route real counts to a TPM branch. The limma discriminator step states no formula, alpha or BH, and enrichment is added without a universe, version, or size window when the question does not call for it; versions and reporting of the stability evidence are only promised in outline."
+}

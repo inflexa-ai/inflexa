@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the decisive point: it refuses the human deconvolution tools on mouse symbols, notes mMCP-counter is absent, and falls back to descriptive mouse-marker scores (PanglaoDB 'Mm', MGI symbols) on linear-scale CPM, explicitly labeled as not fractions, followed by a per-population Wilcoxon with BH and the median difference and effect size beside q. QC keeps sample_01, inspects it on blind-vst PCA and a distance heatmap, and reports its depth and size factor; the filter is minimal and tied to the smallest group size, though it is disconnected from the scoring step which uses the unfiltered matrix. The comparison is explicit in direction (anti-PD-1 minus isotype) but no alpha is stated for the BH threshold. The report names the marker release, package versions, coverage per cell type, and the caution, and enrichment is correctly omitted."
+}

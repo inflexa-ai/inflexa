@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 1,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "The plan names DESeq2 for a two-group design and acknowledges the counts are of unknown scaling, but it never addresses the missing length offset, never asks for quant.sf or average transcript length tables, and does not check for non-integer values. No QC, no filter, no design formula, contrast, or reference level, no BH alpha, and no shrinkage are stated. It promises pathway context without a step, ranking metric, universe, or collection, and the acceptance criterion 'DE table produced' says nothing about versions, thresholds, counts, or caveats."
+}

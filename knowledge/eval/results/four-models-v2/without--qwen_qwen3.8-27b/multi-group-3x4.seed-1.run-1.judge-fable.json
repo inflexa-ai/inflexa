@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 9
+  },
+  "rationale": "The core design is right: one DESeq2 fit of ~condition on all twelve samples, a 2-df LRT against ~1 for the omnibus question, and two explicit contrasts against a stated control reference with apeglm shrinkage and BH at 0.05, with a sensible voom fallback if the matrix turns out not to be counts. QC is present (library sizes, PCA by group, flag-not-drop policy) but omits sample distances and gives no concrete shallow-sample rule; the low-count filter is left to DESeq2 defaults without justification and sits awkwardly with the acceptance demand that tables cover all 12000 genes; size-factor normalization is never named. The |log2FC|>=1 summary is a post hoc threshold rather than an lfcThreshold in the test. Enrichment was not asked for, and the added step ranks the LRT omnibus set by a shrunk log2FC that does not exist for a 2-df test and gives no explicit gene-set size window, though it does name the collection and version and the 12000-gene universe."
+}

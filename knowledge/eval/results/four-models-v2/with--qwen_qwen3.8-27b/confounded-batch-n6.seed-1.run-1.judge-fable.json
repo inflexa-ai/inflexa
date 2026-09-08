@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect batch/condition confounding, refuses a batch term and all removal methods (ComBat-seq, removeBatchEffect, SVA), fits ~condition with an explicit control reference, and labels every output as a condition + batch contrast, matching the reference exactly. QC (blind VST, PCA on 500 genes, distances, library sizes colored by condition and batch) precedes the test, the >=10-in->=6 filter is minimal and justified, and normalization is inside the model (median-of-ratios, TMM) with the lost salmon length offset stated. BH at alpha 0.05 and apeglm shrinkage are explicit, though the 'test_against_threshold' constraint names no lfcThreshold value and the outlier policy says only 'flag and document' rather than a decision rule. Enrichment is correctly omitted and the report specification is complete with versions, counts, session info, and the confounding caveat."
+}

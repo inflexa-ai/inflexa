@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies the hidden structure, estimates surrogate variables with sva using condition in the model of interest, adds them to the DESeq2 design (~SVs + condition) with apeglm shrinkage and BH at 0.05, and avoids ComBat or any count adjustment; it also states a concrete CPM filter and checks the cluster-condition table. It does not first ask the analyst for the unrecorded variable, does not state the null model or explicitly verify that no SV tracks the condition, cites a non-existent limma::peaks cross-check, and the data-derived ~cluster+condition sensitivity model is circular. QC lacks library sizes, sample distances, and a sample-level outlier policy; normalization is implicit rather than stated. Enrichment was not asked and is added without an explicit ORA universe, collection version, or size window; the report omits software versions."
+}

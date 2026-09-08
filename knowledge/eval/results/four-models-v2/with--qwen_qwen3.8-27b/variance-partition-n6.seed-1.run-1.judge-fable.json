@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: variancePartition on voom log-CPM with weights using ~ age + (1|condition) + (1|sex) with no subject term, then DESeq2 Wald on ~ sex + age + condition with control reference, centered age, apeglm shrinkage and BH at 0.05, plus edgeR QL as a robustness check and an explicit tabulation of sex/age balance. QC covers blind vst PCA, distance heatmap and coloring by condition/sex, but omits library sizes and states only that a departing sample is flagged rather than a policy for handling it. The low-count filter is well specified for the DESeq2 and edgeR steps, but the partition step is described as running across all 12000 genes with no filterByExpr before voom, contrary to the reference. The report lists method, versions, design, thresholds, counts and the small-n caveat, and correctly omits enrichment; the step-ID mismatches (T1S4 vs step 3) are cosmetic."
+}

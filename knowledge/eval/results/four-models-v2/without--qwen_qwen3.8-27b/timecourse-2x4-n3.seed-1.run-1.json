@@ -1,0 +1,143 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:40:02.769Z",
+  "elapsedMs": 180998,
+  "outcome": "plan_submitted",
+  "planId": "pln-9c3129b5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 condition×time interaction model (LRT + per-timepoint contrasts)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "treatment-time-interaction",
+        "status": "pending",
+        "caveats": [
+          "Only 3 replicates per condition × time cell — interaction terms are underpowered; expect few FDR-significant genes. Report nominal-p (0.05) lists alongside, clearly labeled as uncorrected.",
+          "If the 25th column of counts.csv turns out to be a sample lacking a metadata row, exclude it from the design and report the discrepancy rather than dropping it silently.",
+          "Do not over-interpret LFC direction: it depends on which condition is the reference, which must be stated in every table.",
+          "If the time points are not equidistant (check time_hours), the discrete-factor model still applies; report the actual hours so readers know the design is not equally spaced."
+        ],
+        "context": "Homo sapiens cell line; treatment over time; 2 conditions × 4 time points (t0–t3) × 3 replicates = 24 samples. Counts are salmon gene-level output delivered as-is; the profile does not record whether a length correction was applied — verify integer counts. t0 is expected to be the baseline time point; confirm via time_hours == 0. The two condition labels are unknown to the planner; read them from the condition column of metadata.csv.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "dplyr",
+          "tidyr",
+          "ggplot2"
+        ],
+        "question": "Among the 12,000 genes in this 2-condition × 4-timepoint (t0–t3), 3-replicate human cell-line RNA-seq dataset, which genes show a statistically supported treatment-specific deviation of the treated condition's temporal trajectory from the reference condition's trajectory, beyond the shared time trend — and at which time points (t1, t2, t3 vs t0) does that deviation emerge?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Model in R with DESeq2 (1.52.0): both condition and time as unordered factors; set the baseline time point (time_hours == 0, expected t0) as the time reference level. Choose the reference condition from the actual metadata values (prefer the untreated/control/vehicle level if identifiable); interaction p-values are invariant to the condition reference, but LFC signs are not — document the reference levels used.",
+          "Primary test: DESeq(dds, test='LRT', reduced = ~ condition + time) against full design ~ condition + time + condition:time; BH FDR at 0.10 (primary) and 0.05 (secondary) on the LRT p-values.",
+          "Secondary: standard Wald DESeq fit; identify the 3 interaction term names from names(results(dds)) and extract each (condition:time at t1, t2, t3 vs t0); apply apeglm LFC shrinkage for the reported log2FCs.",
+          "Before modeling, filter to genes with counts >= 10 in at least 6 samples; report genes retained vs 12,000.",
+          "Validate that the 25th column of counts.csv is the gene-ID column (not a sample) and that all 24 metadata samples map 1:1 to sample columns; verify counts are non-negative. If counts are non-integer (length-corrected), rerun the identical factor design with limma-voom on log2(CPM) and state this deviation in the outputs.",
+          "QC: PCA colored by condition and by time, pairwise sample Pearson correlation, per-sample size factors, MA plots for the 3 interaction contrasts; flag any sample that departs from its expected condition/time group (possible swap).",
+          "Report the actual time_hours values per time point (t0–t3) in the output."
+        ],
+        "description": "Fit a DESeq2 negative-binomial GLM with design ~ condition + time + condition:time on the salmon count matrix at /eval-four-models-v2-without-timecourse-2x4-n3-s1-1/data/inputs/counts/counts.csv (12,000 rows × 25 columns; expected layout is a gene-ID column plus 24 sample columns) with sample metadata from /eval-four-models-v2-without-timecourse-2x4-n3-s1-1/data/inputs/metadata/metadata.csv (24 rows × 4 columns: sample identifier, condition, time, time_hours). Primary gene-level test: LRT of the full interaction model vs the additive model ~ condition + time (joint significance of the 3 interaction terms). Secondary: Wald results for each of the 3 interaction contrasts relative to t0, with apeglm-shrunken log2 fold changes. Also produces QC (PCA, sample correlation, size factors, MA plots) and mean-expression trajectories for top genes.",
+        "acceptance_criteria": [
+          "Per-gene results table for all retained genes: LRT statistic, LRT p, LRT FDR; plus, for each of the 3 interaction contrasts, apeglm-shrunken log2FC, Wald p, and FDR.",
+          "Full-gene ranked list by LRT statistic (ascending p / descending statistic) saved as the input for the downstream GSEA step.",
+          "Top tables: top 50 genes by joint LRT and top 50 by each interaction contrast (t1, t2, t3 vs t0).",
+          "Mean normalized expression (log2 CPM) trajectory plots for the top 15 joint-LRT genes across all 8 condition × time groups.",
+          "QC plots plus a written QC summary: size-factor range, reference levels used, time_hours per time point, any outlier or swap flags."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway enrichment of interaction-DE genes (GSEA + ORA)",
+        "agent": "enrichment-agent",
+        "track": "treatment-time-interaction",
+        "status": "pending",
+        "caveats": [
+          "With low replicate power (3/cell), ORA on nominal-p (0.05) gene sets may be more informative than on FDR-significant sets; keep the FDR status of every reported set explicit.",
+          "WikiPathways set names carry IDs and species tags — clean them via the '%' delimiter before tabulating.",
+          "Do not use the rat or mouse WikiPathways GMTs present in the same reference store; organism must match the data (human)."
+        ],
+        "context": "Inputs from T1S1: LRT-ranked list (all genes), 3 per-contrast ranked lists, and 4 DE gene sets. Organism is Homo sapiens (taxon 9606). If gene names in the count matrix are not HGNC symbols, map via org.Hs.eg.db first and report the mapping rate.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "dplyr",
+          "ggplot2",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which human pathways are enriched among genes showing a treatment-specific temporal deviation (joint LRT list), and does the enriched-pathway identity shift across the emergence time points (t1 vs t2 vs t3 vs t0)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Resolve the human WikiPathways GMT from the provisioned reference data by content (a human WikiPathways GMT file); verify from its set descriptors that it is Homo sapiens before use. Parse set names by splitting the first GMT field on '%' to recover readable pathway names.",
+          "Report the fraction of ranked genes matched to the reference sets by symbol for each input list.",
+          "Run fgsea with at least 10,000 permutations per ranked list; report top 20 sets with NES and FDR, threshold FDR < 0.25 for GSEA and BH p < 0.05 for ORA. An empty result at the threshold is a valid outcome — state it explicitly rather than relaxing thresholds silently.",
+          "If the human GMT is absent at run time, report the gap explicitly; do not substitute a non-human gene set."
+        ],
+        "description": "Gene-set enrichment for the interaction results from T1S1: fgsea GSEA on the full-gene ranked list by LRT statistic and on each per-contrast (t1/t2/t3 vs t0) ranked list; over-representation analysis on the FDR<0.1 DE gene sets (joint LRT plus the 3 contrasts). Reference gene sets: the human-only WikiPathways GMT (2026.07.10) provisioned in the environment — the environment also holds rat and mouse WikiPathways GMTs, which must NOT be used for this human dataset.",
+        "acceptance_criteria": [
+          "Enriched-set tables (set name, NES or p, FDR/adjusted p, core-enrichment genes where available) for: the joint-LRT ranked list, each of the 3 time-point ranked lists, and each of the 4 DE gene sets.",
+          "Gene match-rate report per input list.",
+          "A concise summary of which top pathways are shared across time points and which are time-point-specific."
+        ]
+      }
+    ],
+    "title": "Condition×time interaction DE, cell-line time course",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is a pure interaction problem: with 2 conditions × 4 time points (t0–t3) × 3 replicates in a human cell line, isolate the treatment-specific component of change over time. T1S1 models the 12,000-gene salmon count matrix (24 samples) with a negative-binomial GLM, ~ condition + time + condition:time: the time main effect absorbs the shared time trend, and the 3 interaction terms (condition:time at t1/t2/t3 relative to t0) capture treatment-specific deviation. A joint likelihood-ratio test (full model vs ~ condition + time) gives one gene-level test of 'differing trajectories', while per-contrast Wald results localize deviation to specific time points. T1S2 interprets the LRT-ranked and FDR-significant gene sets against the human WikiPathways gene sets provisioned in the environment, reporting both the overall and per-time-point pathway picture."
+  },
+  "usage": {
+    "inputTokens": 32706,
+    "outputTokens": 10666,
+    "cacheReadInputTokens": 9923,
+    "reasoningTokens": 8366
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_213c537865a942c3b33ea21e",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Condition×time interaction DE, cell-line time course\", \"analytical_narrative\": \"The research question is a pure interaction problem: with 2 conditions × 4 time points (t0–t3) × 3 replicates in a human cell line, isolate the treatment-specific component of change over time. T1S1 models the 12,000-gene salmon count matrix (24 samples) with a negative-binomial GLM, ~ condition + time + condition:time: the time main effect absorbs the shared time trend, and the 3 interaction terms (condition:time at t1/t2/t3 relative to t0) capture treatment-specific deviation. A joint likelihood-ratio test (full model vs ~ condition + time) gives one gene-level test of 'differing trajectories', while per-contrast Wald results localize deviation to specific time points. T1S2 interprets the LRT-ranked and FDR-significant gene sets against the human WikiPathways gene sets provisioned in the environment, reporting both the overall and per-time-point pathway picture.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DESeq2 condition×time interaction model (LRT + per-timepoint contrasts)\", \"track\": \"treatment-time-interaction\", \"step_type\": \"analysis\", \"question\": \"Among the 12,000 genes in this 2-condition × 4-timepoint (t0–t3), 3-replicate human cell-line RNA-seq dataset, which genes show a statistically supported treatment-specific deviation of the treated condition's temporal trajectory from the reference condition's trajectory, beyond the shared time trend — and at which time points (t1, t2, t3 vs t0) does that deviation emerge?\", \"description\": \"Fit a DESeq2 negative-binomial GLM with design ~ condition + time + condition:time on the salmon count matrix at /eval-four-models-v2-without-timecourse-2x4-n3-s1-1/data/inputs/counts/counts.csv (12,000 rows × 25 columns; expected layout is a gene-ID column plus 24 sample columns) with sample metadata from /eval-four-models-v2-without-timecourse-2x4-n3-s1-1/data/inputs/metadata/metadata.csv (24 rows × 4 columns: sample identifier, condition, time, time_hours). Primary gene-level test: LRT of the full interaction model vs the additive model ~ condition + time (joint significance of the 3 interaction terms). Secondary: Wald results for each of the 3 interaction contrasts relative to t0, with apeglm-shrunken log2 fold changes. Also produces QC (PCA, sample correlation, size factors, MA plots) and mean-expression trajectories for top genes.\", \"context\": \"Homo sapiens cell line; treatment over time; 2 conditions × 4 time points (t0–t3) × 3 replicates = 24 samples. Counts are salmon gene-level output delivered as-is; the profile does not record whether a length correction was applied — verify integer counts. t0 is expected to be the baseline time point; confirm via time_hours == 0. The two condition labels are unknown to the planner; read them from the condition column of metadata.csv.\", \"constraints\": [\"Model in R with DESeq2 (1.52.0): both condition and time as unordered factors; set the baseline time point (time_hours == 0, expected t0) as the time reference level. Choose the reference condition from the actual metadata values (prefer the untreated/control/vehicle level if identifiable); interaction p-values are invariant to the condition reference, but LFC signs are not — document the reference levels used.\", \"Primary test: DESeq(dds, test='LRT', reduced = ~ condition + time) against full design ~ condition + time + condition:time; BH FDR at 0.10 (primary) and 0.05 (secondary) on the LRT p-values.\", \"Secondary: standard Wald DESeq fit; identify the 3 interaction term names from names(results(dds)) and extract each (condition:time at t1, t2, t3 vs t0); apply apeglm LFC shrinkage for the reported log2FCs.\", \"Before modeling, filter to genes with counts >= 10 in at least 6 samples; report genes retained vs 12,000.\", \"Validate that the 25th column of counts.csv is the gene-ID column (not a sample) and that all 24 metadata samples map 1:1 to sample columns; verify counts are non-negative. If counts are non-integer (length-corrected), rerun the identical factor design with limma-voom on log2(CPM) and state this deviation in the outputs.\", \"QC: PCA colored by condition and by time, pairwise sample Pearson correlation, per-sample size factors, MA plots for the 3 interaction contrasts; flag any sample that departs from its expected condition/time group (possible swap).\", \"Report the actual time_hours values per time point (t0–t3) in the output.\"], \"acceptance_criteria\": [\"Per-gene results table for all retained genes: LRT statistic, LRT p, LRT FDR; plus, for each of the 3 interaction contrasts, apeglm-shrunken log2FC, Wald p, and FDR.\", \"Full-gene ranked list by LRT statistic (ascending p / descending statistic) saved as the input for the downstream GSEA step.\", \"Top tables: top 50 genes by joint LRT and top 50 by each interaction contrast (t1, t2, t3 vs t0).\", \"Mean normalized expression (log2 CPM) trajectory plots for the top 15 joint-LRT genes across all 8 condition × time groups.\", \"QC plots plus a written QC summary: size-factor range, reference levels used, time_hours per time point, any outlier or swap flags.\"], \"caveats\": [\"Only 3 replicates per condition × time cell — interaction terms are underpowered; expect few FDR-significant genes. Report nominal-p (0.05) lists alongside, clearly labeled as uncorrected.\", \"If the 25th column of counts.csv turns out to be a sample lacking a metadata row, exclude it from the design and report the discrepancy rather than dropping it silently.\", \"Do not over-interpret LFC direction: it depends on which condition is the reference, which must be stated in every table.\", \"If the time points are not equidistant (check time_hours), the discrete-factor model still applies; report the actual hours so readers know the design is not equally spaced.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"dplyr\", \"tidyr\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Pathway enrichment of interaction-DE genes (GSEA + ORA)\", \"track\": \"treatment-time-interaction\", \"step_type\": \"analysis\", \"question\": \"Which human pathways are enriched among genes showing a treatment-specific temporal deviation (joint LRT list), and does the enriched-pathway identity shift across the emergence time points (t1 vs t2 vs t3 vs t0)?\", \"description\": \"Gene-set enrichment for the interaction results from T1S1: fgsea GSEA on the full-gene ranked list by LRT statistic and on each per-contrast (t1/t2/t3 vs t0) ranked list; over-representation analysis on the FDR<0.1 DE gene sets (joint LRT plus the 3 contrasts). Reference gene sets: the human-only WikiPathways GMT (2026.07.10) provisioned in the environment — the environment also holds rat and mouse WikiPathways GMTs, which must NOT be used for this human dataset.\", \"context\": \"Inputs from T1S1: LRT-ranked list (all genes), 3 per-contrast ranked lists, and 4 DE gene sets. Organism is Homo sapiens (taxon 9606). If gene names in the count matrix are not HGNC symbols, map via org.Hs.eg.db first and report the mapping rate.\", \"constraints\": [\"Resolve the human WikiPathways GMT from the provisioned reference data by content (a human WikiPathways GMT file); verify from its set descriptors that it is Homo sapiens before use. Parse set names by splitting the first GMT field on '%' to recover readable pathway names.\", \"Report the fraction of ranked genes matched to the reference sets by symbol for each input list.\", \"Run fgsea with at least 10,000 permutations per ranked list; report top 20 sets with NES and FDR, threshold FDR < 0.25 for GSEA and BH p < 0.05 for ORA. An empty result at the threshold is a valid outcome — state it explicitly rather than relaxing thresholds silently.\", \"If the human GMT is absent at run time, report the gap explicitly; do not substitute a non-human gene set.\"], \"acceptance_criteria\": [\"Enriched-set tables (set name, NES or p, FDR/adjusted p, core-enrichment genes where available) for: the joint-LRT ranked list, each of the 3 time-point ranked lists, and each of the 4 DE gene sets.\", \"Gene match-rate report per input list.\", \"A concise summary of which top pathways are shared across time points and which are time-point-specific.\"], \"caveats\": [\"With low replicate power (3/cell), ORA on nominal-p (0.05) gene sets may be more informative than on FDR-significant sets; keep the FDR status of every reported set explicit.\", \"WikiPathways set names carry IDs and species tags — clean them via the '%' delimiter before tabulating.\", \"Do not use the rat or mouse WikiPathways GMTs present in the same reference store; organism must match the data (human).\"], \"packages\": [\"fgsea\", \"dplyr\", \"ggplot2\", \"clusterProfiler\", \"org.Hs.eg.db\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 72
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

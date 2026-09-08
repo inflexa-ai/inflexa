@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan fits the 60 vs 60 unpaired single-batch design with an explicit ~condition model, control as reference, normalization inside the model (median-of-ratios or TMM), BH at 0.05, and apeglm shrinkage with CIs, which directly addresses the effect-size question. Weaknesses: the effect-size thresholds are applied post hoc as tiers rather than tested (no lfcThreshold/TREAT), the voom branch wrongly implies limma shrinks LFCs, and the low-count filter is only explicit on the voom branch while the DESeq2 branch mentions filtering only in a caveat. QC has PCA and library sizes with an outlier policy but omits the sex check and any search for hidden structure, which matters in a 120-sample blood cohort with no covariates. Enrichment was not asked and its omission is defensible, though the reference treats it as warranted; the report lacks package versions."
+}

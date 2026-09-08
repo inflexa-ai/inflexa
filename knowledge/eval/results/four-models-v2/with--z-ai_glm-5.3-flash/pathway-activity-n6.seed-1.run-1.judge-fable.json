@@ -5,14 +5,14 @@
   "tag": "fable",
   "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
   "scores": {
-    "method_fits_design": 0,
-    "qc_present": 0,
-    "low_count_filter": 0,
-    "normalization": 0,
-    "model_formula_contrasts": 0,
-    "fdr_shrinkage": 0,
-    "enrichment_universe_sets": 0,
-    "report_completeness": 0
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
   },
-  "rationale": "No plan was submitted; the planner terminated with a provider network error before producing any content. There is nothing to judge on any criterion: no count model, no QC or policy for the shallow sample_01, no filter, no normalization, no design or contrast, no FDR or shrinkage, no PROGENy footprint inference, and no report. Every criterion scores zero."
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with median-of-ratios size factors, an explicit ~condition design with vehicle as reference, apeglm shrinkage, BH at 0.05 with independent filtering, and the full unshrunken Wald statistic fed to decoupleR mlm on the PROGENy human model with top 500 responsive genes, ulm as a second estimator, and a per-sample score matrix tested with limma. QC is specific to this dataset, keeping sample_01 with a stated inspect-and-report policy, and membership enrichment is explicitly refused with the footprint-not-membership reading stated. Minor deductions: the lfc_threshold_policy constraint names a threshold test but no threshold is ever specified, and the PROGENy model version is promised in the report rather than stated in the plan."
 }

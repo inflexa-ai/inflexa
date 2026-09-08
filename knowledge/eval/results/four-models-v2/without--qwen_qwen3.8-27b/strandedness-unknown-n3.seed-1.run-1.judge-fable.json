@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The DESeq2 Wald model with ~ condition, size factors, apeglm shrinkage and BH at 0.05 fits a 3 vs 3 unpaired single-batch design, and the n=3 power limit is stated without lowering alpha. The central failure is that the plan fits the model on the counts as delivered: it declares strandedness unresolvable, offers no infer_experiment/salmon check or path to recount, and understates the damage (a stranded library counted with the wrong -s loses most reads, not just antisense-overlap genes), so the user's doubt about the counts is documented rather than resolved. QC is solid (library sizes, PCA, correlation heatmap, explicit outlier policy), but the voom cross-check applies no filterByExpr and the DESeq2 arm leans solely on independent filtering. Enrichment was not asked for; the version-stamped WikiPathways GMT and full-list fgsea are fine, but the ORA universe, size window and a single ranking metric are unspecified, and the report omits software versions."
+}

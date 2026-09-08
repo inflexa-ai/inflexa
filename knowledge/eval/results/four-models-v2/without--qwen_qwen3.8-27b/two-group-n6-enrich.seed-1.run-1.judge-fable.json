@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 0,
+    "normalization": 4,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 2
+  },
+  "rationale": "Only Step 1 (QC) is actually specified; the DE and enrichment steps exist only as narrative sentences. The QC is strong and design-specific: library sizes, PCA/MDS with sample_01 annotated, an explicit keep-and-sensitivity policy, and a raw-vs-length-corrected integer check. The narrative names DESeq2 with apeglm on the 6v6 design plus a sample_01-removed sensitivity model and hallmark enrichment on a full ranked list, but states no design formula, reference level, contrast, low-count filter, BH alpha, ranking statistic, set-size window, gene set version, or software versions. Normalization is only implied by the DESeq2 name and an informational size-factor computation, and no final report contents are specified."
+}

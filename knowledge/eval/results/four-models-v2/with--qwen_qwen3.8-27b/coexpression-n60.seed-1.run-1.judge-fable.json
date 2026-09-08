@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 2,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly specifies a signed WGCNA network on variance-stabilized, filterByExpr-filtered data with a scale-free-fit power criterion, TOM, dynamic tree cut (min 30), merge at 0.25, kME hubs, and BH-corrected eigengene-trait correlations across modules, with sensible design-blind QC and outlier flagging. It deviates from the reference by running the network on all filtered genes rather than the top ~5000 variable genes, omits gene significance for hub ranking, reports only the chosen power's fit rather than the full fit curve, and never states which condition level is coded 1 in the trait vector. The largest gap is the explicit omission of functional enrichment (MSigDB Hallmark with the network genes as universe) for trait-related modules, which the reference treats as warranted; the report is otherwise well specified with reproducibility records and appropriate caveats."
+}

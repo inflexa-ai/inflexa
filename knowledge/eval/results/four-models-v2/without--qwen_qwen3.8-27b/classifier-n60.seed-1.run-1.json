@@ -1,0 +1,290 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "classifier-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:49:00.267Z",
+  "elapsedMs": 579416,
+  "outcome": "plan_submitted",
+  "planId": "pln-6ee84a11",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, ID mapping, and normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Length-correction status unknown: document that per-gene scaling is a constant factor and does not bias case-control LFCs; do not attempt to re-derive lengths",
+          "121st column is expected to be the gene-ID column; verify orientation (genes as rows) before any computation",
+          "PCA separation here is descriptive only — it is not the performance estimate, which belongs to T1S3"
+        ],
+        "context": "60 cases vs 60 controls, unpaired, single batch, no other covariates in metadata. The profile does not state whether Salmon applied length correction: a per-gene multiplicative constant does not affect between-group log fold changes or per-sample discriminative structure, so treat values as counts and document the assumption rather than blocking on it.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Is the 12,000 x 120 Salmon gene-count matrix (counts.csv) QC-clean and properly normalized for the case vs control contrast, and do cases and controls already separate at the sample level on PCA?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "normalization",
+        "depends_on": [],
+        "constraints": [
+          "Use the actual condition column values from metadata.csv; verify exactly 60 vs 60; do not invent covariates (no age/sex/batch exist).",
+          "If the first column holds Ensembl gene IDs (ENSG...), map to HGNC symbols via org.Hs.eg.db, report the mapping rate, and make symbols the row index of every downstream artifact.",
+          "Gene filter: keep genes with CPM >= 0.5 in at least 30 samples (report retained count); never filter on condition.",
+          "Do not drop any sample; flag suspected outliers (e.g. |z| > 3 on PC1-3 scores) and report them.",
+          "Size factors must be estimated on the full unfiltered matrix per DESeq2 convention, then applied; report library-size range and any extreme samples."
+        ],
+        "description": "Load /eval-four-models-v2-without-classifier-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns: 1 gene-ID column + 120 sample columns, orientation to be verified at runtime) and metadata.csv (120 x 2: sample, condition). Detect the gene identifier space; map to HGNC symbols if Ensembl IDs. Filter lowly expressed genes. Estimate DESeq2 size factors (median-of-ratios). Export: (a) filtered raw counts + size factors for DE; (b) a log2-normalized matrix (log2(counts/sizefactor) + 1) with gene symbols as rows — the shared input for all downstream steps; (c) top-1000 variable genes (unsupervised, by residual variance) for the classifier's secondary comparison. Sample QC: library sizes, PCA colored by condition, outlier flags.",
+        "acceptance_criteria": [
+          "Log2-normalized gene-symbol x sample matrix saved as a single CSV artifact used by all downstream steps",
+          "Filtered raw-counts matrix + size factors saved for DE",
+          "Per-sample QC table (library size, PC1-3, outlier flag) and a PCA plot colored by condition",
+          "ID-space detection + symbol mapping rate reported",
+          "Top-1000 variable-gene list saved (unsupervised, computed before any condition use)",
+          "Gene count after filtering reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression case vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 60 vs 60 in blood, expect few or no robustly DE genes; do not relax the threshold to manufacture a list — use the ranked list for GSEA in that case",
+          "Genes with extreme per-sample outliers can drive LFCs; report any DE gene whose contribution is dominated by one sample (DESeq2 cooks)"
+        ],
+        "context": "Unpaired two-group contrast; single batch; n = 60 per arm. Input: T1S1 filtered raw counts + size factors.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which of the filtered genes differ in expression between the 60 cases and 60 controls, and how large are the fold changes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design formula is ~ condition only; do not add unavailable covariates.",
+          "Use LFC shrinkage (apeglm) for reported effect sizes; keep unshrunken LFCs in the full table.",
+          "Save both the padj < 0.05 DE-gene list (up/down flagged) and the ranked list of ALL tested genes — the ranked list is the GSEA input.",
+          "Report the number of DE genes; if zero at padj < 0.05, say so explicitly and report the smallest padj — an empty DE list is a valid result."
+        ],
+        "description": "DESeq2 on the T1S1 filtered counts, design ~ condition (no batch or covariate terms — single batch, none available). Shrink LFCs with apeglm. Report DE genes at padj < 0.05 (up and down), a full ranked list of all tested genes ordered by -log10(padj) for GSEA, volcano and MA plots, and a top-20 table.",
+        "acceptance_criteria": [
+          "Full DE results table (gene, baseMean, log2FC_shrunken, p, padj) saved",
+          "DE-gene list at padj < 0.05 with direction, saved",
+          "Ranked list of all tested genes saved",
+          "Volcano and MA figures produced",
+          "Count of up/down DE genes stated in the report"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Nested-CV case vs control classifier",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "AUC ~ 0.5 with a significant permutation p-value is a real and reportable finding — state that no useful classifier exists for this cohort; do not retry with leaked preprocessing to 'fix' it",
+          "With n = 120 the CI on AUC will be wide; present the CI, not just the point estimate",
+          "Random forest/XGBoost on 12,000 unfiltered features can look strong on small training sets while adding nothing over the linear models — the permutation null guards against this"
+        ],
+        "context": "12,000 features vs 120 samples: overfitting is the dominant threat, and a DE-gene filter applied before CV would be leakage — that is why the primary estimate uses the full feature matrix with selection inside training folds. The T1S2 DE list is NOT used for feature selection here; it is interpreted descriptively in T1S4.",
+        "maxSteps": 200,
+        "packages": [
+          "numpy",
+          "pandas",
+          "scikit-learn",
+          "xgboost",
+          "matplotlib"
+        ],
+        "question": "How accurately can a gene expression classifier predict case vs control on held-out samples, estimated without any leakage from the test folds?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "classification",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "No outer test sample may influence any decision inside its training folds: hyperparameters, feature selection, and any scaling/standardization (fit per training fold; size-factor normalization from T1S1 is unsupervised and may be used as-is).",
+          "Model set and CV scheme are pre-specified as written; do not select among the four models using outer test performance — report all four and designate the best by outer AUC.",
+          "Stratified folds must preserve 30/30 (per repeat, per outer fold); report the per-fold counts.",
+          "Report explicitly: (a) the estimate is the accuracy for a new sample from the SAME population and assay; no external validation cohort is available because the case phenotype is unspecified in the metadata — state this as a limitation; (b) the top-1000 secondary comparison is a pre-specified feature-set comparison whose estimate is optimistic with respect to the feature-set choice.",
+          "If a model fails to converge on a specific fold, drop that fold with a note; never refit using information from the test fold."
+        ],
+        "description": "The core step answering the research question. Input: T1S1 log2-normalized matrix (~12,000 x 120) + condition labels. Nested cross-validation: 5 repeats x 10-fold stratified outer loop; inside each outer training fold (108 samples), a 5-fold inner loop selects hyperparameters. Four pre-specified models: (1) LASSO logistic regression, (2) elastic-net logistic, (3) random forest, (4) XGBoost. All feature selection is intrinsic to training (L1 penalty; tree-model feature use) and confined to inner training data — no gene is ever chosen using outer test samples. Primary metric: pooled ROC AUC with 95% CI by non-parametric bootstrap (10,000 resamples) of the outer test predictions; secondary: balanced accuracy and sensitivity/specificity at the Youden cutpoint. Controls: majority-class baseline and a label-permutation null (100 permutations of the best model) with an empirical p-value. Feature stability: for the L1 models, the frequency with which each gene has a nonzero coefficient across outer training folds, reported as a top-50 stable-feature list. Secondary comparison: repeat the entire nested pipeline restricted to the T1S1 top-1000 variable genes (an unsupervised, pre-specified feature set) to test whether a compact panel suffices.",
+        "acceptance_criteria": [
+          "Per-model table: ROC AUC point estimate + bootstrap 95% CI (pooled outer test predictions), balanced accuracy, Youden-cutpoint sensitivity/specificity",
+          "Best model identified by outer AUC; its ROC curve figure saved",
+          "Permutation-null AUC distribution (100 permutations) + empirical p-value for the best model",
+          "Majority-class baseline reported",
+          "Top-50 stable-feature list (selection frequency across outer training folds) saved",
+          "Top-1000-variable-gene secondary comparison table with the stated optimism caveat",
+          "Per-fold sample-count table confirming stratification"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway and GO enrichment of DE genes and classifier features",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways names embed a '%' separator — split the first GMT field on '%' to recover readable set names",
+          "FDR over thousands of GO sets is strict; report the significant sets, not raw p < 0.05 counts"
+        ],
+        "context": "Organism is Homo sapiens (taxon 9606) — human gene sets only; all four collections use HGNC symbols, matching the T1S1 symbol mapping. GSEA needs the ranked list (works even with few or zero padj-significant DE genes); ORA needs the list at padj < 0.05 (may be small).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which human pathways, processes, and GO terms are enriched among the case vs control DE genes (T1S2) and among the classifier's stably selected features (T1S3)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Human sets only; never use the mouse or rat WikiPathways/MSigDB collections on this data.",
+          "Reactome: filter to Homo sapiens via the species index before testing — the raw GMT is multi-species.",
+          "Report the gene-to-set mapping rate (how many input genes matched set membership) per collection.",
+          "If the DE list is empty or too small for a meaningful ORA, run GSEA only and say so; do not pad the DE list with unthresholded genes.",
+          "GO results are a nested hierarchy: collapse correlated parent/child hits when summarizing counts."
+        ],
+        "description": "GSEA of the T1S2 ranked list and over-representation of (a) the padj < 0.05 DE-gene list and (b) the T1S3 top-50 stable features, against human gene sets that are provisioned in this environment: MSigDB human Hallmark (50 sets), MSigDB human GO (C5: BP, CC, MF), WikiPathways Homo sapiens, and Reactome restricted to Homo sapiens (join the ReactomePathways.txt index on stable ID to filter species — the GMT carries all species). Report top sets per collection with NES/odds-ratio, p, and FDR; produce an enrichment map or dot plot. Descriptively report the overlap between the T1S3 stable features and the T1S2 DE list.",
+        "acceptance_criteria": [
+          "GSEA result tables (set, NES, p, FDR) for Hallmark and GO on the T1S2 ranked list",
+          "ORA tables for the DE list and for the T1S3 stable features, per available collection",
+          "Top-set figure (enrichment map/dot plot) saved",
+          "Mapping rates reported per collection",
+          "DE-list vs stable-feature overlap reported descriptively"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Blood-cell composition confound check",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Erythroid and platelet 'lineages' in whole blood reflect RBC/platelet fraction (sample handling, lysis), not cell states — interpret their condition differences accordingly",
+          "If only a couple of lineage scores differ and the composition-only AUC is near 0.5, that is reassuring: the classification signal is not composition — report it as such"
+        ],
+        "context": "No cell counts, demographics, or flow data exist in the metadata — composition can only be inferred from the transcriptome itself, unsupervised (condition labels must not enter the lineage scoring). The T1S3 AUC is needed only to benchmark the composition-only AUC.",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "ggplot2"
+        ],
+        "question": "Does the case vs control separation in whole blood reflect differences in blood cell composition, and how much of the T1S3 classifier accuracy is explained by composition alone?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 4
+        },
+        "step_type": "immune_deconvolution",
+        "depends_on": [
+          "T1S1",
+          "T1S3"
+        ],
+        "constraints": [
+          "No network access — use only locally resolvable signatures; if none resolve, use the fixed marker panel above and say so in the report. The step must not fail for lack of a deconvolution resource.",
+          "Lineage scores must be constructed without reference to condition (unsupervised scoring), then compared.",
+          "Report which lineages differ between cases and controls, with effect sizes.",
+          "State explicitly whether the composition-only AUC is a large fraction of the full-transcriptome AUC; if it is near-equal, conclude the classifier is largely reading cell mix and flag every downstream interpretation accordingly."
+        ],
+        "description": "Whole blood makes cell-composition differences the principal confound in a bulk case-control transcriptomic study — a classifier could be reading white-cell mix rather than molecular disease signal. From the T1S1 log2-normalized matrix, estimate per-sample abundance for the major blood lineages: B, CD4 T, CD8 T, NK, monocyte, granulocyte, erythroid, platelet. Prefer a local marker-based method (e.g. MCPcounter/xCell/Babelgene via immunedeconv if its signature files are resolvable offline); otherwise use a pre-specified canonical lineage marker panel scored as the per-sample z-scored mean of lineage marker genes (B: CD79A CD79B MS4A1; CD4 T: CD3D CD4; CD8 T: CD8A CD8B; NK: KLRD1 NCAM1 GZMB; monocyte: CD14 CD68 CD163; granulocyte: CSF3R CEAC8 FCGR3B; erythroid: HBA1 HBB; platelet: PF4 PPBP). Compare each lineage score between cases and controls (Wilcoxon rank-sum + rank-biserial r). Fit a logistic regression on the lineage scores only and report its ROC AUC with CI, benchmarked against the T1S3 full-transcriptome AUC (report the difference).",
+        "acceptance_criteria": [
+          "Per-sample lineage score matrix saved",
+          "Condition-comparison table per lineage (test statistic, p, effect size)",
+          "Composition-only logistic-regression AUC + CI",
+          "Comparison of composition-only vs full-transcriptome (T1S3) AUC, with a plain-language conclusion",
+          "Statement of which scoring method (deconvolution signatures vs fixed panel) was actually used"
+        ]
+      }
+    ],
+    "title": "Whole-blood case-control classifier with nested CV",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Whole-blood case vs control bulk RNA-seq: 60 cases, 60 controls, unpaired, single batch, 12,000 Salmon gene-level counts x 120 samples. The research question — can a gene expression classifier tell case from control, and how accurately on a new sample — demands a leakage-free accuracy estimate, because with 12,000 features and 120 samples naive cross-validation overfits catastrophically. Pipeline: (1) QC, gene-filtering, and median-ratio normalization producing a shared log2-normalized matrix; (2) DESeq2 differential expression for gene-level evidence and a full ranked list; (3) 5x10-fold nested cross-validation over four pre-specified models (LASSO logistic, elastic net, random forest, XGBoost) with all feature selection confined to inner training folds on the FULL feature matrix — the reported ROC AUC with bootstrap CI is the honest answer to 'accuracy on a new sample from this population', backed by a label-permutation null; (4) human-only pathway/GO enrichment (Hallmark, GO, WikiPathways, Reactome — all confirmed provisioned) on DE genes and on the classifier's stable selected features; (5) a blood-cell-composition confound check, because whole blood makes cell-composition differences the principal confound in a case-control transcriptomic study: lineage abundance is scored per sample, compared between conditions, and a composition-only classifier AUC is benchmarked against the full-transcriptome AUC to show how much of the classification signal is just cell mix. No covariates (age, sex, batch) exist in the metadata, so nothing is adjusted for; the single-batch, unpaired design keeps every model a plain two-group contrast."
+  },
+  "usage": {
+    "inputTokens": 136136,
+    "outputTokens": 18868,
+    "cacheReadInputTokens": 46464,
+    "reasoningTokens": 14464
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "chatcmpl-tool-b226ce951b409cb5",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 100
+      },
+      "outcome": "ok",
+      "durationMs": 148
+    },
+    {
+      "toolUseId": "call_55476f82e465453d9f8a9790",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gmt",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    },
+    {
+      "toolUseId": "call_33d72a9e674f45ebb2849105",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case-control classifier with nested CV\", \"analytical_narrative\": \"Whole-blood case vs control bulk RNA-seq: 60 cases, 60 controls, unpaired, single batch, 12,000 Salmon gene-level counts x 120 samples. The research question — can a gene expression classifier tell case from control, and how accurately on a new sample — demands a leakage-free accuracy estimate, because with 12,000 features and 120 samples naive cross-validation overfits catastrophically. Pipeline: (1) QC, gene-filtering, and median-ratio normalization producing a shared log2-normalized matrix; (2) DESeq2 differential expression for gene-level evidence and a full ranked list; (3) 5x10-fold nested cross-validation over four pre-specified models (LASSO logistic, elastic net, random forest, XGBoost) with all feature selection confined to inner training folds on the FULL feature matrix — the reported ROC AUC with bootstrap CI is the honest answer to 'accuracy on a new sample from this population', backed by a label-permutation null; (4) human-only pathway/GO enrichment (Hallmark, GO, WikiPathways, Reactome — all confirmed provisioned) on DE genes and on the classifier's stable selected features; (5) a blood-cell-composition confound check, because whole blood makes cell-composition differences the principal confound in a case-control transcriptomic study: lineage abundance is scored per sample, compared between conditions, and a composition-only classifier AUC is benchmarked against the full-transcriptome AUC to show how much of the classification signal is just cell mix. No covariates (age, sex, batch) exist in the metadata, so nothing is adjusted for; the single-batch, unpaired design keeps every model a plain two-group contrast.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, ID mapping, and normalization\", \"track\": \"T1\", \"step_type\": \"normalization\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Is the 12,000 x 120 Salmon gene-count matrix (counts.csv) QC-clean and properly normalized for the case vs control contrast, and do cases and controls already separate at the sample level on PCA?\", \"description\": \"Load /eval-four-models-v2-without-classifier-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns: 1 gene-ID column + 120 sample columns, orientation to be verified at runtime) and metadata.csv (120 x 2: sample, condition). Detect the gene identifier space; map to HGNC symbols if Ensembl IDs. Filter lowly expressed genes. Estimate DESeq2 size factors (median-of-ratios). Export: (a) filtered raw counts + size factors for DE; (b) a log2-normalized matrix (log2(counts/sizefactor) + 1) with gene symbols as rows — the shared input for all downstream steps; (c) top-1000 variable genes (unsupervised, by residual variance) for the classifier's secondary comparison. Sample QC: library sizes, PCA colored by condition, outlier flags.\", \"context\": \"60 cases vs 60 controls, unpaired, single batch, no other covariates in metadata. The profile does not state whether Salmon applied length correction: a per-gene multiplicative constant does not affect between-group log fold changes or per-sample discriminative structure, so treat values as counts and document the assumption rather than blocking on it.\", \"constraints\": [\"Use the actual condition column values from metadata.csv; verify exactly 60 vs 60; do not invent covariates (no age/sex/batch exist).\", \"If the first column holds Ensembl gene IDs (ENSG...), map to HGNC symbols via org.Hs.eg.db, report the mapping rate, and make symbols the row index of every downstream artifact.\", \"Gene filter: keep genes with CPM >= 0.5 in at least 30 samples (report retained count); never filter on condition.\", \"Do not drop any sample; flag suspected outliers (e.g. |z| > 3 on PC1-3 scores) and report them.\", \"Size factors must be estimated on the full unfiltered matrix per DESeq2 convention, then applied; report library-size range and any extreme samples.\"], \"acceptance_criteria\": [\"Log2-normalized gene-symbol x sample matrix saved as a single CSV artifact used by all downstream steps\", \"Filtered raw-counts matrix + size factors saved for DE\", \"Per-sample QC table (library size, PC1-3, outlier flag) and a PCA plot colored by condition\", \"ID-space detection + symbol mapping rate reported\", \"Top-1000 variable-gene list saved (unsupervised, computed before any condition use)\", \"Gene count after filtering reported\"], \"caveats\": [\"Length-correction status unknown: document that per-gene scaling is a constant factor and does not bias case-control LFCs; do not attempt to re-derive lengths\", \"121st column is expected to be the gene-ID column; verify orientation (genes as rows) before any computation\", \"PCA separation here is descriptive only — it is not the performance estimate, which belongs to T1S3\"], \"packages\": [\"DESeq2\", \"edgeR\", \"org.Hs.eg.db\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S2\", \"name\": \"Differential expression case vs control\", \"track\": \"T1\", \"step_type\": \"differential_expression\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which of the filtered genes differ in expression between the 60 cases and 60 controls, and how large are the fold changes?\", \"description\": \"DESeq2 on the T1S1 filtered counts, design ~ condition (no batch or covariate terms — single batch, none available). Shrink LFCs with apeglm. Report DE genes at padj < 0.05 (up and down), a full ranked list of all tested genes ordered by -log10(padj) for GSEA, volcano and MA plots, and a top-20 table.\", \"context\": \"Unpaired two-group contrast; single batch; n = 60 per arm. Input: T1S1 filtered raw counts + size factors.\", \"constraints\": [\"Design formula is ~ condition only; do not add unavailable covariates.\", \"Use LFC shrinkage (apeglm) for reported effect sizes; keep unshrunken LFCs in the full table.\", \"Save both the padj < 0.05 DE-gene list (up/down flagged) and the ranked list of ALL tested genes — the ranked list is the GSEA input.\", \"Report the number of DE genes; if zero at padj < 0.05, say so explicitly and report the smallest padj — an empty DE list is a valid result.\"], \"acceptance_criteria\": [\"Full DE results table (gene, baseMean, log2FC_shrunken, p, padj) saved\", \"DE-gene list at padj < 0.05 with direction, saved\", \"Ranked list of all tested genes saved\", \"Volcano and MA figures produced\", \"Count of up/down DE genes stated in the report\"], \"caveats\": [\"With 60 vs 60 in blood, expect few or no robustly DE genes; do not relax the threshold to manufacture a list — use the ranked list for GSEA in that case\", \"Genes with extreme per-sample outliers can drive LFCs; report any DE gene whose contribution is dominated by one sample (DESeq2 cooks)\"], \"packages\": [\"DESeq2\", \"apeglm\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 4}}, {\"id\": \"T1S3\", \"name\": \"Nested-CV case vs control classifier\", \"track\": \"T1\", \"step_type\": \"classification\", \"agent\": \"statistical-modeling-agent\", \"question\": \"How accurately can a gene expression classifier predict case vs control on held-out samples, estimated without any leakage from the test folds?\", \"description\": \"The core step answering the research question. Input: T1S1 log2-normalized matrix (~12,000 x 120) + condition labels. Nested cross-validation: 5 repeats x 10-fold stratified outer loop; inside each outer training fold (108 samples), a 5-fold inner loop selects hyperparameters. Four pre-specified models: (1) LASSO logistic regression, (2) elastic-net logistic, (3) random forest, (4) XGBoost. All feature selection is intrinsic to training (L1 penalty; tree-model feature use) and confined to inner training data — no gene is ever chosen using outer test samples. Primary metric: pooled ROC AUC with 95% CI by non-parametric bootstrap (10,000 resamples) of the outer test predictions; secondary: balanced accuracy and sensitivity/specificity at the Youden cutpoint. Controls: majority-class baseline and a label-permutation null (100 permutations of the best model) with an empirical p-value. Feature stability: for the L1 models, the frequency with which each gene has a nonzero coefficient across outer training folds, reported as a top-50 stable-feature list. Secondary comparison: repeat the entire nested pipeline restricted to the T1S1 top-1000 variable genes (an unsupervised, pre-specified feature set) to test whether a compact panel suffices.\", \"context\": \"12,000 features vs 120 samples: overfitting is the dominant threat, and a DE-gene filter applied before CV would be leakage — that is why the primary estimate uses the full feature matrix with selection inside training folds. The T1S2 DE list is NOT used for feature selection here; it is interpreted descriptively in T1S4.\", \"constraints\": [\"No outer test sample may influence any decision inside its training folds: hyperparameters, feature selection, and any scaling/standardization (fit per training fold; size-factor normalization from T1S1 is unsupervised and may be used as-is).\", \"Model set and CV scheme are pre-specified as written; do not select among the four models using outer test performance — report all four and designate the best by outer AUC.\", \"Stratified folds must preserve 30/30 (per repeat, per outer fold); report the per-fold counts.\", \"Report explicitly: (a) the estimate is the accuracy for a new sample from the SAME population and assay; no external validation cohort is available because the case phenotype is unspecified in the metadata — state this as a limitation; (b) the top-1000 secondary comparison is a pre-specified feature-set comparison whose estimate is optimistic with respect to the feature-set choice.\", \"If a model fails to converge on a specific fold, drop that fold with a note; never refit using information from the test fold.\"], \"acceptance_criteria\": [\"Per-model table: ROC AUC point estimate + bootstrap 95% CI (pooled outer test predictions), balanced accuracy, Youden-cutpoint sensitivity/specificity\", \"Best model identified by outer AUC; its ROC curve figure saved\", \"Permutation-null AUC distribution (100 permutations) + empirical p-value for the best model\", \"Majority-class baseline reported\", \"Top-50 stable-feature list (selection frequency across outer training folds) saved\", \"Top-1000-variable-gene secondary comparison table with the stated optimism caveat\", \"Per-fold sample-count table confirming stratification\"], \"caveats\": [\"AUC ~ 0.5 with a significant permutation p-value is a real and reportable finding — state that no useful classifier exists for this cohort; do not retry with leaked preprocessing to 'fix' it\", \"With n = 120 the CI on AUC will be wide; present the CI, not just the point estimate\", \"Random forest/XGBoost on 12,000 unfiltered features can look strong on small training sets while adding nothing over the linear models — the permutation null guards against this\"], \"packages\": [\"numpy\", \"pandas\", \"scikit-learn\", \"xgboost\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}}, {\"id\": \"T1S4\", \"name\": \"Pathway and GO enrichment of DE genes and classifier features\", \"track\": \"T1\", \"step_type\": \"enrichment\", \"agent\": \"enrichment-agent\", \"question\": \"Which human pathways, processes, and GO terms are enriched among the case vs control DE genes (T1S2) and among the classifier's stably selected features (T1S3)?\", \"description\": \"GSEA of the T1S2 ranked list and over-representation of (a) the padj < 0.05 DE-gene list and (b) the T1S3 top-50 stable features, against human gene sets that are provisioned in this environment: MSigDB human Hallmark (50 sets), MSigDB human GO (C5: BP, CC, MF), WikiPathways Homo sapiens, and Reactome restricted to Homo sapiens (join the ReactomePathways.txt index on stable ID to filter species — the GMT carries all species). Report top sets per collection with NES/odds-ratio, p, and FDR; produce an enrichment map or dot plot. Descriptively report the overlap between the T1S3 stable features and the T1S2 DE list.\", \"context\": \"Organism is Homo sapiens (taxon 9606) — human gene sets only; all four collections use HGNC symbols, matching the T1S1 symbol mapping. GSEA needs the ranked list (works even with few or zero padj-significant DE genes); ORA needs the list at padj < 0.05 (may be small).\", \"constraints\": [\"Human sets only; never use the mouse or rat WikiPathways/MSigDB collections on this data.\", \"Reactome: filter to Homo sapiens via the species index before testing — the raw GMT is multi-species.\", \"Report the gene-to-set mapping rate (how many input genes matched set membership) per collection.\", \"If the DE list is empty or too small for a meaningful ORA, run GSEA only and say so; do not pad the DE list with unthresholded genes.\", \"GO results are a nested hierarchy: collapse correlated parent/child hits when summarizing counts.\"], \"acceptance_criteria\": [\"GSEA result tables (set, NES, p, FDR) for Hallmark and GO on the T1S2 ranked list\", \"ORA tables for the DE list and for the T1S3 stable features, per available collection\", \"Top-set figure (enrichment map/dot plot) saved\", \"Mapping rates reported per collection\", \"DE-list vs stable-feature overlap reported descriptively\"], \"caveats\": [\"WikiPathways names embed a '%' separator — split the first GMT field on '%' to recover readable set names\", \"FDR over thousands of GO sets is strict; report the significant sets, not raw p < 0.05 counts\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"ggplot2\"], \"depends_on\": [\"T1S2\", \"T1S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S5\", \"name\": \"Blood-cell composition confound check\", \"track\": \"T1\", \"step_type\": \"immune_deconvolution\", \"agent\": \"immune-profiling-agent\", \"question\": \"Does the case vs control separation in whole blood reflect differences in blood cell composition, and how much of the T1S3 classifier accuracy is explained by composition alone?\", \"description\": \"Whole blood makes cell-composition differences the principal confound in a bulk case-control transcriptomic study — a classifier could be reading white-cell mix rather than molecular disease signal. From the T1S1 log2-normalized matrix, estimate per-sample abundance for the major blood lineages: B, CD4 T, CD8 T, NK, monocyte, granulocyte, erythroid, platelet. Prefer a local marker-based method (e.g. MCPcounter/xCell/Babelgene via immunedeconv if its signature files are resolvable offline); otherwise use a pre-specified canonical lineage marker panel scored as the per-sample z-scored mean of lineage marker genes (B: CD79A CD79B MS4A1; CD4 T: CD3D CD4; CD8 T: CD8A CD8B; NK: KLRD1 NCAM1 GZMB; monocyte: CD14 CD68 CD163; granulocyte: CSF3R CEAC8 FCGR3B; erythroid: HBA1 HBB; platelet: PF4 PPBP). Compare each lineage score between cases and controls (Wilcoxon rank-sum + rank-biserial r). Fit a logistic regression on the lineage scores only and report its ROC AUC with CI, benchmarked against the T1S3 full-transcriptome AUC (report the difference).\", \"context\": \"No cell counts, demographics, or flow data exist in the metadata — composition can only be inferred from the transcriptome itself, unsupervised (condition labels must not enter the lineage scoring). The T1S3 AUC is needed only to benchmark the composition-only AUC.\", \"constraints\": [\"No network access — use only locally resolvable signatures; if none resolve, use the fixed marker panel above and say so in the report. The step must not fail for lack of a deconvolution resource.\", \"Lineage scores must be constructed without reference to condition (unsupervised scoring), then compared.\", \"Report which lineages differ between cases and controls, with effect sizes.\", \"State explicitly whether the composition-only AUC is a large fraction of the full-transcriptome AUC; if it is near-equal, conclude the classifier is largely reading cell mix and flag every downstream interpretation accordingly.\"], \"acceptance_criteria\": [\"Per-sample lineage score matrix saved\", \"Condition-comparison table per lineage (test statistic, p, effect size)\", \"Composition-only logistic-regression AUC + CI\", \"Comparison of composition-only vs full-transcriptome (T1S3) AUC, with a plain-language conclusion\", \"Statement of which scoring method (deconvolution signatures vs fixed panel) was actually used\"], \"caveats\": [\"Erythroid and platelet 'lineages' in whole blood reflect RBC/platelet fraction (sample handling, lysis), not cell states — interpret their condition differences accordingly\", \"If only a couple of lineage scores differ and the composition-only AUC is near 0.5, that is reassuring: the classification signal is not composition — report it as such\"], \"packages\": [\"immunedeconv\", \"ggplot2\"], \"depends_on\": [\"T1S1\", \"T1S3\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 4}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 54
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,268 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:29:48.922Z",
+  "elapsedMs": 286585,
+  "outcome": "plan_submitted",
+  "planId": "pln-6bfec1f8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and gene filtering for co-expression input",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "co-expression-network",
+        "status": "pending",
+        "caveats": [
+          "Salmon 'counts' are often non-integer scaled counts; that is fine for TMM/voom, but record that the DESeq2 sensitivity check in T2S1 needs integerization.",
+          "With only 6 samples, per-sample QC metrics are indicative, not decisive."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns: gene-ID column plus 6 sample columns; Salmon gene-level counts as delivered, length-correction status unknown — treat values as counts and record the assumption) and /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows: sample + condition; 3 treated vs 3 control, unpaired, single batch, Homo sapiens liver). Identify the gene-ID column and the 6 sample columns, and join to metadata using the actual condition labels as delivered.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which of the 12,000 Salmon-quantified genes are reliably expressed across the 6 liver samples for co-expression analysis, and do the 3 treated samples separate from the 3 controls in expression space?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Treat counts.csv values as counts for TMM/voom normalization; do not assume length correction was or was not applied — state it as an assumption in the outputs.",
+          "Filter genes with CPM < 1 in all 6 samples; do not remove more than ~30% of genes; report the retained gene count.",
+          "No batch correction (single batch by design).",
+          "Determine the row-name identifier space (Ensembl vs HGNC symbol) and persist a gene-ID to HGNC symbol mapping if IDs are not already symbols (org.Hs.eg.db is installed locally; no network access).",
+          "Persist: filtered log2-normalized expression matrix (RDS or TSV), filter summary, sample 1-Pearson correlation matrix, and a sample dendrogram/heatmap plot."
+        ],
+        "description": "Produces the WGCNA-ready log2-normalized expression matrix, gene-filtering report, identifier mapping, and sample-cluster sanity check from the raw Salmon counts and sample metadata.",
+        "acceptance_criteria": [
+          "A filtered, log2-normalized expression matrix containing all 6 samples is persisted and usable as WGCNA input.",
+          "A sample-level sanity check (correlation heatmap/dendrogram) is produced and condition separation is reported honestly, even if it is weak.",
+          "The gene filter count, identifier-space determination, and symbol mapping (if needed) are reported."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "WGCNA module detection and leave-one-out stability",
+        "agent": "network-agent",
+        "track": "co-expression-network",
+        "status": "pending",
+        "caveats": [
+          "TOM values inherit df=4 correlations; expect substantial ME variability across LOO refits — report it, do not hide it.",
+          "With 12,000 genes and minModuleSize=20 many small modules will be merged or discarded; that is expected behavior, not a failure."
+        ],
+        "context": "Run the standard WGCNA pipeline (R package WGCNA is installed) on the T1S1 matrix: pickSoftThreshold over powers 1-12 (report scale-free R2; the fit curve is coarse at n=6, so choose the smallest power meeting a lenient criterion such as R2 >= 0.80, and treat the choice as provisional), signed adjacency, TOM similarity, average-linkage hierarchical clustering, dynamicTreeCut (minModuleSize = 20), mergeCloseMEs. Because the network is underdetermined at n=6 (correlations have df=4), quantify stability: set a fixed RNG seed; refit the full pipeline with each of the 6 samples left out (6 networks of 5 samples) and report, per refit, the correlation of each module eigengene with the full-data eigengene and the fraction of gene-module assignments retained; also report the module set at soft-threshold power ±1. No literature-specific stability protocol was found for small-n WGCNA (searches returned no results), so this LOO plus power-sensitivity design is the default choice and should be labeled as such.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA"
+        ],
+        "question": "What co-expression modules do the expressed genes form across all 6 liver samples, and how stable are those modules when each of the 6 samples is left out (n-1 = 5 refits) and when the soft-threshold power is shifted by ±1?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Signed network is the primary analysis; if it yields one giant gray module, report the unsigned network as a sensitivity and say so explicitly.",
+          "All module findings must be labeled exploratory (n=6); do not present module biology as established.",
+          "Persist: gene-to-module assignments (module color/name per gene), module eigengene matrix, stability table (per LOO refit: ME correlations and assignment retention), and the soft-threshold fit plot."
+        ],
+        "description": "Builds the signed WGCNA co-expression network, detects modules by dynamic tree cutting, and quantifies module stability via leave-one-sample-out refits and a soft-threshold sensitivity check.",
+        "acceptance_criteria": [
+          "Module assignments covering the filtered genes (named modules plus gray) are persisted.",
+          "The module eigengene matrix and the LOO stability table are produced.",
+          "Sensitivity of module count/structure to soft-threshold power ±1 is reported."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Treated vs control differential expression cross-check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "gene-level-cross-check",
+        "status": "pending",
+        "caveats": [
+          "n=3 vs 3: dispersion estimates are noisy and confidence intervals wide; treat this result as a cross-check of the module findings, not as a primary claim."
+        ],
+        "context": "Primary method: limma-voom on the T1S1 normalized data (handles non-integer Salmon values and small n through empirical-Bayes moderation). Sensitivity: DESeq2 with apeglm LFC shrinkage, run only if the delivered values are (near-)integer, otherwise note why it was skipped. Headline criterion: |log2FC| >= 0.25 with BH FDR < 0.05, but persist the full ranked table regardless. The length-correction ambiguity is harmless for logFC (per-gene constant scaling is absorbed by normalization) — state that.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between the 3 treated and 3 control liver samples, giving an independent gene-level treatment-response signature against which module-treatment tracking can be cross-checked?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Persist the full ranked DE table (logFC, P, FDR) without pre-filtering by significance.",
+          "Report the count of FDR < 0.05 hits exactly as computed (expected to be few at df=4); do not loosen thresholds to manufacture hits.",
+          "Use the treatment/control labels from metadata.csv exactly as delivered (3 treated, 3 control)."
+        ],
+        "description": "Produces the treated-vs-control DE gene table (voom primary, DESeq2 sensitivity) used to cross-check module-treatment associations.",
+        "acceptance_criteria": [
+          "A full ranked DE table is persisted with voom results (and DESeq2 results if applicable).",
+          "FDR is applied post hoc only, and the hit count is reported as-is with the df=4 caveat."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Module eigengene-treatment association and DE overlap",
+        "agent": "statistical-modeling-agent",
+        "track": "co-expression-network",
+        "status": "pending",
+        "caveats": [
+          "Few modules x n=6 makes FDR across modules weakly powered; a non-significant module is not evidence of 'no association'.",
+          "Eigengenes of very small modules are dominated by a few genes; note module size when interpreting ranking."
+        ],
+        "context": "For each module from T1S2: (a) module eigengene (or module mean of log2 expression) against the treatment indicator (0/1 from metadata.csv): Pearson r, two-sample t-test, and Wilcoxon rank-sum; BH-FDR across modules. (b) Overlap: fraction of DE genes from T2S1 (FDR < 0.05 if any, else the |logFC| >= 0.25 and P < 0.05 list) that fall in the module and move in the same direction as the eigengene shift; hypergeometric test against the genome background. Rank modules by combined evidence (|r|, test p, overlap p) and emit a final module-trait table with effect sizes and direction (up in treated vs down in treated).",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Which modules track treatment — i.e., whose module eigengene differs between treated and control liver samples — and is that tracking supported by an excess of same-direction DE genes within each module?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use the treatment/control labels from metadata.csv exactly as delivered.",
+          "Report both parametric and rank-based tests; with n=6 Wilcoxon p-values are coarse, so present effect sizes (r, ME group difference) alongside p-values.",
+          "Persist the module-trait table (module, size, r, t-test p, Wilcoxon p, BH FDR, same-direction DE fraction, hypergeometric p, direction) for every named module."
+        ],
+        "description": "Tests each module eigengene against the treatment condition, corrects across modules, and integrates same-direction DE-gene overlap to rank the treatment-tracking modules.",
+        "acceptance_criteria": [
+          "A module-trait table covering every named module is persisted with BH-FDR.",
+          "Effect sizes and direction are reported for at least the top-ranked module, explicitly labeled exploratory.",
+          "If T2S1 produced zero FDR-significant genes, the overlap is computed against the relaxed list and that fallback is stated in the output."
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Pathway and GO annotation of treatment-tracking modules",
+        "agent": "enrichment-agent",
+        "track": "functional-annotation",
+        "status": "pending",
+        "caveats": [
+          "ORA on small modules (< ~15 genes) is underpowered; present those results as annotation only, not as pathway conclusions."
+        ],
+        "context": "Take the top modules from T2S2 (all FDR-significant, otherwise top 5 by combined evidence). Run over-representation analysis (clusterProfiler, installed locally) against: (a) a human pathway gene set — the human WikiPathways GMT provisioned under the references store (HGNC symbols; resolve it at run time against what is actually staged; if absent, report the gap and proceed with GO), and (b) GO BP/CC/MP via GO.db (org.Hs.eg.db, local, no network). Map module genes to HGNC symbols with org.Hs.eg.db when needed. Optionally run fgsea on the DE-ranked list (T2S1) against the same sets. For each top module, also report enrichment split by direction of the eigengene shift when the module has >= 10 genes moving in that direction.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "In the context of liver drug treatment, which biological pathways and processes are enriched in the top treatment-tracking modules?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S2"
+        ],
+        "constraints": [
+          "Human references only (the dataset is Homo sapiens; do not use the mouse or rat GMTs or ID mappings).",
+          "No network access: do not call KEGGREST, Ensembl REST, or any remote annotation service; use only local annotation (GO.db, staged GMT).",
+          "If the human WikiPathways GMT is missing at run time, complete the GO portion and report the missing resource rather than failing the step."
+        ],
+        "description": "Annotates the top treatment-tracking modules with GO and human WikiPathways enrichment so the module results are biologically interpretable.",
+        "acceptance_criteria": [
+          "Enrichment tables (set, overlap, P, FDR, member genes) are persisted per module for GO, and for WikiPathways when the GMT is present.",
+          "Enriched sets of the top-ranked module are reported with the module's direction (up in treated / down in treated) attached, and the interpretation is framed as annotation of an exploratory n=6 finding."
+        ]
+      }
+    ],
+    "title": "Liver drug-response WGCNA modules and treatment tracking",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-20T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Dataset: human liver bulk RNA-seq, 12,000 Salmon gene-level counts (length correction unknown) across 6 samples — 3 treated vs 3 control, unpaired, single batch. The research question has two parts: (1) what co-expression modules the genes form, and (2) which modules track treatment. Flow: T1S1 QC, TMM/voom-style normalization, conservative gene filtering, and a sample-cluster sanity check to produce the WGCNA-ready matrix and determine the identifier space; T1S2 signed WGCNA with scale-free power selection and dynamic-tree-cut modules, plus — because n=6 leaves correlations with df=4 and the network is underdetermined — leave-one-sample-out refits (6 networks of 5 samples) and a ±1 soft-threshold sensitivity to quantify module stability honestly; T2S1 limma-voom treated-vs-control DE (DESeq2 sensitivity if counts integerize) as an independent gene-level response signature; T2S2 module-eigengene vs treatment association (Pearson r, t-test, Wilcoxon, BH-FDR) integrated with same-direction DE-gene overlap per module to rank treatment-tracking modules; T2S3 GO and human WikiPathways annotation of the top modules for biological interpretation. Note: literature search for small-n WGCNA stability guidance returned no usable results (one corpus rate-limited, two PubMed queries empty), so the stability protocol is the standard LOO/sensitivity design rather than a literature-recommended one. All module-level conclusions must be framed as exploratory given the n=6 design."
+  },
+  "usage": {
+    "inputTokens": 166481,
+    "outputTokens": 15346,
+    "cacheReadInputTokens": 145280,
+    "reasoningTokens": 11837
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c859f01c9de44059ba1f46d9",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "WGCNA co-expression network small sample size module stability bootstrap leave-one-out resampling limitations",
+        "limit": 8
+      },
+      "outcome": "ok",
+      "durationMs": 8369
+    },
+    {
+      "toolUseId": "call_862be34db0704e3fade76e2a",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA \"sample size\" module stability small sample gene co-expression network",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 537
+    },
+    {
+      "toolUseId": "call_11a97c3b4b9a45aba3a4aa63",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 5,
+        "query": "weighted gene co-expression network analysis minimum sample size recommendations"
+      },
+      "outcome": "ok",
+      "durationMs": 245
+    },
+    {
+      "toolUseId": "call_9537228edd7c459e998847a7",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Liver drug-response WGCNA modules and treatment tracking\", \"analytical_narrative\": \"Dataset: human liver bulk RNA-seq, 12,000 Salmon gene-level counts (length correction unknown) across 6 samples — 3 treated vs 3 control, unpaired, single batch. The research question has two parts: (1) what co-expression modules the genes form, and (2) which modules track treatment. Flow: T1S1 QC, TMM/voom-style normalization, conservative gene filtering, and a sample-cluster sanity check to produce the WGCNA-ready matrix and determine the identifier space; T1S2 signed WGCNA with scale-free power selection and dynamic-tree-cut modules, plus — because n=6 leaves correlations with df=4 and the network is underdetermined — leave-one-sample-out refits (6 networks of 5 samples) and a ±1 soft-threshold sensitivity to quantify module stability honestly; T2S1 limma-voom treated-vs-control DE (DESeq2 sensitivity if counts integerize) as an independent gene-level response signature; T2S2 module-eigengene vs treatment association (Pearson r, t-test, Wilcoxon, BH-FDR) integrated with same-direction DE-gene overlap per module to rank treatment-tracking modules; T2S3 GO and human WikiPathways annotation of the top modules for biological interpretation. Note: literature search for small-n WGCNA stability guidance returned no usable results (one corpus rate-limited, two PubMed queries empty), so the stability protocol is the standard LOO/sensitivity design rather than a literature-recommended one. All module-level conclusions must be framed as exploratory given the n=6 design.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-20T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization, and gene filtering for co-expression input\", \"track\": \"co-expression-network\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 Salmon-quantified genes are reliably expressed across the 6 liver samples for co-expression analysis, and do the 3 treated samples separate from the 3 controls in expression space?\", \"context\": \"Inputs: /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns: gene-ID column plus 6 sample columns; Salmon gene-level counts as delivered, length-correction status unknown — treat values as counts and record the assumption) and /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows: sample + condition; 3 treated vs 3 control, unpaired, single batch, Homo sapiens liver). Identify the gene-ID column and the 6 sample columns, and join to metadata using the actual condition labels as delivered.\", \"constraints\": [\"Treat counts.csv values as counts for TMM/voom normalization; do not assume length correction was or was not applied — state it as an assumption in the outputs.\", \"Filter genes with CPM < 1 in all 6 samples; do not remove more than ~30% of genes; report the retained gene count.\", \"No batch correction (single batch by design).\", \"Determine the row-name identifier space (Ensembl vs HGNC symbol) and persist a gene-ID to HGNC symbol mapping if IDs are not already symbols (org.Hs.eg.db is installed locally; no network access).\", \"Persist: filtered log2-normalized expression matrix (RDS or TSV), filter summary, sample 1-Pearson correlation matrix, and a sample dendrogram/heatmap plot.\"], \"acceptance_criteria\": [\"A filtered, log2-normalized expression matrix containing all 6 samples is persisted and usable as WGCNA input.\", \"A sample-level sanity check (correlation heatmap/dendrogram) is produced and condition separation is reported honestly, even if it is weak.\", \"The gene filter count, identifier-space determination, and symbol mapping (if needed) are reported.\"], \"caveats\": [\"Salmon 'counts' are often non-integer scaled counts; that is fine for TMM/voom, but record that the DESeq2 sensitivity check in T2S1 needs integerization.\", \"With only 6 samples, per-sample QC metrics are indicative, not decisive.\"], \"packages\": [\"edgeR\", \"limma\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Produces the WGCNA-ready log2-normalized expression matrix, gene-filtering report, identifier mapping, and sample-cluster sanity check from the raw Salmon counts and sample metadata.\"}, {\"id\": \"T1S2\", \"name\": \"WGCNA module detection and leave-one-out stability\", \"track\": \"co-expression-network\", \"step_type\": \"analysis\", \"question\": \"What co-expression modules do the expressed genes form across all 6 liver samples, and how stable are those modules when each of the 6 samples is left out (n-1 = 5 refits) and when the soft-threshold power is shifted by ±1?\", \"context\": \"Run the standard WGCNA pipeline (R package WGCNA is installed) on the T1S1 matrix: pickSoftThreshold over powers 1-12 (report scale-free R2; the fit curve is coarse at n=6, so choose the smallest power meeting a lenient criterion such as R2 >= 0.80, and treat the choice as provisional), signed adjacency, TOM similarity, average-linkage hierarchical clustering, dynamicTreeCut (minModuleSize = 20), mergeCloseMEs. Because the network is underdetermined at n=6 (correlations have df=4), quantify stability: set a fixed RNG seed; refit the full pipeline with each of the 6 samples left out (6 networks of 5 samples) and report, per refit, the correlation of each module eigengene with the full-data eigengene and the fraction of gene-module assignments retained; also report the module set at soft-threshold power ±1. No literature-specific stability protocol was found for small-n WGCNA (searches returned no results), so this LOO plus power-sensitivity design is the default choice and should be labeled as such.\", \"constraints\": [\"Signed network is the primary analysis; if it yields one giant gray module, report the unsigned network as a sensitivity and say so explicitly.\", \"All module findings must be labeled exploratory (n=6); do not present module biology as established.\", \"Persist: gene-to-module assignments (module color/name per gene), module eigengene matrix, stability table (per LOO refit: ME correlations and assignment retention), and the soft-threshold fit plot.\"], \"acceptance_criteria\": [\"Module assignments covering the filtered genes (named modules plus gray) are persisted.\", \"The module eigengene matrix and the LOO stability table are produced.\", \"Sensitivity of module count/structure to soft-threshold power ±1 is reported.\"], \"caveats\": [\"TOM values inherit df=4 correlations; expect substantial ME variability across LOO refits — report it, do not hide it.\", \"With 12,000 genes and minModuleSize=20 many small modules will be merged or discarded; that is expected behavior, not a failure.\"], \"packages\": [\"WGCNA\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"network-agent\", \"description\": \"Builds the signed WGCNA co-expression network, detects modules by dynamic tree cutting, and quantifies module stability via leave-one-sample-out refits and a soft-threshold sensitivity check.\"}, {\"id\": \"T2S1\", \"name\": \"Treated vs control differential expression cross-check\", \"track\": \"gene-level-cross-check\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 3 treated and 3 control liver samples, giving an independent gene-level treatment-response signature against which module-treatment tracking can be cross-checked?\", \"context\": \"Primary method: limma-voom on the T1S1 normalized data (handles non-integer Salmon values and small n through empirical-Bayes moderation). Sensitivity: DESeq2 with apeglm LFC shrinkage, run only if the delivered values are (near-)integer, otherwise note why it was skipped. Headline criterion: |log2FC| >= 0.25 with BH FDR < 0.05, but persist the full ranked table regardless. The length-correction ambiguity is harmless for logFC (per-gene constant scaling is absorbed by normalization) — state that.\", \"constraints\": [\"Persist the full ranked DE table (logFC, P, FDR) without pre-filtering by significance.\", \"Report the count of FDR < 0.05 hits exactly as computed (expected to be few at df=4); do not loosen thresholds to manufacture hits.\", \"Use the treatment/control labels from metadata.csv exactly as delivered (3 treated, 3 control).\"], \"acceptance_criteria\": [\"A full ranked DE table is persisted with voom results (and DESeq2 results if applicable).\", \"FDR is applied post hoc only, and the hit count is reported as-is with the df=4 caveat.\"], \"caveats\": [\"n=3 vs 3: dispersion estimates are noisy and confidence intervals wide; treat this result as a cross-check of the module findings, not as a primary claim.\"], \"packages\": [\"limma\", \"edgeR\", \"DESeq2\", \"apeglm\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Produces the treated-vs-control DE gene table (voom primary, DESeq2 sensitivity) used to cross-check module-treatment associations.\"}, {\"id\": \"T2S2\", \"name\": \"Module eigengene-treatment association and DE overlap\", \"track\": \"co-expression-network\", \"step_type\": \"analysis\", \"question\": \"Which modules track treatment — i.e., whose module eigengene differs between treated and control liver samples — and is that tracking supported by an excess of same-direction DE genes within each module?\", \"context\": \"For each module from T1S2: (a) module eigengene (or module mean of log2 expression) against the treatment indicator (0/1 from metadata.csv): Pearson r, two-sample t-test, and Wilcoxon rank-sum; BH-FDR across modules. (b) Overlap: fraction of DE genes from T2S1 (FDR < 0.05 if any, else the |logFC| >= 0.25 and P < 0.05 list) that fall in the module and move in the same direction as the eigengene shift; hypergeometric test against the genome background. Rank modules by combined evidence (|r|, test p, overlap p) and emit a final module-trait table with effect sizes and direction (up in treated vs down in treated).\", \"constraints\": [\"Use the treatment/control labels from metadata.csv exactly as delivered.\", \"Report both parametric and rank-based tests; with n=6 Wilcoxon p-values are coarse, so present effect sizes (r, ME group difference) alongside p-values.\", \"Persist the module-trait table (module, size, r, t-test p, Wilcoxon p, BH FDR, same-direction DE fraction, hypergeometric p, direction) for every named module.\"], \"acceptance_criteria\": [\"A module-trait table covering every named module is persisted with BH-FDR.\", \"Effect sizes and direction are reported for at least the top-ranked module, explicitly labeled exploratory.\", \"If T2S1 produced zero FDR-significant genes, the overlap is computed against the relaxed list and that fallback is stated in the output.\"], \"caveats\": [\"Few modules x n=6 makes FDR across modules weakly powered; a non-significant module is not evidence of 'no association'.\", \"Eigengenes of very small modules are dominated by a few genes; note module size when interpreting ranking.\"], \"packages\": [], \"depends_on\": [\"T1S2\", \"T2S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"statistical-modeling-agent\", \"description\": \"Tests each module eigengene against the treatment condition, corrects across modules, and integrates same-direction DE-gene overlap to rank the treatment-tracking modules.\"}, {\"id\": \"T2S3\", \"name\": \"Pathway and GO annotation of treatment-tracking modules\", \"track\": \"functional-annotation\", \"step_type\": \"analysis\", \"question\": \"In the context of liver drug treatment, which biological pathways and processes are enriched in the top treatment-tracking modules?\", \"context\": \"Take the top modules from T2S2 (all FDR-significant, otherwise top 5 by combined evidence). Run over-representation analysis (clusterProfiler, installed locally) against: (a) a human pathway gene set — the human WikiPathways GMT provisioned under the references store (HGNC symbols; resolve it at run time against what is actually staged; if absent, report the gap and proceed with GO), and (b) GO BP/CC/MP via GO.db (org.Hs.eg.db, local, no network). Map module genes to HGNC symbols with org.Hs.eg.db when needed. Optionally run fgsea on the DE-ranked list (T2S1) against the same sets. For each top module, also report enrichment split by direction of the eigengene shift when the module has >= 10 genes moving in that direction.\", \"constraints\": [\"Human references only (the dataset is Homo sapiens; do not use the mouse or rat GMTs or ID mappings).\", \"No network access: do not call KEGGREST, Ensembl REST, or any remote annotation service; use only local annotation (GO.db, staged GMT).\", \"If the human WikiPathways GMT is missing at run time, complete the GO portion and report the missing resource rather than failing the step.\"], \"acceptance_criteria\": [\"Enrichment tables (set, overlap, P, FDR, member genes) are persisted per module for GO, and for WikiPathways when the GMT is present.\", \"Enriched sets of the top-ranked module are reported with the module's direction (up in treated / down in treated) attached, and the interpretation is framed as annotation of an exploratory n=6 finding.\"], \"caveats\": [\"ORA on small modules (< ~15 genes) is underpowered; present those results as annotation only, not as pathway conclusions.\"], \"packages\": [\"clusterProfiler\", \"fgsea\", \"org.Hs.eg.db\"], \"depends_on\": [\"T2S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\", \"description\": \"Annotates the top treatment-tracking modules with GO and human WikiPathways enrichment so the module results are biologically interpretable.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

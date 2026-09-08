@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The DE core is well specified for this design: unpaired two-group, single batch, DESeq2 Wald with ~condition, explicit control reference and treated-vs-control contrast, median-of-ratios inside the model, a minimal 10-in-3 pre-filter with independent filtering, apeglm shrinkage, BH at 0.05, and an edgeR QL robustness pass with TMM, plus a stated power caution for n=3. QC includes library sizes, blind VST, PCA, distance heatmap colored by condition, with flag-and-report policies for outliers and shallow samples. Enrichment is only sketched in the narrative (fgsea on the Wald statistic against zebrafish GO from org.Dr.eg.db, correctly noting no curated zebrafish collection) but is not an actual step, names no annotation version, no gene-set size window, and does not state GO's thin coverage in zebrafish. The report step is likewise absent from the enumerated steps, the Ensembl release is never named, and package versions are not fixed, so completeness rests on acceptance criteria rather than a report specification."
+}

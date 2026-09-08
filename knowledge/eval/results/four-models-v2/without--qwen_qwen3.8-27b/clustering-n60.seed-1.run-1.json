@@ -1,0 +1,109 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "clustering-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:34:35.530Z",
+  "elapsedMs": 388653,
+  "outcome": "plan_submitted",
+  "planId": "pln-5c8e045d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Ingest, QC, and log-normalize expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The profile explicitly does not state whether Salmon length correction was applied — do not assume integer counts; the integer-fraction check is mandatory before normalization.",
+          "counts.csv is 12000 x 121: expect column 1 to be the gene identifier and columns 2-121 the samples; verify the header row matches metadata sample IDs case-sensitively.",
+          "Salmon gene-level 'counts' can be TPM or scaledTPM; if values are non-integer, do NOT run them through count-based size-factor normalization.",
+          "Single batch — do not apply any batch correction."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 121 columns: 1 gene-ID column + 120 samples, raw Salmon gene-level output) and /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns: sample, condition). Organism: Homo sapiens; tissue: whole blood; design: 60 case vs 60 control, unpaired, single batch. Steps: (1) verify the join — counts columns (case-sensitive) must match the 120 metadata rows exactly, with 60 case and 60 control; (2) decide abundance type by measuring the fraction of non-integer matrix values on a random 10,000-value draw — if essentially all integer, treat as raw counts; otherwise treat as TPM (length-corrected); (3) normalize accordingly: raw counts -> edgeR TMM size factors then log2-CPM, or TPM -> log2(TPM+1); (4) if row names are not gene symbols (e.g. Ensembl IDs), map to HGNC symbols using the installed EnsDb.Hsapiens.v86 (fall back to the staged UniProt human ID-mapping table, whose Ensembl column is column 19); keep mapped genes with unique symbols, report the mapping rate; (5) filter genes with CPM (or TPM) >= 1 in at least 10% of samples, report gene counts before/after; (6) per-sample QC: total counts/abundance, median expression, distance from the sample centroid after standardization — flag (do not drop) any sample beyond 3x the median distance; (7) z-score each gene across samples to produce the clustering matrix. Single batch: no batch correction anywhere in the plan.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "EnsDb.Hsapiens.v86",
+          "Matrix",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "What is the clean, log-normalized, HGNC-symbol-indexed expression matrix for the 120 whole-blood samples (60 cases / 60 controls), and are there any sample-level QC outliers that could distort downstream clustering?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Resolve the abundance type by the integer-fraction check BEFORE choosing any normalization; record the branch taken and the triggering statistic in the output.",
+          "Do not remove any of the 120 samples; flag QC outliers with their statistics but keep all 120 in all downstream steps.",
+          "If row names are not HGNC symbols, map them and report the mapping success rate; keep only genes with a unique symbol mapping.",
+          "Retain genes with CPM or TPM >= 1 in at least 10% of samples; report the number of genes kept.",
+          "Save: log-normalized matrix (genes x 120), z-scored standardized matrix (genes x 120), gene-filter list, ID mapping table if used, per-sample QC table, and a PCA plot of the first 2-3 PCs colored by case/control.",
+          "Use only locally installed packages; no network access."
+        ],
+        "description": "Prepare the clustering-ready matrix from the Salmon gene-level output and metadata: resolve the abundance type, normalize, map IDs, filter low-expression genes, per-sample QC, PCA.",
+        "acceptance_criteria": [
+          "A 120 x N matrix (N reported, expected in the low thousands) whose sample IDs exactly match the 120 metadata rows, with 60 case / 60 control verified.",
+          "Abundance-type branch (integer counts vs TPM) documented with the integer-fraction statistic.",
+          "Both the log-normalized and the standardized matrix saved and dimension-checked against metadata.",
+          "Per-sample QC table and a PCA plot colored by condition produced; any flagged outliers named with statistics."
+        ]
+      }
+    ],
+    "title": "Whole-blood case/control consensus clustering: subgroups and stability",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The cohort is 120 whole-blood bulk RNA-seq samples (60 cases vs 60 controls, single batch) with 12,000 Salmon gene-level features (counts.csv, 12000 x 121) and a 120-row condition table (metadata.csv). The question is whether the samples contain stable subgroups beyond the case/control split, how many, and how stable. Because the matrix is tiny (~1.4M cells), all steps are cheap. T1S1 first resolves the one open format question the profile flags — whether the Salmon 'counts' are integer counts or length-corrected TPM — then normalizes (log2-CPM vs log2(TPM+1)), maps identifiers to HGNC symbols, filters, and z-scores genes for clustering. T1S2 runs consensus clustering on all 120 samples (k=2..10, 200 resamples, 80% subsampling), scores stability with C-index/delta-area plus 100-seed k-means ARI and silhouette, and tests every solution against the case/control vector (ARI, NMI, contingency) to see whether the structure IS, refines, or crosses the condition split. T1S3 confirms within-condition substructure with conditional consensus (cases alone, controls alone, k=2..5) and defines each stable subgroup with top discriminating genes (limma). T1S4 characterizes stable subgroups against locally provisioned human gene sets (MSigDB hallmark, human GO, WikiPathways, human-filtered Reactome — all offline) and reports set specificity across subgroups; if no stable subgroups exist, T1S3/T1S4 report that conclusion with the stability evidence rather than forcing a split."
+  },
+  "usage": {
+    "inputTokens": 92881,
+    "outputTokens": 19153,
+    "cacheReadInputTokens": 49664,
+    "reasoningTokens": 17577
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_39ee2accc15b4ab3bf3037cf",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gmt",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 120
+    },
+    {
+      "toolUseId": "call_5ecc9ebe52c44082889705e3",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case/control consensus clustering: subgroups and stability\", \"analytical_narrative\": \"The cohort is 120 whole-blood bulk RNA-seq samples (60 cases vs 60 controls, single batch) with 12,000 Salmon gene-level features (counts.csv, 12000 x 121) and a 120-row condition table (metadata.csv). The question is whether the samples contain stable subgroups beyond the case/control split, how many, and how stable. Because the matrix is tiny (~1.4M cells), all steps are cheap. T1S1 first resolves the one open format question the profile flags — whether the Salmon 'counts' are integer counts or length-corrected TPM — then normalizes (log2-CPM vs log2(TPM+1)), maps identifiers to HGNC symbols, filters, and z-scores genes for clustering. T1S2 runs consensus clustering on all 120 samples (k=2..10, 200 resamples, 80% subsampling), scores stability with C-index/delta-area plus 100-seed k-means ARI and silhouette, and tests every solution against the case/control vector (ARI, NMI, contingency) to see whether the structure IS, refines, or crosses the condition split. T1S3 confirms within-condition substructure with conditional consensus (cases alone, controls alone, k=2..5) and defines each stable subgroup with top discriminating genes (limma). T1S4 characterizes stable subgroups against locally provisioned human gene sets (MSigDB hallmark, human GO, WikiPathways, human-filtered Reactome — all offline) and reports set specificity across subgroups; if no stable subgroups exist, T1S3/T1S4 report that conclusion with the stability evidence rather than forcing a split.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-15T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Ingest, QC, and log-normalize expression\", \"track\": \"T1\", \"step_type\": \"preprocessing\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What is the clean, log-normalized, HGNC-symbol-indexed expression matrix for the 120 whole-blood samples (60 cases / 60 controls), and are there any sample-level QC outliers that could distort downstream clustering?\", \"description\": \"Prepare the clustering-ready matrix from the Salmon gene-level output and metadata: resolve the abundance type, normalize, map IDs, filter low-expression genes, per-sample QC, PCA.\", \"context\": \"Inputs: /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 121 columns: 1 gene-ID column + 120 samples, raw Salmon gene-level output) and /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns: sample, condition). Organism: Homo sapiens; tissue: whole blood; design: 60 case vs 60 control, unpaired, single batch. Steps: (1) verify the join — counts columns (case-sensitive) must match the 120 metadata rows exactly, with 60 case and 60 control; (2) decide abundance type by measuring the fraction of non-integer matrix values on a random 10,000-value draw — if essentially all integer, treat as raw counts; otherwise treat as TPM (length-corrected); (3) normalize accordingly: raw counts -> edgeR TMM size factors then log2-CPM, or TPM -> log2(TPM+1); (4) if row names are not gene symbols (e.g. Ensembl IDs), map to HGNC symbols using the installed EnsDb.Hsapiens.v86 (fall back to the staged UniProt human ID-mapping table, whose Ensembl column is column 19); keep mapped genes with unique symbols, report the mapping rate; (5) filter genes with CPM (or TPM) >= 1 in at least 10% of samples, report gene counts before/after; (6) per-sample QC: total counts/abundance, median expression, distance from the sample centroid after standardization — flag (do not drop) any sample beyond 3x the median distance; (7) z-score each gene across samples to produce the clustering matrix. Single batch: no batch correction anywhere in the plan.\", \"constraints\": [\"Resolve the abundance type by the integer-fraction check BEFORE choosing any normalization; record the branch taken and the triggering statistic in the output.\", \"Do not remove any of the 120 samples; flag QC outliers with their statistics but keep all 120 in all downstream steps.\", \"If row names are not HGNC symbols, map them and report the mapping success rate; keep only genes with a unique symbol mapping.\", \"Retain genes with CPM or TPM >= 1 in at least 10% of samples; report the number of genes kept.\", \"Save: log-normalized matrix (genes x 120), z-scored standardized matrix (genes x 120), gene-filter list, ID mapping table if used, per-sample QC table, and a PCA plot of the first 2-3 PCs colored by case/control.\", \"Use only locally installed packages; no network access.\"], \"acceptance_criteria\": [\"A 120 x N matrix (N reported, expected in the low thousands) whose sample IDs exactly match the 120 metadata rows, with 60 case / 60 control verified.\", \"Abundance-type branch (integer counts vs TPM) documented with the integer-fraction statistic.\", \"Both the log-normalized and the standardized matrix saved and dimension-checked against metadata.\", \"Per-sample QC table and a PCA plot colored by condition produced; any flagged outliers named with statistics.\"], \"caveats\": [\"The profile explicitly does not state whether Salmon length correction was applied — do not assume integer counts; the integer-fraction check is mandatory before normalization.\", \"counts.csv is 12000 x 121: expect column 1 to be the gene identifier and columns 2-121 the samples; verify the header row matches metadata sample IDs case-sensitively.\", \"Salmon gene-level 'counts' can be TPM or scaledTPM; if values are non-integer, do NOT run them through count-based size-factor normalization.\", \"Single batch — do not apply any batch correction.\"], \"packages\": [\"edgeR\", \"DESeq2\", \"EnsDb.Hsapiens.v86\", \"Matrix\", \"ggplot2\", \"dplyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}], \"created_at_extra\": null}"
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

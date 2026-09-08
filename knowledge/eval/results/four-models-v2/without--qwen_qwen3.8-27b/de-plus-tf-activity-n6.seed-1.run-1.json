@@ -1,0 +1,200 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "de-plus-tf-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T16:12:47.266Z",
+  "elapsedMs": 256206,
+  "outcome": "plan_submitted",
+  "planId": "pln-a0613b70",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 DE: aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential_expression",
+        "status": "pending",
+        "caveats": [
+          "Do not assume the condition column's exact factor-level names; read them from metadata.csv and use the actual values for the contrast.",
+          "If counts are fractional, rescaling to pseudo-counts is an approximation; state it in the output so downstream LFC magnitudes are interpreted accordingly.",
+          "12000 genes is a pre-filtered matrix; do not attempt to recover the full transcriptome or re-filter it down.",
+          "With 6 samples per group, small true effects may be missed; report the number of genes at padj<0.05 and separately at padj<0.05 & |log2FC|>0.25."
+        ],
+        "context": "Inputs: counts.csv at data/inputs/counts/counts.csv (12000 genes x 12 samples plus a gene-ID column; gene-level Salmon counts) and metadata.csv at data/inputs/metadata/metadata.csv (12 rows: one per sample with a condition column, aldosterone treatment vs vehicle). Design is unpaired, 6 vs 6, single batch, so the model has one term: condition.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "SummarizedExperiment",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between the 6 aldosterone-treated and 6 vehicle control human kidney samples, and is the count matrix QC-consistent for that comparison?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use no network access; work only with the two provided files.",
+          "The design formula is ~ condition only — do not invent batch or library-quality covariates that are not in metadata.csv.",
+          "Use apeglm shrinkage for the reported LFCs, not default prior shrinkage.",
+          "Keep the full gene list in the results table; filtering, if any, must be applied only to the headline significant-gene count and reported."
+        ],
+        "description": "Validate inputs (the 12 sample columns of counts.csv must all match the 12 metadata rows; the condition column must split 6/6; inspect the actual factor-level names rather than assuming 'treated'/'control'). Check integrality of the Salmon counts: EM ambiguity resolution can yield fractional 'counts', and DESeq2 requires integers — if any value is non-integer, rescale (x 1e6, round) to integer pseudo-counts and record that this was done. Build a SummarizedExperiment, run DESeq2 with design ~ condition (aldosterone as tested level vs vehicle reference), and produce QC artifacts: boxplot of size factors, PCA on VST-transformed counts colored by condition, MA plot. Run the Wald test for the aldosterone-vs-vehicle contrast and apply apeglm LFC shrinkage for the reported fold changes. Map gene IDs to HGNC symbols via org.Hs.eg.db (report the match rate; use symbols directly if the ID column is already HGNC). Save as artifacts: the full 12000-gene results table (log2FoldChange, lfcSE, stat, pvalue, padj, apeglm-shrunk LFC, gene symbol), the count/SummarizedExperiment object, and the VST-normalized expression matrix (genes x 12 samples) that T2S1 will consume.",
+        "acceptance_criteria": [
+          "A DE results table covering all 12000 genes with log2FoldChange, lfcSE, stat, pvalue, padj, and apeglm-shrunk LFC for the contrast aldosterone (treated) vs vehicle (control).",
+          "The integrality check result is documented, including any rescaling applied to make counts integer.",
+          "Per-condition sample counts verified as 6/6, and QC figures (size-factor boxplot, condition-colored PCA, MA plot) show no obvious outlier; the expected group separation is noted or its absence flagged.",
+          "A gene-symbol column is present in the results table and the ID-to-symbol match rate is reported.",
+          "The VST-normalized expression matrix is saved as an artifact for the TF-activity step."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway + GO enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "differential_expression",
+        "status": "pending",
+        "caveats": [
+          "This is a 6-vs-6 single-batch comparison; treat enrichment as hypothesis-generating and pair every term with its overlap size, not just its p-value.",
+          "Hallmark sets are broad and can miss tissue-specific (kidney) programs; WikiPathways and GO-BP are the more specific readout for this tissue.",
+          "fgsea ranking must not be pre-filtered on significance; use the full ranked gene list."
+        ],
+        "context": "Input: the T1S1 DE results table (per-gene log2FC, padj, HGNC symbol). Gene-set resources provisioned locally, all Homo sapiens HGNC symbol GMTs: the MSigDB human Hallmark collection (50 sets), the MSigDB C5 GO Biological Process collection (~7,500 sets), and the WikiPathways human collection. Resolve them from the reference store at run time; do not use the mouse or rat variants.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which hallmark states, GO biological processes, and WikiPathways pathways are enriched among the genes that go up or down under aldosterone treatment?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only the provisioned human HGNC GMT collections; no downloads, no mouse/rat sets.",
+          "Background for ORA is the full set of T1S1 genes with a valid symbol, not just the significant subset.",
+          "Do not lower thresholds to force significance; if a collection yields no padj-significant term, report that explicitly."
+        ],
+        "description": "From the T1S1 DE table: (1) run fgsea on a per-gene ranked list (t-statistic from the DESeq2 results, with the shrunk log2FC direction encoded) against Hallmark, GO-BP, and WikiPathways human, reporting NES, pvalue, padj and the direction of each hit; (2) run over-representation analysis (clusterProfiler enricher) on the up-set and down-set (padj<0.05 & |log2FC|>0.25) against Hallmark and WikiPathways, with the background set to all T1S1 genes that carry a symbol. Reuse the T1S1 symbol column; report the fraction of matrix genes that mapped and run only on matched genes. For GO-BP, which is a nested hierarchy, list the significant terms but group them into redundancy blocks and state that child/parent terms are not independent findings.",
+        "acceptance_criteria": [
+          "Ranked fgsea result tables for each of Hallmark, GO-BP, and WikiPathways with NES, pvalue, padj and enrichment direction.",
+          "ORA results for the up-set and down-set against Hallmark and WikiPathways, with the background universe stated.",
+          "A top-terms digest per collection (term, NES or enrichment p, gene overlap, direction) and the gene-symbol match rate.",
+          "GO-BP significance reported as redundancy-aware blocks, not as one finding per child term."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF regulon activity (DoRothEA + decoupleR)",
+        "agent": "network-agent",
+        "track": "tf_activity",
+        "status": "pending",
+        "caveats": [
+          "DoRothEA A-C is multi-evidence consensus, not ChIP-seq ground truth; frame results as regulon-level evidence of changed TF activity, with individual-TF mechanism claims clearly marked as hypotheses.",
+          "With 6 samples per group the per-regulon tests are low-powered; always report effect sizes (fold change of activity) alongside p-values, and do not present a single nominally significant TF as conclusive.",
+          "A TF whose regulon activity changes but whose own expression does not is expected and informative (post-translational or indirect activation) — report it as such, not as an inconsistency.",
+          "NPI and Umax can disagree for individual TFs; report both and let the summary table show concordance."
+        ],
+        "context": "Inputs: the provisioned DoRothEA human TF regulon resource (an R rda holding a data frame with columns tf, confidence A-E, target, mor where mor is +1 activating / -1 repressing), the VST-normalized expression matrix (12000 genes x 12 samples with HGNC symbols) saved by T1S1, the condition labels from metadata.csv, and the T1S1 DE table for the TF cross-reference. n=6 per group, single batch.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "SummarizedExperiment",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which transcription factors show changed regulon activity between the aldosterone-treated and vehicle control kidney samples, and which of those TFs are themselves differentially expressed?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the provisioned human DoRothEA regulons (the human rda), never the mouse one, and no network download of any network.",
+          "Do not substitute the provisioned MSigDB C3 GTRD or miRDB target sets for activity inference — they are unsigned (binding-only, or sequence-predicted) and are not valid NPI input here.",
+          "Standardize expression per gene before NPI; keep the same 12 samples and condition labels as T1S1.",
+          "If the regulon rda fails to load or maps to fewer than a reasonable number of matrix genes, fail loudly with a diagnostic report rather than silently degrading to an unsigned set."
+        ],
+        "description": "Load the provisioned human DoRothEA regulons (R load()); filter to confidence A-C and report TF and interaction counts before/after filtering; rename tf/target/mor to source/target/weight and drop duplicate edges. Take the T1S1 VST expression matrix, restrict rows to symbols present in the matrix, and standardize per gene (mean 0, sd 1). Run decoupleR decoupleNPI with methods NPI and Umax (minSize = 5). Extract per-sample regulon activity (TF x 12) for both methods. For every regulon, fit activity ~ condition (aldosterone vs vehicle) and collect mean activity per condition, fold change, p-value; apply BH correction across all tested regulons for each method. Cross-reference with the T1S1 DE table: list regulators that are themselves DE (padj<0.05), and report the overlap between DE-TFs and padj-significant-activity TFs in both directions (TFs whose own expression changes, TFs whose target program responds without their own expression changing, and TFs with both). Deliverables: regulon activity matrix, per-TF condition-comparison table (TF, per-condition mean activity, fold change, p, padj for NPI and Umax) sorted by significance, significant-TF list, DE-TF list, overlap report, and a top-TF summary table with activity direction (up/down in treatment).",
+        "acceptance_criteria": [
+          "A regulon activity table with one row per tested TF (DoRothEA A-C) and one column per sample, for both NPI and Umax.",
+          "A per-TF condition-comparison table covering all tested TFs with fold change, p-value and BH-corrected padj per method; the number of TFs significant at padj<0.05 is reported, or its absence stated plainly.",
+          "A network sanity report: TF and interaction counts before and after A-C filtering, and the fraction of regulon targets present in the expression matrix.",
+          "A DE-TF list (regulators that are differentially expressed per T1S1) and an explicit overlap/non-overlap report against the activity-significant TFs.",
+          "A top-TF summary with the direction of activity change in aldosterone vs vehicle."
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney DE + TF regulon activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Unpaired bulk RNA-seq of human kidney: 6 aldosterone-treated vs 6 vehicle control, single batch, Salmon gene-level counts (12000 genes x 12 samples). T1S1 runs DESeq2 with design ~ condition only (no batch exists), apeglm LFC shrinkage, and QC, producing the definitive DE table and an ID-to-HGNC-symbol mapping reused downstream. T1S2 consumes that DE table and tests it against the provisioned human gene sets (MSigDB Hallmark, MSigDB GO-BP, WikiPathways human; all HGNC) via ranked fgsea plus up/down ORA to contextualize the transcriptional response. T2S1 answers the regulatory half of the question in parallel with T1S2: it infers TF regulon activity for every human TF using the provisioned DoRothEA signed regulons (confidence A-C) and decoupleR NPI/Umax on the normalized expression, tests condition-level activity differences with BH correction, and cross-references with the DE table to separate TFs that are themselves differentially expressed from TFs whose target programs respond. With n=6 per group and a single batch, every test uses condition as the only term and reports effect sizes alongside FDR-corrected p-values."
+  },
+  "usage": {
+    "inputTokens": 119918,
+    "outputTokens": 15780,
+    "cacheReadInputTokens": 74880,
+    "reasoningTokens": 12689
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_00f9d9eb3f9e462ca1b1983c",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 65
+    },
+    {
+      "toolUseId": "call_f787bdc8a8ba48f38aa289ab",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "call_7066fd804cbb4d8db9ad4f25",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Aldosterone vs vehicle kidney DE + TF regulon activity\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-10T00:00:00Z\", \"analytical_narrative\": \"Unpaired bulk RNA-seq of human kidney: 6 aldosterone-treated vs 6 vehicle control, single batch, Salmon gene-level counts (12000 genes x 12 samples). T1S1 runs DESeq2 with design ~ condition only (no batch exists), apeglm LFC shrinkage, and QC, producing the definitive DE table and an ID-to-HGNC-symbol mapping reused downstream. T1S2 consumes that DE table and tests it against the provisioned human gene sets (MSigDB Hallmark, MSigDB GO-BP, WikiPathways human; all HGNC) via ranked fgsea plus up/down ORA to contextualize the transcriptional response. T2S1 answers the regulatory half of the question in parallel with T1S2: it infers TF regulon activity for every human TF using the provisioned DoRothEA signed regulons (confidence A-C) and decoupleR NPI/Umax on the normalized expression, tests condition-level activity differences with BH correction, and cross-references with the DE table to separate TFs that are themselves differentially expressed from TFs whose target programs respond. With n=6 per group and a single batch, every test uses condition as the only term and reports effect sizes alongside FDR-corrected p-values.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DESeq2 DE: aldosterone vs vehicle\", \"track\": \"differential_expression\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 6 aldosterone-treated and 6 vehicle control human kidney samples, and is the count matrix QC-consistent for that comparison?\", \"context\": \"Inputs: counts.csv at data/inputs/counts/counts.csv (12000 genes x 12 samples plus a gene-ID column; gene-level Salmon counts) and metadata.csv at data/inputs/metadata/metadata.csv (12 rows: one per sample with a condition column, aldosterone treatment vs vehicle). Design is unpaired, 6 vs 6, single batch, so the model has one term: condition.\", \"description\": \"Validate inputs (the 12 sample columns of counts.csv must all match the 12 metadata rows; the condition column must split 6/6; inspect the actual factor-level names rather than assuming 'treated'/'control'). Check integrality of the Salmon counts: EM ambiguity resolution can yield fractional 'counts', and DESeq2 requires integers — if any value is non-integer, rescale (x 1e6, round) to integer pseudo-counts and record that this was done. Build a SummarizedExperiment, run DESeq2 with design ~ condition (aldosterone as tested level vs vehicle reference), and produce QC artifacts: boxplot of size factors, PCA on VST-transformed counts colored by condition, MA plot. Run the Wald test for the aldosterone-vs-vehicle contrast and apply apeglm LFC shrinkage for the reported fold changes. Map gene IDs to HGNC symbols via org.Hs.eg.db (report the match rate; use symbols directly if the ID column is already HGNC). Save as artifacts: the full 12000-gene results table (log2FoldChange, lfcSE, stat, pvalue, padj, apeglm-shrunk LFC, gene symbol), the count/SummarizedExperiment object, and the VST-normalized expression matrix (genes x 12 samples) that T2S1 will consume.\", \"acceptance_criteria\": [\"A DE results table covering all 12000 genes with log2FoldChange, lfcSE, stat, pvalue, padj, and apeglm-shrunk LFC for the contrast aldosterone (treated) vs vehicle (control).\", \"The integrality check result is documented, including any rescaling applied to make counts integer.\", \"Per-condition sample counts verified as 6/6, and QC figures (size-factor boxplot, condition-colored PCA, MA plot) show no obvious outlier; the expected group separation is noted or its absence flagged.\", \"A gene-symbol column is present in the results table and the ID-to-symbol match rate is reported.\", \"The VST-normalized expression matrix is saved as an artifact for the TF-activity step.\"], \"constraints\": [\"Use no network access; work only with the two provided files.\", \"The design formula is ~ condition only — do not invent batch or library-quality covariates that are not in metadata.csv.\", \"Use apeglm shrinkage for the reported LFCs, not default prior shrinkage.\", \"Keep the full gene list in the results table; filtering, if any, must be applied only to the headline significant-gene count and reported.\"], \"caveats\": [\"Do not assume the condition column's exact factor-level names; read them from metadata.csv and use the actual values for the contrast.\", \"If counts are fractional, rescaling to pseudo-counts is an approximation; state it in the output so downstream LFC magnitudes are interpreted accordingly.\", \"12000 genes is a pre-filtered matrix; do not attempt to recover the full transcriptome or re-filter it down.\", \"With 6 samples per group, small true effects may be missed; report the number of genes at padj<0.05 and separately at padj<0.05 & |log2FC|>0.25.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"SummarizedExperiment\", \"org.Hs.eg.db\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Pathway + GO enrichment of DE genes\", \"track\": \"differential_expression\", \"step_type\": \"analysis\", \"question\": \"Which hallmark states, GO biological processes, and WikiPathways pathways are enriched among the genes that go up or down under aldosterone treatment?\", \"context\": \"Input: the T1S1 DE results table (per-gene log2FC, padj, HGNC symbol). Gene-set resources provisioned locally, all Homo sapiens HGNC symbol GMTs: the MSigDB human Hallmark collection (50 sets), the MSigDB C5 GO Biological Process collection (~7,500 sets), and the WikiPathways human collection. Resolve them from the reference store at run time; do not use the mouse or rat variants.\", \"description\": \"From the T1S1 DE table: (1) run fgsea on a per-gene ranked list (t-statistic from the DESeq2 results, with the shrunk log2FC direction encoded) against Hallmark, GO-BP, and WikiPathways human, reporting NES, pvalue, padj and the direction of each hit; (2) run over-representation analysis (clusterProfiler enricher) on the up-set and down-set (padj<0.05 & |log2FC|>0.25) against Hallmark and WikiPathways, with the background set to all T1S1 genes that carry a symbol. Reuse the T1S1 symbol column; report the fraction of matrix genes that mapped and run only on matched genes. For GO-BP, which is a nested hierarchy, list the significant terms but group them into redundancy blocks and state that child/parent terms are not independent findings.\", \"acceptance_criteria\": [\"Ranked fgsea result tables for each of Hallmark, GO-BP, and WikiPathways with NES, pvalue, padj and enrichment direction.\", \"ORA results for the up-set and down-set against Hallmark and WikiPathways, with the background universe stated.\", \"A top-terms digest per collection (term, NES or enrichment p, gene overlap, direction) and the gene-symbol match rate.\", \"GO-BP significance reported as redundancy-aware blocks, not as one finding per child term.\"], \"constraints\": [\"Use only the provisioned human HGNC GMT collections; no downloads, no mouse/rat sets.\", \"Background for ORA is the full set of T1S1 genes with a valid symbol, not just the significant subset.\", \"Do not lower thresholds to force significance; if a collection yields no padj-significant term, report that explicitly.\"], \"caveats\": [\"This is a 6-vs-6 single-batch comparison; treat enrichment as hypothesis-generating and pair every term with its overlap size, not just its p-value.\", \"Hallmark sets are broad and can miss tissue-specific (kidney) programs; WikiPathways and GO-BP are the more specific readout for this tissue.\", \"fgsea ranking must not be pre-filtered on significance; use the full ranked gene list.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T2S1\", \"name\": \"TF regulon activity (DoRothEA + decoupleR)\", \"track\": \"tf_activity\", \"step_type\": \"analysis\", \"question\": \"Which transcription factors show changed regulon activity between the aldosterone-treated and vehicle control kidney samples, and which of those TFs are themselves differentially expressed?\", \"context\": \"Inputs: the provisioned DoRothEA human TF regulon resource (an R rda holding a data frame with columns tf, confidence A-E, target, mor where mor is +1 activating / -1 repressing), the VST-normalized expression matrix (12000 genes x 12 samples with HGNC symbols) saved by T1S1, the condition labels from metadata.csv, and the T1S1 DE table for the TF cross-reference. n=6 per group, single batch.\", \"description\": \"Load the provisioned human DoRothEA regulons (R load()); filter to confidence A-C and report TF and interaction counts before/after filtering; rename tf/target/mor to source/target/weight and drop duplicate edges. Take the T1S1 VST expression matrix, restrict rows to symbols present in the matrix, and standardize per gene (mean 0, sd 1). Run decoupleR decoupleNPI with methods NPI and Umax (minSize = 5). Extract per-sample regulon activity (TF x 12) for both methods. For every regulon, fit activity ~ condition (aldosterone vs vehicle) and collect mean activity per condition, fold change, p-value; apply BH correction across all tested regulons for each method. Cross-reference with the T1S1 DE table: list regulators that are themselves DE (padj<0.05), and report the overlap between DE-TFs and padj-significant-activity TFs in both directions (TFs whose own expression changes, TFs whose target program responds without their own expression changing, and TFs with both). Deliverables: regulon activity matrix, per-TF condition-comparison table (TF, per-condition mean activity, fold change, p, padj for NPI and Umax) sorted by significance, significant-TF list, DE-TF list, overlap report, and a top-TF summary table with activity direction (up/down in treatment).\", \"acceptance_criteria\": [\"A regulon activity table with one row per tested TF (DoRothEA A-C) and one column per sample, for both NPI and Umax.\", \"A per-TF condition-comparison table covering all tested TFs with fold change, p-value and BH-corrected padj per method; the number of TFs significant at padj<0.05 is reported, or its absence stated plainly.\", \"A network sanity report: TF and interaction counts before and after A-C filtering, and the fraction of regulon targets present in the expression matrix.\", \"A DE-TF list (regulators that are differentially expressed per T1S1) and an explicit overlap/non-overlap report against the activity-significant TFs.\", \"A top-TF summary with the direction of activity change in aldosterone vs vehicle.\"], \"constraints\": [\"Use the provisioned human DoRothEA regulons (the human rda), never the mouse one, and no network download of any network.\", \"Do not substitute the provisioned MSigDB C3 GTRD or miRDB target sets for activity inference — they are unsigned (binding-only, or sequence-predicted) and are not valid NPI input here.\", \"Standardize expression per gene before NPI; keep the same 12 samples and condition labels as T1S1.\", \"If the regulon rda fails to load or maps to fewer than a reasonable number of matrix genes, fail loudly with a diagnostic report rather than silently degrading to an unsigned set.\"], \"caveats\": [\"DoRothEA A-C is multi-evidence consensus, not ChIP-seq ground truth; frame results as regulon-level evidence of changed TF activity, with individual-TF mechanism claims clearly marked as hypotheses.\", \"With 6 samples per group the per-regulon tests are low-powered; always report effect sizes (fold change of activity) alongside p-values, and do not present a single nominally significant TF as conclusive.\", \"A TF whose regulon activity changes but whose own expression does not is expected and informative (post-translational or indirect activation) — report it as such, not as an inconsistency.\", \"NPI and Umax can disagree for individual TFs; report both and let the summary table show concordance.\"], \"packages\": [\"decoupleR\", \"SummarizedExperiment\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"network-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 59
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

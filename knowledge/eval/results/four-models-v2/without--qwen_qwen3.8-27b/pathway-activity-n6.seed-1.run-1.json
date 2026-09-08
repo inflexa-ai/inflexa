@@ -1,0 +1,341 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T16:17:03.483Z",
+  "elapsedMs": 613107,
+  "outcome": "plan_submitted",
+  "planId": "pln-2f9e7446",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, DE with shallow-sample handling",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "The delivery record does not state whether Salmon applied effective-length correction; the DE result is interpretable either way but the assumption must be stated, not papered over.",
+          "With 5-6 samples per arm in the primary run, top-hit lists are indicative; this step makes no power claims."
+        ],
+        "context": "Raw gene-level Salmon counts at /eval-four-models-v2-without-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples plus a gene-ID column; the record does not state whether effective-length correction was applied, so values may be non-integer). Sample table at /eval-four-models-v2-without-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column, 6 treated / 6 control). Unpaired, single batch, Homo sapiens, primary bronchial epithelium. Known caveat from profiling: sample_01 has library size ~4x below the median. All downstream pathway sets and models are keyed to HGNC symbols, so this step must also deliver an ID mapping.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "dplyr",
+          "ggplot2",
+          "EnsDb.Hsapiens.v86",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which genes are differentially expressed in cytokine-stimulated vs vehicle-control bronchial epithelium (DESeq2, 6 vs 6), with sample_01 (~4x below median library size) handled explicitly as primary-excluded vs sensitivity-included?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw delivered counts as the DESeq2 input. If values are non-integer (possible length-corrected Salmon output), keep them, let DESeq2 proceed with its warning, and state this assumption in the QC report; do not invent length information.",
+          "Determine the gene-ID space from the counts row names (Ensembl vs symbol vs other) and map to HGNC symbols using the installed offline annotation (EnsDb.Hsapiens.v86 and/or org.Hs.eg.db). Report mapping coverage; carry both original ID and symbol in every output consumed downstream.",
+          "Report per-sample raw library sizes and size factors; confirm and quantify sample_01's deficit versus the median and record which condition arm it belongs to.",
+          "Primary DE: exclude sample_01. DESeq2 with median-of-ratio size factors, design ~ condition (use the actual condition column values verbatim in the model), Wald test, apeglm log2FC shrinkage.",
+          "Sensitivity DE: include all 12 samples with identical settings. Compare primary vs sensitivity: Spearman correlation of shrunken LFCs for the top 2000 genes by |Wald stat| and Jaccard overlap of the top 100 padj<0.1 genes; report the concordance numbers. Downstream steps consume the primary (excluded) results.",
+          "Save: full DE table (all 12000 genes: original ID, symbol, baseMean, log2FC, lfcSE, Wald stat, p, padj, shrunken LFC); ranked list of all 12000 genes ordered by the primary run's signed Wald statistic with NA-statistic genes (zero counts in both conditions) placed at the bottom; log2(size-factor-normalized counts + 1) expression matrix for all 12 samples; library-size/size-factor table; PCA plot of normalized expression colored by condition; a QC report that names sample_01 and its arm."
+        ],
+        "description": "Gene-level differential expression between cytokine-stimulated and vehicle controls with explicit handling of the shallow sample: primary analysis excludes sample_01, sensitivity run includes it. Produces the full DE table, the full 12,000-gene ranked list for GSEA, the log2-normalized expression matrix for pathway-activity scoring, the gene-ID to HGNC symbol mapping, and the sample QC record.",
+        "acceptance_criteria": [
+          "DE table covers all 12,000 genes and the ranked list is a complete permutation of the 12,000 genes with no NA in the rank column.",
+          "sample_01's condition arm and library-size deficit are explicitly reported, and the primary/sensitivity concordance (correlation + overlap) is quantified in the report.",
+          "Symbol mapping coverage is reported, and all downstream-consumable outputs carry both the original ID and the HGNC symbol."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "PROGENy signalling pathway activity vs condition",
+        "agent": "enrichment-agent",
+        "track": "pathway-footprint",
+        "status": "pending",
+        "caveats": [
+          "Only 14 pathways are tested, so FDR control is weak; report nominal p<0.05 hits as exploratory, not definitive.",
+          "Activity is a weighted footprint readout of responsive genes, not a direct measurement of pathway flux; the interpretation must say so."
+        ],
+        "context": "Consumes T1S1 outputs: the log2(size-factor-normalized counts + 1) expression matrix (all 12 samples, so sample_01 stays visible) plus the condition table and the HGNC symbol mapping. Reference data needed: the provisioned PROGENy human pathway-weight model - an R data frame of per-gene weights (with p-values) for 14 signalling pathways, the footprint prior for pathway-activity inference from expression. It is loaded from the environment at run time; do not assume a specific file location.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which of the 14 PROGENy signalling pathways (e.g. EGFR, MAPK, PI3K, TNFa, p53, Hypoxia) show higher or lower inferred activity in cytokine-stimulated vs vehicle samples, read from the weighted footprint of pathway-responsive genes rather than from pathway membership?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Load the provisioned PROGENy human model with R's load() and use all genes it carries; report per-pathway gene coverage against the 12,000-gene dataset and drop any pathway with <5 present genes, noting the drop.",
+          "Per-sample, per-pathway activity = sum over the pathway's present genes of weight_g x expression_g, divided by the sum of absolute weights (weighted mean). Compute for all 12 samples so the shallow sample_01 row is visible in per-sample outputs.",
+          "Group contrast, primary run excluding sample_01 and sensitivity run including it: per pathway, two-sided Wilcoxon rank-sum (primary) plus Welch t-test (robustness check), treated (cytokine) vs control (vehicle), using the actual condition column values; BH FDR across the tested pathways; report direction (positive delta = more active in treated) and Cohen's d.",
+          "Save: the pathway x sample activity matrix (14 x 12 as present), a per-pathway contrast table (n per arm, mean activity per arm, p, FDR, d, direction), a per-sample activity heatmap that includes sample_01, and a primary/sensitivity concordance note."
+        ],
+        "description": "Per-sample activity of the 14 PROGENy signalling pathways computed as the weighted sum of pathway-responsive gene expression, then contrasted between cytokine-stimulated and vehicle conditions (primary: sample_01 excluded; sensitivity: included). This is the direct footprint-based answer to which signalling pathways are active.",
+        "acceptance_criteria": [
+          "Contrast table covers every pathway with adequate gene coverage and reports p, FDR, direction, and effect size.",
+          "The per-sample activity matrix contains all 12 samples; sample_01's row is present and visible, not silently dropped.",
+          "Top pathways active or inactive in treated are listed by FDR, and primary/sensitivity concordance is stated for each."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "GSEA footprint on the full ranked list",
+        "agent": "enrichment-agent",
+        "track": "pathway-footprint",
+        "status": "pending",
+        "caveats": [
+          "GO BP is a nested hierarchy: report correlated blocks, not each significant GO set as an independent finding.",
+          "WikiPathways set sizes are heterogeneous and the minSize/maxSize filter removes small sets; note what was dropped.",
+          "KEGG MEDICUS names differ from legacy KEGG sets; do not compare them across releases."
+        ],
+        "context": "Consumes T1S1 outputs: the ranked list of all 12,000 genes by the primary run's signed Wald statistic, and the HGNC symbol mapping for ID alignment. Reference data needed: provisioned human gene sets in HGNC symbols - MSigDB hallmark human (50 sets), MSigDB canonical pathways human (BioCarta, KEGG MEDICUS, PID subcollections), WikiPathways human, and MSigDB GO biological process human. Resolve them from the environment at run time; do not assume specific file locations.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which pathways show coordinated up- or down-regulated footprints across the full 12,000-gene ranked transcriptome (fgsea), tested on the provisioned human Hallmark, canonical-pathway (BioCarta, KEGG MEDICUS, PID), WikiPathways, and GO-BP collections?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Intersect each set with the genes present in the dataset after symbol mapping; apply minSize 15 and maxSize 500 for the enrichment test and report, per collection, how many sets were tested vs dropped.",
+          "Run fgsea on the primary-run ranking with BH FDR computed within each collection; do not pool FDR across collections.",
+          "Report the top 10 sets per collection by FDR, separately for up (NES>0, active in treated) and down (NES<0), with leading-edge size and the fraction of the leading edge among the top 100 primary DE genes.",
+          "Save: per-collection fgsea result tables (set, size, NES, p, FDR, leading edge), enrichment plots for the top 5 up and top 5 down sets (at minimum hallmark and the canonical collections), and a summary table of the most significant footprints with explicit direction labels."
+        ],
+        "description": "Gene set enrichment analysis on the full ranked transcriptome: tests whether each pathway's members are coordinately displaced toward the top or bottom of the gene ranking - the footprint of pathway engagement - rather than counting how many members pass a DE threshold. Run separately per collection with per-collection FDR.",
+        "acceptance_criteria": [
+          "Every provisioned collection (hallmark, BioCarta, KEGG MEDICUS, PID, WikiPathways, GO BP) has a fgsea result table with the tested-set count reported.",
+          "Leading-edge statistics are reported for top hits, and every reported pathway carries an explicit up/down direction.",
+          "The most significant footprints active in treated (FDR<0.25) are listed per collection."
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Upstream TF footprint from signed DoRothEA regulons",
+        "agent": "network-agent",
+        "track": "pathway-footprint",
+        "status": "pending",
+        "caveats": [
+          "Regulon membership comes from ChIP-seq-based priors (bound/regulated), so a TF footprint is an inference about the transcriptional program, not a direct phospho-readout of the signalling node.",
+          "With 5-6 samples per arm, per-TF tests are low-powered; prioritize TFs whose direction agrees with the pathway-layer results over isolated significant TFs."
+        ],
+        "context": "Consumes T1S1 outputs: the log2-normalized expression matrix (all 12 samples), the condition table, and the HGNC symbol mapping. Reference data needed: the provisioned DoRothEA human TF regulon network - TF-target interactions with per-interaction confidence levels A-E and a sign (activating +1 / repressing -1). Most analyses keep levels A-C. Resolve the network from the environment at run time; do not assume a specific file location.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which upstream transcription factors (e.g. STATs, RELA/NF-kappaB, AP-1 family) show an active target-program footprint in cytokine-stimulated vs vehicle samples, judged from signed concordance of their DoRothEA regulon targets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Keep only confidence A-C edges; map targets to the dataset's ID space via the T1S1 symbol mapping; exclude TFs with fewer than 3 present targets and report the number of TFs tested.",
+          "Per-TF, per-sample activity = signed mean over its present targets of mor_t x z_t,s, where z_t,s is the per-target-gene z-score computed across the 12 samples; divide by the number of targets used. Label this explicitly as a simplified DoRothEA-style regulon-activity readout (signed target concordance), not a full DoRothEA ridge fit.",
+          "Contrast treated (cytokine) vs control (vehicle) per TF, primary run excluding sample_01: two-sided Wilcoxon rank-sum, BH FDR across TFs; report mean delta activity (standardized) and direction (positive = target program moved in the predicted active direction in treated).",
+          "Save: per-TF table (n targets used, mean activity per arm, p, FDR, delta, direction), a heatmap of the top 20 TFs by |delta| by condition, and a short note mapping the top TFs to the pathway layers where they correspond (e.g. NF-kappaB to RELA/NFKB1, JAK-STAT to STAT1/STAT3, AP-1 to FOS/JUN/JUND)."
+        ],
+        "description": "Upstream regulator layer: for each TF, score whether its target program moved in the predicted direction (activated targets up, repressed targets down) in each sample, then contrast the score between conditions. Attributes the transcriptome footprint to upstream signalling nodes (STATs, NF-kappaB, AP-1, HIF1A, MYC...) instead of to pathway membership.",
+        "acceptance_criteria": [
+          "The number of TFs tested and per-TF target coverage are reported; every reported TF carries p, FDR, delta, and direction.",
+          "Top TFs active in treated are listed, and the TF readout is cross-referenced to the pathway layers where the correspondence is explicit.",
+          "The simplified-estimator label is present in the outputs; the result is not presented as a full DoRothEA ridge fit."
+        ]
+      },
+      {
+        "id": "T2S4",
+        "name": "Concordance integration across footprint layers",
+        "agent": "enrichment-agent",
+        "track": "pathway-footprint",
+        "status": "pending",
+        "caveats": [
+          "The name mapping between layers is heuristic; where the mapping is ambiguous, report the match as uncertain rather than forced.",
+          "Single-layer-only hits must be presented as exploratory; the concordant list is the primary answer."
+        ],
+        "context": "Consumes the three result tables produced by T2S1 (PROGENy per-pathway activity contrast), T2S2 (per-collection fgsea results), and T2S3 (per-TF regulon contrast), as CSVs. This step performs no new statistics on expression; it integrates the three footprint layers into one decision-ready verdict.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr"
+        ],
+        "question": "Which signalling pathways show concordant activation footprints across the PROGENy activity contrast, the GSEA pathway footprints, and the TF-regulon layer in cytokine-stimulated vs vehicle samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2",
+          "T2S3"
+        ],
+        "constraints": [
+          "Build a documented name mapping between PROGENy pathway names and GSEA set names (e.g. NF-kappaB to NFKB/INFLAMMATORY sets, MAPK/PI3K/EGFR to their hallmark and BioCarta/PID counterparts, p53 to DNA-damage/apoptosis sets, Hypoxia to HIF sets) and between top TFs and pathways (STAT1/STAT3, RELA/NFKB, FOS/JUN/JUND, HIF1A, MYC); report the mapping used and only count explicit matches - mark the rest as 'no counterpart in this layer'.",
+          "Classify each of the 14 PROGENy pathways: concordant-active-treated (activity contrast and at least one other layer agree in direction), concordant-active-control, or single-layer-only; report the FDR and effect size from each contributing layer next to the classification.",
+          "Produce the final list of pathways active in treated (and, secondarily, in control), ordered by strength of concordance then by PROGENy FDR, with a short plain-language summary paragraph.",
+          "Save: the integrated table (pathway, PROGENy p/FDR/delta, top supporting GSEA sets with FDR, top supporting TFs with FDR, concordance class, direction) and the plain-language summary."
+        ],
+        "description": "Merges the three footprint layers into a concordance table: each PROGENy pathway is annotated with its supporting GSEA sets and upstream TFs, and classified as concordantly active in treated, active in control, or single-layer-only signal. This is the step that answers the research question with one integrated list.",
+        "acceptance_criteria": [
+          "All 14 PROGENy pathways appear in the integrated table with per-layer evidence (or an explicit 'no counterpart' marker).",
+          "The concordance classification is explicit and no pathway is labelled concordant without directional agreement in at least two layers.",
+          "The final active-in-treated list is ordered and each entry names its supporting layers."
+        ]
+      }
+    ],
+    "title": "Cytokine pathway footprints in bronchial epithelium",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Inputs are raw Salmon gene-level counts for 12 human primary bronchial epithelium samples (6 cytokine-stimulated vs 6 vehicle controls, unpaired, single batch; sample_01 sits ~4x below the median library size) in counts.csv, with the condition table in metadata.csv. T1S1 first establishes the gene-level change and deliberately handles the shallow sample: DESeq2 with apeglm-shrunken LFCs, primary analysis excluding sample_01, sensitivity run including it, concordance reported. Downstream steps answer the pathway-activity question by footprint rather than by counting which pathway members are expressed: T2S1 scores per-sample activity of 14 signalling pathways from the provisioned PROGENy human footprint-weight model and contrasts treated vs vehicle; T2S2 tests coordinated pathway footprints with GSEA (fgsea) on the full 12,000-gene ranked list across the provisioned human Hallmark, canonical-pathway (BioCarta/KEGG MEDICUS/PID), WikiPathways and GO-BP collections; T2S3 attributes the footprint to upstream regulators using the provisioned signed DoRothEA human TF regulons (confidence A-C) with a simplified regulon-activity score. T2S4 merges the three footprint layers into one concordance-based verdict on which signalling pathways are active in the treated condition. Every level uses human-matched resources; the shallow sample's influence stays visible in the per-sample activity outputs and the DE sensitivity comparison."
+  },
+  "usage": {
+    "inputTokens": 587587,
+    "outputTokens": 35754,
+    "cacheReadInputTokens": 528384,
+    "reasoningTokens": 29512
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_f2584250849848acb77571f9",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 91
+    },
+    {
+      "toolUseId": "call_c426178ee26d4997949de007",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_207243e827284400b89b33d2",
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway-activity"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "call_d66f33b686bc4bde80b16d02",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "call_a0ce744c2e5f4e6bacab175d",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PROGENy predictive network-based inference of signaling activity",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 585
+    },
+    {
+      "toolUseId": "call_3185bc5a158d46f590d83a4d",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 8,
+        "query": "PROGENy[Title/Abstract] AND pathway activity",
+        "sort": "relevance"
+      },
+      "outcome": "ok",
+      "durationMs": 1128
+    },
+    {
+      "toolUseId": "call_32da3eed5c134922a1f46e7c",
+      "name": "search_semantic_scholar",
+      "input": {
+        "limit": 8,
+        "query": "PROGENy predictive network-based inference of signaling pathway activity from gene expression"
+      },
+      "outcome": "ok",
+      "durationMs": 9010
+    },
+    {
+      "toolUseId": "call_92d859e3afd7456f80ca3376",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 8,
+        "query": "PROGENy[Title] OR (Saez-Rodriguez[Author] AND \"signaling activity\" AND inference)",
+        "sort": "relevance"
+      },
+      "outcome": "ok",
+      "durationMs": 1689
+    },
+    {
+      "toolUseId": "call_05f8ab0e153c44c9be872b6a",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Cytokine pathway footprints in bronchial epithelium\", \"analytical_narrative\": \"Inputs are raw Salmon gene-level counts for 12 human primary bronchial epithelium samples (6 cytokine-stimulated vs 6 vehicle controls, unpaired, single batch; sample_01 sits ~4x below the median library size) in counts.csv, with the condition table in metadata.csv. T1S1 first establishes the gene-level change and deliberately handles the shallow sample: DESeq2 with apeglm-shrunken LFCs, primary analysis excluding sample_01, sensitivity run including it, concordance reported. Downstream steps answer the pathway-activity question by footprint rather than by counting which pathway members are expressed: T2S1 scores per-sample activity of 14 signalling pathways from the provisioned PROGENy human footprint-weight model and contrasts treated vs vehicle; T2S2 tests coordinated pathway footprints with GSEA (fgsea) on the full 12,000-gene ranked list across the provisioned human Hallmark, canonical-pathway (BioCarta/KEGG MEDICUS/PID), WikiPathways and GO-BP collections; T2S3 attributes the footprint to upstream regulators using the provisioned signed DoRothEA human TF regulons (confidence A-C) with a simplified regulon-activity score. T2S4 merges the three footprint layers into one concordance-based verdict on which signalling pathways are active in the treated condition. Every level uses human-matched resources; the shallow sample's influence stays visible in the per-sample activity outputs and the DE sensitivity comparison.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-14T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization, DE with shallow-sample handling\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed in cytokine-stimulated vs vehicle-control bronchial epithelium (DESeq2, 6 vs 6), with sample_01 (~4x below median library size) handled explicitly as primary-excluded vs sensitivity-included?\", \"context\": \"Raw gene-level Salmon counts at /eval-four-models-v2-without-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples plus a gene-ID column; the record does not state whether effective-length correction was applied, so values may be non-integer). Sample table at /eval-four-models-v2-without-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column, 6 treated / 6 control). Unpaired, single batch, Homo sapiens, primary bronchial epithelium. Known caveat from profiling: sample_01 has library size ~4x below the median. All downstream pathway sets and models are keyed to HGNC symbols, so this step must also deliver an ID mapping.\", \"description\": \"Gene-level differential expression between cytokine-stimulated and vehicle controls with explicit handling of the shallow sample: primary analysis excludes sample_01, sensitivity run includes it. Produces the full DE table, the full 12,000-gene ranked list for GSEA, the log2-normalized expression matrix for pathway-activity scoring, the gene-ID to HGNC symbol mapping, and the sample QC record.\", \"constraints\": [\"Use the raw delivered counts as the DESeq2 input. If values are non-integer (possible length-corrected Salmon output), keep them, let DESeq2 proceed with its warning, and state this assumption in the QC report; do not invent length information.\", \"Determine the gene-ID space from the counts row names (Ensembl vs symbol vs other) and map to HGNC symbols using the installed offline annotation (EnsDb.Hsapiens.v86 and/or org.Hs.eg.db). Report mapping coverage; carry both original ID and symbol in every output consumed downstream.\", \"Report per-sample raw library sizes and size factors; confirm and quantify sample_01's deficit versus the median and record which condition arm it belongs to.\", \"Primary DE: exclude sample_01. DESeq2 with median-of-ratio size factors, design ~ condition (use the actual condition column values verbatim in the model), Wald test, apeglm log2FC shrinkage.\", \"Sensitivity DE: include all 12 samples with identical settings. Compare primary vs sensitivity: Spearman correlation of shrunken LFCs for the top 2000 genes by |Wald stat| and Jaccard overlap of the top 100 padj<0.1 genes; report the concordance numbers. Downstream steps consume the primary (excluded) results.\", \"Save: full DE table (all 12000 genes: original ID, symbol, baseMean, log2FC, lfcSE, Wald stat, p, padj, shrunken LFC); ranked list of all 12000 genes ordered by the primary run's signed Wald statistic with NA-statistic genes (zero counts in both conditions) placed at the bottom; log2(size-factor-normalized counts + 1) expression matrix for all 12 samples; library-size/size-factor table; PCA plot of normalized expression colored by condition; a QC report that names sample_01 and its arm.\"], \"acceptance_criteria\": [\"DE table covers all 12,000 genes and the ranked list is a complete permutation of the 12,000 genes with no NA in the rank column.\", \"sample_01's condition arm and library-size deficit are explicitly reported, and the primary/sensitivity concordance (correlation + overlap) is quantified in the report.\", \"Symbol mapping coverage is reported, and all downstream-consumable outputs carry both the original ID and the HGNC symbol.\"], \"caveats\": [\"The delivery record does not state whether Salmon applied effective-length correction; the DE result is interpretable either way but the assumption must be stated, not papered over.\", \"With 5-6 samples per arm in the primary run, top-hit lists are indicative; this step makes no power claims.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"dplyr\", \"ggplot2\", \"EnsDb.Hsapiens.v86\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}]"
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_35b6e7ee6fb74916a1b12c88",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Cytokine pathway footprints in bronchial epithelium\", \"analytical_narrative\": \"Inputs are raw Salmon gene-level counts for 12 human primary bronchial epithelium samples (6 cytokine-stimulated vs 6 vehicle controls, unpaired, single batch; sample_01 sits ~4x below the median library size) in counts.csv, with the condition table in metadata.csv. T1S1 first establishes the gene-level change and deliberately handles the shallow sample: DESeq2 with apeglm-shrunken LFCs, primary analysis excluding sample_01, sensitivity run including it, concordance reported. Downstream steps answer the pathway-activity question by footprint rather than by counting which pathway members are expressed: T2S1 scores per-sample activity of 14 signalling pathways from the provisioned PROGENy human footprint-weight model and contrasts treated vs vehicle; T2S2 tests coordinated pathway footprints with GSEA (fgsea) on the full 12,000-gene ranked list across the provisioned human Hallmark, canonical-pathway (BioCarta/KEGG MEDICUS/PID), WikiPathways and GO-BP collections; T2S3 attributes the footprint to upstream regulators using the provisioned signed DoRothEA human TF regulons (confidence A-C) with a simplified regulon-activity score. T2S4 merges the three footprint layers into one concordance-based verdict on which signalling pathways are active in the treated condition. Every level uses human-matched resources; the shallow sample's influence stays visible in the per-sample activity outputs and the DE sensitivity comparison.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-14T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization, DE with shallow-sample handling\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed in cytokine-stimulated vs vehicle-control bronchial epithelium (DESeq2, 6 vs 6), with sample_01 (~4x below median library size) handled explicitly as primary-excluded vs sensitivity-included?\", \"context\": \"Raw gene-level Salmon counts at /eval-four-models-v2-without-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples plus a gene-ID column; the record does not state whether effective-length correction was applied, so values may be non-integer). Sample table at /eval-four-models-v2-without-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column, 6 treated / 6 control). Unpaired, single batch, Homo sapiens, primary bronchial epithelium. Known caveat from profiling: sample_01 has library size ~4x below the median. All downstream pathway sets and models are keyed to HGNC symbols, so this step must also deliver an ID mapping.\", \"description\": \"Gene-level differential expression between cytokine-stimulated and vehicle controls with explicit handling of the shallow sample: primary analysis excludes sample_01, sensitivity run includes it. Produces the full DE table, the full 12,000-gene ranked list for GSEA, the log2-normalized expression matrix for pathway-activity scoring, the gene-ID to HGNC symbol mapping, and the sample QC record.\", \"constraints\": [\"Use the raw delivered counts as the DESeq2 input. If values are non-integer (possible length-corrected Salmon output), keep them, let DESeq2 proceed with its warning, and state this assumption in the QC report; do not invent length information.\", \"Determine the gene-ID space from the counts row names (Ensembl vs symbol vs other) and map to HGNC symbols using the installed offline annotation (EnsDb.Hsapiens.v86 and/or org.Hs.eg.db). Report mapping coverage; carry both original ID and symbol in every output consumed downstream.\", \"Report per-sample raw library sizes and size factors; confirm and quantify sample_01's deficit versus the median and record which condition arm it belongs to.\", \"Primary DE: exclude sample_01. DESeq2 with median-of-ratio size factors, design ~ condition (use the actual condition column values verbatim in the model), Wald test, apeglm log2FC shrinkage.\", \"Sensitivity DE: include all 12 samples with identical settings. Compare primary vs sensitivity: Spearman correlation of shrunken LFCs for the top 2000 genes by |Wald stat| and Jaccard overlap of the top 100 padj<0.1 genes; report the concordance numbers. Downstream steps consume the primary (excluded) results.\", \"Save: full DE table (all 12000 genes: original ID, symbol, baseMean, log2FC, lfcSE, Wald stat, p, padj, shrunken LFC); ranked list of all 12000 genes ordered by the primary run's signed Wald statistic with NA-statistic genes (zero counts in both conditions) placed at the bottom; log2(size-factor-normalized counts + 1) expression matrix for all 12 samples; library-size/size-factor table; PCA plot of normalized expression colored by condition; a QC report that names sample_01 and its arm.\"], \"acceptance_criteria\": [\"DE table covers all 12,000 genes and the ranked list is a complete permutation of the 12,000 genes with no NA in the rank column.\", \"sample_01's condition arm and library-size deficit are explicitly reported, and the primary/sensitivity concordance (correlation + overlap) is quantified in the report.\", \"Symbol mapping coverage is reported, and all downstream-consumable outputs carry both the original ID and the HGNC symbol.\"], \"caveats\": [\"The delivery record does not state whether Salmon applied effective-length correction; the DE result is interpretable either way but the assumption must be stated, not papered over.\", \"With 5-6 samples per arm in the primary run, top-hit lists are indicative; this step makes no power claims.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"dplyr\", \"ggplot2\", \"EnsDb.Hsapiens.v86\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T2S1\", \"name\": \"PROGENy signalling pathway activity vs condition\", \"track\": \"pathway-footprint\", \"step_type\": \"analysis\", \"question\": \"Which of the 14 PROGENy signalling pathways (e.g. EGFR, MAPK, PI3K, TNFa, p53, Hypoxia) show higher or lower inferred activity in cytokine-stimulated vs vehicle samples, read from the weighted footprint of pathway-responsive genes rather than from pathway membership?\", \"context\": \"Consumes T1S1 outputs: the log2(size-factor-normalized counts + 1) expression matrix (all 12 samples, so sample_01 stays visible) plus the condition table and the HGNC symbol mapping. Reference data needed: the provisioned PROGENy human pathway-weight model - an R data frame of per-gene weights (with p-values) for 14 signalling pathways, the footprint prior for pathway-activity inference from expression. It is loaded from the environment at run time; do not assume a specific file location.\", \"description\": \"Per-sample activity of the 14 PROGENy signalling pathways computed as the weighted sum of pathway-responsive gene expression, then contrasted between cytokine-stimulated and vehicle conditions (primary: sample_01 excluded; sensitivity: included). This is the direct footprint-based answer to which signalling pathways are active.\", \"constraints\": [\"Load the provisioned PROGENy human model with R's load() and use all genes it carries; report per-pathway gene coverage against the 12,000-gene dataset and drop any pathway with <5 present genes, noting the drop.\", \"Per-sample, per-pathway activity = sum over the pathway's present genes of weight_g x expression_g, divided by the sum of absolute weights (weighted mean). Compute for all 12 samples so the shallow sample_01 row is visible in per-sample outputs.\", \"Group contrast, primary run excluding sample_01 and sensitivity run including it: per pathway, two-sided Wilcoxon rank-sum (primary) plus Welch t-test (robustness check), treated (cytokine) vs control (vehicle), using the actual condition column values; BH FDR across the tested pathways; report direction (positive delta = more active in treated) and Cohen's d.\", \"Save: the pathway x sample activity matrix (14 x 12 as present), a per-pathway contrast table (n per arm, mean activity per arm, p, FDR, d, direction), a per-sample activity heatmap that includes sample_01, and a primary/sensitivity concordance note.\"], \"acceptance_criteria\": [\"Contrast table covers every pathway with adequate gene coverage and reports p, FDR, direction, and effect size.\", \"The per-sample activity matrix contains all 12 samples; sample_01's row is present and visible, not silently dropped.\", \"Top pathways active or inactive in treated are listed by FDR, and primary/sensitivity concordance is stated for each.\"], \"caveats\": [\"Only 14 pathways are tested, so FDR control is weak; report nominal p<0.05 hits as exploratory, not definitive.\", \"Activity is a weighted footprint readout of responsive genes, not a direct measurement of pathway flux; the interpretation must say so.\"], \"packages\": [\"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T2S2\", \"name\": \"GSEA footprint on the full ranked list\", \"track\": \"pathway-footprint\", \"step_type\": \"analysis\", \"question\": \"Which pathways show coordinated up- or down-regulated footprints across the full 12,000-gene ranked transcriptome (fgsea), tested on the provisioned human Hallmark, canonical-pathway (BioCarta, KEGG MEDICUS, PID), WikiPathways, and GO-BP collections?\", \"context\": \"Consumes T1S1 outputs: the ranked list of all 12,000 genes by the primary run's signed Wald statistic, and the HGNC symbol mapping for ID alignment. Reference data needed: provisioned human gene sets in HGNC symbols - MSigDB hallmark human (50 sets), MSigDB canonical pathways human (BioCarta, KEGG MEDICUS, PID subcollections), WikiPathways human, and MSigDB GO biological process human. Resolve them from the environment at run time; do not assume specific file locations.\", \"description\": \"Gene set enrichment analysis on the full ranked transcriptome: tests whether each pathway's members are coordinately displaced toward the top or bottom of the gene ranking - the footprint of pathway engagement - rather than counting how many members pass a DE threshold. Run separately per collection with per-collection FDR.\", \"constraints\": [\"Intersect each set with the genes present in the dataset after symbol mapping; apply minSize 15 and maxSize 500 for the enrichment test and report, per collection, how many sets were tested vs dropped.\", \"Run fgsea on the primary-run ranking with BH FDR computed within each collection; do not pool FDR across collections.\", \"Report the top 10 sets per collection by FDR, separately for up (NES>0, active in treated) and down (NES<0), with leading-edge size and the fraction of the leading edge among the top 100 primary DE genes.\", \"Save: per-collection fgsea result tables (set, size, NES, p, FDR, leading edge), enrichment plots for the top 5 up and top 5 down sets (at minimum hallmark and the canonical collections), and a summary table of the most significant footprints with explicit direction labels.\"], \"acceptance_criteria\": [\"Every provisioned collection (hallmark, BioCarta, KEGG MEDICUS, PID, WikiPathways, GO BP) has a fgsea result table with the tested-set count reported.\", \"Leading-edge statistics are reported for top hits, and every reported pathway carries an explicit up/down direction.\", \"The most significant footprints active in treated (FDR<0.25) are listed per collection.\"], \"caveats\": [\"GO BP is a nested hierarchy: report correlated blocks, not each significant GO set as an independent finding.\", \"WikiPathways set sizes are heterogeneous and the minSize/maxSize filter removes small sets; note what was dropped.\", \"KEGG MEDICUS names differ from legacy KEGG sets; do not compare them across releases.\"], \"packages\": [\"fgsea\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T2S3\", \"name\": \"Upstream TF footprint from signed DoRothEA regulons\", \"track\": \"pathway-footprint\", \"step_type\": \"analysis\", \"question\": \"Which upstream transcription factors (e.g. STATs, RELA/NF-kappaB, AP-1 family) show an active target-program footprint in cytokine-stimulated vs vehicle samples, judged from signed concordance of their DoRothEA regulon targets?\", \"context\": \"Consumes T1S1 outputs: the log2-normalized expression matrix (all 12 samples), the condition table, and the HGNC symbol mapping. Reference data needed: the provisioned DoRothEA human TF regulon network - TF-target interactions with per-interaction confidence levels A-E and a sign (activating +1 / repressing -1). Most analyses keep levels A-C. Resolve the network from the environment at run time; do not assume a specific file location.\", \"description\": \"Upstream regulator layer: for each TF, score whether its target program moved in the predicted direction (activated targets up, repressed targets down) in each sample, then contrast the score between conditions. Attributes the transcriptome footprint to upstream signalling nodes (STATs, NF-kappaB, AP-1, HIF1A, MYC...) instead of to pathway membership.\", \"constraints\": [\"Keep only confidence A-C edges; map targets to the dataset's ID space via the T1S1 symbol mapping; exclude TFs with fewer than 3 present targets and report the number of TFs tested.\", \"Per-TF, per-sample activity = signed mean over its present targets of mor_t x z_t,s, where z_t,s is the per-target-gene z-score computed across the 12 samples; divide by the number of targets used. Label this explicitly as a simplified DoRothEA-style regulon-activity readout (signed target concordance), not a full DoRothEA ridge fit.\", \"Contrast treated (cytokine) vs control (vehicle) per TF, primary run excluding sample_01: two-sided Wilcoxon rank-sum, BH FDR across TFs; report mean delta activity (standardized) and direction (positive = target program moved in the predicted active direction in treated).\", \"Save: per-TF table (n targets used, mean activity per arm, p, FDR, delta, direction), a heatmap of the top 20 TFs by |delta| by condition, and a short note mapping the top TFs to the pathway layers where they correspond (e.g. NF-kappaB to RELA/NFKB1, JAK-STAT to STAT1/STAT3, AP-1 to FOS/JUN/JUND).\"], \"acceptance_criteria\": [\"The number of TFs tested and per-TF target coverage are reported; every reported TF carries p, FDR, delta, and direction.\", \"Top TFs active in treated are listed, and the TF readout is cross-referenced to the pathway layers where the correspondence is explicit.\", \"The simplified-estimator label is present in the outputs; the result is not presented as a full DoRothEA ridge fit.\"], \"caveats\": [\"Regulon membership comes from ChIP-seq-based priors (bound/regulated), so a TF footprint is an inference about the transcriptional program, not a direct phospho-readout of the signalling node.\", \"With 5-6 samples per arm, per-TF tests are low-powered; prioritize TFs whose direction agrees with the pathway-layer results over isolated significant TFs.\"], \"packages\": [\"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"network-agent\"}, {\"id\": \"T2S4\", \"name\": \"Concordance integration across footprint layers\", \"track\": \"pathway-footprint\", \"step_type\": \"analysis\", \"question\": \"Which signalling pathways show concordant activation footprints across the PROGENy activity contrast, the GSEA pathway footprints, and the TF-regulon layer in cytokine-stimulated vs vehicle samples?\", \"context\": \"Consumes the three result tables produced by T2S1 (PROGENy per-pathway activity contrast), T2S2 (per-collection fgsea results), and T2S3 (per-TF regulon contrast), as CSVs. This step performs no new statistics on expression; it integrates the three footprint layers into one decision-ready verdict.\", \"description\": \"Merges the three footprint layers into a concordance table: each PROGENy pathway is annotated with its supporting GSEA sets and upstream TFs, and classified as concordantly active in treated, active in control, or single-layer-only signal. This is the step that answers the research question with one integrated list.\", \"constraints\": [\"Build a documented name mapping between PROGENy pathway names and GSEA set names (e.g. NF-kappaB to NFKB/INFLAMMATORY sets, MAPK/PI3K/EGFR to their hallmark and BioCarta/PID counterparts, p53 to DNA-damage/apoptosis sets, Hypoxia to HIF sets) and between top TFs and pathways (STAT1/STAT3, RELA/NFKB, FOS/JUN/JUND, HIF1A, MYC); report the mapping used and only count explicit matches - mark the rest as 'no counterpart in this layer'.\", \"Classify each of the 14 PROGENy pathways: concordant-active-treated (activity contrast and at least one other layer agree in direction), concordant-active-control, or single-layer-only; report the FDR and effect size from each contributing layer next to the classification.\", \"Produce the final list of pathways active in treated (and, secondarily, in control), ordered by strength of concordance then by PROGENy FDR, with a short plain-language summary paragraph.\", \"Save: the integrated table (pathway, PROGENy p/FDR/delta, top supporting GSEA sets with FDR, top supporting TFs with FDR, concordance class, direction) and the plain-language summary.\"], \"acceptance_criteria\": [\"All 14 PROGENy pathways appear in the integrated table with per-layer evidence (or an explicit 'no counterpart' marker).\", \"The concordance classification is explicit and no pathway is labelled concordant without directional agreement in at least two layers.\", \"The final active-in-treated list is ordered and each entry names its supporting layers.\"], \"caveats\": [\"The name mapping between layers is heuristic; where the mapping is ambiguous, report the match as uncertain rather than forced.\", \"Single-layer-only hits must be presented as exploratory; the concordant list is the primary answer.\"], \"packages\": [\"dplyr\"], \"depends_on\": [\"T2S1\", \"T2S2\", \"T2S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

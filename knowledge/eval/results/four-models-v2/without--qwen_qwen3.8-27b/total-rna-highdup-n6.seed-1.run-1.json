@@ -1,0 +1,196 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "total-rna-highdup-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:51:01.205Z",
+  "elapsedMs": 286666,
+  "outcome": "plan_submitted",
+  "planId": "pln-3e440054",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample QC, count-nature check, and ID-space determination",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A ~4x library-size gap in non-UMI total RNA-seq is often plain low sequencing depth rather than a failure; median-of-ratios size factors absorb pure depth differences, so judge sample_01 by the PCA, not the raw totals",
+          "Duplication >60% is expected for non-UMI total RNA libraries and is not by itself a reason to exclude samples"
+        ],
+        "context": "Human heart, treated vs control, 6 vs 6, unpaired, single batch. rRNA-depleted total RNA libraries without UMIs; raw gene-level counts from Salmon. QC caveats from the data profile: duplication rate >60% in most libraries; sample_01 library size ~4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Are the 12,000 x 12 values in counts.csv raw integer counts or length-corrected abundances; does sample_01 (library size ~4x below the median) deviate in expression space as well as depth; and what identifier space does the gene column of counts.csv use?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Integer-ness test: fraction of non-zero cells with a non-zero fractional part and the maximum absolute fractional part; classify as 'integer counts' if fewer than 0.1% of non-zero cells have fractional part > 1e-6, otherwise classify as 'length-corrected abundance' and flag the DE step to use the voom fallback",
+          "Per-sample totals, median expression, and sample_01's total as a ratio against the median of the other 11 samples",
+          "PCA on log2(CPM+1) across all 12 samples, colored by the condition column of metadata.csv using the actual values present in the file (expected treated vs control)",
+          "Verify every sample column of counts.csv has a matching row in metadata.csv and vice versa, and that the condition column has exactly 6 rows per group",
+          "Characterize the gene-ID column (Ensembl prefix / Entrez numeric / gene-symbol patterns) and record the row count",
+          "Do not drop any sample; record the sample_01 recommendation (keep in primary model with an exclusion robustness check) as an explicit decision in the report"
+        ],
+        "description": "Load /eval-four-models-v2-without-total-rna-highdup-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13, one gene-ID column plus 12 sample columns) and .../metadata/metadata.csv (12 rows, sample + condition). Verify the 12 sample columns match the 12 metadata rows and that the condition column splits 6 vs 6. Compute per-sample totals and CPM profiles; run the integer-ness test on the count values; PCA of log2(CPM+1) across all 12 samples colored by condition; characterize the gene-ID column. Produce a QC report with two explicit decisions: (a) count nature (integer counts vs length-corrected) and (b) sample_01 handling.",
+        "acceptance_criteria": [
+          "QC table with per-sample totals and sample_01's ratio to the median of the other 11",
+          "Explicit count-nature classification with the integer-ness statistics supporting it",
+          "PCA plot with samples colored by condition, with a written assessment of the 6-vs-6 separation and sample_01's position",
+          "Gene-ID space recorded and sample/column consistency between metadata.csv and counts.csv confirmed",
+          "Sample_01 handling decision documented"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DE treated vs control with sample_01 sensitivity",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 samples, power is limited for small effect sizes; do not over-interpret marginal padj values; use shrunk LFCs for ranking only",
+          "Duplication >60% means the effective independent molecule count is below raw read counts; low-count DE genes are the least reliable - report their fraction rather than silently dropping them",
+          "Do not add covariates to the design; it is intentionally bare ~condition (single batch, unpaired)"
+        ],
+        "context": "Inputs: counts.csv (12000 x 12) and metadata.csv with the T1S1 count-nature decision and sample_01 decision. Single batch, unpaired, so the design has no covariates beyond condition. Duplication >60% in most libraries means the effective independent molecule count is below the raw read count, which matters most for lowly expressed genes.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "limma",
+          "dplyr",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which genes are differentially expressed between the 6 treated and 6 control heart libraries, and are those calls robust to excluding sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "If T1S1 classified the matrix as integer counts: DESeq2 with design ~ condition and no additional covariates; LFC shrinkage via lfcShrink(type='apeglm'); leave DESeq2's independent filtering at its default",
+          "If T1S1 classified the values as length-corrected abundance: fall back to per-sample CPM scaling, log2(x+1) transformation, and limma with empirical Bayes, and label every downstream result as approximate under non-count input",
+          "Primary DE list: padj < 0.05; secondary list: padj < 0.05 and |log2FC| >= 1",
+          "Run the same model on the 11 samples excluding sample_01 (5 treated vs 6 control) as a robustness check regardless of T1S1's recommendation",
+          "Robust list: genes significant in both runs with the same sign of log2FC",
+          "Map all genes to official HGNC symbols using local annotation (org.Hs.eg.db, or the UniProt human ID-mapping table if the ID space requires it); retain the original IDs alongside",
+          "Include baseMean and per-condition CPM in the full-gene table"
+        ],
+        "description": "Primary DE on all 12 samples with DESeq2 (design ~ condition), LFC shrinkage via apeglm; sensitivity DE on the 11 samples excluding sample_01 (5 treated vs 6 control); robust list as the intersection; map all genes to official HGNC symbols. Outputs: full-gene table with shrunk LFC, p, padj, baseMean, and per-condition CPM; primary (padj<0.05) and FC-filtered lists; sensitivity table; robust list; symbol mapping.",
+        "acceptance_criteria": [
+          "Full-gene (12,000-row) DE table with shrunk log2FC, p, padj, baseMean, and per-condition CPM",
+          "Primary (padj<0.05) and FC-filtered lists with gene counts",
+          "Sensitivity table for the sample_01-excluded run and the robust intersection, with a concordance summary (shared gene count, sign flips)",
+          "Symbol-mapped column present for every gene row",
+          "Reported fraction of primary DE genes with baseMean < 10 as a low-expression reliability flag"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Local human pathway and GO enrichment on DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "All sets are HGNC-symbol based - run only after the T1S2 symbol mapping, or results fail silently with near-zero matches",
+          "ORA on a small DE list is underpowered; fgsea on the full ranked list is the primary evidence and ORA the secondary",
+          "KEGG MEDICUS set names differ from legacy KEGG_* sets; do not compare them across releases"
+        ],
+        "context": "Inputs from T1S2: primary list, robust list, and the full gene table with shrunk LFC and HGNC symbols. Provisioned local reference store contains human MSigDB hallmark, human MSigDB GO (three branch files), human MSigDB canonical pathways (three subcollections), and WikiPathways human - all symbol-based GMTs. No network at run time.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "dplyr",
+          "tidyr",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which pathways and biological processes are enriched among the up-regulated and down-regulated genes of the treated vs control contrast, using the local human gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Enrich the up- and down-regulated lists separately; never merge directions",
+          "For every gene-set collection, run rank-based fgsea on the full gene list ranked by shrunk log2FC (ties broken by p-value)",
+          "Run ORA on the robust list (primary input) and the primary list (secondary input); if a directional list has fewer than 15 genes, skip ORA for it and rely on fgsea, stating so in the output",
+          "Use human gene sets only - the organism is Homo sapiens; do not use mouse or rat collections even though some are present in the store",
+          "WikiPathways GMT lines are '%' delimited in the first field; split on '%' to recover readable set names",
+          "GO sets form a nested hierarchy; collapse redundant child terms after testing and report distinct top-level enriched processes rather than raw significant-term counts"
+        ],
+        "description": "Rank-based (fgsea) enrichment of the full gene list ranked by shrunk LFC, and ORA on the DE lists, up and down separately, against local human GMT collections: MSigDB Hallmark human 2026.1 (50 sets), MSigDB GO human 2026.1 (BP/CC/MF branch files), MSigDB canonical pathways human 2026.1 (KEGG MEDICUS, BioCarta, PID), and WikiPathways human 2026.07.10. All sets use HGNC symbols, so run after the T1S2 symbol mapping.",
+        "acceptance_criteria": [
+          "Per-direction (up / down) result tables with set name, member count, NES (fgsea) or padj (ORA), and the FDR-significant sets after correction",
+          "Top-10 summary per direction across collections",
+          "Explicit statement of which gene-set collections and versions were used"
+        ]
+      }
+    ],
+    "title": "Heart treated vs control DE with pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-23T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Bulk RNA-seq of 12 human heart libraries (6 treated vs 6 control, unpaired, single batch) with gene-level counts from Salmon (12,000 genes x 12 samples). The data profile flags two decisions that must be made before differential expression: (1) the count record does not state whether Salmon length correction was applied, so an integer-ness check determines whether DESeq2 is valid or a voom fallback is required; (2) sample_01 has a library size ~4x below the median, so PCA in expression space plus a 5-vs-6 sensitivity DE run determines whether it is a depth artifact or an expression outlier. DESeq2 with apeglm-shrunk LFCs is the primary model; the >60% duplication rate is expected for non-UMI total RNA libraries, so independent filtering is the guard against unreliable low-expression calls. Enrichment uses only local human gene sets (MSigDB Hallmark, MSigDB GO BP/CC/MF, MSigDB canonical pathways KEGG MEDICUS/BioCarta/PID, WikiPathways human), with rank-based fgsea on the full ranked gene list and ORA on the DE lists, up and down separately. No network is available at run time, so all annotation and gene sets come from the provisioned reference store."
+  },
+  "usage": {
+    "inputTokens": 82419,
+    "outputTokens": 15612,
+    "cacheReadInputTokens": 41472,
+    "reasoningTokens": 12853
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_63eb7d6cd8024b2889f350a3",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 74
+    },
+    {
+      "toolUseId": "call_fb394424f5bc41d8af7f7c2b",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Heart treated vs control DE with pathway enrichment\", \"analytical_narrative\": \"Bulk RNA-seq of 12 human heart libraries (6 treated vs 6 control, unpaired, single batch) with gene-level counts from Salmon (12,000 genes x 12 samples). The data profile flags two decisions that must be made before differential expression: (1) the count record does not state whether Salmon length correction was applied, so an integer-ness check determines whether DESeq2 is valid or a voom fallback is required; (2) sample_01 has a library size ~4x below the median, so PCA in expression space plus a 5-vs-6 sensitivity DE run determines whether it is a depth artifact or an expression outlier. DESeq2 with apeglm-shrunk LFCs is the primary model; the >60% duplication rate is expected for non-UMI total RNA libraries, so independent filtering is the guard against unreliable low-expression calls. Enrichment uses only local human gene sets (MSigDB Hallmark, MSigDB GO BP/CC/MF, MSigDB canonical pathways KEGG MEDICUS/BioCarta/PID, WikiPathways human), with rank-based fgsea on the full ranked gene list and ORA on the DE lists, up and down separately. No network is available at run time, so all annotation and gene sets come from the provisioned reference store.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-23T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample QC, count-nature check, and ID-space determination\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Are the 12,000 x 12 values in counts.csv raw integer counts or length-corrected abundances; does sample_01 (library size ~4x below the median) deviate in expression space as well as depth; and what identifier space does the gene column of counts.csv use?\", \"description\": \"Load /eval-four-models-v2-without-total-rna-highdup-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13, one gene-ID column plus 12 sample columns) and .../metadata/metadata.csv (12 rows, sample + condition). Verify the 12 sample columns match the 12 metadata rows and that the condition column splits 6 vs 6. Compute per-sample totals and CPM profiles; run the integer-ness test on the count values; PCA of log2(CPM+1) across all 12 samples colored by condition; characterize the gene-ID column. Produce a QC report with two explicit decisions: (a) count nature (integer counts vs length-corrected) and (b) sample_01 handling.\", \"context\": \"Human heart, treated vs control, 6 vs 6, unpaired, single batch. rRNA-depleted total RNA libraries without UMIs; raw gene-level counts from Salmon. QC caveats from the data profile: duplication rate >60% in most libraries; sample_01 library size ~4x below the median.\", \"constraints\": [\"Integer-ness test: fraction of non-zero cells with a non-zero fractional part and the maximum absolute fractional part; classify as 'integer counts' if fewer than 0.1% of non-zero cells have fractional part > 1e-6, otherwise classify as 'length-corrected abundance' and flag the DE step to use the voom fallback\", \"Per-sample totals, median expression, and sample_01's total as a ratio against the median of the other 11 samples\", \"PCA on log2(CPM+1) across all 12 samples, colored by the condition column of metadata.csv using the actual values present in the file (expected treated vs control)\", \"Verify every sample column of counts.csv has a matching row in metadata.csv and vice versa, and that the condition column has exactly 6 rows per group\", \"Characterize the gene-ID column (Ensembl prefix / Entrez numeric / gene-symbol patterns) and record the row count\", \"Do not drop any sample; record the sample_01 recommendation (keep in primary model with an exclusion robustness check) as an explicit decision in the report\"], \"acceptance_criteria\": [\"QC table with per-sample totals and sample_01's ratio to the median of the other 11\", \"Explicit count-nature classification with the integer-ness statistics supporting it\", \"PCA plot with samples colored by condition, with a written assessment of the 6-vs-6 separation and sample_01's position\", \"Gene-ID space recorded and sample/column consistency between metadata.csv and counts.csv confirmed\", \"Sample_01 handling decision documented\"], \"caveats\": [\"A ~4x library-size gap in non-UMI total RNA-seq is often plain low sequencing depth rather than a failure; median-of-ratios size factors absorb pure depth differences, so judge sample_01 by the PCA, not the raw totals\", \"Duplication >60% is expected for non-UMI total RNA libraries and is not by itself a reason to exclude samples\"], \"packages\": [\"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"DE treated vs control with sample_01 sensitivity\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 6 treated and 6 control heart libraries, and are those calls robust to excluding sample_01?\", \"description\": \"Primary DE on all 12 samples with DESeq2 (design ~ condition), LFC shrinkage via apeglm; sensitivity DE on the 11 samples excluding sample_01 (5 treated vs 6 control); robust list as the intersection; map all genes to official HGNC symbols. Outputs: full-gene table with shrunk LFC, p, padj, baseMean, and per-condition CPM; primary (padj<0.05) and FC-filtered lists; sensitivity table; robust list; symbol mapping.\", \"context\": \"Inputs: counts.csv (12000 x 12) and metadata.csv with the T1S1 count-nature decision and sample_01 decision. Single batch, unpaired, so the design has no covariates beyond condition. Duplication >60% in most libraries means the effective independent molecule count is below the raw read count, which matters most for lowly expressed genes.\", \"constraints\": [\"If T1S1 classified the matrix as integer counts: DESeq2 with design ~ condition and no additional covariates; LFC shrinkage via lfcShrink(type='apeglm'); leave DESeq2's independent filtering at its default\", \"If T1S1 classified the values as length-corrected abundance: fall back to per-sample CPM scaling, log2(x+1) transformation, and limma with empirical Bayes, and label every downstream result as approximate under non-count input\", \"Primary DE list: padj < 0.05; secondary list: padj < 0.05 and |log2FC| >= 1\", \"Run the same model on the 11 samples excluding sample_01 (5 treated vs 6 control) as a robustness check regardless of T1S1's recommendation\", \"Robust list: genes significant in both runs with the same sign of log2FC\", \"Map all genes to official HGNC symbols using local annotation (org.Hs.eg.db, or the UniProt human ID-mapping table if the ID space requires it); retain the original IDs alongside\", \"Include baseMean and per-condition CPM in the full-gene table\"], \"acceptance_criteria\": [\"Full-gene (12,000-row) DE table with shrunk log2FC, p, padj, baseMean, and per-condition CPM\", \"Primary (padj<0.05) and FC-filtered lists with gene counts\", \"Sensitivity table for the sample_01-excluded run and the robust intersection, with a concordance summary (shared gene count, sign flips)\", \"Symbol-mapped column present for every gene row\", \"Reported fraction of primary DE genes with baseMean < 10 as a low-expression reliability flag\"], \"caveats\": [\"With 6 vs 6 samples, power is limited for small effect sizes; do not over-interpret marginal padj values; use shrunk LFCs for ranking only\", \"Duplication >60% means the effective independent molecule count is below raw read counts; low-count DE genes are the least reliable - report their fraction rather than silently dropping them\", \"Do not add covariates to the design; it is intentionally bare ~condition (single batch, unpaired)\"], \"packages\": [\"DESeq2\", \"apeglm\", \"edgeR\", \"limma\", \"dplyr\", \"org.Hs.eg.db\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Local human pathway and GO enrichment on DE genes\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which pathways and biological processes are enriched among the up-regulated and down-regulated genes of the treated vs control contrast, using the local human gene sets?\", \"description\": \"Rank-based (fgsea) enrichment of the full gene list ranked by shrunk LFC, and ORA on the DE lists, up and down separately, against local human GMT collections: MSigDB Hallmark human 2026.1 (50 sets), MSigDB GO human 2026.1 (BP/CC/MF branch files), MSigDB canonical pathways human 2026.1 (KEGG MEDICUS, BioCarta, PID), and WikiPathways human 2026.07.10. All sets use HGNC symbols, so run after the T1S2 symbol mapping.\", \"context\": \"Inputs from T1S2: primary list, robust list, and the full gene table with shrunk LFC and HGNC symbols. Provisioned local reference store contains human MSigDB hallmark, human MSigDB GO (three branch files), human MSigDB canonical pathways (three subcollections), and WikiPathways human - all symbol-based GMTs. No network at run time.\", \"constraints\": [\"Enrich the up- and down-regulated lists separately; never merge directions\", \"For every gene-set collection, run rank-based fgsea on the full gene list ranked by shrunk log2FC (ties broken by p-value)\", \"Run ORA on the robust list (primary input) and the primary list (secondary input); if a directional list has fewer than 15 genes, skip ORA for it and rely on fgsea, stating so in the output\", \"Use human gene sets only - the organism is Homo sapiens; do not use mouse or rat collections even though some are present in the store\", \"WikiPathways GMT lines are '%' delimited in the first field; split on '%' to recover readable set names\", \"GO sets form a nested hierarchy; collapse redundant child terms after testing and report distinct top-level enriched processes rather than raw significant-term counts\"], \"acceptance_criteria\": [\"Per-direction (up / down) result tables with set name, member count, NES (fgsea) or padj (ORA), and the FDR-significant sets after correction\", \"Top-10 summary per direction across collections\", \"Explicit statement of which gene-set collections and versions were used\"], \"caveats\": [\"All sets are HGNC-symbol based - run only after the T1S2 symbol mapping, or results fail silently with near-zero matches\", \"ORA on a small DE list is underpowered; fgsea on the full ranked list is the primary evidence and ORA the secondary\", \"KEGG MEDICUS set names differ from legacy KEGG_* sets; do not compare them across releases\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"dplyr\", \"tidyr\", \"org.Hs.eg.db\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 52
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

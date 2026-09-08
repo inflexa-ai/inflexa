@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 2,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly identifies perfect confounding, refuses to fit batch or apply ComBat/SVA/RUV, runs ~condition with DESeq2/limma-voom on raw counts, demonstrates aliasing, and stamps every artifact with the confounding caveat, which matches the reference. Weaknesses: PCA is deferred to Step 2 after the DE test rather than preceding it, with no library-size check or outlier policy; no low-count filter is stated at all (only DESeq2's zero-variance drop); normalization (size factors/TMM) is never named explicitly; the reference level is not set; BH is not named. Enrichment is unasked but defensible as a technical-signature diagnostic, yet the ranking metric is ambiguous (-log10 p is unsigned), no ORA universe is specified, and no collection version is given. The report lacks package versions and explicit tested/significant gene counts."
+}

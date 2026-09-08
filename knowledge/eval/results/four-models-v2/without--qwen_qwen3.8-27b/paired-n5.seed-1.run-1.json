@@ -1,0 +1,173 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "paired-n5",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:30:06.563Z",
+  "elapsedMs": 153679,
+  "outcome": "plan_submitted",
+  "planId": "pln-b7225996",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Paired within-subject DE (DESeq2, subject blocked)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "paired-response",
+        "status": "pending",
+        "caveats": [
+          "With 5 pairs the residual df is 4: dispersions and padj are low-powered; frame significance as preliminary and do not over-interpret genes near the threshold.",
+          "Genes with all-zero counts in one group are handled by DESeq2's internal filtering/NA pvalues — report how many, do not drop them manually.",
+          "Do not re-estimate normalization per subject; DESeq2's global size factors are correct for this contrast."
+        ],
+        "context": "Counts: /eval-four-models-v2-without-paired-n5-s1-1/data/inputs/counts/counts.csv — raw integers from STAR/featureCounts, first column gene ID, then 10 sample columns (12,000 genes). Metadata: /eval-four-four-models-v2-without-paired-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows; sample, subject, condition). Each of 5 subjects contributes exactly one control and one treated sample. R toolchain has DESeq2 1.52.0 and apeglm 1.34.0 installed; nothing is installed at run time.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "In the 5-subject paired blood RNA-seq design (one control and one treated sample per subject), which genes show a treatment effect after accounting for subject — i.e., the within-subject response?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Read the condition column of metadata.csv and identify its two values; designate the control value as the reference level. If the values are not clearly a control/treated pair, stop and report the actual values.",
+          "Verify the pairing before modeling: exactly 5 subjects, each with one control and one treated sample; abort with a clear message if any subject lacks a pair.",
+          "Use design ~ subject + condition (subject first) so the treatment coefficient is the within-subject contrast.",
+          "Filter out genes with total count < 10 across all 10 samples; report how many were removed and keep the filter deterministic.",
+          "Shrink log2FoldChange with apeglm; report the shrunken log2FoldChange alongside the unshrunken stat/pvalue/padj (BH, DESeq2 default).",
+          "Save as artifacts: the full DESeq2 object (RDS), the complete results table (all retained genes, sorted by pvalue), per-sample size factors, and QC outputs (per-sample library sizes, pairwise sample-sample correlations, MA plot)."
+        ],
+        "description": "Build the DESeq2 model with subject as a fixed effect, test treatment on top of it, shrink LFCs with apeglm, and emit the full per-gene results table plus QC summaries and the saved object for downstream steps.",
+        "acceptance_criteria": [
+          "Results table has one row per retained gene with baseMean, log2FoldChange (apeglm-shrunken), lfcSE, stat, pvalue, padj.",
+          "The fitted model matrix confirms the treatment coefficient is an estimable within-subject contrast (5 pairs; residual df = 4) and is reported as such.",
+          "Counts of genes with padj < 0.05 and padj < 0.1 are reported (an explicit zero is a valid outcome).",
+          "QC artifacts exist and any isolated sample (e.g., correlation < 0.9 with the others) is flagged in the summary."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Per-subject within-pair response profile",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "paired-response",
+        "status": "pending",
+        "caveats": [
+          "The 0.25 log2FC threshold is arbitrary; report the 0.5 tier and do not present 0.25 as a biological boundary.",
+          "With n = 5 the one-sample t-test is sensitive to outliers and the Wilcoxon is nearly underpowered; present both and lean on concordance counts as the primary per-subject evidence.",
+          "A gene can be subject-specific (changed in 1-2 subjects) yet not significant in T1S1 — report that intersection explicitly rather than silently dropping it."
+        ],
+        "context": "Loads the DESeq2 object and results table saved by T1S1 from the same run — do not re-normalize or re-estimate anything. The per-subject view is what directly answers 'within each subject', complementing the population-level treatment test of T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2"
+        ],
+        "question": "For each of the 5 subjects individually, which genes change in that subject's own control-to-treated comparison, and how many treatment-responsive genes change in the same direction in all 5 subjects?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Load the DESeq2 object saved by T1S1 and use its normalization for all within-pair log2FC computations.",
+          "For each subject: within-pair log2FC = log2(normalized treated) - log2(normalized control).",
+          "Define a per-subject response at |log2FC| >= 0.25; also compute at 0.5 and report both tiers side by side.",
+          "Per-gene concordance table: per-subject log2FC columns, counts of subjects with up (>= 0.25), down (<= -0.25), and no change; flag 'consistent responder' = padj < 0.05 in T1S1 AND same sign in all 5 subjects; flag 'subject-specific' = changed in <= 2 of 5 subjects.",
+          "Cross-check: per-gene one-sample t-test on the 5 within-pair log2FCs against 0, plus the Wilcoxon signed-rank p-value for comparison; report Spearman rank correlation of within-pair log2FC (per-gene mean) with the T1S1 shrunken LFC and the rank correlation of -log10 p-values between the two tests.",
+          "Save: per-subject top-20 gene tables, the per-gene concordance table, per-subject MA/volcano plots, and a concordance summary plot."
+        ],
+        "description": "Compute each subject's within-pair log2FC from the T1S1 normalization, build a per-gene concordance table (response counts, consistent-responder and subject-specific flags), cross-check with a model-free one-sample test, and produce per-subject gene tables and plots.",
+        "acceptance_criteria": [
+          "Per-gene concordance table exists with per-subject log2FC columns, response counts, and the consistent/subject-specific flags.",
+          "The cross-check statistics (rank correlations of LFC and p-values between model-based and model-free tests) are reported as numbers, not just stated as done.",
+          "Per-subject tables and plots are saved as artifacts."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway context of responsive genes",
+        "agent": "enrichment-agent",
+        "track": "paired-response",
+        "status": "pending",
+        "caveats": [
+          "With few or no padj < 0.05 genes (likely, given 4 residual df), the set-based tier is empty — present only the ranked-list fgsea result and label it suggestive.",
+          "WikiPathways covers pathways unevenly; a negative result is absence of evidence, not evidence of absence."
+        ],
+        "context": "Input: the T1S1 results table (shrunken log2FoldChange, stat, padj). Reference: the human WikiPathways GMT provisioned under /mnt/refs (HGNC symbols, one set per line, first field '%'-delimited name/ID/species) — resolve it against the reference store at run time; organism matches the dataset (Homo sapiens). fgsea 1.38.0 and org.Hs.eg.db 3.23.1 are installed. No network access: do not call KEGG REST or any external API.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which human pathways are represented among the treatment-responsive genes, to annotate the gene list from T1S1/T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Map the results-table gene IDs to HGNC symbols with org.Hs.eg.db (skip if already symbols); report the mapping rate and exclude unmapped genes.",
+          "Rank genes by stat (signed, descending) and run fgsea against the human WikiPathways GMT.",
+          "If the T1S1 padj < 0.05 set is non-empty, additionally report how many of those genes fall into the top 20 fgsea pathways (simple membership counts, no network-based enrichment).",
+          "If the human WikiPathways GMT is absent from the reference store at run time, report the gap and finish the step with a note that pathway context is unavailable — do not substitute a non-human GMT."
+        ],
+        "description": "Run fgsea on the full T1S1 ranked list against the human WikiPathways GMT (organism-matched: Homo sapiens, HGNC symbols), and summarize pathway membership of the padj < 0.05 genes if that set is non-empty. Annotation only — the gene list is the deliverable.",
+        "acceptance_criteria": [
+          "Top-20 pathway table with set, NES, pvalue, and padj is saved.",
+          "The mapping rate, the size of the gene set used, and the empty/non-empty status of the significant-gene tier are reported.",
+          "Ranked-list results are labeled as directional/suggestive where the significant-gene tier is empty."
+        ]
+      }
+    ],
+    "title": "Paired within-subject treatment DE, human blood",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-25T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are a 5-subject paired bulk RNA-seq design in human blood: 12,000 genes x 10 samples of STAR/featureCounts raw integers, with one control and one treated sample per subject. Because the question asks what responds within each subject, subject is treated as a fixed blocking effect and treatment is tested on top of it (T1S1, DESeq2 with apeglm LFC shrinkage) — this is the standard paired-design contrast, and with 5 pairs it carries only 4 residual degrees of freedom, which must be reported as a power caveat. T1S2 computes each subject's own within-pair log2FC from the same normalization to answer which genes respond in each subject and how consistently direction is conserved across subjects, cross-checked against a model-free one-sample test. T1S3 adds organism-matched pathway context (human WikiPathways, present in the reference store, via fgsea on the ranked list) as annotation only — it is not part of the gene-list deliverable."
+  },
+  "usage": {
+    "inputTokens": 32694,
+    "outputTokens": 9333,
+    "cacheReadInputTokens": 9923,
+    "reasoningTokens": 6878
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_864109d9c9b94ba396f34547",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Paired within-subject treatment DE, human blood\", \"analytical_narrative\": \"The data are a 5-subject paired bulk RNA-seq design in human blood: 12,000 genes x 10 samples of STAR/featureCounts raw integers, with one control and one treated sample per subject. Because the question asks what responds within each subject, subject is treated as a fixed blocking effect and treatment is tested on top of it (T1S1, DESeq2 with apeglm LFC shrinkage) — this is the standard paired-design contrast, and with 5 pairs it carries only 4 residual degrees of freedom, which must be reported as a power caveat. T1S2 computes each subject's own within-pair log2FC from the same normalization to answer which genes respond in each subject and how consistently direction is conserved across subjects, cross-checked against a model-free one-sample test. T1S3 adds organism-matched pathway context (human WikiPathways, present in the reference store, via fgsea on the ranked list) as annotation only — it is not part of the gene-list deliverable.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-09-25T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Paired within-subject DE (DESeq2, subject blocked)\", \"track\": \"paired-response\", \"step_type\": \"analysis\", \"question\": \"In the 5-subject paired blood RNA-seq design (one control and one treated sample per subject), which genes show a treatment effect after accounting for subject — i.e., the within-subject response?\", \"description\": \"Build the DESeq2 model with subject as a fixed effect, test treatment on top of it, shrink LFCs with apeglm, and emit the full per-gene results table plus QC summaries and the saved object for downstream steps.\", \"context\": \"Counts: /eval-four-models-v2-without-paired-n5-s1-1/data/inputs/counts/counts.csv — raw integers from STAR/featureCounts, first column gene ID, then 10 sample columns (12,000 genes). Metadata: /eval-four-four-models-v2-without-paired-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows; sample, subject, condition). Each of 5 subjects contributes exactly one control and one treated sample. R toolchain has DESeq2 1.52.0 and apeglm 1.34.0 installed; nothing is installed at run time.\", \"constraints\": [\"Read the condition column of metadata.csv and identify its two values; designate the control value as the reference level. If the values are not clearly a control/treated pair, stop and report the actual values.\", \"Verify the pairing before modeling: exactly 5 subjects, each with one control and one treated sample; abort with a clear message if any subject lacks a pair.\", \"Use design ~ subject + condition (subject first) so the treatment coefficient is the within-subject contrast.\", \"Filter out genes with total count < 10 across all 10 samples; report how many were removed and keep the filter deterministic.\", \"Shrink log2FoldChange with apeglm; report the shrunken log2FoldChange alongside the unshrunken stat/pvalue/padj (BH, DESeq2 default).\", \"Save as artifacts: the full DESeq2 object (RDS), the complete results table (all retained genes, sorted by pvalue), per-sample size factors, and QC outputs (per-sample library sizes, pairwise sample-sample correlations, MA plot).\"], \"acceptance_criteria\": [\"Results table has one row per retained gene with baseMean, log2FoldChange (apeglm-shrunken), lfcSE, stat, pvalue, padj.\", \"The fitted model matrix confirms the treatment coefficient is an estimable within-subject contrast (5 pairs; residual df = 4) and is reported as such.\", \"Counts of genes with padj < 0.05 and padj < 0.1 are reported (an explicit zero is a valid outcome).\", \"QC artifacts exist and any isolated sample (e.g., correlation < 0.9 with the others) is flagged in the summary.\"], \"caveats\": [\"With 5 pairs the residual df is 4: dispersions and padj are low-powered; frame significance as preliminary and do not over-interpret genes near the threshold.\", \"Genes with all-zero counts in one group are handled by DESeq2's internal filtering/NA pvalues — report how many, do not drop them manually.\", \"Do not re-estimate normalization per subject; DESeq2's global size factors are correct for this contrast.\"], \"packages\": [\"DESeq2\", \"apeglm\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Per-subject within-pair response profile\", \"track\": \"paired-response\", \"step_type\": \"analysis\", \"question\": \"For each of the 5 subjects individually, which genes change in that subject's own control-to-treated comparison, and how many treatment-responsive genes change in the same direction in all 5 subjects?\", \"description\": \"Compute each subject's within-pair log2FC from the T1S1 normalization, build a per-gene concordance table (response counts, consistent-responder and subject-specific flags), cross-check with a model-free one-sample test, and produce per-subject gene tables and plots.\", \"context\": \"Loads the DESeq2 object and results table saved by T1S1 from the same run — do not re-normalize or re-estimate anything. The per-subject view is what directly answers 'within each subject', complementing the population-level treatment test of T1S1.\", \"constraints\": [\"Load the DESeq2 object saved by T1S1 and use its normalization for all within-pair log2FC computations.\", \"For each subject: within-pair log2FC = log2(normalized treated) - log2(normalized control).\", \"Define a per-subject response at |log2FC| >= 0.25; also compute at 0.5 and report both tiers side by side.\", \"Per-gene concordance table: per-subject log2FC columns, counts of subjects with up (>= 0.25), down (<= -0.25), and no change; flag 'consistent responder' = padj < 0.05 in T1S1 AND same sign in all 5 subjects; flag 'subject-specific' = changed in <= 2 of 5 subjects.\", \"Cross-check: per-gene one-sample t-test on the 5 within-pair log2FCs against 0, plus the Wilcoxon signed-rank p-value for comparison; report Spearman rank correlation of within-pair log2FC (per-gene mean) with the T1S1 shrunken LFC and the rank correlation of -log10 p-values between the two tests.\", \"Save: per-subject top-20 gene tables, the per-gene concordance table, per-subject MA/volcano plots, and a concordance summary plot.\"], \"acceptance_criteria\": [\"Per-gene concordance table exists with per-subject log2FC columns, response counts, and the consistent/subject-specific flags.\", \"The cross-check statistics (rank correlations of LFC and p-values between model-based and model-free tests) are reported as numbers, not just stated as done.\", \"Per-subject tables and plots are saved as artifacts.\"], \"caveats\": [\"The 0.25 log2FC threshold is arbitrary; report the 0.5 tier and do not present 0.25 as a biological boundary.\", \"With n = 5 the one-sample t-test is sensitive to outliers and the Wilcoxon is nearly underpowered; present both and lean on concordance counts as the primary per-subject evidence.\", \"A gene can be subject-specific (changed in 1-2 subjects) yet not significant in T1S1 — report that intersection explicitly rather than silently dropping it.\"], \"packages\": [\"DESeq2\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Pathway context of responsive genes\", \"track\": \"paired-response\", \"step_type\": \"analysis\", \"question\": \"Which human pathways are represented among the treatment-responsive genes, to annotate the gene list from T1S1/T1S2?\", \"description\": \"Run fgsea on the full T1S1 ranked list against the human WikiPathways GMT (organism-matched: Homo sapiens, HGNC symbols), and summarize pathway membership of the padj < 0.05 genes if that set is non-empty. Annotation only — the gene list is the deliverable.\", \"context\": \"Input: the T1S1 results table (shrunken log2FoldChange, stat, padj). Reference: the human WikiPathways GMT provisioned under /mnt/refs (HGNC symbols, one set per line, first field '%'-delimited name/ID/species) — resolve it against the reference store at run time; organism matches the dataset (Homo sapiens). fgsea 1.38.0 and org.Hs.eg.db 3.23.1 are installed. No network access: do not call KEGG REST or any external API.\", \"constraints\": [\"Map the results-table gene IDs to HGNC symbols with org.Hs.eg.db (skip if already symbols); report the mapping rate and exclude unmapped genes.\", \"Rank genes by stat (signed, descending) and run fgsea against the human WikiPathways GMT.\", \"If the T1S1 padj < 0.05 set is non-empty, additionally report how many of those genes fall into the top 20 fgsea pathways (simple membership counts, no network-based enrichment).\", \"If the human WikiPathways GMT is absent from the reference store at run time, report the gap and finish the step with a note that pathway context is unavailable — do not substitute a non-human GMT.\"], \"acceptance_criteria\": [\"Top-20 pathway table with set, NES, pvalue, and padj is saved.\", \"The mapping rate, the size of the gene set used, and the empty/non-empty status of the significant-gene tier are reported.\", \"Ranked-list results are labeled as directional/suggestive where the significant-gene tier is empty.\"], \"caveats\": [\"With few or no padj < 0.05 genes (likely, given 4 residual df), the set-based tier is empty — present only the ranked-list fgsea result and label it suggestive.\", \"WikiPathways covers pathways unevenly; a negative result is absence of evidence, not evidence of absence.\"], \"packages\": [\"fgsea\", \"org.Hs.eg.db\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 71
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

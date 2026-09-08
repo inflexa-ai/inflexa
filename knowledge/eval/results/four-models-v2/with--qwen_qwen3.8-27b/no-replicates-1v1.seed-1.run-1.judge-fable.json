@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes the 1 vs 1 design, refuses any inferential test, and reports only size-factor-normalized counts and descriptive log2FC with no p-values, no significance labels, and no shrinkage, while naming the replicated design that would support inference. QC (blind VST, PCA, distance heatmap, library sizes) is present with an explicit no-exclusion policy suited to n=1 per group, the low-count filter is minimal and tied to the smallest group size, and normalization is median-of-ratios inside DESeq2 with a stated handling of the lost Salmon length offset. The reference level and contrast are explicit; the design formula is described but not written out symbolically. The report step covers method, versions, design, thresholds, n_tested, session info, and the design caveats, and enrichment is correctly omitted."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan respects the Python constraint and gets the regulon inference right (decoupler ulm on local CollecTRI v2.0 with signed edges, min regulon size 5, BH across regulators via statsmodels, provenance and inference caution stated), but it drops the count model entirely: no PyDESeq2 fit, no Wald statistic as the ulm input, so the primary inference the reference prescribes is missing and the per-sample log2CPM route with Welch t-tests, which the reference treats as a replicate-consistency check, becomes the only test. Consequently there is no in-model normalization by size factors, no explicit design formula or reference level, and no gene-level tested/significant counts. QC is solid (blind VST, top-500 PCA, distance heatmap, library sizes, flag-not-drop outlier policy) and the low-count filter is minimal and stated, though only lightly justified. The report section covers the required activity fields, versions, seed, and caveats well."
+}

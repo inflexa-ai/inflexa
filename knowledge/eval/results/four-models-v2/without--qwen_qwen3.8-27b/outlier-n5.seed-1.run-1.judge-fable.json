@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan fits the unpaired single-batch design (DESeq2 ~condition, control reference, apeglm, BH) and handles sample_03 sensibly: characterize it on PCA/distance/library-size QC, keep it in the main fit, and rerun without it as a sensitivity analysis, which matches the reference's 'both fits' requirement, though it never states a pre-fixed removal criterion or that DESeq2's Cook's outlier handling is the down-weighting mechanism, and does not say plots are colored by condition. The CPM filter is lenient but 'at least 6 of 10' exceeds the smallest group size and is unjustified; the BH alpha is not stated. The T1S3 pathway/GO 'annotation' is unrequested and unspecified (no universe, version, or size window), and the report lacks package versions and an explicit count of significant genes per fit."
+}

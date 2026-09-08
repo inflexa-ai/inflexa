@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The DE half is fully specified and matches the design: blind vst QC with PCA and distance heatmap colored by condition, a minimal justified filter (10 counts in 6 samples), median-of-ratios inside the model, ~condition with explicit control reference and a named treated/control contrast, Wald with BH at 0.05 and apeglm shrinkage kept beside the unshrunken value, plus an edgeR QL corroboration on the identical gene set. The TF step correctly uses decoupleR ulm on the contrast statistic of all tested genes against signed CollecTRI regulons with a minimum size of five and does not refit the count model or feed the shrunken fold change, but it omits the per-sample activity matrix with limma across replicates that the reference uses to check consistency, does not state per-TF target counts in the output table, and spends effort on a JASPAR motif ORA complement that is acceptable (tested-gene background) but not what was asked. The report section is thorough on versions, design, thresholds, counts, sessionInfo, the import caveat, and the inference-not-measurement caution."
+}

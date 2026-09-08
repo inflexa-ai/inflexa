@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly consumes the existing DESeq2 table without refitting, defines the foreground as BH padj < 0.05 with the absence of a fold-change cutoff explicitly stated, uses the tested 12,000 genes as the universe rather than the genome, names a single versioned collection (MSigDB C5 GO BP 2026.1), runs a hypergeometric test via clusterProfiler::enricher with BH at 0.05, and collapses redundant nested terms with a full table plus de-redundant summary reporting term, GeneRatio, adjusted p and overlapping genes. Weaknesses: no gene-set size window is stated, the up/down subsets are produced but the ORA is run on the pooled list without explicitly testing the directions apart, and the redundancy reduction method (simplify/rrvgo) is not named. The sample_01 shallow library is acknowledged but dismissed as irrelevant, which is overconfident since the supplied results were computed with that sample included; it should be carried as a caveat on the DE list rather than declared non-propagating, and no sample-structure QC is described. Filtering and normalization are correctly not re-applied given the results table is in hand, though this is only implicit."
+}

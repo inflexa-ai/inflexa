@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 1,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that gene-level sums carry no isoform information, refused to fabricate or misapply a gene-level DE test, and asked for the per-sample Salmon quant.sf with effective lengths. It fell short of the reference by not requesting the transcript-to-gene map with annotation version, not pre-specifying the downstream DTU method (DRIMSeq/DEXSeq on tximport scaledTPM, dmFilter, stageR at 0.05), and not stating a policy for the shallow sample_01. Because no plan was submitted, QC, filtering, normalization, design/contrast, and FDR control are unstated and score near zero; enrichment is correctly absent for a DTU question; the report criterion gets partial credit for clearly stating the data-state caveat and scope."
+}

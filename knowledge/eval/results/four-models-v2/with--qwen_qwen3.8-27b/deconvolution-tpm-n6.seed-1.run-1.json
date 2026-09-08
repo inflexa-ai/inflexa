@@ -1,0 +1,1106 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T12:58:44.686Z",
+  "elapsedMs": 596104,
+  "outcome": "plan_submitted",
+  "planId": "pln-e28790e4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2 TPM",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TPM sums to ~1e6 per sample by construction: depth differences cannot be read from TPM sums. Infer sample_01's quarter-median depth from gene-detection counts and expression variance, and cross-check against the data profile.",
+          "Verify the 12 sample names in tpm.csv against the 12 rows of metadata.csv (sample, condition) before QC; an identity mismatch is a reported finding, not a silent fix."
+        ],
+        "context": "Inputs: /eval-four-models-v2-with-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv (12,000 genes x 12 samples, linear Salmon TPM, first column gene symbol) and /eval-four-models-v2-with-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition). The TPM is linear-scale: apply log2(TPM+1) exactly once. Do not apply any variance-stabilizing transform from a count model — it expects raw counts, which were not delivered. Make PCA/MDS on the top 500 most variable genes colored by condition (treated vs control), a sample distance heatmap, and per-sample: detected genes (TPM>0), genes at >=1 TPM, median pairwise distance to the other 11 samples. sample_01 was sequenced at ~1/4 of the median depth (from the data profile): inspect it on the plots and report its metrics beside the others; keep it (policy keep_inspect_report) — removal requires a stated reason (identity doubt, failed library), not depth alone.",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Do the 12 melanoma biopsy samples (6 anti-PD-1 treated, 6 untreated) form two coherent condition groups on the log2-transformed TPM matrix, and where does the low-depth sample_01 sit relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0008@440d",
+            "R-0071@e4e2"
+          ],
+          "reason": "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes per R-0008@440d",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "log2_plus_1_unless_already_log",
+              "source": "guide:limma/2026-05-19#data-exploration"
+            },
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)",
+          "qc_sample_structure: transform = log2_plus_1_unless_already_log (guide:limma/2026-05-19#data-exploration)",
+          "qc_sample_structure: n_top_genes = 500 (guide:limma/2026-05-19#multidimensional-scaling-plots)"
+        ],
+        "description": "PCA/MDS and sample-distance QC on log2(TPM+1), with per-sample detection metrics and an explicit keep-inspect verdict on sample_01.",
+        "acceptance_criteria": [
+          "PCA/MDS (top 500 variable genes) and the sample distance heatmap are produced, colored by condition (anti-PD-1 treated vs control), and saved as figures.",
+          "A per-sample table (detected genes, genes >=1 TPM, median pairwise distance, total TPM) is saved with sample_01's values reported beside the others.",
+          "sample_01 is retained for all downstream steps; if it is removed, the stated reason (identity doubt or failed library, not depth alone) is recorded.",
+          "A statement of condition-separation quality (do treated and control samples separate?) is recorded in the step output."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-abundance gene filter (>=1 TPM in >=6 samples)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not feed this filtered matrix to the deconvolution step — reference signature genes that are low in most samples would be lost."
+        ],
+        "context": "Input: the full linear TPM matrix from the inputs directory. Keep a gene if its TPM is >=1 in at least 6 samples (min_samples = smallest group size); drop the rest. The only transform is log2(TPM+1) — no TMM and no size factors, which expect raw counts (rule R-0073). Save the filtered log2-TPM matrix and the number of genes kept. The deconvolution step (T3S2) deliberately does NOT consume this filtered matrix: deconvolution references need the full gene set including low-expression signature markers. This matrix serves the reproducibility record and any downstream expression-level work.",
+        "maxSteps": 200,
+        "packages": [
+          "matrixStats"
+        ],
+        "question": "Which of the 12,000 genes are expressed at >=1 TPM in at least 6 samples (the smallest group size), and how many genes remain in the filtered log2-TPM matrix?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0030@2248",
+            "R-0073@8b36"
+          ],
+          "reason": "Low abundance filter on TPM, FPKM, or log expression values per R-0072@881a",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "min_abundance_tpm",
+              "step": "filter_low_counts",
+              "value": 1,
+              "source": "rule:R-0072"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "guide:limma/2026-05-19#filtering"
+            },
+            {
+              "name": "depth_policy",
+              "step": "normalize",
+              "value": "size_factors_account_for_depth",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "normalization",
+              "step": "normalize",
+              "value": "log2_plus_1_only",
+              "source": "rule:R-0073"
+            },
+            {
+              "name": "protocol_comparability",
+              "step": "normalize",
+              "value": "not_across_protocols",
+              "source": "doi:10.1261/rna.074922.120"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_abundance_tpm = 1 (rule:R-0072)",
+          "filter_low_counts: min_samples = smallest_group_size (guide:limma/2026-05-19#filtering)",
+          "normalize: depth_policy = size_factors_account_for_depth (doi:10.1186/s13059-014-0550-8)",
+          "normalize: normalization = log2_plus_1_only (rule:R-0073)",
+          "normalize: protocol_comparability = not_across_protocols (doi:10.1261/rna.074922.120)"
+        ],
+        "description": "TPM floor filter with log2(TPM+1) as the only transform; outputs the filtered matrix and kept-gene count for the reproducibility record.",
+        "acceptance_criteria": [
+          "The filtered matrix (genes >=1 TPM in >=6 samples) is saved with the kept-gene count reported.",
+          "log2(TPM+1) is applied exactly once; no count-based normalization (TMM/size factors) is applied.",
+          "The floor (1 TPM), min_samples (6), and resulting gene count are recorded for the report."
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "TME deconvolution via the immunedeconv interface (EPIC + ConsensusTME + MCPcounter + xCell + quanTIseq)",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "List the methods supported by the installed immunedeconv version (the method argument) before running; if a method name is unsupported, run that method through its own package (EPIC, ConsensusTME, MCPcounter, xCell, quantiseq) and record the deviation.",
+          "MCPcounter and xCell outputs are scores, not fractions: do not rescale them to sum to one and do not compare their numbers directly against EPIC fractions — use them as per-sample measures within their method and use cross-method directional agreement for claims.",
+          "Use the full unfiltered 12,000-gene TPM matrix, not the T1S2 filtered matrix.",
+          "The data profile says single batch; if the metadata revealed more than one library protocol, TPMs would not be comparable across protocols and a protocol batch variable would be needed — check the metadata and record the result."
+        ],
+        "context": "Input: the full 12,000-gene linear TPM matrix (unfiltered, so every reference signature gene is present) plus metadata.csv. Run the methods through the common immunedeconv interface, which takes one TPM matrix and returns one long table (method, sample, celltype, estimate): EPIC (primary — absolute cell fractions with an uncharacterized fraction that captures tumor cells and other uncharacterized cells; state the tissue match of the reference, which derives from blood and tumor immune cells, in the report), ConsensusTME (relative estimate of 18 TME cell types with stromal coverage; state the cancer type the ConsensusTME signature names), MCPcounter (abundance scores of immune and stromal populations, run on log2 TPM per the rule; scores are not fractions), xCell (64-cell-type enrichment scores with spillover compensation; scores are not proportions and do not sum to one), quanTIseq (absolute fractions of the ten TIL10 immune types). Input scale: linear TPM. CIBERSORT/CIBERSORTx are absent (not open in this pool) — never present a substitute as an LM22 result. ESTIMATE is absent — never claim a tumor purity from a substitute; report EPIC's uncharacterized fraction under the method's own label. Set and record a seed for any method that uses randomness (e.g., xCell spillover compensation).",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "EPIC",
+          "ConsensusTME",
+          "MCPcounter",
+          "xCell",
+          "quantiseq"
+        ],
+        "question": "What is the immune, stromal, and tumor-epithelial cell composition of each of the 12 melanoma biopsy samples, as estimated by five methods from the linear TPM matrix?",
+        "grounding": {
+          "claims": [
+            "R-0127@1ec9",
+            "R-0126@a2be",
+            "R-0128@9eee",
+            "R-0130@c0da",
+            "R-0131@6d6f",
+            "R-0132@246d"
+          ],
+          "reason": "EPIC absolute cell fractions from TPM with an uncharacterized fraction per R-0127@1ec9",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "input_scale",
+              "step": "deconvolution",
+              "value": "tpm_linear",
+              "source": "doi:10.7554/eLife.26476"
+            },
+            {
+              "name": "output",
+              "step": "deconvolution",
+              "value": "absolute_fractions_with_uncharacterized_fraction",
+              "source": "doi:10.7554/eLife.26476"
+            },
+            {
+              "name": "reference_tissue_match",
+              "step": "deconvolution",
+              "value": "state_in_report",
+              "source": "doi:10.1093/bioinformatics/btz363"
+            },
+            {
+              "name": "interface",
+              "step": "deconvolution",
+              "value": "immunedeconv",
+              "source": "doi:10.1093/bioinformatics/btz363"
+            },
+            {
+              "name": "consensus",
+              "step": "deconvolution",
+              "value": "two_or_more_methods_agree",
+              "source": "doi:10.1038/s41467-020-19015-1"
+            },
+            {
+              "name": "tumor_purity_tool_of_record",
+              "step": "deconvolution",
+              "value": "estimate_absent_no_purity_claim",
+              "source": "doi:10.1038/ncomms3612"
+            },
+            {
+              "name": "microenvironment_consensus",
+              "step": "deconvolution",
+              "value": "consensustme_via_immunedeconv",
+              "source": "doi:10.1158/0008-5472.CAN-18-3560"
+            },
+            {
+              "name": "lm22_tool_of_record",
+              "step": "deconvolution",
+              "value": "cibersort_absent",
+              "source": "doi:10.1038/nmeth.3337"
+            },
+            {
+              "name": "proportion_substitute",
+              "step": "deconvolution",
+              "value": "quantiseq_or_epic_with_type_set_stated",
+              "source": "doi:10.1093/bioinformatics/btz363"
+            },
+            {
+              "name": "composition_role",
+              "step": "deconvolution",
+              "value": "outcome_or_covariate_stated",
+              "source": "doi:10.1093/bioinformatics/btz363"
+            },
+            {
+              "name": "report_composition_beside_de",
+              "step": "deconvolution",
+              "value": true,
+              "source": "doi:10.1038/s41467-020-19015-1"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "deconvolution: input_scale = tpm_linear (doi:10.7554/eLife.26476)",
+          "deconvolution: output = absolute_fractions_with_uncharacterized_fraction (doi:10.7554/eLife.26476)",
+          "deconvolution: reference_tissue_match = state_in_report (doi:10.1093/bioinformatics/btz363)",
+          "deconvolution: interface = immunedeconv (doi:10.1093/bioinformatics/btz363)",
+          "deconvolution: consensus = two_or_more_methods_agree (doi:10.1038/s41467-020-19015-1)",
+          "deconvolution: tumor_purity_tool_of_record = estimate_absent_no_purity_claim (doi:10.1038/ncomms3612)",
+          "deconvolution: microenvironment_consensus = consensustme_via_immunedeconv (doi:10.1158/0008-5472.CAN-18-3560)",
+          "deconvolution: lm22_tool_of_record = cibersort_absent (doi:10.1038/nmeth.3337)",
+          "deconvolution: proportion_substitute = quantiseq_or_epic_with_type_set_stated (doi:10.1093/bioinformatics/btz363)",
+          "deconvolution: composition_role = outcome_or_covariate_stated (doi:10.1093/bioinformatics/btz363)",
+          "deconvolution: report_composition_beside_de = true (doi:10.1038/s41467-020-19015-1)"
+        ],
+        "description": "Multi-method TME deconvolution: EPIC absolute fractions (primary) plus ConsensusTME, MCPcounter, xCell, and quanTIseq through the same common interface, producing one long method x sample x celltype table.",
+        "acceptance_criteria": [
+          "A long table (method, sample, celltype, estimate, estimate_type in {fraction, score}) covering all 12 samples and every cell type returned by each method is saved.",
+          "All five methods (EPIC, ConsensusTME, MCPcounter, xCell, quanTIseq) are present, or the exact method unsupported by the installed interface and the direct-package fallback actually used are recorded.",
+          "EPIC's uncharacterized fraction is reported under the method's own label and not renamed as a tumor purity.",
+          "The tissue-reference match statement (EPIC reference = blood/tumor immune; the cancer type named by the ConsensusTME signature, and whether it matches the melanoma biopsies) is recorded for the report."
+        ]
+      },
+      {
+        "id": "T3S3",
+        "name": "Treated vs control composition comparison: permutation tests, FDR, consensus, sample_01 sensitivity",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "n = 6 per group: report effect sizes with p-values and do not over-interpret a single method's borderline FDR.",
+          "Test each method's outputs as the method defines them (fractions for EPIC/ConsensusTME/quanTIseq, scores for MCPcounter/xCell); do not rescale scores to fractions before testing.",
+          "Cell types measured by only one method get no consensus claim — report them as single-method observations."
+        ],
+        "context": "Input: the long deconvolution table from T3S2 plus metadata.csv. For each method, reshape to a celltype x sample matrix and, per cell type, test treated vs control with (a) a two-sided exact permutation test over all 2^12 = 4096 labelings (primary — no normality assumption at n=12) and (b) a two-sided Welch t-test (secondary), with Cohen's d and Benjamini-Hochberg FDR computed within each method's cell-type family. Global test: PERMANOVA (vegan::adonis2, Bray-Curtis distance on the EPIC and ConsensusTME fraction matrices, 999 permutations) for the condition effect on the whole composition. Consensus rule: a composition change is claimed only when two or more methods covering that cell type agree in direction; report each method's estimate side by side and flag cell types where methods disagree. The composition is the OUTCOME of this research question (it asks whether composition differs), not a covariate in another design — state that role in the output. Sensitivity: rerun the full comparison excluding sample_01 (it stays in the primary analysis per the QC keep-inspect policy) and report every change in significance or direction. Set one random seed before any permutation and record it in the output metadata. n=6 per group is underpowered for small effects: report effect sizes alongside p-values.",
+        "maxSteps": 200,
+        "packages": [
+          "vegan"
+        ],
+        "question": "Does the estimated cell composition differ between the 6 anti-PD-1 treated and the 6 untreated melanoma biopsies — per cell type and per method — and is any difference robust to dropping the low-depth sample_01?",
+        "grounding": {
+          "claims": [],
+          "reason": "No procedure rule covers a two-group test of pre-computed deconvolution estimates; the multi-method consensus criterion and the outcome role of the composition follow the procedure claims R-0128@9eee and R-0132@246d, and the FDR step passed the knowledge check as a multiple_testing step.",
+          "status": "ungrounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistical-comparison",
+        "depends_on": [
+          "T3S2"
+        ],
+        "constraints": [
+          "Set one random seed before the permutation and PERMANOVA tests and record it in the output metadata.",
+          "BH FDR is computed within each method's cell-type family; do not pool families across methods.",
+          "The permutation test (all 2^12 labelings) is the primary test; the Welch t-test is reported as secondary.",
+          "State in the output that the composition estimates are the outcome of the research question, not a covariate in another design."
+        ],
+        "description": "Per-cell-type two-group tests (permutation primary, Welch secondary) with BH FDR per method, a global PERMANOVA, a cross-method consensus table, and a leave-out sensitivity for sample_01.",
+        "acceptance_criteria": [
+          "Per-method result tables (celltype, mean and SD per group, Welch p, permutation p, Cohen's d, BH FDR) are saved for all five methods.",
+          "PERMANOVA tables for the EPIC and ConsensusTME fraction matrices (condition R^2, permutation p, seed) are saved.",
+          "A consensus table marks, per cell type, the directional agreement across the methods covering it and whether a robust claim is supported.",
+          "A sensitivity table (primary vs sample_01 excluded) reports every change in significance or direction.",
+          "At least one figure is saved: top cell types per method by significance, or the consensus composition heatmap, colored by condition."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report: TME composition and treated-vs-control comparison",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Assemble the final report from T1S1 (QC, sample_01), T1S2 (filter statistics), T3S2 (per-method compositions), T3S3 (comparison, consensus, sensitivity). Required statements per the procedure: (1) reproducibility record — sessionInfo, package versions, the random seeds (permutation, PERMANOVA, any deconvolution step using randomness), and the reference/collection versions used (EPIC, ConsensusTME signature, xCell signatures, MCPcounter, quanTIseq versions); (2) tissue-reference match — EPIC reference profiles derive from blood and tumor immune cells, and the ConsensusTME signature names a cancer type: state the match or mismatch against the melanoma biopsies; (3) CIBERSORT/LM22 and ESTIMATE are absent from this environment — no LM22 proportions and no tumor purity claims from substitutes; (4) the composition estimates are the outcome of the research question, not a covariate in another design; (5) the sample_01 keep-inspect decision with its QC metrics and the leave-out sensitivity result; (6) the TPM-only limitation — no raw counts were delivered, so no count-based normalization (TMM/size factors) was applied, and multi-method concordance is the guard on the TPM-based estimates; (7) the per-cell-type multi-method consensus summary with each method's estimate side by side, and single-method observations flagged as such.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the per-sample immune/stromal/tumor-epithelial composition of the 12 melanoma biopsies, which cell-type compositions differ between the anti-PD-1 treated and control samples, and what are the caveats?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T3S2",
+          "T3S3"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+        ],
+        "description": "Final consolidated report: per-sample compositions, group-comparison results with consensus, sample_01 sensitivity, and all required limitation statements, with the reproducibility record.",
+        "acceptance_criteria": [
+          "A single report (markdown or PDF) containing all seven required statements is produced.",
+          "The reproducibility record (sessionInfo, package versions, seeds, reference/collection versions) is stored with the results, not in a separate note.",
+          "Figures are embedded or referenced: sample-structure PCA and distance heatmap, per-method composition heatmaps colored by condition, group-comparison plots, and the cross-method concordance view."
+        ]
+      }
+    ],
+    "title": "Melanoma anti-PD-1 vs control TME composition",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core delivered only a Salmon gene-level TPM table (12,000 human gene symbols x 12 melanoma biopsy samples; 6 anti-PD-1 treated vs 6 untreated, unpaired, single batch) — no raw counts and no quantification directories — so count-based normalization (TMM/size factors) is not possible: log2(TPM+1) is used for sample-structure QC and the linear TPM is the native deconvolution input. Composition is estimated by five methods through the common immunedeconv interface — EPIC (primary: absolute cell fractions with an uncharacterized fraction), ConsensusTME (18 TME types, stromal coverage), MCPcounter (immune/stromal scores), xCell (64-type enrichment scores), quanTIseq (TIL10 absolute fractions) — because a single-method TME composition claim is not robust and tissue-reference matches must be stated (references derive from blood/tumor immune, not melanoma-specific panels). CIBERSORT/LM22 and ESTIMATE are absent from this environment, so no LM22 proportions or purity claims are made. The treated-vs-control question is answered per cell type with an exact permutation test (2^12 labelings) as primary, Welch t-test secondary, Cohen's d, and BH FDR within each method; a global PERMANOVA covers the whole composition; a composition claim requires two or more methods to agree in direction; and sample_01 (sequenced at ~quarter of median depth) is kept, inspected, and tested as a leave-out sensitivity. Note: a scGate human-TME gating model set is provisioned in the reference store, but no source available here verifies its bulk applicability, so it is not used; the procedure's five methods already cover the stromal compartment."
+  },
+  "usage": {
+    "inputTokens": 418875,
+    "outputTokens": 39066,
+    "cacheReadInputTokens": 352448,
+    "reasoningTokens": 30877
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_02dd8a1996274764868a9fa7",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 76
+    },
+    {
+      "toolUseId": "call_e910a3e99bd9482f90fcfbf4",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "scGate",
+        "query": "scGate R package bulk RNA-seq immune stromal deconvolution gating model TPM"
+      },
+      "outcome": "error",
+      "durationMs": 1672
+    },
+    {
+      "toolUseId": "call_5e9ebd5f60a14394b52f82a0",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "scGate gating tool cell typing",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 558
+    },
+    {
+      "toolUseId": "call_2bac90aa7e8a4ab68be40951",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "scGate gating model cell type deconvolution bulk RNA-seq tumour microenvironment",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9184
+    },
+    {
+      "toolUseId": "call_4d07432e03ce4b78bdc1c81a",
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "log2(TPM+1) sample structure QC: PCA/MDS on top 500 variable genes, sample distance heatmap, detected-gene counts, keep-inspect-report policy for sample_01",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM floor filter (>=1 TPM in >=6 samples) with log2(TPM+1) as the only transform",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": "1"
+              },
+              {
+                "name": "min_samples",
+                "value": "6"
+              },
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "EPIC absolute cell fractions from linear TPM via the immunedeconv interface, with ConsensusTME, MCPcounter, xCell and quanTIseq run through the same interface for cross-method consensus",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "output",
+                "value": "absolute_fractions_with_uncharacterized_fraction"
+              },
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "two-group comparison of per-sample cell compositions: permutation test (4096 labelings) primary, Welch t-test secondary, Cohen's d, BH FDR per method, PERMANOVA global test, consensus across methods, sample_01 leave-one-out sensitivity",
+            "package": "vegan",
+            "parameters": [
+              {
+                "name": "primary_test",
+                "value": "permutation_2^12"
+              },
+              {
+                "name": "multiple_testing",
+                "value": "BH"
+              },
+              {
+                "name": "global_test",
+                "value": "PERMANOVA_BrayCurtis"
+              },
+              {
+                "name": "sensitivity",
+                "value": "exclude_sample_01"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "report with reproducibility record (sessionInfo, seeds, package and reference versions) and required tissue-match, LM22/ESTIMATE-absence, composition-role and TPM-limitation statements",
+            "package": "none"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    },
+    {
+      "toolUseId": "call_695575a3f3a54d35808b0f14",
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "count_source": "salmon",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              }
+            ],
+            "package": "limma",
+            "step_type": "qc_sample_structure",
+            "method": "log2(TPM+1) sample structure QC: PCA/MDS on top 500 variable genes, sample distance heatmap, detected-gene counts, keep-inspect-report policy for sample_01"
+          },
+          {
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": "1"
+              },
+              {
+                "name": "min_samples",
+                "value": "6"
+              },
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ],
+            "package": "matrixStats",
+            "step_type": "filter_low_counts",
+            "method": "TPM floor filter (>=1 TPM in >=6 samples) with log2(TPM+1) as the only transform"
+          },
+          {
+            "parameters": [
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              },
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "output",
+                "value": "absolute_fractions_with_uncharacterized_fraction"
+              }
+            ],
+            "package": "immunedeconv",
+            "step_type": "deconvolution",
+            "method": "EPIC absolute cell fractions from linear TPM via the immunedeconv interface, with ConsensusTME, MCPcounter, xCell and quanTIseq run through the same interface for cross-method consensus"
+          },
+          {
+            "parameters": [
+              {
+                "name": "family",
+                "value": "cell types within each method"
+              },
+              {
+                "name": "multiple_testing",
+                "value": "BH"
+              },
+              {
+                "name": "sensitivity",
+                "value": "exclude_sample_01"
+              }
+            ],
+            "package": "vegan",
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR across a family of per-cell-type two-group tests (permutation test primary, Welch t-test secondary) on the pre-computed deconvolution outputs, plus a global PERMANOVA; sample_01 leave-one-out sensitivity"
+          },
+          {
+            "method": "report with reproducibility record (sessionInfo, seeds, package and reference versions) and required tissue-match, LM22/ESTIMATE-absence, composition-role and TPM-limitation statements",
+            "package": "none",
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "call_563855b2cda745ae86beb2f6",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Melanoma anti-PD-1 vs control TME composition\", \"analytical_narrative\": \"The core delivered only a Salmon gene-level TPM table (12,000 human gene symbols x 12 melanoma biopsy samples; 6 anti-PD-1 treated vs 6 untreated, unpaired, single batch) — no raw counts and no quantification directories — so count-based normalization (TMM/size factors) is not possible: log2(TPM+1) is used for sample-structure QC and the linear TPM is the native deconvolution input. Composition is estimated by five methods through the common immunedeconv interface — EPIC (primary: absolute cell fractions with an uncharacterized fraction), ConsensusTME (18 TME types, stromal coverage), MCPcounter (immune/stromal scores), xCell (64-type enrichment scores), quanTIseq (TIL10 absolute fractions) — because a single-method TME composition claim is not robust and tissue-reference matches must be stated (references derive from blood/tumor immune, not melanoma-specific panels). CIBERSORT/LM22 and ESTIMATE are absent from this environment, so no LM22 proportions or purity claims are made. The treated-vs-control question is answered per cell type with an exact permutation test (2^12 labelings) as primary, Welch t-test secondary, Cohen's d, and BH FDR within each method; a global PERMANOVA covers the whole composition; a composition claim requires two or more methods to agree in direction; and sample_01 (sequenced at ~quarter of median depth) is kept, inspected, and tested as a leave-out sensitivity. Note: a scGate human-TME gating model set is provisioned in the reference store, but no source available here verifies its bulk applicability, so it is not used; the procedure's five methods already cover the stromal compartment.\", \"created_at\": \"2026-09-07T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC on log2 TPM\", \"track\": \"T1\", \"step_type\": \"qc\", \"question\": \"Do the 12 melanoma biopsy samples (6 anti-PD-1 treated, 6 untreated) form two coherent condition groups on the log2-transformed TPM matrix, and where does the low-depth sample_01 sit relative to its group?\", \"description\": \"PCA/MDS and sample-distance QC on log2(TPM+1), with per-sample detection metrics and an explicit keep-inspect verdict on sample_01.\", \"context\": \"Inputs: /eval-four-models-v2-with-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv (12,000 genes x 12 samples, linear Salmon TPM, first column gene symbol) and /eval-four-models-v2-with-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition). The TPM is linear-scale: apply log2(TPM+1) exactly once. Do not apply any variance-stabilizing transform from a count model — it expects raw counts, which were not delivered. Make PCA/MDS on the top 500 most variable genes colored by condition (treated vs control), a sample distance heatmap, and per-sample: detected genes (TPM>0), genes at >=1 TPM, median pairwise distance to the other 11 samples. sample_01 was sequenced at ~1/4 of the median depth (from the data profile): inspect it on the plots and report its metrics beside the others; keep it (policy keep_inspect_report) — removal requires a stated reason (identity doubt, failed library), not depth alone.\", \"constraints\": [\"qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)\", \"qc_sample_structure: transform = log2_plus_1_unless_already_log (guide:limma/2026-05-19#data-exploration)\", \"qc_sample_structure: n_top_genes = 500 (guide:limma/2026-05-19#multidimensional-scaling-plots)\"], \"acceptance_criteria\": [\"PCA/MDS (top 500 variable genes) and the sample distance heatmap are produced, colored by condition (anti-PD-1 treated vs control), and saved as figures.\", \"A per-sample table (detected genes, genes >=1 TPM, median pairwise distance, total TPM) is saved with sample_01's values reported beside the others.\", \"sample_01 is retained for all downstream steps; if it is removed, the stated reason (identity doubt or failed library, not depth alone) is recorded.\", \"A statement of condition-separation quality (do treated and control samples separate?) is recorded in the step output.\"], \"caveats\": [\"TPM sums to ~1e6 per sample by construction: depth differences cannot be read from TPM sums. Infer sample_01's quarter-median depth from gene-detection counts and expression variance, and cross-check against the data profile.\", \"Verify the 12 sample names in tpm.csv against the 12 rows of metadata.csv (sample, condition) before QC; an identity mismatch is a reported finding, not a silent fix.\"], \"packages\": [\"limma\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0008@440d\", \"R-0071@e4e2\"], \"template\": \"tpl-qc-log-abundance@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"low_depth_policy\", \"value\": \"keep_inspect_report\", \"source\": \"doi:10.1186/s13059-016-0881-8\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"log2_plus_1_unless_already_log\", \"source\": \"guide:limma/2026-05-19#data-exploration\"}, {\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"guide:limma/2026-05-19#multidimensional-scaling-plots\"}], \"reason\": \"Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes per R-0008@440d\"}}, {\"id\": \"T1S2\", \"name\": \"Low-abundance gene filter (>=1 TPM in >=6 samples)\", \"track\": \"T1\", \"step_type\": \"filter\", \"question\": \"Which of the 12,000 genes are expressed at >=1 TPM in at least 6 samples (the smallest group size), and how many genes remain in the filtered log2-TPM matrix?\", \"description\": \"TPM floor filter with log2(TPM+1) as the only transform; outputs the filtered matrix and kept-gene count for the reproducibility record.\", \"context\": \"Input: the full linear TPM matrix from the inputs directory. Keep a gene if its TPM is >=1 in at least 6 samples (min_samples = smallest group size); drop the rest. The only transform is log2(TPM+1) — no TMM and no size factors, which expect raw counts (rule R-0073). Save the filtered log2-TPM matrix and the number of genes kept. The deconvolution step (T3S2) deliberately does NOT consume this filtered matrix: deconvolution references need the full gene set including low-expression signature markers. This matrix serves the reproducibility record and any downstream expression-level work.\", \"constraints\": [\"filter_low_counts: min_abundance_tpm = 1 (rule:R-0072)\", \"filter_low_counts: min_samples = smallest_group_size (guide:limma/2026-05-19#filtering)\", \"normalize: depth_policy = size_factors_account_for_depth (doi:10.1186/s13059-014-0550-8)\", \"normalize: normalization = log2_plus_1_only (rule:R-0073)\", \"normalize: protocol_comparability = not_across_protocols (doi:10.1261/rna.074922.120)\"], \"acceptance_criteria\": [\"The filtered matrix (genes >=1 TPM in >=6 samples) is saved with the kept-gene count reported.\", \"log2(TPM+1) is applied exactly once; no count-based normalization (TMM/size factors) is applied.\", \"The floor (1 TPM), min_samples (6), and resulting gene count are recorded for the report.\"], \"caveats\": [\"Do not feed this filtered matrix to the deconvolution step — reference signature genes that are low in most samples would be lost.\"], \"packages\": [\"matrixStats\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0072@881a\", \"R-0030@2248\", \"R-0073@8b36\"], \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"min_abundance_tpm\", \"value\": 1, \"source\": \"rule:R-0072\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_samples\", \"value\": \"smallest_group_size\", \"source\": \"guide:limma/2026-05-19#filtering\"}, {\"step\": \"normalize\", \"name\": \"depth_policy\", \"value\": \"size_factors_account_for_depth\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"normalize\", \"name\": \"normalization\", \"value\": \"log2_plus_1_only\", \"source\": \"rule:R-0073\"}, {\"step\": \"normalize\", \"name\": \"protocol_comparability\", \"value\": \"not_across_protocols\", \"source\": \"doi:10.1261/rna.074922.120\"}], \"reason\": \"Low abundance filter on TPM, FPKM, or log expression values per R-0072@881a\"}}, {\"id\": \"T3S2\", \"name\": \"TME deconvolution via the immunedeconv interface (EPIC + ConsensusTME + MCPcounter + xCell + quanTIseq)\", \"track\": \"T3\", \"step_type\": \"deconvolution\", \"question\": \"What is the immune, stromal, and tumor-epithelial cell composition of each of the 12 melanoma biopsy samples, as estimated by five methods from the linear TPM matrix?\", \"description\": \"Multi-method TME deconvolution: EPIC absolute fractions (primary) plus ConsensusTME, MCPcounter, xCell, and quanTIseq through the same common interface, producing one long method x sample x celltype table.\", \"context\": \"Input: the full 12,000-gene linear TPM matrix (unfiltered, so every reference signature gene is present) plus metadata.csv. Run the methods through the common immunedeconv interface, which takes one TPM matrix and returns one long table (method, sample, celltype, estimate): EPIC (primary — absolute cell fractions with an uncharacterized fraction that captures tumor cells and other uncharacterized cells; state the tissue match of the reference, which derives from blood and tumor immune cells, in the report), ConsensusTME (relative estimate of 18 TME cell types with stromal coverage; state the cancer type the ConsensusTME signature names), MCPcounter (abundance scores of immune and stromal populations, run on log2 TPM per the rule; scores are not fractions), xCell (64-cell-type enrichment scores with spillover compensation; scores are not proportions and do not sum to one), quanTIseq (absolute fractions of the ten TIL10 immune types). Input scale: linear TPM. CIBERSORT/CIBERSORTx are absent (not open in this pool) — never present a substitute as an LM22 result. ESTIMATE is absent — never claim a tumor purity from a substitute; report EPIC's uncharacterized fraction under the method's own label. Set and record a seed for any method that uses randomness (e.g., xCell spillover compensation).\", \"constraints\": [\"deconvolution: input_scale = tpm_linear (doi:10.7554/eLife.26476)\", \"deconvolution: output = absolute_fractions_with_uncharacterized_fraction (doi:10.7554/eLife.26476)\", \"deconvolution: reference_tissue_match = state_in_report (doi:10.1093/bioinformatics/btz363)\", \"deconvolution: interface = immunedeconv (doi:10.1093/bioinformatics/btz363)\", \"deconvolution: consensus = two_or_more_methods_agree (doi:10.1038/s41467-020-19015-1)\", \"deconvolution: tumor_purity_tool_of_record = estimate_absent_no_purity_claim (doi:10.1038/ncomms3612)\", \"deconvolution: microenvironment_consensus = consensustme_via_immunedeconv (doi:10.1158/0008-5472.CAN-18-3560)\", \"deconvolution: lm22_tool_of_record = cibersort_absent (doi:10.1038/nmeth.3337)\", \"deconvolution: proportion_substitute = quantiseq_or_epic_with_type_set_stated (doi:10.1093/bioinformatics/btz363)\", \"deconvolution: composition_role = outcome_or_covariate_stated (doi:10.1093/bioinformatics/btz363)\", \"deconvolution: report_composition_beside_de = true (doi:10.1038/s41467-020-19015-1)\"], \"acceptance_criteria\": [\"A long table (method, sample, celltype, estimate, estimate_type in {fraction, score}) covering all 12 samples and every cell type returned by each method is saved.\", \"All five methods (EPIC, ConsensusTME, MCPcounter, xCell, quanTIseq) are present, or the exact method unsupported by the installed interface and the direct-package fallback actually used are recorded.\", \"EPIC's uncharacterized fraction is reported under the method's own label and not renamed as a tumor purity.\", \"The tissue-reference match statement (EPIC reference = blood/tumor immune; the cancer type named by the ConsensusTME signature, and whether it matches the melanoma biopsies) is recorded for the report.\"], \"caveats\": [\"List the methods supported by the installed immunedeconv version (the method argument) before running; if a method name is unsupported, run that method through its own package (EPIC, ConsensusTME, MCPcounter, xCell, quantiseq) and record the deviation.\", \"MCPcounter and xCell outputs are scores, not fractions: do not rescale them to sum to one and do not compare their numbers directly against EPIC fractions — use them as per-sample measures within their method and use cross-method directional agreement for claims.\", \"Use the full unfiltered 12,000-gene TPM matrix, not the T1S2 filtered matrix.\", \"The data profile says single batch; if the metadata revealed more than one library protocol, TPMs would not be comparable across protocols and a protocol batch variable would be needed — check the metadata and record the result.\"], \"packages\": [\"immunedeconv\", \"EPIC\", \"ConsensusTME\", \"MCPcounter\", \"xCell\", \"quantiseq\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"immune-profiling-agent\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0127@1ec9\", \"R-0126@a2be\", \"R-0128@9eee\", \"R-0130@c0da\", \"R-0131@6d6f\", \"R-0132@246d\"], \"settings\": [{\"step\": \"deconvolution\", \"name\": \"input_scale\", \"value\": \"tpm_linear\", \"source\": \"doi:10.7554/eLife.26476\"}, {\"step\": \"deconvolution\", \"name\": \"output\", \"value\": \"absolute_fractions_with_uncharacterized_fraction\", \"source\": \"doi:10.7554/eLife.26476\"}, {\"step\": \"deconvolution\", \"name\": \"reference_tissue_match\", \"value\": \"state_in_report\", \"source\": \"doi:10.1093/bioinformatics/btz363\"}, {\"step\": \"deconvolution\", \"name\": \"interface\", \"value\": \"immunedeconv\", \"source\": \"doi:10.1093/bioinformatics/btz363\"}, {\"step\": \"deconvolution\", \"name\": \"consensus\", \"value\": \"two_or_more_methods_agree\", \"source\": \"doi:10.1038/s41467-020-19015-1\"}, {\"step\": \"deconvolution\", \"name\": \"tumor_purity_tool_of_record\", \"value\": \"estimate_absent_no_purity_claim\", \"source\": \"doi:10.1038/ncomms3612\"}, {\"step\": \"deconvolution\", \"name\": \"microenvironment_consensus\", \"value\": \"consensustme_via_immunedeconv\", \"source\": \"doi:10.1158/0008-5472.CAN-18-3560\"}, {\"step\": \"deconvolution\", \"name\": \"lm22_tool_of_record\", \"value\": \"cibersort_absent\", \"source\": \"doi:10.1038/nmeth.3337\"}, {\"step\": \"deconvolution\", \"name\": \"proportion_substitute\", \"value\": \"quantiseq_or_epic_with_type_set_stated\", \"source\": \"doi:10.1093/bioinformatics/btz363\"}, {\"step\": \"deconvolution\", \"name\": \"composition_role\", \"value\": \"outcome_or_covariate_stated\", \"source\": \"doi:10.1093/bioinformatics/btz363\"}, {\"step\": \"deconvolution\", \"name\": \"report_composition_beside_de\", \"value\": true, \"source\": \"doi:10.1038/s41467-020-19015-1\"}], \"reason\": \"EPIC absolute cell fractions from TPM with an uncharacterized fraction per R-0127@1ec9\"}}, {\"id\": \"T3S3\", \"name\": \"Treated vs control composition comparison: permutation tests, FDR, consensus, sample_01 sensitivity\", \"track\": \"T3\", \"step_type\": \"statistical-comparison\", \"question\": \"Does the estimated cell composition differ between the 6 anti-PD-1 treated and the 6 untreated melanoma biopsies — per cell type and per method — and is any difference robust to dropping the low-depth sample_01?\", \"description\": \"Per-cell-type two-group tests (permutation primary, Welch secondary) with BH FDR per method, a global PERMANOVA, a cross-method consensus table, and a leave-out sensitivity for sample_01.\", \"context\": \"Input: the long deconvolution table from T3S2 plus metadata.csv. For each method, reshape to a celltype x sample matrix and, per cell type, test treated vs control with (a) a two-sided exact permutation test over all 2^12 = 4096 labelings (primary — no normality assumption at n=12) and (b) a two-sided Welch t-test (secondary), with Cohen's d and Benjamini-Hochberg FDR computed within each method's cell-type family. Global test: PERMANOVA (vegan::adonis2, Bray-Curtis distance on the EPIC and ConsensusTME fraction matrices, 999 permutations) for the condition effect on the whole composition. Consensus rule: a composition change is claimed only when two or more methods covering that cell type agree in direction; report each method's estimate side by side and flag cell types where methods disagree. The composition is the OUTCOME of this research question (it asks whether composition differs), not a covariate in another design — state that role in the output. Sensitivity: rerun the full comparison excluding sample_01 (it stays in the primary analysis per the QC keep-inspect policy) and report every change in significance or direction. Set one random seed before any permutation and record it in the output metadata. n=6 per group is underpowered for small effects: report effect sizes alongside p-values.\", \"constraints\": [\"Set one random seed before the permutation and PERMANOVA tests and record it in the output metadata.\", \"BH FDR is computed within each method's cell-type family; do not pool families across methods.\", \"The permutation test (all 2^12 labelings) is the primary test; the Welch t-test is reported as secondary.\", \"State in the output that the composition estimates are the outcome of the research question, not a covariate in another design.\"], \"acceptance_criteria\": [\"Per-method result tables (celltype, mean and SD per group, Welch p, permutation p, Cohen's d, BH FDR) are saved for all five methods.\", \"PERMANOVA tables for the EPIC and ConsensusTME fraction matrices (condition R^2, permutation p, seed) are saved.\", \"A consensus table marks, per cell type, the directional agreement across the methods covering it and whether a robust claim is supported.\", \"A sensitivity table (primary vs sample_01 excluded) reports every change in significance or direction.\", \"At least one figure is saved: top cell types per method by significance, or the consensus composition heatmap, colored by condition.\"], \"caveats\": [\"n = 6 per group: report effect sizes with p-values and do not over-interpret a single method's borderline FDR.\", \"Test each method's outputs as the method defines them (fractions for EPIC/ConsensusTME/quanTIseq, scores for MCPcounter/xCell); do not rescale scores to fractions before testing.\", \"Cell types measured by only one method get no consensus claim — report them as single-method observations.\"], \"packages\": [\"vegan\"], \"depends_on\": [\"T3S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"statistical-modeling-agent\", \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [], \"reason\": \"No procedure rule covers a two-group test of pre-computed deconvolution estimates; the multi-method consensus criterion and the outcome role of the composition follow the procedure claims R-0128@9eee and R-0132@246d, and the FDR step passed the knowledge check as a multiple_testing step.\"}}, {\"id\": \"T1S3\", \"name\": \"Report: TME composition and treated-vs-control comparison\", \"track\": \"T1\", \"step_type\": \"report\", \"question\": \"What is the per-sample immune/stromal/tumor-epithelial composition of the 12 melanoma biopsies, which cell-type compositions differ between the anti-PD-1 treated and control samples, and what are the caveats?\", \"description\": \"Final consolidated report: per-sample compositions, group-comparison results with consensus, sample_01 sensitivity, and all required limitation statements, with the reproducibility record.\", \"context\": \"Assemble the final report from T1S1 (QC, sample_01), T1S2 (filter statistics), T3S2 (per-method compositions), T3S3 (comparison, consensus, sensitivity). Required statements per the procedure: (1) reproducibility record — sessionInfo, package versions, the random seeds (permutation, PERMANOVA, any deconvolution step using randomness), and the reference/collection versions used (EPIC, ConsensusTME signature, xCell signatures, MCPcounter, quanTIseq versions); (2) tissue-reference match — EPIC reference profiles derive from blood and tumor immune cells, and the ConsensusTME signature names a cancer type: state the match or mismatch against the melanoma biopsies; (3) CIBERSORT/LM22 and ESTIMATE are absent from this environment — no LM22 proportions and no tumor purity claims from substitutes; (4) the composition estimates are the outcome of the research question, not a covariate in another design; (5) the sample_01 keep-inspect decision with its QC metrics and the leave-out sensitivity result; (6) the TPM-only limitation — no raw counts were delivered, so no count-based normalization (TMM/size factors) was applied, and multi-method concordance is the guard on the TPM-based estimates; (7) the per-cell-type multi-method consensus summary with each method's estimate side by side, and single-method observations flagged as such.\", \"constraints\": [\"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\"], \"acceptance_criteria\": [\"A single report (markdown or PDF) containing all seven required statements is produced.\", \"The reproducibility record (sessionInfo, package versions, seeds, reference/collection versions) is stored with the results, not in a separate note.\", \"Figures are embedded or referenced: sample-structure PCA and distance heatmap, per-method composition heatmaps colored by condition, group-comparison plots, and the cross-method concordance view.\"], \"caveats\": [], \"packages\": [], \"depends_on\": [\"T1S2\", \"T3S2\", \"T3S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "count_source": "salmon",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "count_source": "salmon",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0026"
+            },
+            "template": "tpl-qc-log-abundance@1.0.0",
+            "rules": [
+              "R-0008@440d",
+              "R-0071@e4e2"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0027"
+            },
+            "rules": [
+              "R-0072@881a"
+            ]
+          },
+          {
+            "step": "normalize",
+            "rules": [
+              "R-0030@2248",
+              "R-0073@8b36"
+            ]
+          },
+          {
+            "step": "deconvolution",
+            "method": {
+              "id": "M-0043"
+            },
+            "rules": [
+              "R-0127@1ec9",
+              "R-0126@a2be",
+              "R-0128@9eee",
+              "R-0130@c0da",
+              "R-0131@6d6f",
+              "R-0132@246d"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0127@1ec9"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0030@2248"
+          },
+          {
+            "id": "R-0071@e4e2"
+          },
+          {
+            "id": "R-0072@881a"
+          },
+          {
+            "id": "R-0073@8b36"
+          },
+          {
+            "id": "R-0126@a2be"
+          },
+          {
+            "id": "R-0128@9eee"
+          },
+          {
+            "id": "R-0130@c0da"
+          },
+          {
+            "id": "R-0131@6d6f"
+          },
+          {
+            "id": "R-0132@246d"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 21586,
+      "elapsedMs": 44
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "count_source": "salmon",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "log2(TPM+1) sample structure QC: PCA/MDS on top 500 variable genes, sample distance heatmap, detected-gene counts, keep-inspect-report policy for sample_01",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM floor filter (>=1 TPM in >=6 samples) with log2(TPM+1) as the only transform",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": "1"
+              },
+              {
+                "name": "min_samples",
+                "value": "6"
+              },
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "EPIC absolute cell fractions from linear TPM via the immunedeconv interface, with ConsensusTME, MCPcounter, xCell and quanTIseq run through the same interface for cross-method consensus",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "output",
+                "value": "absolute_fractions_with_uncharacterized_fraction"
+              },
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "two-group comparison of per-sample cell compositions: permutation test (4096 labelings) primary, Welch t-test secondary, Cohen's d, BH FDR per method, PERMANOVA global test, consensus across methods, sample_01 leave-one-out sensitivity",
+            "package": "vegan",
+            "parameters": [
+              {
+                "name": "primary_test",
+                "value": "permutation_2^12"
+              },
+              {
+                "name": "multiple_testing",
+                "value": "BH"
+              },
+              {
+                "name": "global_test",
+                "value": "PERMANOVA_BrayCurtis"
+              },
+              {
+                "name": "sensitivity",
+                "value": "exclude_sample_01"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "report with reproducibility record (sessionInfo, seeds, package and reference versions) and required tissue-match, LM22/ESTIMATE-absence, composition-role and TPM-limitation statements",
+            "package": "none"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "deconvolution",
+            "severity": "violation",
+            "rule": "R-0127@1ec9",
+            "message": "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores is not a permitted method for deconvolution in this situation.",
+            "permitted": [
+              "EPIC absolute cell fractions from TPM with an uncharacterized fraction",
+              "quanTIseq absolute fractions of ten immune cell types from TPM",
+              "MCP-counter abundance scores of immune and stromal populations",
+              "xCell enrichment scores of 64 cell types with spillover compensation"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 691,
+      "elapsedMs": 44
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "count_source": "salmon",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "log2(TPM+1) sample structure QC: PCA/MDS on top 500 variable genes, sample distance heatmap, detected-gene counts, keep-inspect-report policy for sample_01",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              },
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM floor filter (>=1 TPM in >=6 samples) with log2(TPM+1) as the only transform",
+            "package": "matrixStats",
+            "parameters": [
+              {
+                "name": "min_abundance_tpm",
+                "value": "1"
+              },
+              {
+                "name": "min_samples",
+                "value": "6"
+              },
+              {
+                "name": "normalization",
+                "value": "log2_plus_1_only"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "EPIC absolute cell fractions from linear TPM via the immunedeconv interface, with ConsensusTME, MCPcounter, xCell and quanTIseq run through the same interface for cross-method consensus",
+            "package": "immunedeconv",
+            "parameters": [
+              {
+                "name": "consensus",
+                "value": "two_or_more_methods_agree"
+              },
+              {
+                "name": "input_scale",
+                "value": "tpm_linear"
+              },
+              {
+                "name": "interface",
+                "value": "immunedeconv"
+              },
+              {
+                "name": "output",
+                "value": "absolute_fractions_with_uncharacterized_fraction"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg FDR across a family of per-cell-type two-group tests (permutation test primary, Welch t-test secondary) on the pre-computed deconvolution outputs, plus a global PERMANOVA; sample_01 leave-one-out sensitivity",
+            "package": "vegan",
+            "parameters": [
+              {
+                "name": "family",
+                "value": "cell types within each method"
+              },
+              {
+                "name": "multiple_testing",
+                "value": "BH"
+              },
+              {
+                "name": "sensitivity",
+                "value": "exclude_sample_01"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "report with reproducibility record (sessionInfo, seeds, package and reference versions) and required tissue-match, LM22/ESTIMATE-absence, composition-role and TPM-limitation statements",
+            "package": "none"
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 13
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

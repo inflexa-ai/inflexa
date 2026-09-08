@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly frames PROGENy/decoupleR mlm as a footprint inference with DESeq2 upstream and median-of-ratios inside the model, and the QC step is thorough and design-specific (blind vst, PCA, distances, sample_01 kept with a stated policy and a sensitivity re-run). However it inverts the reference by making the per-sample score t-test primary and the contrast-statistic mlm secondary, adds a GSVA/WikiPathways enrichment view that edges toward membership-based activity, and never states the design formula, reference level, or DE alpha. PROGENy version and top-N genes are unstated, no fold-change shrinkage is mentioned, and the report section does not commit to listing versions, thresholds, tested/significant counts, or the footprint caution."
+}

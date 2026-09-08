@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly stays inside the QC question: library sizes with ratio to median, a condition-colored PCA with leverage, two-metric sample distances with dendrograms, and a pre-registered retain/exclude rule for sample_01 that names the 5-vs-6 arm-balance cost and refuses to exclude on depth alone. Its main gap is the absence of any low-count gene filter or top-variable-gene selection before log2(CPM+1) PCA and distances; Step 2 even forbids filtering, so the multivariate views run on all 12000 genes including near-zero rows. The verdict also omits the detected-gene count and count distribution for sample_01 that the reference uses, and the report does not state package versions or sketch the downstream design (~condition, reference level) it is gating. The count-scale check on Salmon output and the correct omission of DE, p-values, and enrichment are appropriate."
+}

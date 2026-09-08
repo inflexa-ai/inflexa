@@ -6,25 +6,336 @@
   "run": 1,
   "seed": 1,
   "split": "development",
-  "startedAt": "2026-09-08T04:27:21.711Z",
-  "elapsedMs": 232859,
-  "outcome": "error",
-  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-v2-with-clustering-n60-s1-1: Upstream idle timeout exceeded",
+  "startedAt": "2026-09-08T17:28:38.691Z",
+  "elapsedMs": 805535,
+  "outcome": "plan_submitted",
+  "planId": "pln-fb2b13d7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts came from Salmon with unknown length correction; if a per-gene average-length table exists it could refine this, but absent it, proceed on the raw matrix and say so in the output",
+          "Single batch per the data profile, but scan the metadata for any processing columns before assuming none"
+        ],
+        "context": "Bulk RNA-seq, human whole blood, single batch, 60 cases vs 60 controls, unpaired. Counts are gene-level Salmon counts as delivered; whether the transcript-length correction was applied is not recorded, so treat the matrix as raw counts for size-factor estimation and state this in the output.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "How do the 120 samples (60 case vs 60 control) organize on variance-stabilized values: does condition drive the primary variance axis, is there any outlier sample, and what is the library-size distribution?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind"
+        ],
+        "description": "Load /eval-four-models-v2-with-clustering-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 120 samples; first column is a gene identifier, drop it into rownames) and /eval-four-models-v2-with-clustering-n60-s1-1/data/inputs/metadata/metadata.csv (condition column). Verify sample IDs match between the two files, and order columns to the metadata. Build a DESeq2 DESeqDataSet from the raw counts (do not pre-normalize: the Salmon length correction status is unknown, and DESeq2's median-of-ratios size factors handle library size on raw count-like values), apply the variance stabilizing transformation blind to the design, compute PCA on the 500 genes with the highest variance, and plot a heatmap of Euclidean sample distances. Color every plot by condition and record library sizes per sample. Output: PCA plot colored by condition, sample-distance heatmap, per-sample library-size table, per-PC variance-shares, and a short statement of whether case/control separates on the leading PCs.",
+        "acceptance_criteria": [
+          "All 120 samples present in the QC outputs; no sample dropped silently",
+          "PCA on top-500 most variable vst genes with per-PC variance shares reported",
+          "Sample-distance heatmap colored by condition",
+          "Library-size table with median and any sample far below the median flagged",
+          "Statement of whether PC1/PC2 align with case vs control"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count gene filter",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "12,000 genes is a modest matrix; the filter mainly removes near-zero rows that distort the variance-stabilized mean-variance relationship and add noise to distance computations.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which genes carry enough counts across the 120 samples to inform sample clustering, and how many survive?",
+        "grounding": {
+          "claims": [
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1"
+          ],
+          "reason": "filterByExpr low count filter (edgeR) per R-0058@99e1",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter",
+              "step": "filter_low_counts",
+              "value": "filterByExpr",
+              "source": "guide:edgeR/2026-04-25#filtering"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter = filterByExpr (guide:edgeR/2026-04-25#filtering)"
+        ],
+        "description": "Run edgeR filterByExpr on the raw count matrix with group = condition (60 case vs 60 control) to remove genes with no worthwhile counts before variance stabilization and clustering. Report the number of genes kept and the retained fraction of the 12,000 input genes. Output: the filtered count matrix (same 120 samples) with a per-group keep-count summary.",
+        "acceptance_criteria": [
+          "filterByExpr run with the condition as group",
+          "Number of genes kept reported against the 12,000 input genes",
+          "All 120 samples retained in the filtered matrix"
+        ]
+      },
+      {
+        "id": "T3S4",
+        "name": "Consensus clustering with stability assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Consensus clustering returns clusters on random data; every cluster is a hypothesis until an independent variable or external cohort supports it",
+          "k_criterion: delta area alone points to apparent structure in data without clusters; PAC must corroborate",
+          "No NMF metagene analysis is planned: the NMF package is absent from the pool; PCA loadings may be reported descriptively as a substitute, noting a principal component mixes positive and negative weights"
+        ],
+        "context": "120 samples is large enough for resampling-based consensus (each subsample holds ~96 samples); 60/60 balance means a cluster split that coincides exactly with condition is a case/control re-discovery, not a new subgroup, so the cluster x condition table is the primary interpretation table. A genotype-like group structure where controls are healthy may show clustering dominated by condition; subgroups of interest are splits WITHIN a condition class.",
+        "maxSteps": 200,
+        "packages": [
+          "ConsensusClusterPlus",
+          "DESeq2"
+        ],
+        "question": "Do the 120 samples fall into subgroups beyond the case vs control split: how many (k), and how stable are those subgroups under resampling?",
+        "grounding": {
+          "claims": [
+            "R-0146@e4ae",
+            "R-0141@ac9d",
+            "R-0142@c982",
+            "R-0144@dcfc",
+            "R-0145@3579"
+          ],
+          "reason": "Sample subgroups by consensus clustering with resampling, k from consensus CDF delta area and PAC, per R-0141@ac9d with input, distance, linkage, and confounder rules from R-0142@c982",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "input_transform",
+              "step": "clustering",
+              "value": "vst_or_log2_then_top_variable_genes_centered",
+              "source": "doi:10.1093/bioinformatics/btq170"
+            },
+            {
+              "name": "n_top_genes",
+              "step": "clustering",
+              "value": 2000,
+              "source": "rule:R-0142"
+            },
+            {
+              "name": "resampling_reps",
+              "step": "clustering",
+              "value": 1000,
+              "source": "doi:10.1093/bioinformatics/btq170"
+            },
+            {
+              "name": "item_subsample_share",
+              "step": "clustering",
+              "value": 0.8,
+              "source": "doi:10.1093/bioinformatics/btq170"
+            },
+            {
+              "name": "k_criterion",
+              "step": "clustering",
+              "value": "consensus_cdf_delta_area_and_pac",
+              "source": "doi:10.1038/srep06207"
+            },
+            {
+              "name": "distance_and_linkage",
+              "step": "clustering",
+              "value": "1-Pearson correlation distance, ward.D2 linkage (stated per rule:R-0142)"
+            },
+            {
+              "name": "cluster_confounder_table",
+              "step": "clustering",
+              "value": [
+                "batch",
+                "library_size",
+                "processing_variables",
+                "condition"
+              ],
+              "source": "doi:10.1038/nrg2825"
+            },
+            {
+              "name": "embedding_use",
+              "step": "clustering",
+              "value": "picture_only_no_cluster_or_distance_claim",
+              "source": "doi:10.48550/arXiv.1802.03426"
+            },
+            {
+              "name": "null_structure_caution",
+              "step": "clustering",
+              "value": "stated_in_plan",
+              "source": "doi:10.1038/srep06207"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-consensus-clustering@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "input_transform = vst_or_log2_then_top_variable_genes_centered",
+          "n_top_genes = 2000",
+          "resampling_reps = 1000",
+          "item_subsample_share = 0.8",
+          "k_criterion = consensus_cdf_delta_area_and_pac",
+          "distance_and_linkage = stated (1 - Pearson correlation; ward.D2)",
+          "cluster_confounder_table = batch, library_size, processing_variables, and condition",
+          "embedding_use = picture_only_no_cluster_or_distance_claim",
+          "subtype_call_caution = no published whole-blood subtype classifier exists for these samples; do not map clusters to published subtype labels"
+        ],
+        "description": "From the filtered counts, re-estimate size factors and apply variance-stabilizing transformation, keep the 2,000 genes with the highest variance across the 120 samples, and center each gene. Run ConsensusClusterPlus with distance = 1 - Pearson correlation, linkage = ward.D2, reps = 1000, pItem = 0.8, pFeature = 0.8, k = 2:10, fixed seed. Select k from the consensus cumulative distribution function (delta area) and confirm it with the proportion of ambiguous clustering (PAC) across candidate k; state that delta area alone finds structure in noise. Report the consensus matrix at the chosen k, item-consensus per sample, and cluster-consensus per cluster as the stability estimate. Tabulate the resulting clusters against condition (case/control), library size, and every metadata column, because a cluster explained by depth or a processing variable is technical, not a biological subgroup. Draw the UMAP of the vst values only beside the PCA, as a picture, never as the basis of a cluster or distance claim. Output: chosen k with CDF/delta-area/PAC evidence, consensus matrix heatmap, per-sample cluster assignments with item consensus, per-cluster cluster consensus, cluster x condition and cluster x technical-variable tables, and an explicit stability verdict.",
+        "acceptance_criteria": [
+          "Clustering run on centered vst values of the 2,000 most variable genes with a stated distance (1-Pearson) and linkage (ward.D2)",
+          "1000 resamplings with 0.8 item and feature subsampling, fixed seed recorded",
+          "k selected with evidence: consensus CDF delta area plus PAC across k = 2:10; single-evidence k choices flagged",
+          "Consensus matrix, item consensus per sample, and cluster consensus per cluster reported at the chosen k",
+          "Clusters tabulated against condition and against library size (and any metadata processing columns); any cluster aligned with a technical variable reported as such",
+          "Consensus clustering on random data caveat stated: clusters are hypotheses until supported independently",
+          "Any embedding (UMAP/t-SNE) used for display only, seed and parameters recorded"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Clustering report with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Summarizes T1S1-T3S4 for the 120-sample, 60-vs-60 whole-blood cohort.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "How many subgroups do the 120 samples hold beyond case vs control, how stable are they, and what explains them?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0152@7a42"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            },
+            {
+              "name": "clustering_report",
+              "step": "report",
+              "value": [
+                "input_transform",
+                "n_genes_kept",
+                "distance",
+                "linkage_or_partition",
+                "n_resamples",
+                "k_evidence_cdf_delta_area_pac",
+                "sample_cluster_with_item_consensus",
+                "cluster_consensus",
+                "cluster_confounder_table",
+                "null_structure_caution"
+              ],
+              "source": "doi:10.1093/bioinformatics/btq170"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T3S4"
+        ],
+        "constraints": [
+          "reproducibility_record = session_info, seed, package_versions",
+          "clustering_report = input_transform, n_genes_kept, distance, linkage_or_partition, n_resamples, k_evidence_cdf_delta_area_pac, sample_cluster_with_item_consensus, cluster_consensus, cluster_confounder_table, null_structure_caution"
+        ],
+        "description": "Assemble the final report: input matrix and transform, number of genes kept and criterion, distance, linkage, number of resamples; evidence for the chosen k (consensus CDF, relative change in area, PAC across candidate k); per-sample cluster assignments with item consensus; cluster-consensus values; tables of clusters against condition, library size, and processing variables; the null-structure caution; and the reproducibility record (sessionInfo, package versions, and every seed used). The verdict must state: how many subgroups beyond the case/control split are supported, at what consensus level, and whether any subgroup is explained by a technical variable.",
+        "acceptance_criteria": [
+          "Report states input transform, genes kept and criterion, distance, linkage, n_resamples",
+          "Evidence for chosen k: consensus CDF, delta area, PAC",
+          "Per-sample cluster with item consensus, and per-cluster cluster consensus listed",
+          "Clusters tabulated against condition and technical variables; interpretation distinguishes case/control re-discovery from genuine subgroups",
+          "Null-structure caution stated: clusters are hypotheses until independently supported",
+          "Reproducibility record: sessionInfo, package versions, all seeds"
+        ]
+      }
+    ],
+    "title": "Whole-blood subgroups: consensus clustering and stability",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question asks whether the 120 whole-blood samples (60 case vs 60 control) fall into subgroups beyond the condition split, how many, and how stable. The data are raw gene-level Salmon counts (12,000 genes x 120 samples, single batch), so the plan first characterizes the sample structure on a blind variance-stabilizing transform (QC step: PCA, sample-distance heatmap, library sizes) to see whether case/control or any technical variable already dominates the primary axes of variance. Low-count genes are then removed with filterByExpr against the condition, and consensus clustering (ConsensusClusterPlus) is run on the variance-stabilized values of the 2,000 most variable genes, centered, with 1-Pearson-correlation distance and ward.D2 linkage: 1,000 resamplings, 80% item subsampling, k from 2 to 10. The number of subgroups k is chosen from the consensus CDF, its delta area, and the proportion of ambiguous clustering (PAC), because delta area alone finds structure in noise; stability is quantified directly by cluster-consensus and item-consensus values. Clusters are tabulated against condition, library size, and available processing variables, since a cluster explained by depth is technical, not biological. The report carries the full reproducibility record. No reference data outside the staged toolchain is needed; the step's grounding names the rules and settings to follow."
+  },
   "usage": {
-    "inputTokens": 123836,
-    "outputTokens": 3217,
-    "cacheReadInputTokens": 81152,
-    "reasoningTokens": 2586
+    "inputTokens": 124754,
+    "outputTokens": 6170,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1720
   },
   "toolCalls": [
     {
-      "toolUseId": "call_d37bd05682214d34891f9c49",
+      "toolUseId": "chatcmpl-tool-a36ff8605051e758",
       "name": "knowledge_recommend",
       "input": {
         "question": "clustering",
         "modality": "bulk_rna_seq",
         "data_state": "counts",
-        "count_source": "salmon",
         "import_state": "unknown",
         "organism": "human",
         "n_groups": 2,
@@ -34,19 +345,37 @@
         "batch": "none",
         "extra_analyses": [
           "clustering"
-        ]
+        ],
+        "preferred_language": "R"
       },
       "outcome": "ok",
-      "durationMs": 60
+      "durationMs": 48
     },
     {
-      "toolUseId": "call_bc104a2f56ab453fa34614e2",
+      "toolUseId": "chatcmpl-tool-bc61853ff2fcebef",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none"
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    },
+    {
+      "toolUseId": "call_d975f923fb714443a2877ebf",
       "name": "knowledge_check",
       "input": {
         "question": "clustering",
         "modality": "bulk_rna_seq",
         "data_state": "counts",
-        "count_source": "salmon",
         "import_state": "unknown",
         "organism": "human",
         "n_groups": 2,
@@ -57,7 +386,7 @@
         "steps": [
           {
             "step_type": "qc_sample_structure",
-            "method": "DESeq2 blind VST sample structure QC (PCA on top-variance genes, sample distance heatmap)",
+            "method": "DESeq2 blind vst, PCA on top 500 most variable genes, sample distance heatmap",
             "package": "DESeq2",
             "parameters": [
               {
@@ -72,7 +401,7 @@
           },
           {
             "step_type": "filter_low_counts",
-            "method": "edgeR filterByExpr low-count filter",
+            "method": "filterByExpr",
             "package": "edgeR",
             "parameters": [
               {
@@ -83,9 +412,17 @@
           },
           {
             "step_type": "clustering",
-            "method": "ConsensusClusterPlus consensus clustering on centered top-variable-gene VST matrix",
+            "method": "ConsensusClusterPlus consensus clustering on vst values, 2000 most variable genes, Pearson correlation distance, ward.D2 linkage",
             "package": "ConsensusClusterPlus",
             "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 2000
+              },
+              {
+                "name": "input_transform",
+                "value": "vst_centered"
+              },
               {
                 "name": "resampling_reps",
                 "value": 1000
@@ -95,38 +432,35 @@
                 "value": 0.8
               },
               {
+                "name": "k_range",
+                "value": "2:10"
+              },
+              {
                 "name": "k_criterion",
                 "value": "consensus_cdf_delta_area_and_pac"
               },
               {
-                "name": "n_top_genes",
-                "value": 2000
-              },
-              {
-                "name": "input_transform",
-                "value": "vst_or_log2_then_top_variable_genes_centered"
-              },
-              {
                 "name": "distance",
-                "value": "1 - Pearson correlation"
+                "value": "1-Pearson_correlation"
               },
               {
                 "name": "linkage",
-                "value": "average"
+                "value": "ward.D2"
               },
               {
-                "name": "cluster_confounder_table",
-                "value": "condition, library_size"
+                "name": "seed",
+                "value": 42
               }
             ]
           },
           {
             "step_type": "report",
-            "method": "Reproducibility and clustering report with cluster-vs-condition tabulation",
+            "method": "clustering report with reproducibility record",
+            "package": "",
             "parameters": [
               {
                 "name": "reproducibility_record",
-                "value": "session_info, seed, package_versions, collection_version"
+                "value": "session_info, seed, package_versions"
               },
               {
                 "name": "clustering_report",
@@ -137,16 +471,319 @@
         ]
       },
       "outcome": "ok",
-      "durationMs": 29
+      "durationMs": 24
     },
     {
-      "toolUseId": "call_63a4f37258c544bcb8531651",
+      "toolUseId": "call_4744c40c39134a6f8dabaebd",
       "name": "submit_plan",
       "input": {
-        "plan": "title</arg_key><arg_value>Whole-blood cohort subgroup consensus clustering"
+        "plan": {
+          "title": "Whole-blood subgroups: consensus clustering and stability",
+          "analytical_narrative": "The research question asks whether the 120 whole-blood samples (60 case vs 60 control) fall into subgroups beyond the condition split, how many, and how stable. The data are raw gene-level Salmon counts (12,000 genes x 120 samples, single batch), so the plan first characterizes the sample structure on a blind variance-stabilizing transform (QC step: PCA, sample-distance heatmap, library sizes) to see whether case/control or any technical variable already dominates the primary axes of variance. Low-count genes are then removed with filterByExpr against the condition, and consensus clustering (ConsensusClusterPlus) is run on the variance-stabilized values of the 2,000 most variable genes, centered, with 1-Pearson-correlation distance and ward.D2 linkage: 1,000 resamplings, 80% item subsampling, k from 2 to 10. The number of subgroups k is chosen from the consensus CDF, its delta area, and the proportion of ambiguous clustering (PAC), because delta area alone finds structure in noise; stability is quantified directly by cluster-consensus and item-consensus values. Clusters are tabulated against condition, library size, and available processing variables, since a cluster explained by depth is technical, not biological. The report carries the full reproducibility record. No reference data outside the staged toolchain is needed; the step's grounding names the rules and settings to follow.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "How do the 120 samples (60 case vs 60 control) organize on variance-stabilized values: does condition drive the primary variance axis, is there any outlier sample, and what is the library-size distribution?",
+              "description": "Load /eval-four-models-v2-with-clustering-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 120 samples; first column is a gene identifier, drop it into rownames) and /eval-four-models-v2-with-clustering-n60-s1-1/data/inputs/metadata/metadata.csv (condition column). Verify sample IDs match between the two files, and order columns to the metadata. Build a DESeq2 DESeqDataSet from the raw counts (do not pre-normalize: the Salmon length correction status is unknown, and DESeq2's median-of-ratios size factors handle library size on raw count-like values), apply the variance stabilizing transformation blind to the design, compute PCA on the 500 genes with the highest variance, and plot a heatmap of Euclidean sample distances. Color every plot by condition and record library sizes per sample. Output: PCA plot colored by condition, sample-distance heatmap, per-sample library-size table, per-PC variance-shares, and a short statement of whether case/control separates on the leading PCs.",
+              "acceptance_criteria": [
+                "All 120 samples present in the QC outputs; no sample dropped silently",
+                "PCA on top-500 most variable vst genes with per-PC variance shares reported",
+                "Sample-distance heatmap colored by condition",
+                "Library-size table with median and any sample far below the median flagged",
+                "Statement of whether PC1/PC2 align with case vs control"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "context": "Bulk RNA-seq, human whole blood, single batch, 60 cases vs 60 controls, unpaired. Counts are gene-level Salmon counts as delivered; whether the transcript-length correction was applied is not recorded, so treat the matrix as raw counts for size-factor estimation and state this in the output.",
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind"
+              ],
+              "caveats": [
+                "Counts came from Salmon with unknown length correction; if a per-gene average-length table exists it could refine this, but absent it, proceed on the raw matrix and say so in the output",
+                "Single batch per the data profile, but scan the metadata for any processing columns before assuming none"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count gene filter",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Which genes carry enough counts across the 120 samples to inform sample clustering, and how many survive?",
+              "description": "Run edgeR filterByExpr on the raw count matrix with group = condition (60 case vs 60 control) to remove genes with no worthwhile counts before variance stabilization and clustering. Report the number of genes kept and the retained fraction of the 12,000 input genes. Output: the filtered count matrix (same 120 samples) with a per-group keep-count summary.",
+              "acceptance_criteria": [
+                "filterByExpr run with the condition as group",
+                "Number of genes kept reported against the 12,000 input genes",
+                "All 120 samples retained in the filtered matrix"
+              ],
+              "packages": [
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "context": "12,000 genes is a modest matrix; the filter mainly removes near-zero rows that distort the variance-stabilized mean-variance relationship and add noise to distance computations.",
+              "constraints": [
+                "filter = filterByExpr (guide:edgeR/2026-04-25#filtering)"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0058@99e1",
+                  "R-0002@087b",
+                  "R-0057@31cc",
+                  "R-0026@9ab1"
+                ],
+                "template": "tpl-edger-ql@1.0.0",
+                "reason": "filterByExpr low count filter (edgeR) per R-0058@99e1",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "filter",
+                    "value": "filterByExpr",
+                    "source": "guide:edgeR/2026-04-25#filtering"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S4",
+              "name": "Consensus clustering with stability assessment",
+              "track": "T3",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Do the 120 samples fall into subgroups beyond the case vs control split: how many (k), and how stable are those subgroups under resampling?",
+              "description": "From the filtered counts, re-estimate size factors and apply variance-stabilizing transformation, keep the 2,000 genes with the highest variance across the 120 samples, and center each gene. Run ConsensusClusterPlus with distance = 1 - Pearson correlation, linkage = ward.D2, reps = 1000, pItem = 0.8, pFeature = 0.8, k = 2:10, fixed seed. Select k from the consensus cumulative distribution function (delta area) and confirm it with the proportion of ambiguous clustering (PAC) across candidate k; state that delta area alone finds structure in noise. Report the consensus matrix at the chosen k, item-consensus per sample, and cluster-consensus per cluster as the stability estimate. Tabulate the resulting clusters against condition (case/control), library size, and every metadata column, because a cluster explained by depth or a processing variable is technical, not a biological subgroup. Draw the UMAP of the vst values only beside the PCA, as a picture, never as the basis of a cluster or distance claim. Output: chosen k with CDF/delta-area/PAC evidence, consensus matrix heatmap, per-sample cluster assignments with item consensus, per-cluster cluster consensus, cluster x condition and cluster x technical-variable tables, and an explicit stability verdict.",
+              "acceptance_criteria": [
+                "Clustering run on centered vst values of the 2,000 most variable genes with a stated distance (1-Pearson) and linkage (ward.D2)",
+                "1000 resamplings with 0.8 item and feature subsampling, fixed seed recorded",
+                "k selected with evidence: consensus CDF delta area plus PAC across k = 2:10; single-evidence k choices flagged",
+                "Consensus matrix, item consensus per sample, and cluster consensus per cluster reported at the chosen k",
+                "Clusters tabulated against condition and against library size (and any metadata processing columns); any cluster aligned with a technical variable reported as such",
+                "Consensus clustering on random data caveat stated: clusters are hypotheses until supported independently",
+                "Any embedding (UMAP/t-SNE) used for display only, seed and parameters recorded"
+              ],
+              "packages": [
+                "ConsensusClusterPlus",
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "context": "120 samples is large enough for resampling-based consensus (each subsample holds ~96 samples); 60/60 balance means a cluster split that coincides exactly with condition is a case/control re-discovery, not a new subgroup, so the cluster x condition table is the primary interpretation table. A genotype-like group structure where controls are healthy may show clustering dominated by condition; subgroups of interest are splits WITHIN a condition class.",
+              "constraints": [
+                "input_transform = vst_or_log2_then_top_variable_genes_centered",
+                "n_top_genes = 2000",
+                "resampling_reps = 1000",
+                "item_subsample_share = 0.8",
+                "k_criterion = consensus_cdf_delta_area_and_pac",
+                "distance_and_linkage = stated (1 - Pearson correlation; ward.D2)",
+                "cluster_confounder_table = batch, library_size, processing_variables, and condition",
+                "embedding_use = picture_only_no_cluster_or_distance_claim",
+                "subtype_call_caution = no published whole-blood subtype classifier exists for these samples; do not map clusters to published subtype labels"
+              ],
+              "caveats": [
+                "Consensus clustering returns clusters on random data; every cluster is a hypothesis until an independent variable or external cohort supports it",
+                "k_criterion: delta area alone points to apparent structure in data without clusters; PAC must corroborate",
+                "No NMF metagene analysis is planned: the NMF package is absent from the pool; PCA loadings may be reported descriptively as a substitute, noting a principal component mixes positive and negative weights"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0146@e4ae",
+                  "R-0141@ac9d",
+                  "R-0142@c982",
+                  "R-0144@dcfc",
+                  "R-0145@3579"
+                ],
+                "template": "tpl-consensus-clustering@1.0.0",
+                "reason": "Sample subgroups by consensus clustering with resampling, k from consensus CDF delta area and PAC, per R-0141@ac9d with input, distance, linkage, and confounder rules from R-0142@c982",
+                "settings": [
+                  {
+                    "step": "clustering",
+                    "name": "input_transform",
+                    "value": "vst_or_log2_then_top_variable_genes_centered",
+                    "source": "doi:10.1093/bioinformatics/btq170"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "n_top_genes",
+                    "value": 2000,
+                    "source": "rule:R-0142"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "resampling_reps",
+                    "value": 1000,
+                    "source": "doi:10.1093/bioinformatics/btq170"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "item_subsample_share",
+                    "value": 0.8,
+                    "source": "doi:10.1093/bioinformatics/btq170"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "k_criterion",
+                    "value": "consensus_cdf_delta_area_and_pac",
+                    "source": "doi:10.1038/srep06207"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "distance_and_linkage",
+                    "value": "1-Pearson correlation distance, ward.D2 linkage (stated per rule:R-0142)"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "cluster_confounder_table",
+                    "value": [
+                      "batch",
+                      "library_size",
+                      "processing_variables",
+                      "condition"
+                    ],
+                    "source": "doi:10.1038/nrg2825"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "embedding_use",
+                    "value": "picture_only_no_cluster_or_distance_claim",
+                    "source": "doi:10.48550/arXiv.1802.03426"
+                  },
+                  {
+                    "step": "clustering",
+                    "name": "null_structure_caution",
+                    "value": "stated_in_plan",
+                    "source": "doi:10.1038/srep06207"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Clustering report with reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "How many subgroups do the 120 samples hold beyond case vs control, how stable are they, and what explains them?",
+              "description": "Assemble the final report: input matrix and transform, number of genes kept and criterion, distance, linkage, number of resamples; evidence for the chosen k (consensus CDF, relative change in area, PAC across candidate k); per-sample cluster assignments with item consensus; cluster-consensus values; tables of clusters against condition, library size, and processing variables; the null-structure caution; and the reproducibility record (sessionInfo, package versions, and every seed used). The verdict must state: how many subgroups beyond the case/control split are supported, at what consensus level, and whether any subgroup is explained by a technical variable.",
+              "acceptance_criteria": [
+                "Report states input transform, genes kept and criterion, distance, linkage, n_resamples",
+                "Evidence for chosen k: consensus CDF, delta area, PAC",
+                "Per-sample cluster with item consensus, and per-cluster cluster consensus listed",
+                "Clusters tabulated against condition and technical variables; interpretation distinguishes case/control re-discovery from genuine subgroups",
+                "Null-structure caution stated: clusters are hypotheses until independently supported",
+                "Reproducibility record: sessionInfo, package versions, all seeds"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T3S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "context": "Summarizes T1S1-T3S4 for the 120-sample, 60-vs-60 whole-blood cohort.",
+              "constraints": [
+                "reproducibility_record = session_info, seed, package_versions",
+                "clustering_report = input_transform, n_genes_kept, distance, linkage_or_partition, n_resamples, k_evidence_cdf_delta_area_pac, sample_cluster_with_item_consensus, cluster_consensus, cluster_confounder_table, null_structure_caution"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0152@7a42"
+                ],
+                "reason": "no rule covers this step",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  },
+                  {
+                    "step": "report",
+                    "name": "clustering_report",
+                    "value": [
+                      "input_transform",
+                      "n_genes_kept",
+                      "distance",
+                      "linkage_or_partition",
+                      "n_resamples",
+                      "k_evidence_cdf_delta_area_pac",
+                      "sample_cluster_with_item_consensus",
+                      "cluster_consensus",
+                      "cluster_confounder_table",
+                      "null_structure_caution"
+                    ],
+                    "source": "doi:10.1093/bioinformatics/btq170"
+                  }
+                ]
+              }
+            }
+          ],
+          "created_at": "2026-09-07T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
       },
       "outcome": "ok",
-      "durationMs": 3
+      "durationMs": 55
     }
   ],
   "knowledgeCalls": [
@@ -158,7 +795,6 @@
           "question": "clustering",
           "modality": "bulk_rna_seq",
           "data_state": "counts",
-          "count_source": "salmon",
           "import_state": "unknown",
           "organism": "human",
           "n_groups": 2,
@@ -170,7 +806,10 @@
             "clustering"
           ]
         },
-        "response_format": "concise"
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
       },
       "response": {
         "match": "applicable",
@@ -182,7 +821,6 @@
           "question": "clustering",
           "modality": "bulk_rna_seq",
           "data_state": "counts",
-          "count_source": "salmon",
           "import_state": "unknown",
           "organism": "human",
           "n_groups": 2,
@@ -289,18 +927,76 @@
         "flags": [],
         "uncovered": []
       },
-      "responseChars": 20028,
-      "elapsedMs": 28
+      "responseChars": 20004,
+      "elapsedMs": 8
     },
     {
       "seq": 2,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0033@40bf"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 2239,
+      "elapsedMs": 15
+    },
+    {
+      "seq": 3,
       "op": "check",
       "request": {
         "situation": {
           "question": "clustering",
           "modality": "bulk_rna_seq",
           "data_state": "counts",
-          "count_source": "salmon",
           "import_state": "unknown",
           "organism": "human",
           "n_groups": 2,
@@ -312,7 +1008,7 @@
         "steps": [
           {
             "step_type": "qc_sample_structure",
-            "method": "DESeq2 blind VST sample structure QC (PCA on top-variance genes, sample distance heatmap)",
+            "method": "DESeq2 blind vst, PCA on top 500 most variable genes, sample distance heatmap",
             "package": "DESeq2",
             "parameters": [
               {
@@ -327,7 +1023,7 @@
           },
           {
             "step_type": "filter_low_counts",
-            "method": "edgeR filterByExpr low-count filter",
+            "method": "filterByExpr",
             "package": "edgeR",
             "parameters": [
               {
@@ -338,9 +1034,17 @@
           },
           {
             "step_type": "clustering",
-            "method": "ConsensusClusterPlus consensus clustering on centered top-variable-gene VST matrix",
+            "method": "ConsensusClusterPlus consensus clustering on vst values, 2000 most variable genes, Pearson correlation distance, ward.D2 linkage",
             "package": "ConsensusClusterPlus",
             "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 2000
+              },
+              {
+                "name": "input_transform",
+                "value": "vst_centered"
+              },
               {
                 "name": "resampling_reps",
                 "value": 1000
@@ -350,38 +1054,35 @@
                 "value": 0.8
               },
               {
+                "name": "k_range",
+                "value": "2:10"
+              },
+              {
                 "name": "k_criterion",
                 "value": "consensus_cdf_delta_area_and_pac"
               },
               {
-                "name": "n_top_genes",
-                "value": 2000
-              },
-              {
-                "name": "input_transform",
-                "value": "vst_or_log2_then_top_variable_genes_centered"
-              },
-              {
                 "name": "distance",
-                "value": "1 - Pearson correlation"
+                "value": "1-Pearson_correlation"
               },
               {
                 "name": "linkage",
-                "value": "average"
+                "value": "ward.D2"
               },
               {
-                "name": "cluster_confounder_table",
-                "value": "condition, library_size"
+                "name": "seed",
+                "value": 42
               }
             ]
           },
           {
             "step_type": "report",
-            "method": "Reproducibility and clustering report with cluster-vs-condition tabulation",
+            "method": "clustering report with reproducibility record",
+            "package": "",
             "parameters": [
               {
                 "name": "reproducibility_record",
-                "value": "session_info, seed, package_versions, collection_version"
+                "value": "session_info, seed, package_versions"
               },
               {
                 "name": "clustering_report",
@@ -402,7 +1103,7 @@
         "not_assessed": []
       },
       "responseChars": 175,
-      "elapsedMs": 28
+      "elapsedMs": 22
     }
   ],
   "snapshot": {

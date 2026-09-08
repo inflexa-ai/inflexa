@@ -1,0 +1,143 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "star-counts-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:45:04.444Z",
+  "elapsedMs": 137245,
+  "outcome": "plan_submitted",
+  "planId": "pln-584a09e7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC + DESeq2 treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 requires unique rownames; featureCounts can emit duplicate gene IDs — deduplicate (keep the first row) and report how many duplicates were removed.",
+          "Verify the 6 count-matrix sample columns match the 6 metadata rows exactly; fail loudly on any mismatch instead of silently reordering.",
+          "n=3 per group gives limited power: expect many genes at nominal p<0.05 and far fewer at FDR<0.05 — report effect sizes and do not over-interpret a small significant set.",
+          "Do not manually pre-filter low-count genes; let DESeq2's independent filtering run and report how many genes it filtered."
+        ],
+        "context": "Files: /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/counts/counts.csv (12000 x 7: one gene-ID column plus 6 sample columns; raw integer counts from STAR alignments + featureCounts — gene-level, not transcript-level) and /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/metadata/metadata.csv (6 x 2: one row per sample with a condition column; 3 treated, 3 control). Organism Homo sapiens (taxon 9606), tissue liver, unpaired, single batch. Row-ID space is not stated in the profile (featureCounts typically emits Ensembl gene IDs) — detect it from the file and map to HGNC symbols with org.Hs.eg.db, reporting the mapping rate.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "org.Hs.eg.db",
+          "SummarizedExperiment",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which of the 12,000 genes in /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/counts/counts.csv are differentially expressed between the 3 treated and 3 control human liver samples, using the condition labels in /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/metadata/metadata.csv?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the gene-level featureCounts counts as the DE input directly (integer, as-is); do NOT use tximport or any transcript-level quantification step.",
+          "Model: design ~ condition only — two-group, unpaired, single batch. No batch covariate, no pairing term.",
+          "Report apeglm-shrunken log2FC in the primary table alongside the unshrunken estimate.",
+          "Primary significance: BH FDR < 0.05; secondary: nominal p < 0.05, both split into up- and down-regulated lists.",
+          "Export the full 12,000-gene ranked table to CSV, not only significant rows.",
+          "No network access: use only the provided files and installed packages."
+        ],
+        "description": "Per-sample QC on the raw featureCounts counts (12,000 genes x 6 samples, integer), then two-group DESeq2 differential expression of treated vs control with apeglm log2FC shrinkage, plus gene-ID to HGNC symbol mapping. Produces: a full 12,000-gene ranked DE table (shrunken and unshrunken log2FC, Wald p, BH FDR, baseMean, symbol), primary (FDR<0.05) and secondary (nominal p<0.05) DE lists split by direction, a per-sample QC table, and a PCA plot of the 3v3 grouping.",
+        "acceptance_criteria": [
+          "Per-sample QC table (library size, fraction of genes detected) with any deviant sample flagged rather than silently dropped.",
+          "DE table with one row per gene containing log2FC (apeglm), unshrunken log2FC, p-value, BH FDR, baseMean, and mapped gene symbol.",
+          "Reported counts of genes with FDR<0.05 (up/down) and nominal p<0.05 (up/down), plus a top-10-by-|Wald-statistic| example per direction.",
+          "PCA of variance-stabilized counts showing (or honestly documenting) the 3-treated vs 3-control grouping.",
+          "Symbol mapping rate reported; unmapped genes retained in the full table under their original IDs."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway enrichment of DE genes (human)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per group the FDR<0.05 DE set may be very small; ORA on fewer than ~10 genes is unreliable — treat the nominal list and the ranked GSEA as the more robust evidence and say so in the result.",
+          "Parse the GMT first column on '%' before using set names; the raw descriptor is 'name%WP_ID%species'.",
+          "WikiPathways sets vary widely in size; very large or very small sets can dominate ORA — report set sizes in the output table."
+        ],
+        "context": "Inputs: the full ranked DE table and the primary/secondary DE symbol lists produced by T1S1. Reference: a human pathway gene-set collection in GMT format (WikiPathways Homo sapiens), provisioned in the reference store under the wikipathways-human group — resolve it against the store at run time; its first GMT column is a '%'-delimited descriptor (name%WikiPathways-ID%species), so split on '%' to recover the set name. The dataset is human (taxon 9606); the gene-set organism must match. The store also holds mouse and rat WikiPathways files — do not use those.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "dplyr"
+        ],
+        "question": "Which human pathways are over-represented among the up- and down-regulated differentially expressed genes from T1S1, and which pathways are enriched by ranked GSEA across the full 12,000-gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only human gene sets; verify the organism on the GMT descriptor before running any test.",
+          "ORA must be direction-split (up-regulated vs down-regulated separately); report the input-gene count per test and use a minimum set size.",
+          "GSEA ranking: all genes ranked by the signed DESeq2 Wald statistic — never by unsigned p-value.",
+          "Significance threshold: BH FDR < 0.1 for enriched sets; report exact FDR values, not rounded.",
+          "If the human gene-set collection is absent at run time, report the absence explicitly and stop that part of the step; do not substitute a non-human or differently-species collection."
+        ],
+        "description": "Functional characterization of the treated-vs-control result: ORA on the direction-split DE symbol lists (FDR<0.05 primary; nominal p<0.05 if the primary set is too small) plus ranked GSEA on the full gene list ranked by the DESeq2 Wald statistic. Gene sets: the provisioned human WikiPathways gene-set collection (GMT format, HGNC symbols).",
+        "acceptance_criteria": [
+          "ORA tables (separate for up- and down-regulated genes) with set size, enriched-member list, p-value, and FDR.",
+          "Ranked GSEA table with NES and FDR per pathway.",
+          "Reported count of significant sets at FDR<0.1 per direction, or an explicit statement that none reached it.",
+          "Recorded confirmation that the gene-set collection is human before any test ran."
+        ]
+      }
+    ],
+    "title": "Liver treated-vs-control DE + pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-08-24T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Human liver bulk RNA-seq, 3 treated vs 3 control, unpaired, single batch, raw integer gene-level counts from STAR+featureCounts (12,000 genes x 6 samples in counts.csv, condition labels in metadata.csv). Because the counts are already gene-level (not transcript-level from a quantifier), DESeq2 consumes them directly — no tximport. Step T1S1 does per-sample QC, then a two-group DESeq2 design with apeglm-shrunken log2FC, and maps row IDs to HGNC symbols, answering 'which genes are differentially expressed'. Step T1S2 characterizes the result with human WikiPathways enrichment (ORA on direction-split DE sets + ranked GSEA on the full list), which is the more robust evidence given n=3 per group will yield a small FDR-significant set."
+  },
+  "usage": {
+    "inputTokens": 32700,
+    "outputTokens": 8478,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 6497
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_e8568dc71da541ca909fba65",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Liver treated-vs-control DE + pathway enrichment\", \"analytical_narrative\": \"Human liver bulk RNA-seq, 3 treated vs 3 control, unpaired, single batch, raw integer gene-level counts from STAR+featureCounts (12,000 genes x 6 samples in counts.csv, condition labels in metadata.csv). Because the counts are already gene-level (not transcript-level from a quantifier), DESeq2 consumes them directly — no tximport. Step T1S1 does per-sample QC, then a two-group DESeq2 design with apeglm-shrunken log2FC, and maps row IDs to HGNC symbols, answering 'which genes are differentially expressed'. Step T1S2 characterizes the result with human WikiPathways enrichment (ORA on direction-split DE sets + ranked GSEA on the full list), which is the more robust evidence given n=3 per group will yield a small FDR-significant set.\", \"created_at\": \"2026-08-24T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC + DESeq2 treated vs control\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 genes in /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/counts/counts.csv are differentially expressed between the 3 treated and 3 control human liver samples, using the condition labels in /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/metadata/metadata.csv?\", \"description\": \"Per-sample QC on the raw featureCounts counts (12,000 genes x 6 samples, integer), then two-group DESeq2 differential expression of treated vs control with apeglm log2FC shrinkage, plus gene-ID to HGNC symbol mapping. Produces: a full 12,000-gene ranked DE table (shrunken and unshrunken log2FC, Wald p, BH FDR, baseMean, symbol), primary (FDR<0.05) and secondary (nominal p<0.05) DE lists split by direction, a per-sample QC table, and a PCA plot of the 3v3 grouping.\", \"context\": \"Files: /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/counts/counts.csv (12000 x 7: one gene-ID column plus 6 sample columns; raw integer counts from STAR alignments + featureCounts — gene-level, not transcript-level) and /eval-four-models-v2-without-star-counts-n3-s1-1/data/inputs/metadata/metadata.csv (6 x 2: one row per sample with a condition column; 3 treated, 3 control). Organism Homo sapiens (taxon 9606), tissue liver, unpaired, single batch. Row-ID space is not stated in the profile (featureCounts typically emits Ensembl gene IDs) — detect it from the file and map to HGNC symbols with org.Hs.eg.db, reporting the mapping rate.\", \"constraints\": [\"Use the gene-level featureCounts counts as the DE input directly (integer, as-is); do NOT use tximport or any transcript-level quantification step.\", \"Model: design ~ condition only — two-group, unpaired, single batch. No batch covariate, no pairing term.\", \"Report apeglm-shrunken log2FC in the primary table alongside the unshrunken estimate.\", \"Primary significance: BH FDR < 0.05; secondary: nominal p < 0.05, both split into up- and down-regulated lists.\", \"Export the full 12,000-gene ranked table to CSV, not only significant rows.\", \"No network access: use only the provided files and installed packages.\"], \"acceptance_criteria\": [\"Per-sample QC table (library size, fraction of genes detected) with any deviant sample flagged rather than silently dropped.\", \"DE table with one row per gene containing log2FC (apeglm), unshrunken log2FC, p-value, BH FDR, baseMean, and mapped gene symbol.\", \"Reported counts of genes with FDR<0.05 (up/down) and nominal p<0.05 (up/down), plus a top-10-by-|Wald-statistic| example per direction.\", \"PCA of variance-stabilized counts showing (or honestly documenting) the 3-treated vs 3-control grouping.\", \"Symbol mapping rate reported; unmapped genes retained in the full table under their original IDs.\"], \"caveats\": [\"DESeq2 requires unique rownames; featureCounts can emit duplicate gene IDs — deduplicate (keep the first row) and report how many duplicates were removed.\", \"Verify the 6 count-matrix sample columns match the 6 metadata rows exactly; fail loudly on any mismatch instead of silently reordering.\", \"n=3 per group gives limited power: expect many genes at nominal p<0.05 and far fewer at FDR<0.05 — report effect sizes and do not over-interpret a small significant set.\", \"Do not manually pre-filter low-count genes; let DESeq2's independent filtering run and report how many genes it filtered.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"org.Hs.eg.db\", \"SummarizedExperiment\", \"dplyr\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Pathway enrichment of DE genes (human)\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which human pathways are over-represented among the up- and down-regulated differentially expressed genes from T1S1, and which pathways are enriched by ranked GSEA across the full 12,000-gene list?\", \"description\": \"Functional characterization of the treated-vs-control result: ORA on the direction-split DE symbol lists (FDR<0.05 primary; nominal p<0.05 if the primary set is too small) plus ranked GSEA on the full gene list ranked by the DESeq2 Wald statistic. Gene sets: the provisioned human WikiPathways gene-set collection (GMT format, HGNC symbols).\", \"context\": \"Inputs: the full ranked DE table and the primary/secondary DE symbol lists produced by T1S1. Reference: a human pathway gene-set collection in GMT format (WikiPathways Homo sapiens), provisioned in the reference store under the wikipathways-human group — resolve it against the store at run time; its first GMT column is a '%'-delimited descriptor (name%WikiPathways-ID%species), so split on '%' to recover the set name. The dataset is human (taxon 9606); the gene-set organism must match. The store also holds mouse and rat WikiPathways files — do not use those.\", \"constraints\": [\"Use only human gene sets; verify the organism on the GMT descriptor before running any test.\", \"ORA must be direction-split (up-regulated vs down-regulated separately); report the input-gene count per test and use a minimum set size.\", \"GSEA ranking: all genes ranked by the signed DESeq2 Wald statistic — never by unsigned p-value.\", \"Significance threshold: BH FDR < 0.1 for enriched sets; report exact FDR values, not rounded.\", \"If the human gene-set collection is absent at run time, report the absence explicitly and stop that part of the step; do not substitute a non-human or differently-species collection.\"], \"acceptance_criteria\": [\"ORA tables (separate for up- and down-regulated genes) with set size, enriched-member list, p-value, and FDR.\", \"Ranked GSEA table with NES and FDR per pathway.\", \"Reported count of significant sets at FDR<0.1 per direction, or an explicit statement that none reached it.\", \"Recorded confirmation that the gene-set collection is human before any test ran.\"], \"caveats\": [\"With n=3 per group the FDR<0.05 DE set may be very small; ORA on fewer than ~10 genes is unreliable — treat the nominal list and the ranked GSEA as the more robust evidence and say so in the result.\", \"Parse the GMT first column on '%' before using set names; the raw descriptor is 'name%WP_ID%species'.\", \"WikiPathways sets vary widely in size; very large or very small sets can dominate ORA — report set sizes in the output table.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 73
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

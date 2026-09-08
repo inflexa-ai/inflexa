@@ -1,0 +1,1348 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "classifier-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T12:03:09.064Z",
+  "elapsedMs": 844349,
+  "outcome": "plan_submitted",
+  "planId": "pln-eedc5967",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 rejects non-integer counts: if the Salmon table is fractional, do not round silently; use log2(CPM+1) via edgeR::cpm for the QC plots as a documented substitution for vst and report the import state as undetermined (R-0169)",
+          "Single batch, so color plots by condition only; an outlier that separates the groups inflates classifier accuracy, which is why it must be flagged now"
+        ],
+        "context": "counts.csv: 12000 genes x 120 samples plus index column, Salmon gene-level counts as delivered; length-correction state unknown, no quantification files or length table delivered, so model as delivered with no length offset (R-0169). metadata.csv: 120 x 2 (sample, condition). Unpaired human cohort, single batch.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "Do the 120 whole-blood samples (60 case, 60 control) form two coherent groups, are there outlier or mislabeled samples that would bias the classifier, and do the 120 sample columns of counts.csv match the 120 rows of metadata.csv 1:1?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 and transform = vst_blind per the grounded settings",
+          "Verify 1:1 sample-ID match between counts.csv and metadata.csv (120 of 120); fail loudly on any mismatch",
+          "Report the fraction of non-integer count values; state the import state as delivered, no length offset (R-0169)",
+          "Record a keep/exclude decision for every sample departing its group (distance from group centroid greater than 2 SD); downstream steps must use this QC-passed list"
+        ],
+        "description": "PCA on the top 500 variable genes, sample-distance heatmap, library sizes, and the integrity checks (sample-ID alignment, count integrality) that downstream steps depend on.",
+        "acceptance_criteria": [
+          "PCA and distance heatmap colored by condition saved; departing samples flagged with keep/exclude decisions",
+          "1:1 ID match confirmed or the mismatch reported",
+          "Integrality fraction reported; if non-integer, the documented log-CPM fallback was used for QC plots and downstream steps informed",
+          "Library-size distribution per condition saved"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "filterByExpr low-count gene filter",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The fixed-count alternative (at least 10 counts in at least 60 samples, R-0002) is permitted; filterByExpr is the method of record here"
+        ],
+        "context": "Per R-0058, filter with the group before normalization (50+ per group). Filter on the raw delivered counts, no size factors (R-0026). If T1S1 found fractional counts, run filterByExpr on the delivered values with the same group logic and state it.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which of the 12,000 genes carry enough counts in a 60-vs-60 design to be informative, and how many remain for the DE test?",
+        "grounding": {
+          "claims": [
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1"
+          ],
+          "reason": "filterByExpr low count filter (edgeR) per R-0058@99e1",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter",
+              "step": "filter_low_counts",
+              "value": "filterByExpr",
+              "source": "guide:edgeR/2026-04-25#filtering"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filtering",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter = filterByExpr with the case/control group on QC-passed samples only, per the grounded setting",
+          "Do not apply size-factor normalization before the filter (R-0058, R-0026)",
+          "Report genes kept (n_in to n_out) where T2S1 and the report can read it"
+        ],
+        "description": "filterByExpr with the case/control group on the QC-passed samples, before any normalization; produces the filtered matrix for the DE step.",
+        "acceptance_criteria": [
+          "Filtered count matrix written and the number of retained genes reported",
+          "Filter used the case/control group, not an ungrouped threshold"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Differential expression case vs control (limma-voom)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "State the R-0015 caution: NB models exaggerate false positives at this cohort scale, which is why fixed-effects limma-voom is used; the controls quantify how well the FDR held",
+          "Length offset lost (R-0169): a change in isoform use between case and control can show as differential expression; state it",
+          "R-0038 (DESeq2 Cook's distance count replacement) does not apply on the voom path",
+          "Use the T1S1 QC-passed sample list; excluded samples stay out of the design and are named"
+        ],
+        "context": "With 50+ per group the limma-voom fixed-effects path is the method of record (R-0015): in human population cohorts the negative-binomial count models (DESeq2, edgeR-GLM) exaggerate false positives, even on permuted labels. Input: the T1S2 filtered matrix, QC-passed samples. Counts modeled as delivered with no length offset (R-0169); do not run tximport on a gene table and do not invent a length input. The DE gene list is descriptive for interpretation and must NOT pre-select features for the T3S1 performance estimate.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "ggplot2"
+        ],
+        "question": "Which genes differ in expression between case and control whole blood, and how large are the differences (log2 fold change with 95% CI at BH FDR below 0.05)?",
+        "grounding": {
+          "claims": [
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1",
+            "R-0169@18ab",
+            "R-0036@9786",
+            "R-0015@65aa",
+            "R-0038@7ec6",
+            "R-0083@12de",
+            "R-0010@6072",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "Population cohort with 50+ per group: limma-voom fixed-effects model per R-0015@65aa; no length input delivered: counts modeled as delivered, no length offset per R-0169@18ab",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter",
+              "step": "filter_low_counts",
+              "value": "filterByExpr",
+              "source": "guide:edgeR/2026-04-25#filtering"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "gene_counts_without_length_offset",
+              "source": "doi:10.12688/f1000research.7563.2"
+            },
+            {
+              "name": "missing_input",
+              "step": "model_design",
+              "value": "quantification_directories_or_avg_tx_length_table",
+              "source": "vignette:tximport/2026-04-28#import-transcript-level-estimates"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "pvalue_histogram",
+              "step": "multiple_testing",
+              "value": "inspect_before_adjustment",
+              "source": "doi:10.3390/ht7030023"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "lfc_threshold_policy",
+              "step": "multiple_testing",
+              "value": "test_against_threshold",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-limma-voom-fixed@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "import = gene_counts_without_length_offset and missing_input = quantification_directories_or_avg_tx_length_table per the grounded settings",
+          "reference_level = explicit: set the condition factor reference to control before the model; do not rely on alphabetical order",
+          "contrast_form = factor_numerator_denominator: case (numerator) vs control (denominator); positive log2FC means higher in case",
+          "TMM scaling factors (edgeR::calcNormFactors) before voom (R-0057); no pre-normalization beyond the log-CPM that voom models (R-0026)",
+          "pvalue_histogram = inspect_before_adjustment; alpha = 0.05; adjustment = BH; filter_results_by = adjusted_pvalue per the grounded settings; select by padj, never by unadjusted p-value or fold change alone (R-0043)",
+          "lfc_threshold_policy = test_against_threshold: the question states no minimum effect size, so test the zero null; additionally report the significant count above the named threshold |log2FC| at least 0.585 (1.5-fold)",
+          "R-0015 controls: (a) Wilcoxon rank-sum per retained gene, reporting the fraction of voom-significant genes also significant at BH 0.05; (b) one full label-permutation replicate of the voom test reporting how many genes are falsely significant under shuffled labels"
+        ],
+        "description": "TMM, voom, fixed-effects linear model (explicit reference control, contrast case vs control), BH at 0.05, p-value histogram diagnostic, plus the R-0015 population-cohort controls: Wilcoxon cross-check and one label-permutation replicate.",
+        "acceptance_criteria": [
+          "Results table with log2FC, 95% CI, p-value, BH padj per retained gene; significant genes at padj below 0.05; significant set sorted by effect size (R-0089)",
+          "Unadjusted p-value histogram saved with shape described (flat or left-peaked OK; mid-hill or right rise means adjusted p-values unreliable, R-0083)",
+          "Wilcoxon agreement fraction and permutation false-positive count reported",
+          "Report fields: method, package versions, design formula and contrast, thresholds, n tested, n DE, count above the named fold-change threshold (R-0041)"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Case-vs-control classifier: glmnet nested CV",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "The lasso gene set is unstable across folds: report selection frequency and treat the genes selected in most or all folds as the robust core",
+          "Length offset lost (R-0169): a change in isoform use could contribute to the apparent case/control difference the classifier exploits; state it",
+          "Within-cohort estimate: same tissue (whole blood), single batch, same quantification pipeline; generalization to a new cohort, batch, or platform is untested - no external validation set in the inputs",
+          "Classes balanced 60/60: accuracy reported together with sensitivity/specificity, never alone"
+        ],
+        "context": "Inputs: the full 12,000 x 120 delivered counts (no length offset, R-0169), condition from metadata.csv, T1S1 QC-passed sample list. Per R-0155 each prediction must come from a model that never saw that sample, and the gene filter and scaling are fitted inside each training fold because selection on all samples makes the error estimate optimistic. The T2S1 DE list is descriptive only and plays no role in feature selection. The settings score_test, score_adjustment, signature_provenance, marker_source, marker_species_and_tissue concern predefined external signatures; none exists here, so they do not take effect - the signature is the model's own nonzero-coefficient gene set, whose provenance (source, version, gene count) is stated per R-0134.",
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "pROC",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "Can a gene expression model classify case from control, and how accurate would it be on a sample it has never seen - the honest new-sample estimate from held-out predictions?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16",
+            "R-0155@08c2",
+            "R-0133@ce76",
+            "R-0135@f02d"
+          ],
+          "reason": "Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve per R-0155@08c2 and R-0134@0f16; filter and scaling inside each training fold per doi:10.1073/pnas.102102699",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "score_test",
+              "step": "signature_scoring",
+              "value": "limma_on_scores_with_the_design",
+              "source": "doi:10.1186/1471-2105-14-7"
+            },
+            {
+              "name": "score_adjustment",
+              "step": "signature_scoring",
+              "value": "BH_across_signatures",
+              "source": "doi:10.1186/1471-2105-14-7"
+            },
+            {
+              "name": "signature_provenance",
+              "step": "signature_scoring",
+              "value": "source_version_and_genes_present",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "classifier_model",
+              "step": "signature_scoring",
+              "value": "penalized_logistic_regression",
+              "source": "doi:10.18637/jss.v033.i01"
+            },
+            {
+              "name": "classifier_validation",
+              "step": "signature_scoring",
+              "value": "nested_cross_validation",
+              "source": "rule:R-0155"
+            },
+            {
+              "name": "classifier_performance",
+              "step": "signature_scoring",
+              "value": "roc_auc_with_confidence_interval",
+              "source": "doi:10.1186/1471-2105-12-77"
+            },
+            {
+              "name": "preprocessing_scope",
+              "step": "signature_scoring",
+              "value": "filter_and_scaling_inside_each_training_fold",
+              "source": "doi:10.1073/pnas.102102699"
+            },
+            {
+              "name": "marker_source",
+              "step": "signature_scoring",
+              "value": "panglaodb_or_hpa_tissue",
+              "source": "doi:10.1093/database/baz046"
+            },
+            {
+              "name": "marker_species_and_tissue",
+              "step": "signature_scoring",
+              "value": "state_in_report",
+              "source": "doi:10.1126/science.1260419"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "classifier_model = penalized_logistic_regression; classifier_validation = nested_cross_validation; classifier_performance = roc_auc_with_confidence_interval; preprocessing_scope = filter_and_scaling_inside_each_training_fold per the grounded settings",
+          "score_test, score_adjustment, signature_provenance, marker_source, marker_species_and_tissue are conditional on a predefined external signature; none exists here so they do not take effect - signature provenance (source, version, gene count) recorded per R-0134",
+          "Outer CV: 10-fold stratified by condition (6 case / 6 control per test fold), 3 repeats with a different recorded seed per repeat; pool the outer predictions across repeats",
+          "Inner CV: 5-fold on the training portion only to select the penalty parameter; choose lambda.1se (sparser, more stable signature; lambda.min is the permitted alternative)",
+          "Penalty: lasso - glmnet alpha = 1, family = binomial",
+          "Inside each outer training fold before fitting: (a) TMM on training-fold samples only (edgeR::calcNormFactors), (b) log2-CPM, (c) low-count gene filter fitted on the training fold, (d) per-gene mean/SD from the training fold used to standardize train and test portions",
+          "Report from held-out predictions only: ROC with AUC and 95% CI (DeLong, pROC), accuracy, sensitivity, specificity at threshold 0.5, confusion matrix, per-repeat AUC (mean +/- SD)",
+          "Stability: per-gene nonzero-coefficient frequency across outer folds; then refit on all QC-passed samples with lambda from 5-fold CV on the full data - in-sample reference only, never the new-sample estimate",
+          "Record all CV seeds; never estimate performance on samples that trained the model (R-0155)"
+        ],
+        "description": "Lasso logistic classifier (glmnet, binomial) with nested cross-validation on the full 12,000-gene matrix; TMM, filtering, and scaling fitted strictly inside each outer training fold. Outputs: pooled outer-prediction ROC with AUC and 95% CI (DeLong), accuracy/sensitivity/specificity at 0.5, per-repeat AUC stability, the learned signature with selection frequency, and the full-data refit labeled in-sample reference only.",
+        "acceptance_criteria": [
+          "Pooled outer-prediction ROC saved with AUC + 95% CI (DeLong), confusion matrix, accuracy, sensitivity, specificity at 0.5",
+          "Per-repeat AUCs reported (mean +/- SD over 3 repeats)",
+          "Final gene set (nonzero coefficients of the full-data refit) exported with coefficients, sign, and selection frequency",
+          "Headline new-sample answer is the outer-CV accuracy and AUC, labeled within-cohort; no in-sample number presented as new-sample accuracy"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Final report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not present the in-sample refit accuracy, or any number computed on training samples, as the new-sample accuracy (R-0155)",
+          "The estimate cannot be claimed to transfer to new cohorts, batches, or platforms; state this in the headline"
+        ],
+        "context": "Aggregates T1S1 (QC decisions, count state, ID alignment), T1S2 (filter yield), T2S1 (DE table, p-value histogram, Wilcoxon and permutation controls), T3S1 (outer-CV performance, signature, stability). Headline discipline: the new-sample accuracy is the outer-CV number only; the full-data refit accuracy is labeled in-sample reference. No external validation cohort exists in the inputs, so within-cohort validation is the stated limit of the estimate.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Do the results together answer: can case be distinguished from control by expression, how accurate is the classifier on a new sample, what are the caveats, and is the analysis reproducible?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0089@69f0",
+            "R-0041@059a"
+          ],
+          "reason": "No rule covers the aggregation report step; it consolidates the grounded upstream steps and carries the reproducibility record per R-0086@becf",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            },
+            {
+              "name": "effect_size_beside_pvalue",
+              "step": "report",
+              "value": true,
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "sort_significant_by",
+              "step": "report",
+              "value": "effect_size",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1",
+          "T3S1"
+        ],
+        "constraints": [
+          "reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release, stored with the results (per grounded setting)",
+          "effect_size_beside_pvalue = true and sort_significant_by = effect_size (per grounded settings)",
+          "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (per grounded setting)",
+          "Report contents: (1) headline classifier performance - outer-CV AUC + 95% CI, accuracy/sensitivity/specificity, per-repeat AUC stability, labeled within-cohort; (2) the learned signature - top nonzero coefficients, selection frequency, overlap with the T2S1 DE list (overlap only, not a re-derivation); (3) DE summary - n DE at FDR 0.05, top effect sizes, p-value histogram shape, Wilcoxon agreement, permutation false-positive count, the R-0015 population-cohort caution; (4) data caveats - length offset lost (R-0169), single batch, no external validation cohort, QC exclusions if any; (5) the reproducibility record with seeds and package versions"
+        ],
+        "description": "Written report answering the research question: can case be told from control by gene expression, how accurate on a new sample (outer-CV estimate, within-cohort labeled), the gene signature, the descriptive DE summary with its controls, all data caveats, and the reproducibility record.",
+        "acceptance_criteria": [
+          "A written report file with all five content blocks, seeds and package versions stored alongside the results",
+          "The headline performance number is the outer-CV estimate; no in-sample number presented as new-sample accuracy",
+          "The DE table shows effect size beside each p-value and is sorted by effect size within the significant set"
+        ]
+      }
+    ],
+    "title": "Whole-blood case-control classifier with nested CV",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "12,000 Salmon gene-level counts x 120 human whole-blood samples (60 case vs 60 control, unpaired, single batch). Only the gene-level table was delivered (no per-sample quantification files, no average transcript length table), so the length-correction state is unknown and every step models the counts as delivered with no length offset (R-0169). T1S1 checks sample coherence and data integrity; T1S2 applies filterByExpr with the group; T2S1 characterizes the case-vs-control difference with the population-cohort-appropriate limma-voom fixed-effects model (NB count models exaggerate false positives at 60 per group, R-0015) plus Wilcoxon and label-permutation controls; T3S1 is the core: a lasso logistic classifier with nested CV, all filtering/normalization/scaling inside each training fold, so the outer-CV AUC and accuracy are the honest new-sample estimate; the DE list is descriptive only and never pre-selects features for that estimate; T1S3 writes the report with the reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 561635,
+    "outputTokens": 63685,
+    "cacheReadInputTokens": 475584,
+    "reasoningTokens": 40196
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c7a6c423b5d44fe28660d2d1",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "classifier": true
+      },
+      "outcome": "ok",
+      "durationMs": 76
+    },
+    {
+      "toolUseId": "call_58bdf3ea2cc64111934509ad",
+      "name": "knowledge_recommend",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "n_groups": 2,
+        "n_per_group_max": 60,
+        "n_per_group_min": 60,
+        "organism": "human",
+        "paired": false,
+        "question": "differential_expression"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_69a73065d1114035b518f7bc",
+      "name": "knowledge_recommend",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "modality": "bulk_rna_seq",
+        "n_groups": 2,
+        "n_per_group_max": 60,
+        "n_per_group_min": 60,
+        "organism": "human",
+        "paired": false,
+        "question": "differential_expression"
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    },
+    {
+      "toolUseId": "call_f7b4d1b8632b45e7986d51b6",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "modality": "bulk_rna_seq",
+        "n_groups": 2,
+        "n_per_group_max": 60,
+        "n_per_group_min": 60,
+        "organism": "human",
+        "paired": false,
+        "classifier": true,
+        "question": "signature_scoring",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM calcNormFactors"
+              },
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit (control)"
+              },
+              {
+                "name": "contrast",
+                "value": "case vs control"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "control",
+                "value": "wilcoxon_rank_sum + label permutation"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "penalized logistic regression (glmnet lasso) with nested cross-validation and pROC AUC",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_model",
+                "value": "penalized_logistic_regression"
+              },
+              {
+                "name": "penalty",
+                "value": "lasso (alpha=1, family=binomial)"
+              },
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "outer_cv",
+                "value": "10-fold stratified x 3 repeats"
+              },
+              {
+                "name": "inner_cv",
+                "value": "5-fold, lambda.1se"
+              },
+              {
+                "name": "classifier_performance",
+                "value": "roc_auc_with_confidence_interval"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility report with session info, seeds, versions",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 101
+    },
+    {
+      "toolUseId": "call_c0e7f5fcee964702bac00f89",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "modality": "bulk_rna_seq",
+        "n_groups": 2,
+        "n_per_group_max": 60,
+        "n_per_group_min": 60,
+        "organism": "human",
+        "paired": false,
+        "question": "differential_expression",
+        "steps": [
+          {
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "limma-voom fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM calcNormFactors"
+              },
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit (control)"
+              },
+              {
+                "name": "contrast",
+                "value": "case vs control"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "control",
+                "value": "wilcoxon_rank_sum + label permutation"
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "reproducibility report with effect sizes beside p-values",
+            "parameters": [
+              {
+                "name": "effect_size_beside_pvalue",
+                "value": "true"
+              },
+              {
+                "name": "sort_significant_by",
+                "value": "effect_size"
+              },
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              }
+            ],
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "call_7f61b0e9711b4a6a96268339",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case-control classifier with nested CV\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-09-07T12:00:00Z\", \"analytical_narrative\": \"The data are 12,000 Salmon gene-level counts x 120 human whole-blood samples (60 case vs 60 control, unpaired, single batch) in counts.csv plus a 120x2 sample table in metadata.csv. Whether the Salmon length correction occurred is not established and no per-sample quantification files or average transcript length table were delivered, so every step models the counts as delivered, with no length offset (R-0169), and states that caveat. The research question is a classifier with an honest new-sample accuracy estimate. T1S1 first establishes sample coherence (blind VST, PCA, distance heatmap) and verifies counts/metadata alignment and count-state. T1S2 applies the filterByExpr low-count filter with the case/control group, feeding the descriptive DE step. T2S1 characterizes the case-vs-control difference with the population-cohort-appropriate limma-voom fixed-effects model (negative-binomial count models exaggerate false positives at 60 per group, R-0015), with a Wilcoxon cross-check and a label-permutation control. T3S1 is the core answer: a lasso logistic classifier validated by nested cross-validation with filtering, normalization and scaling fitted strictly inside each training fold, so the outer-CV accuracy/AUC is the defensible estimate for a new sample; the DE gene list is descriptive only and never pre-selects features for the performance estimate. T1S3 assembles the report with the reproducibility record and all caveats.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC (blind VST, PCA, distances)\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"QC of the 120-sample whole-blood cohort: PCA on the top 500 variable genes and a sample-distance heatmap colored by condition, library-size distributions, and the data-integrity checks (sample ID alignment, count integrality) that every downstream step depends on.\", \"question\": \"Before any test or modeling: do the 120 whole-blood samples (60 case, 60 control) form two coherent groups in expression space, are there outlier or mislabeled samples that would bias the classifier, and do the 120 sample columns of counts.csv match the 120 rows of metadata.csv 1:1?\", \"context\": \"Inputs: /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 120 samples plus index column, Salmon gene-level counts as delivered, length-correction state unknown; no per-sample quantification files and no average transcript length table delivered) and /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns: sample, condition). Design: 60 case vs 60 control, unpaired, human, single batch. Because only the gene-level table was delivered, the length offset is lost and all steps model the counts as delivered (R-0169).\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"Verify that the 120 sample columns of counts.csv match the 120 rows of metadata.csv 1:1 (no missing, no duplicated IDs); fail loudly on any mismatch and report the comparison.\", \"Check and report the integrality of the count values (fraction of non-integer entries). Per R-0169, state in the outputs that no length input was delivered and the import state is 'as delivered, no length offset'.\", \"Record an explicit keep/exclude decision for every flagged sample (e.g., Euclidean distance from its group centroid > 2 SD); downstream steps must use this QC-passed sample list.\"], \"acceptance_criteria\": [\"PCA (top 500 variable genes) and distance heatmap saved, colored by condition, showing whether case and control cluster apart; any sample departing from its group is flagged with a keep/exclude decision.\", \"1:1 sample-ID match between counts.csv and metadata.csv confirmed (120/120) or the mismatch is reported.\", \"Fraction of non-integer count values reported; if non-integer, the documented log-CPM fallback was used for the QC plots and downstream steps are informed.\", \"Library-size (total count) distribution per condition saved.\"], \"caveats\": [\"DESeq2 rejects non-integer counts: if the Salmon gene table contains fractional counts, do not round silently - use log2(CPM+1) via edgeR::cpm for the PCA/distance plots as a documented substitution for the vst step, and report the import state as undetermined (R-0169).\", \"Single batch: no batch factor to color or check; color plots by condition only.\", \"An outlier sample that separates the groups can inflate classifier accuracy downstream; flagging it now is what protects the estimate.\"], \"packages\": [\"DESeq2\", \"edgeR\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}]}, {\"id\": \"T1S2\", \"name\": \"filterByExpr low-count gene filter\", \"track\": \"T1\", \"step_type\": \"filtering\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Low-count gene filter on the 12,000-gene matrix, applied with the case/control group before any normalization, producing the filtered count matrix that the differential expression step tests.\", \"question\": \"Which of the 12,000 genes carry enough counts in a 60-vs-60 design to be informative, and how many remain for the differential expression test?\", \"context\": \"Per R-0058, with 50+ samples per group filterByExpr with the group is applied before normalization because low-count genes distort the mean-variance trend. Input: counts.csv restricted to the QC-passed samples from T1S1, with condition from metadata.csv. Filter is on the raw delivered counts (no size factors, R-0026); if T1S1 found fractional counts, the filter is applied to the delivered values with the same group logic and that is stated.\", \"constraints\": [\"filter_low_counts: filter = filterByExpr (guide:edgeR/2026-04-25#filtering)\", \"Apply filterByExpr with the case/control group on the QC-passed samples only; do not apply size-factor normalization before the filter (R-0058, R-0026).\", \"Report the number of genes kept (n_in -> n_out) in a place T2S1 and the report can read.\"], \"acceptance_criteria\": [\"A filtered count matrix is written (QC-passed samples x retained genes) and the number of genes retained is reported.\", \"The filter used the case/control group, not an ungrouped threshold.\"], \"caveats\": [\"The alternative fixed-count filter (>=10 counts in >=60 samples, R-0002) is permitted but filterByExpr is the method of record here; if the counts are fractional, state that filterByExpr was run on the delivered values.\"], \"packages\": [\"edgeR\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\"], \"template\": \"tpl-edger-ql@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}], \"reason\": \"filterByExpr low count filter (edgeR) per R-0058@99e1\"}]}, {\"id\": \"T2S1\", \"name\": \"Differential expression case vs control (limma-voom)\", \"track\": \"T2\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Descriptive characterization of the case-vs-control difference: TMM normalization, voom, fixed-effects linear model, explicit reference level, BH-adjusted p-values, p-value histogram diagnostic, and the population-cohort false-positive controls (Wilcoxon cross-check + one label-permutation replicate).\", \"question\": \"Which genes differ in expression between case and control whole blood, and how large are the differences (log2 fold change with 95% CI at BH FDR < 0.05)?\", \"context\": \"60 case vs 60 control, unpaired, single batch, 50+ per group -> the fixed-effects limma-voom path is the method of record (R-0015): in human population cohorts the negative-binomial count models (DESeq2, edgeR-GLM) exaggerate false positives, even on permuted labels. Input: the T1S2 filtered count matrix, QC-passed samples only. Counts modeled as delivered with no length offset (R-0169) - only the gene-level table was delivered, no per-sample quantification files, no average transcript length table; do not run tximport on a gene table and do not invent a length input. The DE gene list is descriptive for interpretation; it must NOT be used as a pre-selected feature set for the T3S1 performance estimate (that would make the estimate optimistic).\", \"constraints\": [\"model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)\", \"model_design: missing_input = quantification_directories_or_avg_tx_length_table (vignette:tximport/2026-04-28#import-transcript-level-estimates)\", \"model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels): set the condition factor reference level to 'control' explicitly before the model; do not rely on alphabetical order\", \"model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts): contrast case (numerator) vs control (denominator); positive log2FC means higher in case\", \"Normalization: TMM scaling factors (edgeR::calcNormFactors) before voom (R-0057); counts stay untransformed apart from the log-CPM that voom models (R-0026)\", \"multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)\", \"multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)\", \"multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053): the question states no minimum effect size, so test the zero null; additionally report the count of significant genes above the named threshold |log2FC| >= 0.585 (1.5-fold)\", \"multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x): select by padj, never by unadjusted p-value or fold change alone (R-0043)\", \"Population-cohort control per R-0015: (a) Wilcoxon rank-sum test per retained gene, reporting the fraction of voom-significant genes also significant at BH 0.05 by Wilcoxon; (b) one full label-permutation replicate of the voom test reporting how many genes are falsely significant under shuffled labels\"], \"acceptance_criteria\": [\"Results table with log2FC, 95% CI, p-value, and BH adjusted p-value for every retained gene; significant genes at padj < 0.05; the significant set sorted by effect size (R-0089).\", \"Unadjusted p-value histogram saved with its shape described (flat or left-peaked = OK; mid-hill or right rise = adjusted p-values unreliable, R-0083).\", \"Wilcoxon cross-check and label-permutation control results reported (agreement fraction; number of falsely significant genes under permutation).\", \"Report fields: method, package versions, design formula and contrast, thresholds, number of genes tested, number of DE genes, count above the named fold-change threshold (R-0041).\"], \"caveats\": [\"State in the outputs: with 50+ per group in a human population cohort, count-based NB models exaggerate false positives (R-0015) - this is why the fixed-effects limma-voom linear model is used; the Wilcoxon/permutation controls quantify how well the FDR held.\", \"Length offset is lost (R-0169): model the counts as delivered; a change in isoform use between case and control can show as differential expression; state this limitation.\", \"R-0038 (DESeq2 Cook's distance count replacement) does not apply on the voom path; no count replacement is performed.\", \"Use the QC-passed sample list from T1S1; if T1S1 excluded samples, the design excludes them too and the report states which.\"], \"packages\": [\"edgeR\", \"limma\", \"ggplot2\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\", \"R-0169@18ab\", \"R-0036@9786\", \"R-0015@65aa\", \"R-0038@7ec6\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-limma-voom-fixed@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"gene_counts_without_length_offset\", \"source\": \"doi:10.12688/f1000research.7563.2\"}, {\"step\": \"model_design\", \"name\": \"missing_input\", \"value\": \"quantification_directories_or_avg_tx_length_table\", \"source\": \"vignette:tximport/2026-04-28#import-transcript-level-estimates\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"Population cohort with 50+ per group: limma-voom fixed-effects model per R-0015@65aa; no length input delivered: counts modeled as delivered, no length offset per R-0169@18ab\"}]}, {\"id\": \"T3S1\", \"name\": \"Case-vs-control classifier: glmnet nested cross-validation\", \"track\": \"T3\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"The core answer: a lasso (penalized) logistic classifier of case vs control validated by nested cross-validation on the full 12,000-gene matrix, with filtering, TMM normalization and feature scaling fitted strictly inside each outer training fold. Outputs: pooled outer-prediction ROC with AUC and 95% CI (DeLong, pROC), accuracy/sensitivity/specificity at threshold 0.5, per-repeat AUC stability, the learned gene signature (nonzero coefficients of the full-data refit) with selection frequency across folds, and the full-data refit labeled in-sample reference only.\", \"question\": \"Can a gene expression model classify case from control, and how accurate would it be on a sample it has never seen - i.e., the honest new-sample estimate from held-out predictions?\", \"context\": \"Inputs: the full 12,000 x 120 delivered counts (no length offset, R-0169), condition from metadata.csv, and the QC-passed sample list from T1S1. Method of record per R-0155: penalized logistic regression (glmnet, family=binomial, lasso alpha=1 for gene selection) with nested CV; each prediction must come from a model that never saw that sample; the gene filter and the scaling are fitted inside each training fold because selection on all samples makes the error estimate optimistic (doi:10.1073/pnas.102102699). The T2S1 DE gene list is descriptive only: using it to pre-select features would make the estimate optimistic, so it plays no role in feature selection here. The per-sample settings score_test, score_adjustment, signature_provenance, marker_source and marker_species_and_tissue in the constraints apply to scoring predefined external signatures; no external signature exists in this analysis, so they do not take effect - the 'signature' is the model's own nonzero-coefficient gene set, and its provenance (source = this analysis, version = seed and package versions, number of genes present) is stated per R-0134.\", \"constraints\": [\"signature_scoring: score_test = limma_on_scores_with_the_design (doi:10.1186/1471-2105-14-7)\", \"signature_scoring: score_adjustment = BH_across_signatures (doi:10.1186/1471-2105-14-7)\", \"signature_scoring: signature_provenance = source_version_and_genes_present (doi:10.1371/journal.pcbi.1009935)\", \"signature_scoring: classifier_model = penalized_logistic_regression (doi:10.18637/jss.v033.i01)\", \"signature_scoring: classifier_validation = nested_cross_validation (rule:R-0155)\", \"signature_scoring: classifier_performance = roc_auc_with_confidence_interval (doi:10.1186/1471-2105-12-77)\", \"signature_scoring: preprocessing_scope = filter_and_scaling_inside_each_training_fold (doi:10.1073/pnas.102102699)\", \"signature_scoring: marker_source = panglaodb_or_hpa_tissue (doi:10.1093/database/baz046)\", \"signature_scoring: marker_species_and_tissue = state_in_report (doi:10.1126/science.1260419)\", \"score_test, score_adjustment, signature_provenance, marker_source and marker_species_and_tissue are conditional on a predefined external signature; none exists here, so they do not take effect - the learned nonzero-coefficient gene set is the signature and its provenance (source, version, gene count) is recorded per R-0134\", \"Outer CV: 10-fold stratified by condition (6 case / 6 control per test fold), 3 repeats with a different recorded seed per repeat; a held-out sample is predicted only by a model trained without it; pool the outer predictions across repeats\", \"Inner CV: 5-fold on the training portion only, to select the penalty parameter; choose lambda.1se (chosen for a sparser, more stable signature; lambda.min is the permitted alternative)\", \"Penalty: lasso - glmnet alpha = 1, family = binomial, for gene selection\", \"Inside each outer training fold, before fitting: (a) TMM scale factors computed on the training-fold samples only (edgeR::calcNormFactors), (b) log2-CPM, (c) a low-count gene filter fitted on the training fold, (d) per-gene mean/SD computed on the training fold and used to standardize both the training and the held-out test portion\", \"Report from the outer (held-out) predictions: ROC with AUC and 95% CI (DeLong, pROC), accuracy, sensitivity, specificity at threshold 0.5, confusion matrix, and per-repeat AUC (mean +/- SD)\", \"Gene-set stability: frequency with which each gene has a nonzero coefficient across all outer folds; then refit the final model on all QC-passed samples with lambda chosen by 5-fold CV on the full data; its in-sample accuracy is reported as in-sample reference only, never as a new-sample estimate\", \"Set and record the random seed(s) for all CV resampling\", \"Never estimate performance on samples that trained the model (R-0155): the headline new-sample numbers come exclusively from the outer CV\"], \"acceptance_criteria\": [\"Pooled outer-prediction ROC saved with AUC + 95% CI (DeLong), plus confusion matrix, accuracy, sensitivity and specificity at threshold 0.5.\", \"Per-repeat AUCs reported (mean +/- SD across the 3 repeats).\", \"Final gene set (nonzero coefficients of the full-data refit) exported with coefficients, sign, and selection frequency across outer folds.\", \"The headline statement answers the question with the outer-CV accuracy (and AUC), explicitly labeled as a within-cohort estimate; no in-sample number is presented as new-sample accuracy.\"], \"caveats\": [\"The lasso gene set is unstable across folds: report selection frequency and treat the genes selected in most or all folds as the robust core; state this instability rather than presenting a single fold's genes as the signature.\", \"Length offset is lost (R-0169): state that a change in isoform use could contribute to the apparent case/control difference the classifier exploits.\", \"The estimate is within-cohort: same tissue (whole blood), single batch, same quantification pipeline. Generalization to a new cohort, new batch, or new platform is untested - state this explicitly; there is no external validation set in the inputs.\", \"Classes are balanced 60/60; accuracy is reported together with sensitivity/specificity, never alone.\"], \"packages\": [\"glmnet\", \"pROC\", \"edgeR\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0134@0f16\", \"R-0155@08c2\", \"R-0133@ce76\", \"R-0135@f02d\"], \"settings\": [{\"step\": \"signature_scoring\", \"name\": \"score_test\", \"value\": \"limma_on_scores_with_the_design\", \"source\": \"doi:10.1186/1471-2105-14-7\"}, {\"step\": \"signature_scoring\", \"name\": \"score_adjustment\", \"value\": \"BH_across_signatures\", \"source\": \"doi:10.1186/1471-2105-14-7\"}, {\"step\": \"signature_scoring\", \"name\": \"signature_provenance\", \"value\": \"source_version_and_genes_present\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_model\", \"value\": \"penalized_logistic_regression\", \"source\": \"doi:10.18637/jss.v033.i01\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_validation\", \"value\": \"nested_cross_validation\", \"source\": \"rule:R-0155\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_performance\", \"value\": \"roc_auc_with_confidence_interval\", \"source\": \"doi:10.1186/1471-2105-12-77\"}, {\"step\": \"signature_scoring\", \"name\": \"preprocessing_scope\", \"value\": \"filter_and_scaling_inside_each_training_fold\", \"source\": \"doi:10.1073/pnas.102102699\"}, {\"step\": \"signature_scoring\", \"name\": \"marker_source\", \"value\": \"panglaodb_or_hpa_tissue\", \"source\": \"doi:10.1093/database/baz046\"}, {\"step\": \"signature_scoring\", \"name\": \"marker_species_and_tissue\", \"value\": \"state_in_report\", \"source\": \"doi:10.1126/science.1260419\"}], \"reason\": \"Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve per R-0155@08c2 and R-0134@0f16; filter and scaling inside each training fold per doi:10.1073/pnas.102102699\"}]}, {\"id\": \"T1S3\", \"name\": \"Final report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"The written report that answers the research question: whether case can be told from control by gene expression, how accurate on a new sample (outer-CV estimate, within-cohort labeled), the gene signature, the descriptive DE summary with its controls, all data caveats, and the reproducibility record.\", \"question\": \"Do the results together answer: can case be distinguished from control by expression, how accurate is the classifier on a new sample, what is the evidence quality and caveat set, and is the analysis reproducible?\", \"context\": \"Aggregates T1S1 (QC decisions, count state, ID alignment), T1S2 (filter yield), T2S1 (DE table, p-value histogram, Wilcoxon/permutation controls) and T3S1 (outer-CV performance, signature, stability). Headline discipline: the new-sample accuracy is the outer-CV number only; the full-data refit accuracy is labeled in-sample reference. No external validation cohort exists in the inputs, so the report states that within-cohort validation is the limit of this estimate.\", \"constraints\": [\"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\", \"report: effect_size_beside_pvalue = true (doi:10.1093/bioinformatics/btp053)\", \"report: sort_significant_by = effect_size (doi:10.1093/bioinformatics/btp053)\", \"report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)\", \"Report contents: (1) headline classifier performance - outer-CV AUC + 95% CI, accuracy/sensitivity/specificity, per-repeat AUC stability, explicitly labeled within-cohort; (2) the learned gene signature - top nonzero coefficients, selection frequency, comparison against the T2S1 DE list (overlap only, not a re-derivation); (3) DE summary - n DE at FDR 0.05, top effect sizes, p-value histogram shape, Wilcoxon agreement, permutation false-positive count, and the R-0015 population-cohort caution; (4) data caveats - length offset lost (R-0169), single batch, no external validation cohort, QC exclusions if any; (5) the reproducibility record with seeds and package versions, stored with the results, not in a separate note.\"], \"acceptance_criteria\": [\"A written report file exists containing all five content blocks above, with sessionInfo, seeds, and package versions recorded and stored alongside the results.\", \"The headline performance number is the outer-CV estimate; no in-sample number is presented as new-sample accuracy.\", \"The DE table shows effect size beside each p-value and is sorted by effect size within the significant set.\"], \"caveats\": [\"Do not present the in-sample refit accuracy, or any number computed on training samples, as the new-sample accuracy (R-0155).\", \"The estimate cannot be claimed to transfer to new cohorts, batches, or platforms; state this limitation in the headline.\"], \"packages\": [], \"depends_on\": [\"T1S2\", \"T2S1\", \"T3S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0086@becf\", \"R-0089@69f0\", \"R-0041@059a\"], \"settings\": [{\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}, {\"step\": \"report\", \"name\": \"effect_size_beside_pvalue\", \"value\": true, \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"sort_significant_by\", \"value\": \"effect_size\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}], \"reason\": \"No rule covers the aggregation report step; it consolidates the grounded upstream steps and carries the reproducibility record per R-0086@becf\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_e6f3b43915cf476988db4255",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case-control classifier with nested CV\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-09-07T12:00:00Z\", \"analytical_narrative\": \"The data are 12,000 Salmon gene-level counts x 120 human whole-blood samples (60 case vs 60 control, unpaired, single batch) in counts.csv plus a 120x2 sample table in metadata.csv. Whether the Salmon length correction occurred is not established and no per-sample quantification files or average transcript length table were delivered, so every step models the counts as delivered, with no length offset (R-0169), and states that caveat. The research question is a classifier with an honest new-sample accuracy estimate. T1S1 first establishes sample coherence (blind VST, PCA, distance heatmap) and verifies counts/metadata alignment and count-state. T1S2 applies the filterByExpr low-count filter with the case/control group, feeding the descriptive DE step. T2S1 characterizes the case-vs-control difference with the population-cohort-appropriate limma-voom fixed-effects model (negative-binomial count models exaggerate false positives at 60 per group, R-0015), with a Wilcoxon cross-check and a label-permutation control. T3S1 is the core answer: a lasso logistic classifier validated by nested cross-validation with filtering, normalization and scaling fitted strictly inside each training fold, so the outer-CV accuracy/AUC is the defensible estimate for a new sample; the DE gene list is descriptive only and never pre-selects features for the performance estimate. T1S3 assembles the report with the reproducibility record and all caveats.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC (blind VST, PCA, distances)\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"QC of the 120-sample whole-blood cohort: PCA on the top 500 variable genes and a sample-distance heatmap colored by condition, library-size distributions, and the data-integrity checks (sample ID alignment, count integrality) that every downstream step depends on.\", \"question\": \"Before any test or modeling: do the 120 whole-blood samples (60 case, 60 control) form two coherent groups in expression space, are there outlier or mislabeled samples that would bias the classifier, and do the 120 sample columns of counts.csv match the 120 rows of metadata.csv 1:1?\", \"context\": \"Inputs: /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 120 samples plus index column, Salmon gene-level counts as delivered, length-correction state unknown; no per-sample quantification files and no average transcript length table delivered) and /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns: sample, condition). Design: 60 case vs 60 control, unpaired, human, single batch. Because only the gene-level table was delivered, the length offset is lost and all steps model the counts as delivered (R-0169).\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"Verify that the 120 sample columns of counts.csv match the 120 rows of metadata.csv 1:1 (no missing, no duplicated IDs); fail loudly on any mismatch and report the comparison.\", \"Check and report the integrality of the count values (fraction of non-integer entries). Per R-0169, state in the outputs that no length input was delivered and the import state is 'as delivered, no length offset'.\", \"Record an explicit keep/exclude decision for every flagged sample (e.g., Euclidean distance from its group centroid > 2 SD); downstream steps must use this QC-passed sample list.\"], \"acceptance_criteria\": [\"PCA (top 500 variable genes) and distance heatmap saved, colored by condition, showing whether case and control cluster apart; any sample departing from its group is flagged with a keep/exclude decision.\", \"1:1 sample-ID match between counts.csv and metadata.csv confirmed (120/120) or the mismatch is reported.\", \"Fraction of non-integer count values reported; if non-integer, the documented log-CPM fallback was used for the QC plots and downstream steps are informed.\", \"Library-size (total count) distribution per condition saved.\"], \"caveats\": [\"DESeq2 rejects non-integer counts: if the Salmon gene table contains fractional counts, do not round silently - use log2(CPM+1) via edgeR::cpm for the PCA/distance plots as a documented substitution for the vst step, and report the import state as undetermined (R-0169).\", \"Single batch: no batch factor to color or check; color plots by condition only.\", \"An outlier sample that separates the groups can inflate classifier accuracy downstream; flagging it now is what protects the estimate.\"], \"packages\": [\"DESeq2\", \"edgeR\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}]}, {\"id\": \"T1S2\", \"name\": \"filterByExpr low-count gene filter\", \"track\": \"T1\", \"step_type\": \"filtering\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Low-count gene filter on the 12,000-gene matrix, applied with the case/control group before any normalization, producing the filtered count matrix that the differential expression step tests.\", \"question\": \"Which of the 12,000 genes carry enough counts in a 60-vs-60 design to be informative, and how many remain for the differential expression test?\", \"context\": \"Per R-0058, with 50+ samples per group filterByExpr with the group is applied before normalization because low-count genes distort the mean-variance trend. Input: counts.csv restricted to the QC-passed samples from T1S1, with condition from metadata.csv. Filter is on the raw delivered counts (no size factors, R-0026); if T1S1 found fractional counts, the filter is applied to the delivered values with the same group logic and that is stated.\", \"constraints\": [\"filter_low_counts: filter = filterByExpr (guide:edgeR/2026-04-25#filtering)\", \"Apply filterByExpr with the case/control group on the QC-passed samples only; do not apply size-factor normalization before the filter (R-0058, R-0026).\", \"Report the number of genes kept (n_in -> n_out) in a place T2S1 and the report can read.\"], \"acceptance_criteria\": [\"A filtered count matrix is written (QC-passed samples x retained genes) and the number of genes retained is reported.\", \"The filter used the case/control group, not an ungrouped threshold.\"], \"caveats\": [\"The alternative fixed-count filter (>=10 counts in >=60 samples, R-0002) is permitted but filterByExpr is the method of record here; if the counts are fractional, state that filterByExpr was run on the delivered values.\"], \"packages\": [\"edgeR\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\"], \"template\": \"tpl-edger-ql@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}], \"reason\": \"filterByExpr low count filter (edgeR) per R-0058@99e1\"}]}, {\"id\": \"T2S1\", \"name\": \"Differential expression case vs control (limma-voom)\", \"track\": \"T2\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Descriptive characterization of the case-vs-control difference: TMM normalization, voom, fixed-effects linear model, explicit reference level, BH-adjusted p-values, p-value histogram diagnostic, and the population-cohort false-positive controls (Wilcoxon cross-check + one label-permutation replicate).\", \"question\": \"Which genes differ in expression between case and control whole blood, and how large are the differences (log2 fold change with 95% CI at BH FDR < 0.05)?\", \"context\": \"60 case vs 60 control, unpaired, single batch, 50+ per group -> the fixed-effects limma-voom path is the method of record (R-0015): in human population cohorts the negative-binomial count models (DESeq2, edgeR-GLM) exaggerate false positives, even on permuted labels. Input: the T1S2 filtered count matrix, QC-passed samples only. Counts modeled as delivered with no length offset (R-0169) - only the gene-level table was delivered, no per-sample quantification files, no average transcript length table; do not run tximport on a gene table and do not invent a length input. The DE gene list is descriptive for interpretation; it must NOT be used as a pre-selected feature set for the T3S1 performance estimate (that would make the estimate optimistic).\", \"constraints\": [\"model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)\", \"model_design: missing_input = quantification_directories_or_avg_tx_length_table (vignette:tximport/2026-04-28#import-transcript-level-estimates)\", \"model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels): set the condition factor reference level to 'control' explicitly before the model; do not rely on alphabetical order\", \"model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts): contrast case (numerator) vs control (denominator); positive log2FC means higher in case\", \"Normalization: TMM scaling factors (edgeR::calcNormFactors) before voom (R-0057); counts stay untransformed apart from the log-CPM that voom models (R-0026)\", \"multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)\", \"multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)\", \"multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053): the question states no minimum effect size, so test the zero null; additionally report the count of significant genes above the named threshold |log2FC| >= 0.585 (1.5-fold)\", \"multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x): select by padj, never by unadjusted p-value or fold change alone (R-0043)\", \"Population-cohort control per R-0015: (a) Wilcoxon rank-sum test per retained gene, reporting the fraction of voom-significant genes also significant at BH 0.05 by Wilcoxon; (b) one full label-permutation replicate of the voom test reporting how many genes are falsely significant under shuffled labels\"], \"acceptance_criteria\": [\"Results table with log2FC, 95% CI, p-value, and BH adjusted p-value for every retained gene; significant genes at padj < 0.05; the significant set sorted by effect size (R-0089).\", \"Unadjusted p-value histogram saved with its shape described (flat or left-peaked = OK; mid-hill or right rise = adjusted p-values unreliable, R-0083).\", \"Wilcoxon cross-check and label-permutation control results reported (agreement fraction; number of falsely significant genes under permutation).\", \"Report fields: method, package versions, design formula and contrast, thresholds, number of genes tested, number of DE genes, count above the named fold-change threshold (R-0041).\"], \"caveats\": [\"State in the outputs: with 50+ per group in a human population cohort, count-based NB models exaggerate false positives (R-0015) - this is why the fixed-effects limma-voom linear model is used; the Wilcoxon/permutation controls quantify how well the FDR held.\", \"Length offset is lost (R-0169): model the counts as delivered; a change in isoform use between case and control can show as differential expression; state this limitation.\", \"R-0038 (DESeq2 Cook's distance count replacement) does not apply on the voom path; no count replacement is performed.\", \"Use the QC-passed sample list from T1S1; if T1S1 excluded samples, the design excludes them too and the report states which.\"], \"packages\": [\"edgeR\", \"limma\", \"ggplot2\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\", \"R-0169@18ab\", \"R-0036@9786\", \"R-0015@65aa\", \"R-0038@7ec6\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-limma-voom-fixed@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"gene_counts_without_length_offset\", \"source\": \"doi:10.12688/f1000research.7563.2\"}, {\"step\": \"model_design\", \"name\": \"missing_input\", \"value\": \"quantification_directories_or_avg_tx_length_table\", \"source\": \"vignette:tximport/2026-04-28#import-transcript-level-estimates\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"Population cohort with 50+ per group: limma-voom fixed-effects model per R-0015@65aa; no length input delivered: counts modeled as delivered, no length offset per R-0169@18ab\"}]}, {\"id\": \"T3S1\", \"name\": \"Case-vs-control classifier: glmnet nested cross-validation\", \"track\": \"T3\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"The core answer: a lasso (penalized) logistic classifier of case vs control validated by nested cross-validation on the full 12,000-gene matrix, with filtering, TMM normalization and feature scaling fitted strictly inside each outer training fold. Outputs: pooled outer-prediction ROC with AUC and 95% CI (DeLong, pROC), accuracy/sensitivity/specificity at threshold 0.5, per-repeat AUC stability, the learned gene signature (nonzero coefficients of the full-data refit) with selection frequency across folds, and the full-data refit labeled in-sample reference only.\", \"question\": \"Can a gene expression model classify case from control, and how accurate would it be on a sample it has never seen - i.e., the honest new-sample estimate from held-out predictions?\", \"context\": \"Inputs: the full 12,000 x 120 delivered counts (no length offset, R-0169), condition from metadata.csv, and the QC-passed sample list from T1S1. Method of record per R-0155: penalized logistic regression (glmnet, family=binomial, lasso alpha=1 for gene selection) with nested CV; each prediction must come from a model that never saw that sample; the gene filter and the scaling are fitted inside each training fold because selection on all samples makes the error estimate optimistic (doi:10.1073/pnas.102102699). The T2S1 DE gene list is descriptive only: using it to pre-select features would make the estimate optimistic, so it plays no role in feature selection here. The per-sample settings score_test, score_adjustment, signature_provenance, marker_source and marker_species_and_tissue in the constraints apply to scoring predefined external signatures; no external signature exists in this analysis, so they do not take effect - the 'signature' is the model's own nonzero-coefficient gene set, and its provenance (source = this analysis, version = seed and package versions, number of genes present) is stated per R-0134.\", \"constraints\": [\"signature_scoring: score_test = limma_on_scores_with_the_design (doi:10.1186/1471-2105-14-7)\", \"signature_scoring: score_adjustment = BH_across_signatures (doi:10.1186/1471-2105-14-7)\", \"signature_scoring: signature_provenance = source_version_and_genes_present (doi:10.1371/journal.pcbi.1009935)\", \"signature_scoring: classifier_model = penalized_logistic_regression (doi:10.18637/jss.v033.i01)\", \"signature_scoring: classifier_validation = nested_cross_validation (rule:R-0155)\", \"signature_scoring: classifier_performance = roc_auc_with_confidence_interval (doi:10.1186/1471-2105-12-77)\", \"signature_scoring: preprocessing_scope = filter_and_scaling_inside_each_training_fold (doi:10.1073/pnas.102102699)\", \"signature_scoring: marker_source = panglaodb_or_hpa_tissue (doi:10.1093/database/baz046)\", \"signature_scoring: marker_species_and_tissue = state_in_report (doi:10.1126/science.1260419)\", \"score_test, score_adjustment, signature_provenance, marker_source and marker_species_and_tissue are conditional on a predefined external signature; none exists here, so they do not take effect - the learned nonzero-coefficient gene set is the signature and its provenance (source, version, gene count) is recorded per R-0134\", \"Outer CV: 10-fold stratified by condition (6 case / 6 control per test fold), 3 repeats with a different recorded seed per repeat; a held-out sample is predicted only by a model trained without it; pool the outer predictions across repeats\", \"Inner CV: 5-fold on the training portion only, to select the penalty parameter; choose lambda.1se (chosen for a sparser, more stable signature; lambda.min is the permitted alternative)\", \"Penalty: lasso - glmnet alpha = 1, family = binomial, for gene selection\", \"Inside each outer training fold, before fitting: (a) TMM scale factors computed on the training-fold samples only (edgeR::calcNormFactors), (b) log2-CPM, (c) a low-count gene filter fitted on the training fold, (d) per-gene mean/SD computed on the training fold and used to standardize both the training and the held-out test portion\", \"Report from the outer (held-out) predictions: ROC with AUC and 95% CI (DeLong, pROC), accuracy, sensitivity, specificity at threshold 0.5, confusion matrix, and per-repeat AUC (mean +/- SD)\", \"Gene-set stability: frequency with which each gene has a nonzero coefficient across all outer folds; then refit the final model on all QC-passed samples with lambda chosen by 5-fold CV on the full data; its in-sample accuracy is reported as in-sample reference only, never as a new-sample estimate\", \"Set and record the random seed(s) for all CV resampling\", \"Never estimate performance on samples that trained the model (R-0155): the headline new-sample numbers come exclusively from the outer CV\"], \"acceptance_criteria\": [\"Pooled outer-prediction ROC saved with AUC + 95% CI (DeLong), plus confusion matrix, accuracy, sensitivity and specificity at threshold 0.5.\", \"Per-repeat AUCs reported (mean +/- SD across the 3 repeats).\", \"Final gene set (nonzero coefficients of the full-data refit) exported with coefficients, sign, and selection frequency across outer folds.\", \"The headline statement answers the question with the outer-CV accuracy (and AUC), explicitly labeled as a within-cohort estimate; no in-sample number is presented as new-sample accuracy.\"], \"caveats\": [\"The lasso gene set is unstable across folds: report selection frequency and treat the genes selected in most or all folds as the robust core; state this instability rather than presenting a single fold's genes as the signature.\", \"Length offset is lost (R-0169): state that a change in isoform use could contribute to the apparent case/control difference the classifier exploits.\", \"The estimate is within-cohort: same tissue (whole blood), single batch, same quantification pipeline. Generalization to a new cohort, new batch, or new platform is untested - state this explicitly; there is no external validation set in the inputs.\", \"Classes are balanced 60/60; accuracy is reported together with sensitivity/specificity, never alone.\"], \"packages\": [\"glmnet\", \"pROC\", \"edgeR\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0134@0f16\", \"R-0155@08c2\", \"R-0133@ce76\", \"R-0135@f02d\"], \"settings\": [{\"step\": \"signature_scoring\", \"name\": \"score_test\", \"value\": \"limma_on_scores_with_the_design\", \"source\": \"doi:10.1186/1471-2105-14-7\"}, {\"step\": \"signature_scoring\", \"name\": \"score_adjustment\", \"value\": \"BH_across_signatures\", \"source\": \"doi:10.1186/1471-2105-14-7\"}, {\"step\": \"signature_scoring\", \"name\": \"signature_provenance\", \"value\": \"source_version_and_genes_present\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_model\", \"value\": \"penalized_logistic_regression\", \"source\": \"doi:10.18637/jss.v033.i01\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_validation\", \"value\": \"nested_cross_validation\", \"source\": \"rule:R-0155\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_performance\", \"value\": \"roc_auc_with_confidence_interval\", \"source\": \"doi:10.1186/1471-2105-12-77\"}, {\"step\": \"signature_scoring\", \"name\": \"preprocessing_scope\", \"value\": \"filter_and_scaling_inside_each_training_fold\", \"source\": \"doi:10.1073/pnas.102102699\"}, {\"step\": \"signature_scoring\", \"name\": \"marker_source\", \"value\": \"panglaodb_or_hpa_tissue\", \"source\": \"doi:10.1093/database/baz046\"}, {\"step\": \"signature_scoring\", \"name\": \"marker_species_and_tissue\", \"value\": \"state_in_report\", \"source\": \"doi:10.1126/science.1260419\"}], \"reason\": \"Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve per R-0155@08c2 and R-0134@0f16; filter and scaling inside each training fold per doi:10.1073/pnas.102102699\"}]}, {\"id\": \"T1S3\", \"name\": \"Final report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"The written report that answers the research question: whether case can be told from control by gene expression, how accurate on a new sample (outer-CV estimate, within-cohort labeled), the gene signature, the descriptive DE summary with its controls, all data caveats, and the reproducibility record.\", \"question\": \"Do the results together answer: can case be distinguished from control by expression, how accurate is the classifier on a new sample, what is the evidence quality and caveat set, and is the analysis reproducible?\", \"context\": \"Aggregates T1S1 (QC decisions, count state, ID alignment), T1S2 (filter yield), T2S1 (DE table, p-value histogram, Wilcoxon/permutation controls) and T3S1 (outer-CV performance, signature, stability). Headline discipline: the new-sample accuracy is the outer-CV number only; the full-data refit accuracy is labeled in-sample reference. No external validation cohort exists in the inputs, so the report states that within-cohort validation is the limit of this estimate.\", \"constraints\": [\"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\", \"report: effect_size_beside_pvalue = true (doi:10.1093/bioinformatics/btp053)\", \"report: sort_significant_by = effect_size (doi:10.1093/bioinformatics/btp053)\", \"report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)\", \"Report contents: (1) headline classifier performance - outer-CV AUC + 95% CI, accuracy/sensitivity/specificity, per-repeat AUC stability, explicitly labeled within-cohort; (2) the learned gene signature - top nonzero coefficients, selection frequency, comparison against the T2S1 DE list (overlap only, not a re-derivation); (3) DE summary - n DE at FDR 0.05, top effect sizes, p-value histogram shape, Wilcoxon agreement, permutation false-positive count, and the R-0015 population-cohort caution; (4) data caveats - length offset lost (R-0169), single batch, no external validation cohort, QC exclusions if any; (5) the reproducibility record with seeds and package versions, stored with the results, not in a separate note.\"], \"acceptance_criteria\": [\"A written report file exists containing all five content blocks above, with sessionInfo, seeds, and package versions recorded and stored alongside the results.\", \"The headline performance number is the outer-CV estimate; no in-sample number is presented as new-sample accuracy.\", \"The DE table shows effect size beside each p-value and is sorted by effect size within the significant set.\"], \"caveats\": [\"Do not present the in-sample refit accuracy, or any number computed on training samples, as the new-sample accuracy (R-0155).\", \"The estimate cannot be claimed to transfer to new cohorts, batches, or platforms; state this limitation in the headline.\"], \"packages\": [], \"depends_on\": [\"T1S2\", \"T2S1\", \"T3S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0086@becf\", \"R-0089@69f0\", \"R-0041@059a\"], \"settings\": [{\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}, {\"step\": \"report\", \"name\": \"effect_size_beside_pvalue\", \"value\": true, \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"sort_significant_by\", \"value\": \"effect_size\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}], \"reason\": \"No rule covers the aggregation report step; it consolidates the grounded upstream steps and carries the reproducibility record per R-0086@becf\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_8861cf0904a44437a55732d4",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case-control classifier with nested CV\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-09-07T12:00:00Z\", \"analytical_narrative\": \"12,000 Salmon gene-level counts x 120 human whole-blood samples (60 case vs 60 control, unpaired, single batch). Only the gene-level table was delivered (no per-sample quantification files, no average transcript length table), so the length-correction state is unknown and every step models the counts as delivered with no length offset (R-0169). T1S1 checks sample coherence and data integrity; T1S2 applies filterByExpr with the group; T2S1 characterizes the case-vs-control difference with the population-cohort-appropriate limma-voom fixed-effects model (NB count models exaggerate false positives at 60 per group, R-0015) plus Wilcoxon and label-permutation controls; T3S1 is the core: a lasso logistic classifier with nested CV, all filtering/normalization/scaling inside each training fold, so the outer-CV AUC and accuracy are the honest new-sample estimate; the DE list is descriptive only and never pre-selects features for that estimate; T1S3 writes the report with the reproducibility record.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC (blind VST, PCA, distances)\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"PCA on the top 500 variable genes, sample-distance heatmap, library sizes, and the integrity checks (sample-ID alignment, count integrality) that downstream steps depend on.\", \"question\": \"Do the 120 whole-blood samples (60 case, 60 control) form two coherent groups, are there outlier or mislabeled samples that would bias the classifier, and do the 120 sample columns of counts.csv match the 120 rows of metadata.csv 1:1?\", \"context\": \"counts.csv: 12000 genes x 120 samples plus index column, Salmon gene-level counts as delivered; length-correction state unknown, no quantification files or length table delivered, so model as delivered with no length offset (R-0169). metadata.csv: 120 x 2 (sample, condition). Unpaired human cohort, single batch.\", \"constraints\": [\"n_top_genes = 500 and transform = vst_blind per the grounded settings\", \"Verify 1:1 sample-ID match between counts.csv and metadata.csv (120 of 120); fail loudly on any mismatch\", \"Report the fraction of non-integer count values; state the import state as delivered, no length offset (R-0169)\", \"Record a keep/exclude decision for every sample departing its group (distance from group centroid greater than 2 SD); downstream steps must use this QC-passed list\"], \"acceptance_criteria\": [\"PCA and distance heatmap colored by condition saved; departing samples flagged with keep/exclude decisions\", \"1:1 ID match confirmed or the mismatch reported\", \"Integrality fraction reported; if non-integer, the documented log-CPM fallback was used for QC plots and downstream steps informed\", \"Library-size distribution per condition saved\"], \"caveats\": [\"DESeq2 rejects non-integer counts: if the Salmon table is fractional, do not round silently; use log2(CPM+1) via edgeR::cpm for the QC plots as a documented substitution for vst and report the import state as undetermined (R-0169)\", \"Single batch, so color plots by condition only; an outlier that separates the groups inflates classifier accuracy, which is why it must be flagged now\"], \"packages\": [\"DESeq2\", \"edgeR\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}}, {\"id\": \"T1S2\", \"name\": \"filterByExpr low-count gene filter\", \"track\": \"T1\", \"step_type\": \"filtering\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"filterByExpr with the case/control group on the QC-passed samples, before any normalization; produces the filtered matrix for the DE step.\", \"question\": \"Which of the 12,000 genes carry enough counts in a 60-vs-60 design to be informative, and how many remain for the DE test?\", \"context\": \"Per R-0058, filter with the group before normalization (50+ per group). Filter on the raw delivered counts, no size factors (R-0026). If T1S1 found fractional counts, run filterByExpr on the delivered values with the same group logic and state it.\", \"constraints\": [\"filter = filterByExpr with the case/control group on QC-passed samples only, per the grounded setting\", \"Do not apply size-factor normalization before the filter (R-0058, R-0026)\", \"Report genes kept (n_in to n_out) where T2S1 and the report can read it\"], \"acceptance_criteria\": [\"Filtered count matrix written and the number of retained genes reported\", \"Filter used the case/control group, not an ungrouped threshold\"], \"caveats\": [\"The fixed-count alternative (at least 10 counts in at least 60 samples, R-0002) is permitted; filterByExpr is the method of record here\"], \"packages\": [\"edgeR\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\"], \"template\": \"tpl-edger-ql@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}], \"reason\": \"filterByExpr low count filter (edgeR) per R-0058@99e1\"}}, {\"id\": \"T2S1\", \"name\": \"Differential expression case vs control (limma-voom)\", \"track\": \"T2\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"TMM, voom, fixed-effects linear model (explicit reference control, contrast case vs control), BH at 0.05, p-value histogram diagnostic, plus the R-0015 population-cohort controls: Wilcoxon cross-check and one label-permutation replicate.\", \"question\": \"Which genes differ in expression between case and control whole blood, and how large are the differences (log2 fold change with 95% CI at BH FDR below 0.05)?\", \"context\": \"With 50+ per group the limma-voom fixed-effects path is the method of record (R-0015): in human population cohorts the negative-binomial count models (DESeq2, edgeR-GLM) exaggerate false positives, even on permuted labels. Input: the T1S2 filtered matrix, QC-passed samples. Counts modeled as delivered with no length offset (R-0169); do not run tximport on a gene table and do not invent a length input. The DE gene list is descriptive for interpretation and must NOT pre-select features for the T3S1 performance estimate.\", \"constraints\": [\"import = gene_counts_without_length_offset and missing_input = quantification_directories_or_avg_tx_length_table per the grounded settings\", \"reference_level = explicit: set the condition factor reference to control before the model; do not rely on alphabetical order\", \"contrast_form = factor_numerator_denominator: case (numerator) vs control (denominator); positive log2FC means higher in case\", \"TMM scaling factors (edgeR::calcNormFactors) before voom (R-0057); no pre-normalization beyond the log-CPM that voom models (R-0026)\", \"pvalue_histogram = inspect_before_adjustment; alpha = 0.05; adjustment = BH; filter_results_by = adjusted_pvalue per the grounded settings; select by padj, never by unadjusted p-value or fold change alone (R-0043)\", \"lfc_threshold_policy = test_against_threshold: the question states no minimum effect size, so test the zero null; additionally report the significant count above the named threshold |log2FC| at least 0.585 (1.5-fold)\", \"R-0015 controls: (a) Wilcoxon rank-sum per retained gene, reporting the fraction of voom-significant genes also significant at BH 0.05; (b) one full label-permutation replicate of the voom test reporting how many genes are falsely significant under shuffled labels\"], \"acceptance_criteria\": [\"Results table with log2FC, 95% CI, p-value, BH padj per retained gene; significant genes at padj below 0.05; significant set sorted by effect size (R-0089)\", \"Unadjusted p-value histogram saved with shape described (flat or left-peaked OK; mid-hill or right rise means adjusted p-values unreliable, R-0083)\", \"Wilcoxon agreement fraction and permutation false-positive count reported\", \"Report fields: method, package versions, design formula and contrast, thresholds, n tested, n DE, count above the named fold-change threshold (R-0041)\"], \"caveats\": [\"State the R-0015 caution: NB models exaggerate false positives at this cohort scale, which is why fixed-effects limma-voom is used; the controls quantify how well the FDR held\", \"Length offset lost (R-0169): a change in isoform use between case and control can show as differential expression; state it\", \"R-0038 (DESeq2 Cook's distance count replacement) does not apply on the voom path\", \"Use the T1S1 QC-passed sample list; excluded samples stay out of the design and are named\"], \"packages\": [\"edgeR\", \"limma\", \"ggplot2\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0058@99e1\", \"R-0002@087b\", \"R-0057@31cc\", \"R-0026@9ab1\", \"R-0169@18ab\", \"R-0036@9786\", \"R-0015@65aa\", \"R-0038@7ec6\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-limma-voom-fixed@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter\", \"value\": \"filterByExpr\", \"source\": \"guide:edgeR/2026-04-25#filtering\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"gene_counts_without_length_offset\", \"source\": \"doi:10.12688/f1000research.7563.2\"}, {\"step\": \"model_design\", \"name\": \"missing_input\", \"value\": \"quantification_directories_or_avg_tx_length_table\", \"source\": \"vignette:tximport/2026-04-28#import-transcript-level-estimates\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"Population cohort with 50+ per group: limma-voom fixed-effects model per R-0015@65aa; no length input delivered: counts modeled as delivered, no length offset per R-0169@18ab\"}}, {\"id\": \"T3S1\", \"name\": \"Case-vs-control classifier: glmnet nested CV\", \"track\": \"T3\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Lasso logistic classifier (glmnet, binomial) with nested cross-validation on the full 12,000-gene matrix; TMM, filtering, and scaling fitted strictly inside each outer training fold. Outputs: pooled outer-prediction ROC with AUC and 95% CI (DeLong), accuracy/sensitivity/specificity at 0.5, per-repeat AUC stability, the learned signature with selection frequency, and the full-data refit labeled in-sample reference only.\", \"question\": \"Can a gene expression model classify case from control, and how accurate would it be on a sample it has never seen - the honest new-sample estimate from held-out predictions?\", \"context\": \"Inputs: the full 12,000 x 120 delivered counts (no length offset, R-0169), condition from metadata.csv, T1S1 QC-passed sample list. Per R-0155 each prediction must come from a model that never saw that sample, and the gene filter and scaling are fitted inside each training fold because selection on all samples makes the error estimate optimistic. The T2S1 DE list is descriptive only and plays no role in feature selection. The settings score_test, score_adjustment, signature_provenance, marker_source, marker_species_and_tissue concern predefined external signatures; none exists here, so they do not take effect - the signature is the model's own nonzero-coefficient gene set, whose provenance (source, version, gene count) is stated per R-0134.\", \"constraints\": [\"classifier_model = penalized_logistic_regression; classifier_validation = nested_cross_validation; classifier_performance = roc_auc_with_confidence_interval; preprocessing_scope = filter_and_scaling_inside_each_training_fold per the grounded settings\", \"score_test, score_adjustment, signature_provenance, marker_source, marker_species_and_tissue are conditional on a predefined external signature; none exists here so they do not take effect - signature provenance (source, version, gene count) recorded per R-0134\", \"Outer CV: 10-fold stratified by condition (6 case / 6 control per test fold), 3 repeats with a different recorded seed per repeat; pool the outer predictions across repeats\", \"Inner CV: 5-fold on the training portion only to select the penalty parameter; choose lambda.1se (sparser, more stable signature; lambda.min is the permitted alternative)\", \"Penalty: lasso - glmnet alpha = 1, family = binomial\", \"Inside each outer training fold before fitting: (a) TMM on training-fold samples only (edgeR::calcNormFactors), (b) log2-CPM, (c) low-count gene filter fitted on the training fold, (d) per-gene mean/SD from the training fold used to standardize train and test portions\", \"Report from held-out predictions only: ROC with AUC and 95% CI (DeLong, pROC), accuracy, sensitivity, specificity at threshold 0.5, confusion matrix, per-repeat AUC (mean +/- SD)\", \"Stability: per-gene nonzero-coefficient frequency across outer folds; then refit on all QC-passed samples with lambda from 5-fold CV on the full data - in-sample reference only, never the new-sample estimate\", \"Record all CV seeds; never estimate performance on samples that trained the model (R-0155)\"], \"acceptance_criteria\": [\"Pooled outer-prediction ROC saved with AUC + 95% CI (DeLong), confusion matrix, accuracy, sensitivity, specificity at 0.5\", \"Per-repeat AUCs reported (mean +/- SD over 3 repeats)\", \"Final gene set (nonzero coefficients of the full-data refit) exported with coefficients, sign, and selection frequency\", \"Headline new-sample answer is the outer-CV accuracy and AUC, labeled within-cohort; no in-sample number presented as new-sample accuracy\"], \"caveats\": [\"The lasso gene set is unstable across folds: report selection frequency and treat the genes selected in most or all folds as the robust core\", \"Length offset lost (R-0169): a change in isoform use could contribute to the apparent case/control difference the classifier exploits; state it\", \"Within-cohort estimate: same tissue (whole blood), single batch, same quantification pipeline; generalization to a new cohort, batch, or platform is untested - no external validation set in the inputs\", \"Classes balanced 60/60: accuracy reported together with sensitivity/specificity, never alone\"], \"packages\": [\"glmnet\", \"pROC\", \"edgeR\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0134@0f16\", \"R-0155@08c2\", \"R-0133@ce76\", \"R-0135@f02d\"], \"settings\": [{\"step\": \"signature_scoring\", \"name\": \"score_test\", \"value\": \"limma_on_scores_with_the_design\", \"source\": \"doi:10.1186/1471-2105-14-7\"}, {\"step\": \"signature_scoring\", \"name\": \"score_adjustment\", \"value\": \"BH_across_signatures\", \"source\": \"doi:10.1186/1471-2105-14-7\"}, {\"step\": \"signature_scoring\", \"name\": \"signature_provenance\", \"value\": \"source_version_and_genes_present\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_model\", \"value\": \"penalized_logistic_regression\", \"source\": \"doi:10.18637/jss.v033.i01\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_validation\", \"value\": \"nested_cross_validation\", \"source\": \"rule:R-0155\"}, {\"step\": \"signature_scoring\", \"name\": \"classifier_performance\", \"value\": \"roc_auc_with_confidence_interval\", \"source\": \"doi:10.1186/1471-2105-12-77\"}, {\"step\": \"signature_scoring\", \"name\": \"preprocessing_scope\", \"value\": \"filter_and_scaling_inside_each_training_fold\", \"source\": \"doi:10.1073/pnas.102102699\"}, {\"step\": \"signature_scoring\", \"name\": \"marker_source\", \"value\": \"panglaodb_or_hpa_tissue\", \"source\": \"doi:10.1093/database/baz046\"}, {\"step\": \"signature_scoring\", \"name\": \"marker_species_and_tissue\", \"value\": \"state_in_report\", \"source\": \"doi:10.1126/science.1260419\"}], \"reason\": \"Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve per R-0155@08c2 and R-0134@0f16; filter and scaling inside each training fold per doi:10.1073/pnas.102102699\"}}, {\"id\": \"T1S3\", \"name\": \"Final report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Written report answering the research question: can case be told from control by gene expression, how accurate on a new sample (outer-CV estimate, within-cohort labeled), the gene signature, the descriptive DE summary with its controls, all data caveats, and the reproducibility record.\", \"question\": \"Do the results together answer: can case be distinguished from control by expression, how accurate is the classifier on a new sample, what are the caveats, and is the analysis reproducible?\", \"context\": \"Aggregates T1S1 (QC decisions, count state, ID alignment), T1S2 (filter yield), T2S1 (DE table, p-value histogram, Wilcoxon and permutation controls), T3S1 (outer-CV performance, signature, stability). Headline discipline: the new-sample accuracy is the outer-CV number only; the full-data refit accuracy is labeled in-sample reference. No external validation cohort exists in the inputs, so within-cohort validation is the stated limit of the estimate.\", \"constraints\": [\"reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release, stored with the results (per grounded setting)\", \"effect_size_beside_pvalue = true and sort_significant_by = effect_size (per grounded settings)\", \"report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (per grounded setting)\", \"Report contents: (1) headline classifier performance - outer-CV AUC + 95% CI, accuracy/sensitivity/specificity, per-repeat AUC stability, labeled within-cohort; (2) the learned signature - top nonzero coefficients, selection frequency, overlap with the T2S1 DE list (overlap only, not a re-derivation); (3) DE summary - n DE at FDR 0.05, top effect sizes, p-value histogram shape, Wilcoxon agreement, permutation false-positive count, the R-0015 population-cohort caution; (4) data caveats - length offset lost (R-0169), single batch, no external validation cohort, QC exclusions if any; (5) the reproducibility record with seeds and package versions\"], \"acceptance_criteria\": [\"A written report file with all five content blocks, seeds and package versions stored alongside the results\", \"The headline performance number is the outer-CV estimate; no in-sample number presented as new-sample accuracy\", \"The DE table shows effect size beside each p-value and is sorted by effect size within the significant set\"], \"caveats\": [\"Do not present the in-sample refit accuracy, or any number computed on training samples, as the new-sample accuracy (R-0155)\", \"The estimate cannot be claimed to transfer to new cohorts, batches, or platforms; state this in the headline\"], \"packages\": [], \"depends_on\": [\"T1S2\", \"T2S1\", \"T3S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0086@becf\", \"R-0089@69f0\", \"R-0041@059a\"], \"settings\": [{\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}, {\"step\": \"report\", \"name\": \"effect_size_beside_pvalue\", \"value\": true, \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"sort_significant_by\", \"value\": \"effect_size\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}], \"reason\": \"No rule covers the aggregation report step; it consolidates the grounded upstream steps and carries the reproducibility record per R-0086@becf\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 93
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "classifier": true
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "classifier": true
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0022"
+            },
+            "template": "tpl-edger-ql@1.0.0",
+            "rules": [
+              "R-0058@99e1",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0009"
+            },
+            "rules": [
+              "R-0057@31cc",
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0055"
+            },
+            "rules": [
+              "R-0134@0f16",
+              "R-0155@08c2",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0057@31cc"
+          },
+          {
+            "id": "R-0058@99e1"
+          },
+          {
+            "id": "R-0155@08c2"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 16891,
+      "elapsedMs": 42
+    },
+    {
+      "seq": 2,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0022"
+            },
+            "template": "tpl-edger-ql@1.0.0",
+            "rules": [
+              "R-0058@99e1",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0009"
+            },
+            "rules": [
+              "R-0057@31cc",
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0169@18ab",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0169@18ab",
+                "severity": "warn",
+                "message": "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+                "outcome": "report_missing_length_input"
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0019"
+            },
+            "template": "tpl-limma-voom-fixed@1.0.0",
+            "rules": [
+              "R-0015@65aa",
+              "R-0038@7ec6"
+            ],
+            "flags": [
+              {
+                "rule": "R-0015@65aa",
+                "severity": "warn",
+                "message": "If each group holds 50 or more samples, use limma-voom with a fixed-effects linear model for the differential expression test. In a population cohort the sample-to-sample variation does not obey the negative binomial model, and DESeq2 and edgeR then report many false positives, even on permuted labels. The linear model on the log counts with precision weights keeps the false discovery rate closer to the nominal level than the count models, but it also exceeds it on some data. The paper recommends the Wilcoxon rank-sum test at a large sample size. State this caution in the report, and give the Wilcoxon test or a permutation check as the control."
+              }
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0089@69f0",
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0169@18ab"
+          },
+          {
+            "id": "R-0089@69f0"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0057@31cc"
+          },
+          {
+            "id": "R-0058@99e1"
+          },
+          {
+            "id": "R-0015@65aa"
+          },
+          {
+            "id": "R-0038@7ec6"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          }
+        ],
+        "flags": [],
+        "uncovered": [
+          "shrink_lfc"
+        ]
+      },
+      "responseChars": 26908,
+      "elapsedMs": 6
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "classifier": true
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM calcNormFactors"
+              },
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit (control)"
+              },
+              {
+                "name": "contrast",
+                "value": "case vs control"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "control",
+                "value": "wilcoxon_rank_sum + label permutation"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "penalized logistic regression (glmnet lasso) with nested cross-validation and pROC AUC",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_model",
+                "value": "penalized_logistic_regression"
+              },
+              {
+                "name": "penalty",
+                "value": "lasso (alpha=1, family=binomial)"
+              },
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "outer_cv",
+                "value": "10-fold stratified x 3 repeats"
+              },
+              {
+                "name": "inner_cv",
+                "value": "5-fold, lambda.1se"
+              },
+              {
+                "name": "classifier_performance",
+                "value": "roc_auc_with_confidence_interval"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility report with session info, seeds, versions",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 99
+    },
+    {
+      "seq": 4,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr with group",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-voom fixed-effects linear model",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "TMM calcNormFactors"
+              },
+              {
+                "name": "model",
+                "value": "fixed_effects"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit (control)"
+              },
+              {
+                "name": "contrast",
+                "value": "case vs control"
+              },
+              {
+                "name": "alpha",
+                "value": "0.05"
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "pvalue_histogram",
+                "value": "inspect_before_adjustment"
+              },
+              {
+                "name": "control",
+                "value": "wilcoxon_rank_sum + label permutation"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility report with effect sizes beside p-values",
+            "parameters": [
+              {
+                "name": "effect_size_beside_pvalue",
+                "value": "true"
+              },
+              {
+                "name": "sort_significant_by",
+                "value": "effect_size"
+              },
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 10
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 3,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan fits the 2x2 factorial correctly: a PyDESeq2 NB-GLM with the explicit interaction formula, stated reference levels, programmatic identification of the interaction coefficient, within-genotype simple effects, and a nested LRT against the additive model, with Python-only fallbacks stated when the installed PyDESeq2 cannot express a contrast. Normalization stays inside the model via size factors and BH at 0.05 with lfc_shrink for reported main effects is explicit. Weaknesses: there is no explicit, justified low-count filter (it only reports whatever PyDESeq2 drops), QC lacks sample distances and any stated policy for an outlier or shallow library, and enrichment omits a gene-set size window. Reporting is otherwise thorough, naming versions, formula, thresholds, gene counts, and the power and length-correction caveats."
+}

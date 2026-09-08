@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly answers the per-sample score question: DESeq2 median-of-ratios normalization, rlog transformation, GSVA over the named MSigDB Hallmark 2026.1 collection with organism check, then Wilcoxon and t-tests on the score matrix with BH across 50 pathways and a heatmap with condition annotation; the fgsea run is framed as a cross-check rather than the answer. Weaknesses: no low-count filter is stated anywhere; no alpha is given for the BH cutoff; the heatmap is not stated to be row-scaled; sample_01 is inspected only at the DE/PCA level with a sensitivity rerun, not on the score matrix itself; and the reference level for condition is not made explicit. Reporting names the design, methods and caveats but not package versions or the count of tested versus significant pathways."
+}

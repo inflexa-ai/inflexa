@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The count model is well specified for 6 vs 6 unpaired single-batch: DESeq2 Wald with an explicit vehicle reference, factor/aldosterone/vehicle contrast, median-of-ratios inside the model, a minimal >=10-in->=6 filter, apeglm shrinkage, BH at 0.05 with independent filtering, and edgeR QL as a check, preceded by a blind-VST PCA/distance QC colored by condition with a flag-not-remove policy. The TF-activity step, which is the actual question, is only sketched in the narrative and diverges from the reference: it relies solely on per-sample ulm plus limma on log2 CPM with CollecTRI v2.0 and a size-5 floor, never regresses the Wald statistic on the signed regulons, omits mlm in favour of DoRothEA, exports a padj<0.05 DE list 'that the TF step consumes', and adds a JASPAR motif scan on DE promoters that is an over-representation-style test the reference discourages. The report step is not detailed, states neither the number of regulators tested nor the caveat that activity is an inference from targets rather than a measurement, and the 'test_against_threshold' policy names no threshold."
+}

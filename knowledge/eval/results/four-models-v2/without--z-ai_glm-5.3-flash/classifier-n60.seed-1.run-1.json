@@ -6,183 +6,388 @@
   "run": 1,
   "seed": 1,
   "split": "development",
-  "startedAt": "2026-09-08T07:08:19.839Z",
-  "elapsedMs": 339339,
-  "outcome": "error",
-  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-v2-without-classifier-n60-s1-1: Upstream idle timeout exceeded",
+  "startedAt": "2026-09-08T17:58:03.638Z",
+  "elapsedMs": 97981,
+  "outcome": "plan_submitted",
+  "planId": "pln-1de06351",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Import, QC and count preprocessing",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de-qc",
+        "status": "pending",
+        "caveats": [
+          "The record does not state whether Salmon gene-level counts are length-corrected; treat them as raw counts for DESeq2 modeling and state this assumption in the output"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 12,000 gene-level Salmon counts and 120-sample metadata internally consistent for the 60 case vs 60 control design, and which genes are expressed enough to enter the downstream models?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load the Salmon gene-level counts and metadata, verify sample/condition alignment, apply a minimal expression filter, and produce QC diagnostics (library sizes, PCA) on variance-stabilized values. Output: filtered count matrix and VST/logCPM matrix for downstream steps.",
+        "acceptance_criteria": [
+          "Sample IDs of counts.csv (120 samples, 12000 gene rows) and metadata.csv (120 rows) match one-to-one; any mismatch is reported, not silently dropped",
+          "Condition balance verified as 60 cases vs 60 controls from the actual metadata values",
+          "Low-count filter applied (e.g., keep genes with count >= 10 in at least 10 samples); gene counts before/after reported",
+          "Library-size distribution and variance-stabilized/logCPM PCA colored by condition produced; samples flagged as outliers by within-group distance are documented, none removed without justification"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Case vs control differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de-qc",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between the 60 cases and 60 controls?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Standard DESeq2 differential expression for the unpaired case-control design, with LFC shrinkage and BH correction. The DE table characterizes the biological signal; it must not be used as the classifier feature list (that selection is repeated inside cross-validation in T2S1 to avoid label leakage).",
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ condition on the filtered raw counts; full results table (baseMean, log2FC, Wald stat, p-value, BH padj) written to disk",
+          "Number of significant genes reported at FDR < 0.05 and < 0.10",
+          "A ranked list by Wald statistic saved for downstream pathway analysis",
+          "Volcano and MA plots produced"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway interpretation of DE genes",
+        "agent": "enrichment-agent",
+        "track": "de-qc",
+        "status": "pending",
+        "caveats": [
+          "biomaRt requires network access and is unavailable; use the offline org.Hs.eg.db mapping"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among the case-vs-control DE genes, and is the DE signal biologically coherent?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "ORA and pre-ranked GSEA against the WikiPathways human gene sets (HGNC symbols) available in the reference store, mapping gene identifiers via org.Hs.eg.db if the count matrix uses Ensembl/Entrez IDs. This step annotates the DE result; the classifier does not depend on it.",
+        "acceptance_criteria": [
+          "Over-representation analysis on significant DE genes and pre-ranked GSEA (fgsea) on the Wald-statistic-ranked list against the WikiPathways human gene sets",
+          "Gene identifier to HGNC symbol mapping coverage reported (skip mapping if the count matrix already uses HGNC symbols); if coverage < 80%, state it explicitly",
+          "Ranked enriched-pathway table with NES/p-values written; a clear 'pathway resource absent' report instead of fabricated results if the gene sets are missing"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Nested-CV benchmark of four classifiers",
+        "agent": "statistical-modeling-agent",
+        "track": "classification",
+        "status": "pending",
+        "caveats": [
+          "DE-gene-derived feature lists are label-informed feature selection on the same samples; using them directly would inflate accuracy — selection must be redone per fold",
+          "12000 features vs 120 samples means most models will default to heavy regularization; that is expected and is part of what the CV estimates"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "ranger",
+          "kernlab",
+          "e1071",
+          "xgboost",
+          "pROC",
+          "data.table"
+        ],
+        "question": "How accurately can a case-vs-control classifier built on the expressed-gene matrix be expected to perform on a new sample, and does that accuracy exceed chance?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Leakage-free accuracy estimation: repeated nested stratified cross-validation of four classifiers on the filtered, normalized expression matrix (VST or logCPM) from T1S1. All feature selection (univariate filter or embedded selection) and hyperparameter tuning happen inside the inner folds, computed only on each outer training split; outer folds are never touched until scoring. Because n=120 with a 12000-gene predictor space, report CIs and a permutation null rather than a point accuracy.",
+        "acceptance_criteria": [
+          "Outer evaluation is repeated stratified 10-fold cross-validation (>= 5 repeats, fixed seed); within every outer training split, hyperparameters AND the feature set are re-selected by inner 5-fold CV from the full filtered gene matrix — the T1S2 DE gene list must NOT be used as features",
+          "Four models compared: elastic-net logistic regression (glmnet), random forest (ranger), SVM-RBF (kernlab or e1071), XGBoost",
+          "Outer-fold metrics reported per model: AUC, balanced accuracy, sensitivity, specificity, with 95% CIs; a model-comparison table written",
+          "Label-permutation null (>= 100 shuffles) on the best model's outer AUC reported as an empirical p-value",
+          "Outer-CV (honest) performance reported separately from resubstitution/in-sample performance; the honest number is the headline"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Final signature and scoring rule",
+        "agent": "statistical-modeling-agent",
+        "track": "classification",
+        "status": "pending",
+        "caveats": [
+          "No independent external cohort is available in this environment (GEO holds no directly comparable downloadable whole-blood case-control set, and the sandbox has no network); the nested-CV estimate is the only accuracy number until a user-supplied validation cohort is provided"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "glmnet",
+          "pROC",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What is the final case-vs-control gene signature from the 120-sample cohort, and how should a new sample be scored and classified?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "description": "Refit the winning classifier on all 120 samples with the hyperparameters chosen in T2S1, extract the gene signature, quantify selection stability across outer folds, and package a transparent scoring rule for new samples. The all-sample fit defines the signature; its performance estimate must come from the nested-CV step, not from refitting.",
+        "acceptance_criteria": [
+          "Best model selected by outer-CV performance from T2S1 and refit on all 120 samples with the CV-chosen hyperparameters",
+          "Signature table written: selected genes with coefficients/feature importances and effect direction",
+          "Feature-selection stability reported: how often each gene is selected across the outer folds of T2S1",
+          "A compact top-N signature (most frequently selected genes) presented with its cross-validated performance from T2S1 — never with its all-sample refit performance",
+          "Calibration of the final model shown (calibration curve or Brier score); output states explicitly that the all-120-sample fit is optimistic and the quoted accuracy is the nested-CV estimate",
+          "Deliverable includes a concrete scoring rule: expression values per gene, direction, and decision threshold"
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control classifier with honest CV accuracy",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-24T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a single-batch, unpaired human whole-blood cohort (60 cases vs 60 controls) with gene-level Salmon counts for 12,000 genes over 120 samples. The question — can expression classify case vs control and how accurate would it be on a new sample — is fundamentally an out-of-sample generalization question, so the plan is built around leakage-free accuracy estimation rather than in-sample fit. Flow: (1) import and QC the counts against the 120-row metadata, verify the 60/60 balance, filter near-zero genes, and screen for outliers on a variance-stabilized PCA; (2) run a standard DESeq2 case-vs-control differential expression analysis on the raw counts to characterize the biological signal (this informs interpretation but is explicitly NOT used as the classifier's feature list, because a DE selection done on all 120 samples would leak labels into the feature set); (3) map DE biology to WikiPathways human pathways for interpretability; (4) benchmark four classifiers (elastic-net logistic, random forest, SVM-RBF, XGBoost) under repeated nested stratified cross-validation, where feature selection and hyperparameter tuning happen inside the inner folds on the full filtered expression matrix, and report outer-fold AUC/balanced accuracy/sensitivity/specificity with CIs plus a label-permutation null; (5) refit the best model on all 120 samples to deliver a concrete gene signature and scoring rule, quoting only the cross-validated performance as the accuracy estimate. A GEO search found no directly comparable downloadable whole-blood case-control cohort to validate against, and the sandbox has no network, so external validation is noted as requiring a user-supplied cohort rather than planned as a step."
+  },
   "usage": {
-    "inputTokens": 31159,
-    "outputTokens": 4377,
-    "cacheReadInputTokens": 0,
-    "reasoningTokens": 1957
+    "inputTokens": 102982,
+    "outputTokens": 8151,
+    "cacheReadInputTokens": 71424,
+    "reasoningTokens": 3485
   },
   "toolCalls": [
     {
-      "toolUseId": "call_d7bf2676ed414f638c8da372",
+      "toolUseId": "call_f43853c9c66c477dbea2a883",
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "whole blood case control RNA-seq gene expression classifier biomarker",
+        "datasetType": "gse",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1167
+    },
+    {
+      "toolUseId": "call_65fc23ecd3684a2cb479c272",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case vs control classifier with honest CV accuracy\", \"analytical_narrative\": \"The dataset is a single-batch, unpaired human whole-blood cohort (60 cases vs 60 controls) with gene-level Salmon counts for 12,000 genes over 120 samples. The question — can expression classify case vs control and how accurate would it be on a new sample — is fundamentally an out-of-sample generalization question, so the plan is built around leakage-free accuracy estimation rather than in-sample fit. Flow: (1) import and QC the counts against the 120-row metadata, verify the 60/60 balance, filter near-zero genes, and screen for outliers on a variance-stabilized PCA; (2) run a standard DESeq2 case-vs-control differential expression analysis on the raw counts to characterize the biological signal (this informs interpretation but is explicitly NOT used as the classifier's feature list, because a DE selection done on all 120 samples would leak labels into the feature set); (3) map DE biology to WikiPathways human pathways for interpretability; (4) benchmark four classifiers (elastic-net logistic, random forest, SVM-RBF, XGBoost) under repeated nested stratified cross-validation, where feature selection and hyperparameter tuning happen inside the inner folds on the full filtered expression matrix, and report outer-fold AUC/balanced accuracy/sensitivity/specificity with CIs plus a label-permutation null; (5) refit the best model on all 120 samples to deliver a concrete gene signature and scoring rule, quoting only the cross-validated performance as the accuracy estimate. A GEO search found no directly comparable downloadable whole-blood case-control cohort to validate against, and the sandbox has no network, so external validation is noted as requiring a user-supplied cohort rather than planned as a step.\", \"created_at\": \"2026-07-24T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Import, QC and count preprocessing\", \"track\": \"de-qc\", \"step_type\": \"analysis\", \"question\": \"Are the 12,000 gene-level Salmon counts and 120-sample metadata internally consistent for the 60 case vs 60 control design, and which genes are expressed enough to enter the downstream models?\", \"acceptance_criteria\": [\"Sample IDs of counts.csv (120 samples, 12000 gene rows) and metadata.csv (120 rows) match one-to-one; any mismatch is reported, not silently dropped\", \"Condition balance verified as 60 cases vs 60 controls from the actual metadata values\", \"Low-count filter applied (e.g., keep genes with count >= 10 in at least 10 samples); gene counts before/after reported\", \"Library-size distribution and variance-stabilized/logCPM PCA colored by condition produced; samples flagged as outliers by within-group distance are documented, none removed without justification\"], \"packages\": [\"DESeq2\", \"data.table\", \"ggplot2\", \"pheatmap\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Load the Salmon gene-level counts and metadata, verify sample/condition alignment, apply a minimal expression filter, and produce QC diagnostics (library sizes, PCA) on variance-stabilized values. Output: filtered count matrix and VST/logCPM matrix for downstream steps.\", \"caveats\": [\"The record does not state whether Salmon counts have length correction applied; treat them as raw counts for DESeq2 (its model handles gene length implicitly via offsets only when using tximport with countsFromAbundance; for gene-level counts without offsets, DESeq2 on raw counts is the standard route) and state the assumption in the output\"]}, {\"id\": \"T1S2\", \"name\": \"Case vs control differential expression\", \"track\": \"de-qc\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 60 cases and 60 controls?\", \"acceptance_criteria\": [\"DESeq2 run with design ~ condition on the filtered raw counts; full results table (baseMean, log2FC, Wald stat, p-value, BH padj) written to disk\", \"Number of significant genes reported at FDR < 0.05 and < 0.10\", \"A ranked list by Wald statistic saved for downstream pathway analysis\", \"Volcano and MA plots produced\"], \"packages\": [\"DESeq2\", \"apeglm\", \"EnhancedVolcano\", \"data.table\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Standard DESeq2 differential expression for the unpaired case-control design, with LFC shrinkage and BH correction. The DE table characterizes the biological signal; it must not be used as the classifier feature list (that selection is repeated inside cross-validation in T2S1 to avoid label leakage).\"}, {\"id\": \"T1S3\", \"name\": \"Pathway interpretation of DE genes\", \"track\": \"de-qc\", \"step_type\": \"analysis\", \"question\": \"Which WikiPathways human pathways are enriched among the case-vs-control DE genes, and is the DE signal biologically coherent?\", \"acceptance_criteria\": [\"Over-representation analysis on significant DE genes and pre-ranked GSEA (fgsea) on the Wald-statistic-ranked list against the WikiPathways human GMT\", \"Gene identifier to HGNC symbol mapping coverage reported (skip mapping if the count matrix already uses HGNC symbols); if coverage < 80%, state it explicitly\", \"Ranked enriched-pathway table with NES/p-values written; a clear 'pathway resource absent' report instead of fabricated results if the GMT is missing\"], \"packages\": [\"fgsea\", \"GSEABase\", \"clusterProfiler\", \"org.Hs.eg.db\", \"ggplot2\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"description\": \"ORA and pre-ranked GSEA against the WikiPathways human gene sets (HGNC symbols) available in the reference store, mapping gene identifiers via org.Hs.eg.db if the count matrix uses Ensembl/Entrez IDs. This step annotates the DE result; the classifier does not depend on it.\", \"caveats\": [\"biomaRt requires network access and is unavailable; use the offline org.Hs.eg.db mapping\"]}, {\"id\": \"T2S1\", \"name\": \"Nested-CV benchmark of four classifiers\", \"track\": \"classification\", \"step_type\": \"analysis\", \"question\": \"How accurately can a case-vs-control classifier built on the expressed-gene matrix be expected to perform on a new sample, and does that accuracy exceed chance?\", \"acceptance_criteria\": [\"Outer evaluation is repeated stratified 10-fold cross-validation (>= 5 repeats, fixed seed); within every outer training split, hyperparameters AND the feature set are re-selected by inner 5-fold CV from the full filtered gene matrix — the T1S2 DE gene list must NOT be used as features\", \"Four models compared: elastic-net logistic regression (glmnet), random forest (ranger), SVM-RBF (kernlab or e1071), XGBoost\", \"Outer-fold metrics reported per model: AUC, balanced accuracy, sensitivity, specificity, with 95% CIs; a model-comparison table written\", \"Label-permutation null (>= 100 shuffles) on the best model's outer AUC reported as an empirical p-value\", \"Outer-CV (honest) performance reported separately from resubstitution/in-sample performance; the honest number is the headline\"], \"packages\": [\"glmnet\", \"ranger\", \"kernlab\", \"e1071\", \"xgboost\", \"pROC\", \"data.table\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"statistical-modeling-agent\", \"description\": \"Leakage-free accuracy estimation: repeated nested stratified cross-validation of four classifiers on the filtered, normalized expression matrix (VST or logCPM) from T1S1. All feature selection (univariate filter or embedded selection) and hyperparameter tuning happen inside the inner folds, computed only on each outer training split; outer folds are never touched until scoring. Because n=120 with a 12000-gene predictor space, report CIs and a permutation null rather than a point accuracy.\", \"caveats\": [\"DE-gene-derived feature lists are label-informed feature selection on the same samples; using them directly would inflate accuracy — selection must be redone per fold\", \"12000 features vs 120 samples means most models will default to heavy regularization; that is expected and is part of what the CV estimates\"]}, {\"id\": \"T2S2\", \"name\": \"Final signature and scoring rule\", \"track\": \"classification\", \"step_type\": \"analysis\", \"question\": \"What is the final case-vs-control gene signature from the 120-sample cohort, and how should a new sample be scored and classified?\", \"acceptance_criteria\": [\"Best model selected by outer-CV performance from T2S1 and refit on all 120 samples with the CV-chosen hyperparameters\", \"Signature table written: selected genes with coefficients/feature importances and effect direction\", \"Feature-selection stability reported: how often each gene is selected across the outer folds of T2S1\", \"A compact top-N signature (most frequently selected genes) presented with its cross-validated performance from T2S1 — never with its all-sample refit performance\", \"Calibration of the final model shown (calibration curve or Brier score); output states explicitly that the all-120-sample fit is optimistic and the quoted accuracy is the nested-CV estimate\", \"Deliverable includes a concrete scoring rule: expression values per gene, direction, and decision threshold\"], \"packages\": [\"glmnet\", \"pROC\", \"ggplot2\", \"data.table\"], \"depends_on\": [\"T2S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"statistical-modeling-agent\", \"description\": \"Refit the winning classifier on all 120 samples with the hyperparameters chosen in T2S1, extract the gene signature, quantify selection stability across outer folds, and package a transparent scoring rule for new samples. The all-sample fit defines the signature; its performance estimate must come from the nested-CV step, not from refitting.\", \"caveats\": [\"No independent external cohort is available in this environment (GEO holds no directly comparable downloadable whole-blood case-control set, and the sandbox has no network); the nested-CV estimate is the only accuracy number until a user-supplied validation cohort is provided\"]}]}}"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_b362759b8770404da343b753",
       "name": "submit_plan",
       "input": {
         "plan": {
-          "created_at": "2026-07-22T12:00:00Z",
-          "omicsSubtype": "bulk-rna-seq",
+          "title": "Whole-blood case vs control classifier with honest CV accuracy",
+          "analytical_narrative": "The dataset is a single-batch, unpaired human whole-blood cohort (60 cases vs 60 controls) with gene-level Salmon counts for 12,000 genes over 120 samples. The question — can expression classify case vs control and how accurate would it be on a new sample — is fundamentally an out-of-sample generalization question, so the plan is built around leakage-free accuracy estimation rather than in-sample fit. Flow: (1) import and QC the counts against the 120-row metadata, verify the 60/60 balance, filter near-zero genes, and screen for outliers on a variance-stabilized PCA; (2) run a standard DESeq2 case-vs-control differential expression analysis on the raw counts to characterize the biological signal (this informs interpretation but is explicitly NOT used as the classifier's feature list, because a DE selection done on all 120 samples would leak labels into the feature set); (3) map DE biology to WikiPathways human pathways for interpretability; (4) benchmark four classifiers (elastic-net logistic, random forest, SVM-RBF, XGBoost) under repeated nested stratified cross-validation, where feature selection and hyperparameter tuning happen inside the inner folds on the full filtered expression matrix, and report outer-fold AUC/balanced accuracy/sensitivity/specificity with CIs plus a label-permutation null; (5) refit the best model on all 120 samples to deliver a concrete gene signature and scoring rule, quoting only the cross-validated performance as the accuracy estimate. A GEO search found no directly comparable downloadable whole-blood case-control cohort to validate against, and the sandbox has no network, so external validation is noted as requiring a user-supplied cohort rather than planned as a step.",
+          "created_at": "2026-07-24T00:00:00Z",
           "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
           "steps": [
             {
-              "acceptance_criteria": [
-                "All 120 samples in counts.csv are matched 1:1 to metadata rows with condition labels (60 case / 60 control); sample order mismatches are resolved by ID, never by position",
-                "A prefilter (e.g., CPM > 1 in at least 10 samples) retains a stated number of expressed genes and drops near-zero genes; the retained gene count is reported",
-                "A normalized log-scale matrix (VST or logCPM) for the filtered genes x 120 samples is written to disk",
-                "PCA of the normalized matrix is produced, colored by condition, with the fraction of variance explained by PC1/PC2 and any condition separation described",
-                "Library sizes and normalization factors are reported for all 120 samples with no sample flagged as a gross outlier unmentioned"
-              ],
-              "agent": "bulk-transcriptomics-agent",
-              "context": "Files: counts.csv (12000 genes x 120 sample columns plus ID column, raw Salmon gene-level counts) and metadata.csv (120 rows x 2 columns: sample ID and condition). Design: 60 case vs 60 control, unpaired, whole blood, single batch. Whether Salmon counts received tximport-style length correction is not recorded; for between-sample normalization with DESeq2/edgeR on gene-level counts this is immaterial, but the step should state which counts it received. metadata.csv has only condition plus sample ID, so no covariates can be modeled - this is a limitation for interpretation, not for the classifier itself.",
-              "depends_on": [],
-              "description": "Load the raw Salmon gene-level count matrix (12000 genes x 120 samples) and the 120-row condition metadata, verify sample/gene integrity, filter low-expression genes, normalize with a variance-stabilizing or logCPM transform, and produce a PCA/QC summary to confirm the case-control design is clean before any modeling.",
               "id": "T1S1",
-              "name": "QC, filtering and normalization of case-control counts",
-              "packages": [
-                "data.table==1.18.4",
-                "edgeR==4.10.3",
-                "DESeq2==1.52.0",
-                "ggplot2==4.0.3",
-                "pheatmap==1.0.13"
-              ],
-              "question": "Are the 120 samples (60 case vs 60 control) and 12000 genes internally consistent, which genes carry enough signal to analyze, and do samples cluster by condition or show outliers on a PCA of normalized expression?",
-              "resources": {
-                "cpu": 4,
-                "memoryGb": 8
-              },
+              "name": "Import, QC and count preprocessing",
+              "track": "de-qc",
               "step_type": "analysis",
-              "track": "T1-prep"
-            },
-            {
+              "question": "Are the 12,000 gene-level Salmon counts and 120-sample metadata internally consistent for the 60 case vs 60 control design, and which genes are expressed enough to enter the downstream models?",
               "acceptance_criteria": [
-                "A full DE results table (gene, baseMean, log2FoldChange, Wald p-value, BH adjusted p-value) covering all tested genes is written to disk",
-                "The number of genes at FDR < 0.05 and the number additionally passing a fold-change threshold are reported",
-                "The shrunken log2FC version (apeglm) is used for ranking and reporting effect sizes",
-                "A volcano plot and an MA plot are produced",
-                "A ranked gene list (signed statistic) is exported for downstream enrichment"
+                "Sample IDs of counts.csv (120 samples, 12000 gene rows) and metadata.csv (120 rows) match one-to-one; any mismatch is reported, not silently dropped",
+                "Condition balance verified as 60 cases vs 60 controls from the actual metadata values",
+                "Low-count filter applied (e.g., keep genes with count >= 10 in at least 10 samples); gene counts before/after reported",
+                "Library-size distribution and variance-stabilized/logCPM PCA colored by condition produced; samples flagged as outliers by within-group distance are documented, none removed without justification"
               ],
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
               "agent": "bulk-transcriptomics-agent",
-              "context": "Unpaired two-group design: ~design = ~ condition. No covariates are available in metadata.csv. Shrunken LFCs (apeglm) are for effect-size reporting only; the unshrunken Wald statistic is what gets exported as the ranking.",
-              "depends_on": [
-                "T1S1"
-              ],
-              "description": "Fit a DESeq2 negative-binomial model on the filtered raw counts with a two-level condition factor (case vs control), apply BH multiple-testing correction, and export the DE table plus a ranked gene list that later steps use for biological interpretation.",
+              "description": "Load the Salmon gene-level counts and metadata, verify sample/condition alignment, apply a minimal expression filter, and produce QC diagnostics (library sizes, PCA) on variance-stabilized values. Output: filtered count matrix and VST/logCPM matrix for downstream steps.",
+              "caveats": [
+                "The record does not state whether Salmon gene-level counts are length-corrected; treat them as raw counts for DESeq2 modeling and state this assumption in the output"
+              ]
+            },
+            {
               "id": "T1S2",
-              "name": "Differential expression: 60 cases vs 60 controls",
-              "packages": [
-                "DESeq2==1.52.0",
-                "apeglm==1.34.0",
-                "EnhancedVolcano==1.30.0",
-                "data.table==1.18.4",
-                "ggplot2==4.0.3"
-              ],
-              "question": "Which genes are differentially expressed between the 60 cases and the 60 controls, at what magnitudes, and with what FDR?",
-              "resources": {
-                "cpu": 4,
-                "memoryGb": 8
-              },
+              "name": "Case vs control differential expression",
+              "track": "de-qc",
               "step_type": "analysis",
-              "track": "T1-prep"
-            },
-            {
+              "question": "Which genes are differentially expressed between the 60 cases and 60 controls?",
               "acceptance_criteria": [
-                "Outer performance estimates are reported for every model as mean +/- SD or CI across outer folds: AUROC, accuracy, balanced accuracy, sensitivity, specificity",
-                "All tuning (lambda, alpha, mtry, cost) and all feature filtering happen strictly inside inner training folds; no statistic computed on the full dataset is used to pick features or hyperparameters - if any deviation exists it is stated explicitly as an optimism caveat",
-                "A per-fold table of fold ID, chosen hyperparameters, number of selected genes, and test-fold metrics is exported",
-                "The best model by outer-fold AUROC is named, and the honest expected accuracy on a new single sample is stated as a range derived from the outer folds, with the caveat that n=120 makes these estimates wide",
-                "Permutation sanity check: AUROC of the model on label-shuffled data is reported to confirm the pipeline does not extract signal from noise"
+                "DESeq2 run with design ~ condition on the filtered raw counts; full results table (baseMean, log2FC, Wald stat, p-value, BH padj) written to disk",
+                "Number of significant genes reported at FDR < 0.05 and < 0.10",
+                "A ranked list by Wald statistic saved for downstream pathway analysis",
+                "Volcano and MA plots produced"
               ],
-              "agent": "statistical-modeling-agent",
-              "context": "Input is the normalized (VST or logCPM) expression matrix from T1S1 for 120 samples x filtered genes, plus condition labels. n=120, 60/60 balanced. The candidate feature set for any fold is the full filtered gene matrix - the T1S2 DE list must NOT be used as a pre-filter, because it was computed on all samples and would leak labels. A univariate screen (e.g., by moderated t or variance) applied inside each inner fold is allowed. Primary model: elastic-net logistic regression; comparators: linear SVM and random forest. Metrics: AUROC, accuracy, balanced accuracy, sensitivity, specificity. With 120 samples, use repeated k-fold (e.g., 5 repeats x 10-fold) outer CV and report the spread, not a single number. The metadata carries only condition, so covariate adjustment is not possible; state this.",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "data.table",
+                "ggplot2"
+              ],
               "depends_on": [
                 "T1S1"
               ],
-              "description": "Train and honestly evaluate gene-expression classifiers (elastic-net logistic regression, linear SVM, random forest) that distinguish case from control, using nested cross-validation where hyperparameter tuning AND feature selection happen strictly inside inner training folds, and outer folds are touched only for performance estimation.",
-              "id": "T2S1",
-              "name": "Nested-CV classifier: case vs control",
-              "packages": [
-                "glmnet==5.0",
-                "e1071==1.7-17",
-                "ranger==0.18.0",
-                "pROC==1.19.0.1",
-                "data.table==1.18.4",
-                "ggplot2==4.0.3"
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Standard DESeq2 differential expression for the unpaired case-control design, with LFC shrinkage and BH correction. The DE table characterizes the biological signal; it must not be used as the classifier feature list (that selection is repeated inside cross-validation in T2S1 to avoid label leakage)."
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway interpretation of DE genes",
+              "track": "de-qc",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among the case-vs-control DE genes, and is the DE signal biologically coherent?",
+              "acceptance_criteria": [
+                "Over-representation analysis on significant DE genes and pre-ranked GSEA (fgsea) on the Wald-statistic-ranked list against the WikiPathways human gene sets",
+                "Gene identifier to HGNC symbol mapping coverage reported (skip mapping if the count matrix already uses HGNC symbols); if coverage < 80%, state it explicitly",
+                "Ranked enriched-pathway table with NES/p-values written; a clear 'pathway resource absent' report instead of fabricated results if the gene sets are missing"
               ],
-              "question": "How accurately can a gene-expression classifier distinguish the 60 cases from the 60 controls on a new sample, when feature selection and tuning are performed honestly inside cross-validation?",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "description": "ORA and pre-ranked GSEA against the WikiPathways human gene sets (HGNC symbols) available in the reference store, mapping gene identifiers via org.Hs.eg.db if the count matrix uses Ensembl/Entrez IDs. This step annotates the DE result; the classifier does not depend on it.",
+              "caveats": [
+                "biomaRt requires network access and is unavailable; use the offline org.Hs.eg.db mapping"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Nested-CV benchmark of four classifiers",
+              "track": "classification",
+              "step_type": "analysis",
+              "question": "How accurately can a case-vs-control classifier built on the expressed-gene matrix be expected to perform on a new sample, and does that accuracy exceed chance?",
+              "acceptance_criteria": [
+                "Outer evaluation is repeated stratified 10-fold cross-validation (>= 5 repeats, fixed seed); within every outer training split, hyperparameters AND the feature set are re-selected by inner 5-fold CV from the full filtered gene matrix — the T1S2 DE gene list must NOT be used as features",
+                "Four models compared: elastic-net logistic regression (glmnet), random forest (ranger), SVM-RBF (kernlab or e1071), XGBoost",
+                "Outer-fold metrics reported per model: AUC, balanced accuracy, sensitivity, specificity, with 95% CIs; a model-comparison table written",
+                "Label-permutation null (>= 100 shuffles) on the best model's outer AUC reported as an empirical p-value",
+                "Outer-CV (honest) performance reported separately from resubstitution/in-sample performance; the honest number is the headline"
+              ],
+              "packages": [
+                "glmnet",
+                "ranger",
+                "kernlab",
+                "e1071",
+                "xgboost",
+                "pROC",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
               "resources": {
                 "cpu": 4,
                 "memoryGb": 8
               },
-              "step_type": "modeling",
-              "track": "T2-classifier"
+              "agent": "statistical-modeling-agent",
+              "description": "Leakage-free accuracy estimation: repeated nested stratified cross-validation of four classifiers on the filtered, normalized expression matrix (VST or logCPM) from T1S1. All feature selection (univariate filter or embedded selection) and hyperparameter tuning happen inside the inner folds, computed only on each outer training split; outer folds are never touched until scoring. Because n=120 with a 12000-gene predictor space, report CIs and a permutation null rather than a point accuracy.",
+              "caveats": [
+                "DE-gene-derived feature lists are label-informed feature selection on the same samples; using them directly would inflate accuracy — selection must be redone per fold",
+                "12000 features vs 120 samples means most models will default to heavy regularization; that is expected and is part of what the CV estimates"
+              ]
             },
             {
+              "id": "T2S2",
+              "name": "Final signature and scoring rule",
+              "track": "classification",
+              "step_type": "analysis",
+              "question": "What is the final case-vs-control gene signature from the 120-sample cohort, and how should a new sample be scored and classified?",
               "acceptance_criteria": [
-                "A signature table: gene symbol, elastic-net coefficient, fold frequency across outer CV runs",
-                "Stability summary: how many genes recur in >=50%, >=80% of folds; interpretability caveat if the signature is large or unstable",
-                "A final full-data model object plus the fitted probabilities for all 120 samples (in-sample, clearly labeled as such)",
-                "A heatmap or dot plot of the signature genes' normalized expression across the 120 samples ordered by condition"
+                "Best model selected by outer-CV performance from T2S1 and refit on all 120 samples with the CV-chosen hyperparameters",
+                "Signature table written: selected genes with coefficients/feature importances and effect direction",
+                "Feature-selection stability reported: how often each gene is selected across the outer folds of T2S1",
+                "A compact top-N signature (most frequently selected genes) presented with its cross-validated performance from T2S1 — never with its all-sample refit performance",
+                "Calibration of the final model shown (calibration curve or Brier score); output states explicitly that the all-120-sample fit is optimistic and the quoted accuracy is the nested-CV estimate",
+                "Deliverable includes a concrete scoring rule: expression values per gene, direction, and decision threshold"
               ],
-              "agent": "statistical-modeling-agent",
-              "context": "Use the elastic-net model (the primary model from T2S1) and its cross-validated runs. Coefficients from the full-data refit describe the fitted data, not new-sample performance - performance claims come only from T2S1 outer folds. If the signature is very large (>50 genes) or unstable across folds, say so explicitly rather than presenting a tidy gene panel.",
+              "packages": [
+                "glmnet",
+                "pROC",
+                "ggplot2",
+                "data.table"
+              ],
               "depends_on": [
                 "T2S1"
               ],
-              "description": "Refit the winning model on all 120 samples at the selected hyperparameters, extract the nonzero-coefficient gene signature, and quantify how consistently each gene is selected across outer-CV folds.",
-              "id": "T2S2",
-              "name": "Final signature and selection stability",
-              "packages": [
-                "glmnet==5.0",
-                "data.table==1.18.4",
-                "pheatmap==1.0.13",
-                "ggplot2==4.0.3"
-              ],
-              "question": "Which genes make up the final case-vs-control classifier signature, how large is it, and how stable is the selected gene set across resampling folds?",
               "resources": {
                 "cpu": 2,
-                "memoryGb": 8
+                "memoryGb": 4
               },
-              "step_type": "analysis",
-              "track": "T2-classifier"
-            },
-            {
-              "acceptance_criteria": [
-                "Pathway-level results table for both rankings (pathway, size, NES, padj/BH) written to disk",
-                "Top enriched pathways at FDR < 0.05 named for (a) the DE ranking and (b) the classifier-signature ranking, with a note on overlap or divergence between the two",
-                "The enrichment confirms the signature is biologically coherent rather than a technical artefact, or reports plainly if it is not",
-                "If the human GMT reference is absent from the environment, the step reports its absence and skips gracefully instead of failing the run"
-              ],
-              "agent": "enrichment-agent",
-              "context": "Whole-blood case-control data; the environment holds a WikiPathways Homo sapiens GMT (HGNC gene symbols, one pathway per line, '%'-delimited descriptor) as the gene-set source. Match gene identifiers to HGNC symbols; if identifier types disagree, resolve via the staged UniProt human ID mapping (Entrez/Ensembl/symbol columns). Genes absent from a pathway's universe are handled by fgsea's default ranking-of-all-genes approach, which needs no pre-set universe.",
-              "depends_on": [
-                "T1S2",
-                "T2S2"
-              ],
-              "description": "Run GSEA (fgsea) on the case-vs-control DE ranked list and on the classifier-signature ranked list against WikiPathways human gene sets to interpret the biology the classifier has learned.",
-              "id": "T3S1",
-              "name": "Pathway interpretation of DE and classifier signature",
-              "packages": [
-                "fgsea==1.38.0",
-                "GSEABase==1.74.0",
-                "data.table==1.18.4",
-                "ggplot2==4.0.3"
-              ],
-              "question": "Which biological pathways characterize the case-control difference (from the DE ranking) and the classifier's learned signature, and do the two converge?",
-              "resources": {
-                "cpu": 2,
-                "memoryGb": 8
-              },
-              "step_type": "analysis",
-              "track": "T3-interpretation"
+              "agent": "statistical-modeling-agent",
+              "description": "Refit the winning classifier on all 120 samples with the hyperparameters chosen in T2S1, extract the gene signature, quantify selection stability across outer folds, and package a transparent scoring rule for new samples. The all-sample fit defines the signature; its performance estimate must come from the nested-CV step, not from refitting.",
+              "caveats": [
+                "No independent external cohort is available in this environment (GEO holds no directly comparable downloadable whole-blood case-control set, and the sandbox has no network); the nested-CV estimate is the only accuracy number until a user-supplied validation cohort is provided"
+              ]
             }
-          ],
-          "title": "Case-vs-control whole-blood expression classifier"
+          ]
         }
       },
       "outcome": "ok",
-      "durationMs": 4
+      "durationMs": 27
     }
   ],
   "knowledgeCalls": [],

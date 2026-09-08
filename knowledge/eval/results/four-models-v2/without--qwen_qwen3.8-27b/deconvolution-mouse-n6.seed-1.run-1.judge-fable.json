@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan gets the core species logic right: it explicitly refuses the human deconvolution tools, works on linear CPM, uses mouse marker panels, tests each population with Wilcoxon plus BH across cell types with effect sizes and direction, and keeps sample_01 with depth, PCA position and a leave-one-out check. Its main flaw is converting GSVA scores (which range over [-1,1] and are only comparable across samples within one set) into 'row-normalized fractions' with an 'unassigned' residual and testing those as a second scale; this is exactly the cross-population comparison the reference forbids, and the limitations paragraph does not undo it. The marker lists are sloppy (Eomesh, Cd11c, Csf3r1, Hrb2, Tnc for mast cells, Cdh5 in pericytes) and kcdf='Gaussian' on untransformed CPM is a minor mismatch. The DESeq2/fgsea track was not asked for; it is specified competently (mouse collections with versions, size window) but the ranking metric based on floored padj is ill-defined and the Fisher overlay universe is odd, so enrichment neither omits correctly nor executes cleanly. The DESeq2 design omits an explicit reference level, and the report does not commit to stating package versions."
+}

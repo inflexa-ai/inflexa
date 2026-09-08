@@ -5,14 +5,14 @@
   "tag": "fable",
   "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
   "scores": {
-    "method_fits_design": 0,
-    "qc_present": 0,
-    "low_count_filter": 0,
-    "normalization": 0,
-    "model_formula_contrasts": 0,
-    "fdr_shrinkage": 0,
-    "enrichment_universe_sets": 0,
-    "report_completeness": 0
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
   },
-  "rationale": "No plan was submitted; the planner terminated with a provider timeout error and produced no content. There is nothing to evaluate against any criterion: no statement of method, QC, filtering, normalization, design, multiple testing, enrichment approach, or reporting. Every criterion scores 0 as absent."
+  "rationale": "The plan correctly inherits the delivered DESeq2 table rather than refitting, ranks all 12,000 tested genes by the Wald statistic with no threshold, and runs fgsea against a pinned Hallmark collection (2026.1) with a 15-500 size window, BH adjustment, fixed seed, identifier-space check, and per-set leading edges, matching the reference closely. Sample QC is design-specific (blind VST, PCA, distances, explicit keep-inspect-report policy for the shallow sample_01) and the sign convention and reference level are to be stated. Weaknesses: the pathway alpha is never stated numerically, the permutation scheme is not described, and no low-count filter or its upstream provenance is discussed for the QC transform; normalization is only touched implicitly via the size-factor remark. The Reactome/WikiPathways follow-up is extra scope beyond the question but does not harm the primary analysis."
 }

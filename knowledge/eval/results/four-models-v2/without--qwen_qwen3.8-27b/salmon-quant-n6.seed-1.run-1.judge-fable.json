@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to hand-round NumReads or model TPM, imports at gene level with tximport and the delivered tx2gene map, and keeps DESeq2 Wald with ~condition, BH at 0.05, and apeglm after the test. It departs from the reference by using countsFromAbundance='lengthScaledTPM' into a matrix rather than raw counts with the average-transcript-length offset via DESeqDataSetFromTximport; this is a documented and defensible alternative but not the stated best fit for DESeq2, and it also cites a non-existent tximport argument and gives no annotation version for the map. QC lists library size, detected genes, and a distance plot with an outlier policy but omits an explicit PCA; the filter (non-zero in 6 of 12) is minimal but only loosely justified; size-factor normalization is implicit in DESeq2 rather than stated. Enrichment names the collection and version and the ranking metric, but the ORA universe and gene-set size window are never specified."
+}

@@ -5,14 +5,14 @@
   "tag": "fable",
   "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
   "scores": {
-    "method_fits_design": 0,
-    "qc_present": 0,
-    "low_count_filter": 0,
-    "normalization": 0,
-    "model_formula_contrasts": 0,
-    "fdr_shrinkage": 0,
-    "enrichment_universe_sets": 0,
-    "report_completeness": 0
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
   },
-  "rationale": "No plan was submitted; the planner terminated with a provider timeout error and produced no content. There is nothing to evaluate against the reference: no method, no QC, no filtering or normalization, no clustering procedure, no stability or null comparison, no confounder check, and no report. Every criterion is absent and scores zero, including enrichment, since the omission is not a deliberate correct choice but a total absence of output."
+  "rationale": "The plan matches the reference core: blind vst on raw Salmon counts with DESeq2 size factors, filterByExpr, top-2000 centered genes, ConsensusClusterPlus with 1000 reps, 0.8 item/feature subsampling, stated distance and linkage, k chosen from CDF delta area plus PAC with item and cluster consensus, and clusters tabulated against condition, library size, and metadata with the correct 'condition re-discovery is not a subgroup' interpretation. Two reference elements are missing: no formal test of cluster-condition agreement (ARI, chi-squared or Fisher) is specified, only a table, and the null-structure problem is handled by a stated caveat rather than an actual permuted or simulated null matrix comparison that would decide whether the structure is real. QC is solid but the outlier policy is limited to flagging shallow samples without stating what happens to them. Enrichment and DE-style FDR are correctly absent for this unsupervised question, and the report carries sessionInfo, seeds, and thresholds."
 }

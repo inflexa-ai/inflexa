@@ -5,14 +5,14 @@
   "tag": "fable",
   "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
   "scores": {
-    "method_fits_design": 0,
-    "qc_present": 0,
-    "low_count_filter": 0,
-    "normalization": 0,
-    "model_formula_contrasts": 0,
-    "fdr_shrinkage": 0,
-    "enrichment_universe_sets": 0,
-    "report_completeness": 0
+    "method_fits_design": 6,
+    "qc_present": 6,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
   },
-  "rationale": "No plan was submitted; the planner terminated with a provider timeout error and produced no content. There is nothing to judge on any criterion: no statistical method, no QC, no filtering, no normalization, no model or contrast, no multiple-testing procedure, no regulator inference against CollecTRI, and no report. Every criterion is scored as absent."
+  "rationale": "PyDESeq2 with size factors, a Wald test on the 6 vs 6 unpaired single-batch contrast, and decoupler ULM on CollecTRI with a minimum of five targets and a per-sample activity matrix on the VST are the correct core. The plan weakens itself by loading DoRothEA through rpy2, which pulls in an R runtime despite the Python-only constraint, by leaving the ULM input undecided between the Wald statistic and the shrunk LFC (the shrunk value is the wrong input), and by adding a GSEA over unsigned GTRD TF-target sets that the question does not warrant. The design formula is never written out and the reference level is only implied by 'map treated vs vehicle', the adjustment method is called padj without naming BH or the alpha for the regulator test, and QC consists of a PCA alone with no library sizes or sample distances. Reporting is reasonably complete on network name and version, regulon size floor, caveats and DE counts, though the number of regulators tested is not an explicit deliverable."
 }

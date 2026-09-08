@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 5,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The core is right: a Cox model with the standardized score plus condition, event counts before inference with a power statement, Schoenfeld diagnostics with a time-varying remedy, KM as a labeled descriptive display rather than the test, and a within-case sensitivity. Weaknesses: the score is an unweighted mean of TMM CPM with no log transform or per-gene z-scoring stated, so highly expressed genes will dominate the score; no low-count filter is mentioned; the sample QC is library size and detected genes only, with no PCA or sample-distance view by condition. Minor gaps are the absence of a median follow-up report, a Wald rather than likelihood-ratio p-value, and no stated reference level for condition. Versions, design, and caveats (prognostic vs predictive, non-informative censoring, pre-specified signature) are well stated."
+}

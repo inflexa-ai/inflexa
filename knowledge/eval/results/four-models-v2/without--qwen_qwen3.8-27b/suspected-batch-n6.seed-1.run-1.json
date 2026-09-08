@@ -1,0 +1,192 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:41:40.599Z",
+  "elapsedMs": 203836,
+  "outcome": "plan_submitted",
+  "planId": "pln-164fd07d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Confounding diagnostics and surrogate variable estimation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "confounding-diagnostics",
+        "status": "pending",
+        "caveats": [
+          "If the values are TPM-like (non-integer, per-sample sums around 1e6 or 1), do NOT treat them as raw counts for downstream DE; flag the voom branch.",
+          "n=12: more than ~3 surrogate variables leaves too few residual degrees of freedom; do not inflate the SV count.",
+          "If the contingency table shows FULLY CONFOUNDED (e.g., 6 treated + 0 control in one cluster), flag it loudly — the downstream condition contrast is unidentifiable and T1S2 must not report a gene list.",
+          "In an unpaired bulk design the hidden factor is plausibly biological (donor/tissue composition), not a technical batch; word the report that way."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns = 12 samples + name column; Salmon gene-level counts; the record does not say whether length correction was applied) and /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; 6 treated, 6 control). Known caveat: PCA shows two clusters of six samples that do not follow the condition.",
+        "maxSteps": 200,
+        "packages": [
+          "sva",
+          "limma",
+          "edgeR",
+          "matrixStats",
+          "ggplot2"
+        ],
+        "question": "In the 12-sample kidney RNA-seq data (6 treated vs 6 control, unpaired, no recorded batch), how strongly is each of the two 6-sample PCA clusters associated with the condition labels, and how many latent surrogate variables should the DE model adjust for?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Join metadata to count columns by sample ID; verify exactly 12 unique samples with 6 'treated' and 6 'control'; abort with a report if the join or counts do not match.",
+          "Classify the matrix: check integrality and per-sample row-sum ranges; record explicitly whether the values are raw counts or length-corrected expression values, because this decides the DE tool in T1S2 (DESeq2 for counts, voom for normalized values).",
+          "Reproduce the cluster structure: PCA on a variance-stabilized/log-transformed matrix, define clusters by the dominant axis (PC1) with k=2 (k-means or hierarchical on PC1/PC2), and cross-check against the stated two-cluster observation.",
+          "Test cluster-condition association with Fisher's exact test AND a permutation test (>=10,000 permutations of condition labels); report the contingency table with actual counts.",
+          "Estimate surrogate variables with sva::sva using mod = condition design (primary), cross-check with limma::peaks; report the number of SVs, the fraction of between-sample variation each captures, and whether the top SV reproduces the observed two clusters. Keep the number of SVs small (n=12); cap at 3.",
+          "State the confounding verdict in one of three terms: BALANCED (clusters mix both conditions), PARTIALLY CONFOUNDED (condition counts imbalanced between clusters), or FULLY CONFOUNDED (one cluster contains only one condition).",
+          "Save: contingency table, permutation p-value, count-type classification, SV count + SV sample matrix, and a PCA plot colored by condition and by cluster."
+        ],
+        "description": "Loads counts and metadata, verifies the 12-sample / 6+6 join, classifies the matrix as raw integer counts vs length-corrected (TPM-like), reproduces the 2-cluster structure, tests the cluster-condition association, and estimates surrogate variables for downstream adjustment.",
+        "acceptance_criteria": [
+          "Cluster x condition contingency table with the actual counts is reported, with a permutation-test p-value and an explicit verdict (BALANCED / PARTIALLY CONFOUNDED / FULLY CONFOUNDED).",
+          "The matrix is explicitly classified as raw counts vs length-corrected, with the evidence (integrality, per-sample sums).",
+          "Number of surrogate variables reported with justification (variation explained / sva suggestion), and the SV matrix saved for T1S2.",
+          "PCA visualization colored by both condition and cluster is produced."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression under naive and hidden-factor-adjusted designs",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "Do not present the naive design's results as the answer — that is exactly the model the PCA caveat warns about.",
+          "With n = 12 and up to 3 SVs the residual df are small; report dispersion/model fit diagnostics, and do not interpret modest |log2FC| genes with padj just under 0.05 as solid hits.",
+          "If a DE gene's per-sample dot plot shows the 'effect' coming from one outlier sample, flag it rather than keeping it silently."
+        ],
+        "context": "Consumes T1S1 outputs: confounding verdict, count-type classification, 2-cluster labels, SV count and SV matrix. Design: 6 treated vs 6 control, unpaired. The primary answer to the research question is the SVA-adjusted DE table; the other two designs are sensitivity comparisons that quantify how much the answer depends on the unrecorded hidden factor.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "edgeR",
+          "sva",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control under (a) the naive design, (b) the 2-cluster-adjusted design, and (c) the SVA-adjusted design (primary), and how stable is the resulting DE gene set across these designs?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "BRANCH ON T1S1 VERDICT: if FULLY CONFOUNDED, produce NO differential-expression calls; instead write a report stating that the condition contrast is unidentifiable in this design (treatment assignment is carried by the hidden factor) and stop. Do not relax this to 'run the naive model anyway' as a result — it may be shown only as a diagnostic that is explicitly labeled uninterpretable.",
+          "Primary model: if raw counts — DESeq2 with design ~ SV1 + ... + SVk + condition (k = SV count from T1S1); if length-corrected — limma-voom with the same design. If T1S1 found k = 0 SVs, primary = naive; state that.",
+          "Sensitivity models: (a) ~ condition (naive); (b) ~ cluster + condition (using the 2 cluster labels from T1S1).",
+          "Pre-filter low-abundance genes (e.g., CPM > 1 in at least 6 of 12 samples) before modeling; state the rule and how many genes were removed from the 12,000.",
+          "Shrink log2 fold changes (apeglm via lfcShrink for DESeq2; lfcShrink for voom). Multiple testing: Benjamini-Hochberg, FDR < 0.05.",
+          "Compare designs: Jaccard overlap of FDR<0.05 sets and of top-100-by-|shrunken LFC| sets, and the count of genes whose effect direction flips between naive and adjusted.",
+          "Produce per-sample dot plots for the top 10 primary DE genes to confirm the contrast is not driven by a single sample on one side.",
+          "Report the primary (adjusted) DE table as the deliverable: gene, baseMean, log2FC, shrunken log2FC, Wald/test p, padj.",
+          "State power honestly in the report: 6 vs 6 with k adjusted factors yields low power — only large effects (roughly |log2FC| >= 1) are likely to pass FDR; frame the list as candidates, not validated effects."
+        ],
+        "description": "Runs DESeq2 (or voom/limma if the matrix is length-corrected) under three designs, applies LFC shrinkage, compares the DE gene sets across designs, and produces the primary DE table plus stability diagnostics.",
+        "acceptance_criteria": [
+          "Primary (SVA-adjusted) DE table is produced with gene, baseMean, log2FC, shrunken log2FC, p, padj (or the full unidentifiable-contrast report in the FULLY CONFOUNDED case).",
+          "Naive and cluster-adjusted comparisons exist with overlap statistics (Jaccard for FDR<0.05 and top-100 sets) and effect-direction flip counts.",
+          "Pre-filter rule and gene counts removed are stated.",
+          "Top-10 per-sample dot plots are produced.",
+          "The report contains an explicit residual-confounding statement: SVA adjusts only for structure orthogonal to the condition; if the hidden factor correlates with treatment assignment, residual confounding cannot be excluded."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway and GO enrichment of the primary DE list",
+        "agent": "enrichment-agent",
+        "track": "enrichment",
+        "status": "pending",
+        "caveats": [
+          "Pathway hits are descriptive, not mechanistic — do not claim a causal pathway from this.",
+          "Because the hidden factor dominated sample variation, enriched pathways may partly reflect residual donor/tissue-composition effects rather than treatment; carry this caveat into the interpretation.",
+          "Do not re-run or re-select DE genes here; consume the T1S2 primary table as-is."
+        ],
+        "context": "Consumes the T1S2 primary DE table (gene, shrunken log2FC, padj). Reference data: a human (Homo_sapiens) WikiPathways gene-set collection in GMT format is provisioned in the environment (descriptor field is '%'-delimited: name, pathway ID, species; split the first field on '%' for a readable set name) — confirm presence and species at runtime; if absent, report the gap and proceed with GO alone. Gene annotation via the installed org.Hs.eg.db (dataset is Homo sapiens, taxon 9606 — the human resource matches; no species mismatch).",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "enrichplot"
+        ],
+        "question": "Which pathways and GO terms are enriched among the primary (SVA-adjusted) differentially expressed genes, separately for up-regulated and down-regulated genes in treated vs control?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Confirm the GMT is human before use (check the species token in the descriptor line); if the file is missing at runtime, say so and run GO only.",
+          "Map feature IDs to gene symbols with org.Hs.eg.db if the matrix uses non-symbol IDs; report the mapping rate, and if < 80% of DE genes map, flag the enrichment as limited.",
+          "Over-representation: clusterProfiler on up-regulated (FDR<0.05, log2FC > 0) and down-regulated (FDR<0.05, log2FC < 0) lists separately; report pathway sizes, raw p, FDR; significance at FDR < 0.05.",
+          "Ranked analysis: fgsea on the full 12,000-gene list ranked by shrunken log2FC (treated vs control), same human WikiPathways + GO sets, to capture directionality and near-threshold genes.",
+          "Cap the reported list at the top ~20 sets per direction, with statistics."
+        ],
+        "description": "Maps the primary DE genes to symbols (if needed), runs over-representation analysis on up and down lists separately, plus a ranked-gene-set analysis on the full 12,000-gene list ranked by shrunken LFC, against human WikiPathways and GO.",
+        "acceptance_criteria": [
+          "Enrichment tables produced for up-regulated and down-regulated genes separately, with set names, sizes, p and FDR.",
+          "Ranked (fgsea) results for the full gene list are produced.",
+          "Human species match of the gene sets and the annotation mapping rate are stated.",
+          "If the WikiPathways GMT is unavailable at runtime, that is reported and GO-only results are delivered."
+        ]
+      }
+    ],
+    "title": "Kidney treated-vs-control DE with hidden-factor adjustment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-24T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12 human kidney bulk RNA-seq samples (6 treated vs 6 control, unpaired, no recorded batch) with 12,000 Salmon gene-level features. The known caveat — PCA splits the samples into two clusters of six that do not follow the condition — means a naive treated-vs-control contrast risks measuring an unknown factor (in an unpaired bulk design, most likely donor-level biology such as tissue/cell-type composition, or an unrecorded technical batch) rather than treatment. The plan therefore (1) first quantifies how the two clusters relate to the condition labels (contingency table, permutation test) and estimates surrogate variables orthogonal to the condition design (sva, cross-checked with limma peaks); (2) runs differential expression under three designs — naive (~condition), cluster-adjusted (~cluster + condition), and SVA-adjusted (~SVs + condition, primary) — with LFC shrinkage, and reports how stable the DE gene set is across designs, since that stability is the honest answer to 'which genes differ' under this confounding structure; (3) enriches the primary adjusted DE list (up and down separately) against the provisioned human WikiPathways gene sets and GO, since the organism (Homo sapiens) matches. If step 1 finds the clusters fully confounded with condition, the plan does not force a gene list — it reports that the condition contrast is unidentifiable in this design."
+  },
+  "usage": {
+    "inputTokens": 32733,
+    "outputTokens": 12157,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 9014
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_802ac14156c949e3be558ee9",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Kidney treated-vs-control DE with hidden-factor adjustment\", \"analytical_narrative\": \"The dataset is 12 human kidney bulk RNA-seq samples (6 treated vs 6 control, unpaired, no recorded batch) with 12,000 Salmon gene-level features. The known caveat — PCA splits the samples into two clusters of six that do not follow the condition — means a naive treated-vs-control contrast risks measuring an unknown factor (in an unpaired bulk design, most likely donor-level biology such as tissue/cell-type composition, or an unrecorded technical batch) rather than treatment. The plan therefore (1) first quantifies how the two clusters relate to the condition labels (contingency table, permutation test) and estimates surrogate variables orthogonal to the condition design (sva, cross-checked with limma peaks); (2) runs differential expression under three designs — naive (~condition), cluster-adjusted (~cluster + condition), and SVA-adjusted (~SVs + condition, primary) — with LFC shrinkage, and reports how stable the DE gene set is across designs, since that stability is the honest answer to 'which genes differ' under this confounding structure; (3) enriches the primary adjusted DE list (up and down separately) against the provisioned human WikiPathways gene sets and GO, since the organism (Homo sapiens) matches. If step 1 finds the clusters fully confounded with condition, the plan does not force a gene list — it reports that the condition contrast is unidentifiable in this design.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-24T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Confounding diagnostics and surrogate variable estimation\", \"track\": \"confounding-diagnostics\", \"step_type\": \"analysis\", \"question\": \"In the 12-sample kidney RNA-seq data (6 treated vs 6 control, unpaired, no recorded batch), how strongly is each of the two 6-sample PCA clusters associated with the condition labels, and how many latent surrogate variables should the DE model adjust for?\", \"context\": \"Inputs: /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns = 12 samples + name column; Salmon gene-level counts; the record does not say whether length correction was applied) and /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; 6 treated, 6 control). Known caveat: PCA shows two clusters of six samples that do not follow the condition.\", \"description\": \"Loads counts and metadata, verifies the 12-sample / 6+6 join, classifies the matrix as raw integer counts vs length-corrected (TPM-like), reproduces the 2-cluster structure, tests the cluster-condition association, and estimates surrogate variables for downstream adjustment.\", \"constraints\": [\"Join metadata to count columns by sample ID; verify exactly 12 unique samples with 6 'treated' and 6 'control'; abort with a report if the join or counts do not match.\", \"Classify the matrix: check integrality and per-sample row-sum ranges; record explicitly whether the values are raw counts or length-corrected expression values, because this decides the DE tool in T1S2 (DESeq2 for counts, voom for normalized values).\", \"Reproduce the cluster structure: PCA on a variance-stabilized/log-transformed matrix, define clusters by the dominant axis (PC1) with k=2 (k-means or hierarchical on PC1/PC2), and cross-check against the stated two-cluster observation.\", \"Test cluster-condition association with Fisher's exact test AND a permutation test (>=10,000 permutations of condition labels); report the contingency table with actual counts.\", \"Estimate surrogate variables with sva::sva using mod = condition design (primary), cross-check with limma::peaks; report the number of SVs, the fraction of between-sample variation each captures, and whether the top SV reproduces the observed two clusters. Keep the number of SVs small (n=12); cap at 3.\", \"State the confounding verdict in one of three terms: BALANCED (clusters mix both conditions), PARTIALLY CONFOUNDED (condition counts imbalanced between clusters), or FULLY CONFOUNDED (one cluster contains only one condition).\", \"Save: contingency table, permutation p-value, count-type classification, SV count + SV sample matrix, and a PCA plot colored by condition and by cluster.\"], \"acceptance_criteria\": [\"Cluster x condition contingency table with the actual counts is reported, with a permutation-test p-value and an explicit verdict (BALANCED / PARTIALLY CONFOUNDED / FULLY CONFOUNDED).\", \"The matrix is explicitly classified as raw counts vs length-corrected, with the evidence (integrality, per-sample sums).\", \"Number of surrogate variables reported with justification (variation explained / sva suggestion), and the SV matrix saved for T1S2.\", \"PCA visualization colored by both condition and cluster is produced.\"], \"caveats\": [\"If the values are TPM-like (non-integer, per-sample sums around 1e6 or 1), do NOT treat them as raw counts for downstream DE; flag the voom branch.\", \"n=12: more than ~3 surrogate variables leaves too few residual degrees of freedom; do not inflate the SV count.\", \"If the contingency table shows FULLY CONFOUNDED (e.g., 6 treated + 0 control in one cluster), flag it loudly — the downstream condition contrast is unidentifiable and T1S2 must not report a gene list.\", \"In an unpaired bulk design the hidden factor is plausibly biological (donor/tissue composition), not a technical batch; word the report that way.\"], \"packages\": [\"sva\", \"limma\", \"edgeR\", \"matrixStats\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Differential expression under naive and hidden-factor-adjusted designs\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between treated and control under (a) the naive design, (b) the 2-cluster-adjusted design, and (c) the SVA-adjusted design (primary), and how stable is the resulting DE gene set across these designs?\", \"context\": \"Consumes T1S1 outputs: confounding verdict, count-type classification, 2-cluster labels, SV count and SV matrix. Design: 6 treated vs 6 control, unpaired. The primary answer to the research question is the SVA-adjusted DE table; the other two designs are sensitivity comparisons that quantify how much the answer depends on the unrecorded hidden factor.\", \"description\": \"Runs DESeq2 (or voom/limma if the matrix is length-corrected) under three designs, applies LFC shrinkage, compares the DE gene sets across designs, and produces the primary DE table plus stability diagnostics.\", \"constraints\": [\"BRANCH ON T1S1 VERDICT: if FULLY CONFOUNDED, produce NO differential-expression calls; instead write a report stating that the condition contrast is unidentifiable in this design (treatment assignment is carried by the hidden factor) and stop. Do not relax this to 'run the naive model anyway' as a result — it may be shown only as a diagnostic that is explicitly labeled uninterpretable.\", \"Primary model: if raw counts — DESeq2 with design ~ SV1 + ... + SVk + condition (k = SV count from T1S1); if length-corrected — limma-voom with the same design. If T1S1 found k = 0 SVs, primary = naive; state that.\", \"Sensitivity models: (a) ~ condition (naive); (b) ~ cluster + condition (using the 2 cluster labels from T1S1).\", \"Pre-filter low-abundance genes (e.g., CPM > 1 in at least 6 of 12 samples) before modeling; state the rule and how many genes were removed from the 12,000.\", \"Shrink log2 fold changes (apeglm via lfcShrink for DESeq2; lfcShrink for voom). Multiple testing: Benjamini-Hochberg, FDR < 0.05.\", \"Compare designs: Jaccard overlap of FDR<0.05 sets and of top-100-by-|shrunken LFC| sets, and the count of genes whose effect direction flips between naive and adjusted.\", \"Produce per-sample dot plots for the top 10 primary DE genes to confirm the contrast is not driven by a single sample on one side.\", \"Report the primary (adjusted) DE table as the deliverable: gene, baseMean, log2FC, shrunken log2FC, Wald/test p, padj.\", \"State power honestly in the report: 6 vs 6 with k adjusted factors yields low power — only large effects (roughly |log2FC| >= 1) are likely to pass FDR; frame the list as candidates, not validated effects.\"], \"acceptance_criteria\": [\"Primary (SVA-adjusted) DE table is produced with gene, baseMean, log2FC, shrunken log2FC, p, padj (or the full unidentifiable-contrast report in the FULLY CONFOUNDED case).\", \"Naive and cluster-adjusted comparisons exist with overlap statistics (Jaccard for FDR<0.05 and top-100 sets) and effect-direction flip counts.\", \"Pre-filter rule and gene counts removed are stated.\", \"Top-10 per-sample dot plots are produced.\", \"The report contains an explicit residual-confounding statement: SVA adjusts only for structure orthogonal to the condition; if the hidden factor correlates with treatment assignment, residual confounding cannot be excluded.\"], \"caveats\": [\"Do not present the naive design's results as the answer — that is exactly the model the PCA caveat warns about.\", \"With n = 12 and up to 3 SVs the residual df are small; report dispersion/model fit diagnostics, and do not interpret modest |log2FC| genes with padj just under 0.05 as solid hits.\", \"If a DE gene's per-sample dot plot shows the 'effect' coming from one outlier sample, flag it rather than keeping it silently.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"edgeR\", \"sva\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T2S1\", \"name\": \"Pathway and GO enrichment of the primary DE list\", \"track\": \"enrichment\", \"step_type\": \"enrichment\", \"question\": \"Which pathways and GO terms are enriched among the primary (SVA-adjusted) differentially expressed genes, separately for up-regulated and down-regulated genes in treated vs control?\", \"context\": \"Consumes the T1S2 primary DE table (gene, shrunken log2FC, padj). Reference data: a human (Homo_sapiens) WikiPathways gene-set collection in GMT format is provisioned in the environment (descriptor field is '%'-delimited: name, pathway ID, species; split the first field on '%' for a readable set name) — confirm presence and species at runtime; if absent, report the gap and proceed with GO alone. Gene annotation via the installed org.Hs.eg.db (dataset is Homo sapiens, taxon 9606 — the human resource matches; no species mismatch).\", \"description\": \"Maps the primary DE genes to symbols (if needed), runs over-representation analysis on up and down lists separately, plus a ranked-gene-set analysis on the full 12,000-gene list ranked by shrunken LFC, against human WikiPathways and GO.\", \"constraints\": [\"Confirm the GMT is human before use (check the species token in the descriptor line); if the file is missing at runtime, say so and run GO only.\", \"Map feature IDs to gene symbols with org.Hs.eg.db if the matrix uses non-symbol IDs; report the mapping rate, and if < 80% of DE genes map, flag the enrichment as limited.\", \"Over-representation: clusterProfiler on up-regulated (FDR<0.05, log2FC > 0) and down-regulated (FDR<0.05, log2FC < 0) lists separately; report pathway sizes, raw p, FDR; significance at FDR < 0.05.\", \"Ranked analysis: fgsea on the full 12,000-gene list ranked by shrunken log2FC (treated vs control), same human WikiPathways + GO sets, to capture directionality and near-threshold genes.\", \"Cap the reported list at the top ~20 sets per direction, with statistics.\"], \"acceptance_criteria\": [\"Enrichment tables produced for up-regulated and down-regulated genes separately, with set names, sizes, p and FDR.\", \"Ranked (fgsea) results for the full gene list are produced.\", \"Human species match of the gene sets and the annotation mapping rate are stated.\", \"If the WikiPathways GMT is unavailable at runtime, that is reported and GO-only results are delivered.\"], \"caveats\": [\"Pathway hits are descriptive, not mechanistic — do not claim a causal pathway from this.\", \"Because the hidden factor dominated sample variation, enriched pathways may partly reflect residual donor/tissue-composition effects rather than treatment; carry this caveat into the interpretation.\", \"Do not re-run or re-select DE genes here; consume the T1S2 primary table as-is.\"], \"packages\": [\"clusterProfiler\", \"fgsea\", \"org.Hs.eg.db\", \"enrichplot\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 73
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

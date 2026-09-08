@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "DESeq2 Wald on raw Salmon gene counts for an unpaired 6 vs 6 single-batch design is correct, with edgeR QL as a stated robustness check. QC is complete: blind VST PCA, distance heatmap, per-sample library size and detected genes, sample_01 kept, inspected, reported by name, and probed by a sensitivity refit rather than silently dropped. Filter (>=10 counts in >=6 samples), median-of-ratios inside the model, explicit chow reference, named contrast, apeglm shrinkage, and BH at 0.05 with independent filtering are all stated; the design formula is described rather than written out, and one constraint line ('test_against_threshold') conflicts with the stated no-LFC-threshold policy. Enrichment correctly uses the mouse MSigDB Hallmark collection with release stated, fgsea on the full Wald-statistic-ranked list, size window 15-500, and universe = tested genes, avoiding the human-sets-on-mouse-symbols error. The report specifies method, versions, design, thresholds, n_tested/n_DE, NA-cause counts, length-offset caveat, and a reproducibility record with seeds."
+}

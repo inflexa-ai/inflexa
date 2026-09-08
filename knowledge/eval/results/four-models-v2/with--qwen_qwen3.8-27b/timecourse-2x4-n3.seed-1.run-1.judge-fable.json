@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: a DESeq2 LRT of ~ condition + time + condition:time against ~ condition + time as the primary joint interaction test, with per-time-point simple effects (ashr-shrunk, since they are multi-coefficient contrasts) describing the pattern, plus an edgeR QL cross-check on identical input. Reference levels, the reduced model, median-of-ratios inside the model, and a minimal 10-counts-in-3-samples filter are all explicit and justified; BH at alpha 0.05 is passed to results with independent filtering. QC covers blind-vst PCA and a distance heatmap colored by condition and time with a library-size check, though the outlier policy is only 'report as a finding' rather than a stated decision rule. Enrichment is correctly omitted, and the report specification covers method, versions, design, thresholds, tested/significant counts, power and length-offset caveats, and a reproducibility record."
+}

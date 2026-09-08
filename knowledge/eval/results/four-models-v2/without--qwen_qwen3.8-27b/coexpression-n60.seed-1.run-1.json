@@ -1,0 +1,225 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "coexpression-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:26:30.769Z",
+  "elapsedMs": 198113,
+  "outcome": "plan_submitted",
+  "planId": "pln-d3cf50d7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalize Salmon counts and align metadata",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not assume the file holds raw integer counts — the record explicitly leaves the scale unverified; let the integer test decide.",
+          "Check for duplicate sample column names and duplicate gene row IDs; report any found before proceeding.",
+          "Do not remove outlier samples; the downstream 60/60 comparison depends on the full cohort."
+        ],
+        "context": "Input: /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns: one gene-ID column + 120 sample columns) and /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns: sample, condition; 60 cases, 60 controls). Human whole blood, unpaired, single batch. The data profile does not state whether Salmon length correction was applied, so the scale must be established from the file itself.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "stats",
+          "ggplot2"
+        ],
+        "question": "What scale are the delivered Salmon 'counts' on (raw integer counts vs length-corrected/scaled values), and what does the final clean gene x 120-sample log-scale expression matrix with case/control labels look like?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Establish the count scale empirically: fraction of integer values, per-sample sum distribution. If values are non-integer, treat them as length-corrected/scaled and rescale all samples to equal totals before log transform (equivalent to CPM).",
+          "Normalize every sample to CPM (counts / sample total * 1e6) and transform to log2(1 + CPM); all downstream work uses the log2-scale matrix.",
+          "Join metadata on sample name; require exactly 120/120 matches and a 60/60 case-control split; build a numeric trait vector (case = 1, control = 0). Fail loudly with a diagnostic on any mismatch — do not silently drop or reassign samples.",
+          "Drop genes with CPM < 1 in fewer than 10% of samples; report the number retained (expected >= 11000 of 12000). Keep original gene IDs as row names.",
+          "Run PCA on the normalized matrix (all retained genes) and report per-sample library sizes; flag, but do not remove, any outlier — the design is fixed at 60/60.",
+          "Save to the step output directory: the normalized log2(1+CPM) matrix (genes x 120), the sample table with the numeric trait, and a short prep report."
+        ],
+        "description": "Verified-scale, library-size-normalized log2(1+CPM) expression matrix for 120 samples, a joined sample table with the numeric case trait, and a prep report on scale determination, filtering, and PCA.",
+        "acceptance_criteria": [
+          "A normalized log2(1+CPM) matrix with exactly 120 samples and a documented retained-gene count.",
+          "A sample table joining 120/120 samples to case/control labels (60/60) with a numeric trait vector.",
+          "A prep report stating the count-scale determination (integer vs scaled), number of genes filtered, PCA summary, and any outlier flags."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "WGCNA soft-threshold selection and module detection",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The 12k x 12k TOM is the memory/time bottleneck — keep worker count in 4-6 and do not inflate memory beyond what the step requests.",
+          "Do not raise the soft power beyond what the fit requires; over-thresholding destroys module signal.",
+          "Watch for blockwiseModules warnings (unstable groups, near-empty modules); rely on mergeDepth = 0.25 for merging rather than manual merges.",
+          "If module detection collapses to 1-2 giant modules, re-check the soft power and the expression matrix for a degenerate column/row (e.g., a constant gene) and report it."
+        ],
+        "context": "Input: the normalized log2(1+CPM) matrix from T1S1 (~12k genes x 120 samples). Single batch, so no batch correction precedes network construction. The heavy object is a ~12k x 12k TOM matrix (~1.15 GB in double precision), so parallelize and size memory accordingly.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "BiocParallel",
+          "stats"
+        ],
+        "question": "Which co-expression modules do the genes form across the 120 whole-blood samples under a signed WGCNA network model?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use a signed network: adjacency = (signed Pearson correlation of log2 expression) ^ power, no extra re-standardization beyond WGCNA internals.",
+          "Select the soft-threshold power over 1-12 with pickSoftThreshold: smallest power with scale-free fit R^2 >= 0.85, cross-checked against the signed HUB fit curve; if no power reaches 0.85, take the power at the RFIT plateau and flag the choice as a fallback. Report fit statistics for every tested power.",
+          "Compute TOM from the soft adjacency; detect modules with dynamic tree cut at minModuleSize = 30 and mergeDepth = 0.25; fix the RNG seed for reproducibility.",
+          "Parallelize the TOM computation with BiocParallel over 4-6 workers.",
+          "Save: per-gene module assignment, the module eigengene matrix (final modules x 120 samples), a module summary table (module, size, mean connectivity), and the module-detection dendrogram."
+        ],
+        "description": "Soft-threshold selection, signed TOM network, and dynamic tree cut producing per-gene module assignments, module eigengenes, and a module summary for the 120-sample cohort.",
+        "acceptance_criteria": [
+          "Every retained gene has a module assignment; module count and per-module size table are reported.",
+          "The module eigengene matrix spans all 120 samples and the dendrogram is saved.",
+          "The chosen soft power and scale-free fit statistics are reported; if the fallback power was used, it is explicitly flagged."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Module-trait association with case vs control",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Many modules are tested against one trait: the cross-module FDR, not raw p-values, is the decision criterion.",
+          "Do not re-test or re-rank modules on a subset of samples selected by the correlation.",
+          "The 1000-permutation p-values have a resolution floor of ~0.001; report that precision honestly."
+        ],
+        "context": "Input: module eigengene matrix and module assignments from T1S2; numeric case trait (case = 1, control = 0) from T1S1. This step answers the second half of the research question directly.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "stats",
+          "qvalue",
+          "ggplot2"
+        ],
+        "question": "Which of the detected co-expression modules track case versus control status, and which genes carry the association within those modules?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Compute the point-biserial correlation of each module eigengene with the case trait (two-sided parametric p-value).",
+          "Permutation test per module: 1000 shuffles of case/control labels across the 120 samples; two-sided permutation p-value. FDR across all modules by Benjamini-Hochberg.",
+          "Report ALL modules in a table: module, size, ME-case correlation, parametric p, permutation p, FDR. Define a trait-tracking module as FDR < 0.05; if none qualifies, carry the top 3 modules by |correlation| into downstream annotation and label them explicitly non-significant.",
+          "For each trait-tracking module (or fallback top 3): compute module membership (gene-ME Pearson correlation) and list leading genes (top 10 by membership); save a per-gene table with module, membership, and connectivity.",
+          "Save a PCA of the module-eigengene space with case/control overlay as a visual sanity check."
+        ],
+        "description": "Per-module correlation of eigengenes with case vs control status, permutation and FDR significance, and module-membership / leading-gene tables for the trait-tracking modules.",
+        "acceptance_criteria": [
+          "A module-trait table covering all modules with correlation, parametric p, permutation p, and FDR.",
+          "Per-gene module-membership / leading-gene tables for the trait-tracking modules (or the explicitly-labeled fallback top 3).",
+          "An explicit count of modules tracking case status at FDR < 0.05."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Functional annotation of trait-tracking modules",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Modules near minModuleSize (~30 genes) have limited power in over-representation analysis; do not over-interpret single gene sets.",
+          "WikiPathways gene sets carry HGNC symbols; symbol mismatches silently shrink sets — report per-set matched-gene counts if coverage looks low.",
+          "The biological summary is interpretation, not a conclusion: frame it as candidate pathways consistent with the gene-set hits."
+        ],
+        "context": "Input: gene lists of the trait-tracking modules from T1S3 (or the fallback top 3, flagged non-significant); the universe is the full retained-gene set from T1S1; organism is Homo sapiens. This step needs reference gene sets that are provisioned in this environment: a human WikiPathways pathway gene-set collection (GMT, HGNC symbols) in the reference store, and the human org annotation database (org.Hs.eg.db, installed) for GO; a human gene-identifier ID-mapping table (UniProt) is also available for resolving labels the org database misses. Confirm each reference is resolvable at run time before relying on it.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "DOSE",
+          "org.Hs.eg.db",
+          "fgsea",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What do the trait-tracking modules correspond to biologically — which GO biological processes and WikiPathways pathways are over-represented among their genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S3"
+        ],
+        "constraints": [
+          "Determine the ID format of the gene labels (T1S1 reports it); if not HGNC symbols, convert to symbols and Entrez IDs via the human org annotation database, using the human gene-identifier ID mapping for ambiguous or missed entries; report mapping coverage per module.",
+          "For each module in scope: over-representation analysis against (a) GO biological process (clusterProfiler + human org database) and (b) the human WikiPathways gene-set collection (loaded as a custom GMT), with the universe = all retained genes from T1S1; FDR control within each database.",
+          "If the WikiPathways gene-set collection cannot be resolved at run time, say so explicitly in the output and proceed with GO only — this step enriches the answer but does not carry it.",
+          "Save per-module enrichment tables (gene set, genes matched, ratio/NES, p, FDR); report gene sets at FDR < 0.25 and highlight FDR < 0.05.",
+          "Write a 2-4 sentence per-module biological summary grounded only in the returned gene sets."
+        ],
+        "description": "GO BP and WikiPathways over-representation enrichment for each trait-tracking module gene list, with ID-mapping coverage and concise per-module biological summaries.",
+        "acceptance_criteria": [
+          "Per-module enrichment tables for the in-scope modules, covering both GO BP and WikiPathways (or an explicit note that WikiPathways was unavailable).",
+          "ID-mapping coverage reported per module.",
+          "Per-module biological summaries that do not over-interpret small modules."
+        ]
+      }
+    ],
+    "title": "WGCNA modules and case-control association, whole blood",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-08-05T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are gene-level Salmon counts (scale not verified by the record — could be raw integer counts or length-corrected values) for 120 human whole-blood samples, 60 cases vs 60 controls, unpaired, single batch, 12000 genes x 120 samples. The research question — which co-expression modules form, and which track case versus control status — maps directly onto the standard WGCNA pipeline, which is fully supported by the installed R/Bioconductor stack (WGCNA 1.74, dynamicTreeCut, clusterProfiler, org.Hs.eg.db, qvalue). Flow: (T1S1) verify the delivered count scale, library-size-normalize to log2(1+CPM), join the 120-sample metadata into a 0/1 case trait, and filter unsuppressed genes; (T1S2) select the soft-threshold by scale-free fit on a signed network, compute TOM, and cut modules with dynamicTreeCut (minModuleSize 30, mergeDepth 0.25); (T1S3) test each module eigengene against the case trait with point-biserial correlation, 1000-label permutation tests, and cross-module FDR, and extract module membership / leading genes for the trait-tracking modules; (T1S4) functionally annotate those modules via GO biological process and the human WikiPathways gene-set collection (both resolvable in this environment: human WikiPathways GMT in the reference store, human org database installed), with graceful degradation to GO-only if the GMT is absent. No batch correction step is needed (single batch); no translational steps are warranted by the question."
+  },
+  "usage": {
+    "inputTokens": 32707,
+    "outputTokens": 12984,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 9786
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_33a05d2ab1ac42da9c360af2",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"WGCNA modules and case-control association, whole blood\", \"analytical_narrative\": \"The data are gene-level Salmon counts (scale not verified by the record — could be raw integer counts or length-corrected values) for 120 human whole-blood samples, 60 cases vs 60 controls, unpaired, single batch, 12000 genes x 120 samples. The research question — which co-expression modules form, and which track case versus control status — maps directly onto the standard WGCNA pipeline, which is fully supported by the installed R/Bioconductor stack (WGCNA 1.74, dynamicTreeCut, clusterProfiler, org.Hs.eg.db, qvalue). Flow: (T1S1) verify the delivered count scale, library-size-normalize to log2(1+CPM), join the 120-sample metadata into a 0/1 case trait, and filter unsuppressed genes; (T1S2) select the soft-threshold by scale-free fit on a signed network, compute TOM, and cut modules with dynamicTreeCut (minModuleSize 30, mergeDepth 0.25); (T1S3) test each module eigengene against the case trait with point-biserial correlation, 1000-label permutation tests, and cross-module FDR, and extract module membership / leading genes for the trait-tracking modules; (T1S4) functionally annotate those modules via GO biological process and the human WikiPathways gene-set collection (both resolvable in this environment: human WikiPathways GMT in the reference store, human org database installed), with graceful degradation to GO-only if the GMT is absent. No batch correction step is needed (single batch); no translational steps are warranted by the question.\", \"created_at\": \"2026-08-05T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Normalize Salmon counts and align metadata\", \"track\": \"T1\", \"step_type\": \"preprocessing\", \"question\": \"What scale are the delivered Salmon 'counts' on (raw integer counts vs length-corrected/scaled values), and what does the final clean gene x 120-sample log-scale expression matrix with case/control labels look like?\", \"context\": \"Input: /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns: one gene-ID column + 120 sample columns) and /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns: sample, condition; 60 cases, 60 controls). Human whole blood, unpaired, single batch. The data profile does not state whether Salmon length correction was applied, so the scale must be established from the file itself.\", \"constraints\": [\"Establish the count scale empirically: fraction of integer values, per-sample sum distribution. If values are non-integer, treat them as length-corrected/scaled and rescale all samples to equal totals before log transform (equivalent to CPM).\", \"Normalize every sample to CPM (counts / sample total * 1e6) and transform to log2(1 + CPM); all downstream work uses the log2-scale matrix.\", \"Join metadata on sample name; require exactly 120/120 matches and a 60/60 case-control split; build a numeric trait vector (case = 1, control = 0). Fail loudly with a diagnostic on any mismatch — do not silently drop or reassign samples.\", \"Drop genes with CPM < 1 in fewer than 10% of samples; report the number retained (expected >= 11000 of 12000). Keep original gene IDs as row names.\", \"Run PCA on the normalized matrix (all retained genes) and report per-sample library sizes; flag, but do not remove, any outlier — the design is fixed at 60/60.\", \"Save to the step output directory: the normalized log2(1+CPM) matrix (genes x 120), the sample table with the numeric trait, and a short prep report.\"], \"acceptance_criteria\": [\"A normalized log2(1+CPM) matrix with exactly 120 samples and a documented retained-gene count.\", \"A sample table joining 120/120 samples to case/control labels (60/60) with a numeric trait vector.\", \"A prep report stating the count-scale determination (integer vs scaled), number of genes filtered, PCA summary, and any outlier flags.\"], \"caveats\": [\"Do not assume the file holds raw integer counts — the record explicitly leaves the scale unverified; let the integer test decide.\", \"Check for duplicate sample column names and duplicate gene row IDs; report any found before proceeding.\", \"Do not remove outlier samples; the downstream 60/60 comparison depends on the full cohort.\"], \"packages\": [\"data.table\", \"stats\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Verified-scale, library-size-normalized log2(1+CPM) expression matrix for 120 samples, a joined sample table with the numeric case trait, and a prep report on scale determination, filtering, and PCA.\"}, {\"id\": \"T1S2\", \"name\": \"WGCNA soft-threshold selection and module detection\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which co-expression modules do the genes form across the 120 whole-blood samples under a signed WGCNA network model?\", \"context\": \"Input: the normalized log2(1+CPM) matrix from T1S1 (~12k genes x 120 samples). Single batch, so no batch correction precedes network construction. The heavy object is a ~12k x 12k TOM matrix (~1.15 GB in double precision), so parallelize and size memory accordingly.\", \"constraints\": [\"Use a signed network: adjacency = (signed Pearson correlation of log2 expression) ^ power, no extra re-standardization beyond WGCNA internals.\", \"Select the soft-threshold power over 1-12 with pickSoftThreshold: smallest power with scale-free fit R^2 >= 0.85, cross-checked against the signed HUB fit curve; if no power reaches 0.85, take the power at the RFIT plateau and flag the choice as a fallback. Report fit statistics for every tested power.\", \"Compute TOM from the soft adjacency; detect modules with dynamic tree cut at minModuleSize = 30 and mergeDepth = 0.25; fix the RNG seed for reproducibility.\", \"Parallelize the TOM computation with BiocParallel over 4-6 workers.\", \"Save: per-gene module assignment, the module eigengene matrix (final modules x 120 samples), a module summary table (module, size, mean connectivity), and the module-detection dendrogram.\"], \"acceptance_criteria\": [\"Every retained gene has a module assignment; module count and per-module size table are reported.\", \"The module eigengene matrix spans all 120 samples and the dendrogram is saved.\", \"The chosen soft power and scale-free fit statistics are reported; if the fallback power was used, it is explicitly flagged.\"], \"caveats\": [\"The 12k x 12k TOM is the memory/time bottleneck — keep worker count in 4-6 and do not inflate memory beyond what the step requests.\", \"Do not raise the soft power beyond what the fit requires; over-thresholding destroys module signal.\", \"Watch for blockwiseModules warnings (unstable groups, near-empty modules); rely on mergeDepth = 0.25 for merging rather than manual merges.\", \"If module detection collapses to 1-2 giant modules, re-check the soft power and the expression matrix for a degenerate column/row (e.g., a constant gene) and report it.\"], \"packages\": [\"WGCNA\", \"dynamicTreeCut\", \"BiocParallel\", \"stats\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 8, \"memoryGb\": 16}, \"agent\": \"network-agent\", \"description\": \"Soft-threshold selection, signed TOM network, and dynamic tree cut producing per-gene module assignments, module eigengenes, and a module summary for the 120-sample cohort.\"}, {\"id\": \"T1S3\", \"name\": \"Module-trait association with case vs control\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the detected co-expression modules track case versus control status, and which genes carry the association within those modules?\", \"context\": \"Input: module eigengene matrix and module assignments from T1S2; numeric case trait (case = 1, control = 0) from T1S1. This step answers the second half of the research question directly.\", \"constraints\": [\"Compute the point-biserial correlation of each module eigengene with the case trait (two-sided parametric p-value).\", \"Permutation test per module: 1000 shuffles of case/control labels across the 120 samples; two-sided permutation p-value. FDR across all modules by Benjamini-Hochberg.\", \"Report ALL modules in a table: module, size, ME-case correlation, parametric p, permutation p, FDR. Define a trait-tracking module as FDR < 0.05; if none qualifies, carry the top 3 modules by |correlation| into downstream annotation and label them explicitly non-significant.\", \"For each trait-tracking module (or fallback top 3): compute module membership (gene-ME Pearson correlation) and list leading genes (top 10 by membership); save a per-gene table with module, membership, and connectivity.\", \"Save a PCA of the module-eigengene space with case/control overlay as a visual sanity check.\"], \"acceptance_criteria\": [\"A module-trait table covering all modules with correlation, parametric p, permutation p, and FDR.\", \"Per-gene module-membership / leading-gene tables for the trait-tracking modules (or the explicitly-labeled fallback top 3).\", \"An explicit count of modules tracking case status at FDR < 0.05.\"], \"caveats\": [\"Many modules are tested against one trait: the cross-module FDR, not raw p-values, is the decision criterion.\", \"Do not re-test or re-rank modules on a subset of samples selected by the correlation.\", \"The 1000-permutation p-values have a resolution floor of ~0.001; report that precision honestly.\"], \"packages\": [\"WGCNA\", \"stats\", \"qvalue\", \"ggplot2\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"network-agent\", \"description\": \"Per-module correlation of eigengenes with case vs control status, permutation and FDR significance, and module-membership / leading-gene tables for the trait-tracking modules.\"}, {\"id\": \"T1S4\", \"name\": \"Functional annotation of trait-tracking modules\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"What do the trait-tracking modules correspond to biologically — which GO biological processes and WikiPathways pathways are over-represented among their genes?\", \"context\": \"Input: gene lists of the trait-tracking modules from T1S3 (or the fallback top 3, flagged non-significant); the universe is the full retained-gene set from T1S1; organism is Homo sapiens. This step needs reference gene sets that are provisioned in this environment: a human WikiPathways pathway gene-set collection (GMT, HGNC symbols) in the reference store, and the human org annotation database (org.Hs.eg.db, installed) for GO; a human gene-identifier ID-mapping table (UniProt) is also available for resolving labels the org database misses. Confirm each reference is resolvable at run time before relying on it.\", \"constraints\": [\"Determine the ID format of the gene labels (T1S1 reports it); if not HGNC symbols, convert to symbols and Entrez IDs via the human org annotation database, using the human gene-identifier ID mapping for ambiguous or missed entries; report mapping coverage per module.\", \"For each module in scope: over-representation analysis against (a) GO biological process (clusterProfiler + human org database) and (b) the human WikiPathways gene-set collection (loaded as a custom GMT), with the universe = all retained genes from T1S1; FDR control within each database.\", \"If the WikiPathways gene-set collection cannot be resolved at run time, say so explicitly in the output and proceed with GO only — this step enriches the answer but does not carry it.\", \"Save per-module enrichment tables (gene set, genes matched, ratio/NES, p, FDR); report gene sets at FDR < 0.25 and highlight FDR < 0.05.\", \"Write a 2-4 sentence per-module biological summary grounded only in the returned gene sets.\"], \"acceptance_criteria\": [\"Per-module enrichment tables for the in-scope modules, covering both GO BP and WikiPathways (or an explicit note that WikiPathways was unavailable).\", \"ID-mapping coverage reported per module.\", \"Per-module biological summaries that do not over-interpret small modules.\"], \"caveats\": [\"Modules near minModuleSize (~30 genes) have limited power in over-representation analysis; do not over-interpret single gene sets.\", \"WikiPathways gene sets carry HGNC symbols; symbol mismatches silently shrink sets — report per-set matched-gene counts if coverage looks low.\", \"The biological summary is interpretation, not a conclusion: frame it as candidate pathways consistent with the gene-set hits.\"], \"packages\": [\"clusterProfiler\", \"DOSE\", \"org.Hs.eg.db\", \"fgsea\", \"ggplot2\", \"data.table\"], \"depends_on\": [\"T1S1\", \"T1S3\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\", \"description\": \"GO BP and WikiPathways over-representation enrichment for each trait-tracking module gene list, with ID-mapping coverage and concise per-module biological summaries.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 120
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

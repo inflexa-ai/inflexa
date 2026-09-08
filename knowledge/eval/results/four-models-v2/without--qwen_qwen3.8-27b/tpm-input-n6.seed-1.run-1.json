@@ -1,0 +1,160 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:15:58.988Z",
+  "elapsedMs": 182066,
+  "outcome": "plan_submitted",
+  "planId": "pln-241b4b91",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "limma DE + Wilcoxon robustness on log2(TPM+1)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "Do not present log2(TPM+1) fold changes as count-based fold changes; state the scale in every output.",
+          "The +1 pseudo-count dominates genes near-zero TPM — the TPM>=1 filter mitigates this, but mention it when interpreting low-expression hits.",
+          "12 samples total: do not report per-sample biology; all claims are group-level with small-n caveats."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-tpm-input-n6-s1-1/data/inputs/abundance/tpm.csv (12,000 genes x 12 samples; first column gene symbol, one column per sample) and /eval-four-models-v2-without-tpm-input-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows; sample + condition, 6 lesional / 6 control). Design is unpaired, single batch, so the model is condition-only. limma (3.68.5) and ggplot2 are installed in the R track; scipy in Python for the rank-sum test. Rationale for the method: with no raw counts or Salmon quantification directories, dispersion estimation from counts is impossible, so the linear-model/empirical-Bayes route on log2-scaled TPM is used, which is the standard published fallback for TPM-only RNA-seq comparisons.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "scipy"
+        ],
+        "question": "Which genes are differentially expressed between the 6 psoriasis lesional skin samples and the 6 control skin samples, given only Salmon gene-level TPM (12,000 genes x 12 samples) with no raw counts?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Join tpm.csv and metadata.csv on sample name and verify exactly 6 lesional and 6 control samples; if the split differs, stop and report the mismatch instead of proceeding.",
+          "Pre-filter to genes with TPM >= 1 in at least 5 of the 12 samples; report genes retained and filtered.",
+          "Transform the retained matrix to log2(TPM + 1); do not apply any further normalization step (TPM is already compositionally scaled).",
+          "Run limma: design = model.matrix(~ 0 + condition), makeContrasts(lesional - control), lmFit + eBayes with BH-adjusted p-values; export the full results table with gene, log2FC, mean TPM, t, P.Value, adj.P.Val.",
+          "Independently run a per-gene Wilcoxon rank-sum test on the raw TPM; report the Spearman correlation between limma t-statistics and Wilcoxon z-scores and the overlap of each method's top-100 genes.",
+          "Write out: (a) DE table TSV with all modeled genes sorted by |t|, (b) up- and down-regulated gene lists at FDR < 0.05, (c) figures: boxplot of per-gene log2(TPM+1) by condition, PCA (PC1/PC2 colored by condition), MA plot of the top-50 DE genes.",
+          "Include an explicit limitation statement in the outputs: no raw counts were delivered so this is an approximate alternative to count-based DESeq2/edgeR; n=6 per group is underpowered and the FDR is under-determined; single batch, so no covariates were adjusted."
+        ],
+        "description": "Differential expression of psoriasis lesional vs control skin using limma empirical-Bayes linear modeling on log2(TPM+1) — the established approach when only TPM/normalized continuous expression is available — cross-checked with per-gene Wilcoxon rank-sum tests on raw TPM. Produces the full DE table, FDR<0.05 up/down gene lists, QC and DE figures, and the explicit limitation statement that TPM-based DE is approximate relative to count-based models.",
+        "acceptance_criteria": [
+          "DE table covering all modeled genes with log2FC, mean expression, t, P.Value, and BH-adjusted FDR.",
+          "Up- and down-regulated gene lists at FDR < 0.05 (counts reported even if empty).",
+          "Boxplot, PCA, and MA figures produced.",
+          "Wilcoxon-vs-limma concordance statistics (Spearman of statistics; top-100 overlap) reported.",
+          "Limitation statement present in the step output."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "fgsea enrichment: Hallmark, GO-BP, WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "functional-enrichment",
+        "status": "pending",
+        "caveats": [
+          "If any TPM-table symbols fail to match the HGNC-keyed collections, report the unmatched count and proceed on the matched subset — no silent dropping.",
+          "Nested GO: parent and child terms sharing most members are not independent findings; summarize blocks rather than counting raw terms.",
+          "WikiPathways set names come from the first GMT field split on '%' — not from the file name or the URL column."
+        ],
+        "context": "Inputs from T1S1: full ranked list of all modeled genes (ranked by limma t-statistic) and the FDR<0.05 up/down gene lists. Reference collections to resolve from the reference store (verify organism = human before use, since the dataset is Homo sapiens): the MSigDB human Hallmark gene-set collection; the MSigDB human GO Biological Process gene-set collection; the human WikiPathways pathway collection (2026.07.10 snapshot). GO sets form a nested hierarchy, so expect blocks of correlated significant terms — collapse/summarize them before reporting a count of significant GO terms. The sandbox has no network access; KEGGREST and online Reactome queries must not be attempted.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among genes up- or down-regulated in psoriasis lesional skin relative to control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Run fgsea with the full T1S1 ranked list (all modeled genes, ranked by limma t-statistic) against each of the three collections separately; report NES, pvalue, padj (BH) per set, and report up- and down-regulated enrichment separately (rank direction).",
+          "Run over-representation analysis of the FDR<0.05 up- and down-regulated lists against the Hallmark and WikiPathways collections with universe = all T1S1 modeled genes; if a direction has fewer than 15 genes, state that ORA for that direction is underpowered and rely on fgsea for it.",
+          "If any of the three collections is missing at run time, report the absence and continue with the remaining collections rather than failing the step.",
+          "Do not call any network-backed enrichment (KEGGREST, online Reactome, gseapy's remote databases).",
+          "Output: per-collection ranked pathway tables for both directions; dot/bar plots of top pathways per direction and collection; a cross-collection summary table of the top-20 pathways (pathway, collection, NES, padj, direction)."
+        ],
+        "description": "Gene-set enrichment of the T1S1 DE results against three locally provisioned human gene-set collections: MSigDB human Hallmark (50 sets), MSigDB human GO Biological Process (~7,500 sets), and the human WikiPathways GMT (set name in the first GMT field, '%'-delimited; second field is a URL and is not the name). Ranked (fgsea) enrichment is primary, with over-representation on the FDR<0.05 lists as a complement. All collections are HGNC symbol-keyed, matching the symbol-keyed TPM table, so no identifier translation is needed. Entirely offline — no KEGGREST or other network-backed enrichment.",
+        "acceptance_criteria": [
+          "fgsea results for all three human collections, or a documented absence for any that is missing at run time.",
+          "ORA results for the up/down FDR<0.05 lists with the universe explicitly stated.",
+          "Per-collection figures and the cross-collection top-20 summary table produced.",
+          "No enrichment claim made from a set collection whose organism does not match human."
+        ]
+      }
+    ],
+    "title": "Psoriasis skin DE on Salmon TPM + pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Only a Salmon gene-level TPM table was delivered (12,000 genes x 12 samples; 6 psoriasis lesional vs 6 control, unpaired, single batch; no raw counts, no quantification directories), so count-based models (DESeq2/edgeR) are off the table. The primary DE step therefore uses limma empirical-Bayes linear modeling on log2(TPM+1) — the standard fallback for normalized continuous expression data — with a per-gene Wilcoxon rank-sum test on raw TPM as a robustness cross-check, appropriate for the small n=6/group design. The DE outputs (full ranked list plus FDR<0.05 up/down sets) feed a second, fully offline enrichment step: fgsea ranked enrichment against three locally provisioned human gene-set collections in HGNC symbol space (MSigDB Hallmark, MSigDB GO-BP, WikiPathways — all present in the reference store and matching the symbol-keyed TPM table), plus ORA on the DE lists. No network access exists in the sandbox, so online databases are excluded. Stated limitations carried in the outputs: TPM is compositionally normalized, so effect sizes and FDR are approximate relative to count-based models; n=6 per group is underpowered and FDR is under-determined; single batch means no covariates are adjusted. Candidate independent validation cohorts are noted in the narrative (GSE121212 psoriasis/AD/healthy bulk RNA-seq n=147; GSE295540 psoriasis vs controls n=13; GSE47944 n=84) but their data is not provisioned in this environment, so no validation step is planned — validation would require a separate data-provisioning pass."
+  },
+  "usage": {
+    "inputTokens": 133445,
+    "outputTokens": 10588,
+    "cacheReadInputTokens": 82368,
+    "reasoningTokens": 8156
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_67d72752aa714aaba091beb0",
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 70
+    },
+    {
+      "toolUseId": "call_ad0bd616c2cd4d06b77a3ce8",
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "psoriasis lesional skin RNA-seq control",
+        "organism": "Homo sapiens",
+        "datasetType": "gse",
+        "limit": 10
+      },
+      "outcome": "ok",
+      "durationMs": 1042
+    },
+    {
+      "toolUseId": "call_11819d58a97b426f89f7bb97",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Psoriasis skin DE on Salmon TPM + pathway enrichment\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-10T12:00:00Z\", \"analytical_narrative\": \"Only a Salmon gene-level TPM table was delivered (12,000 genes x 12 samples; 6 psoriasis lesional vs 6 control, unpaired, single batch; no raw counts, no quantification directories), so count-based models (DESeq2/edgeR) are off the table. The primary DE step therefore uses limma empirical-Bayes linear modeling on log2(TPM+1) — the standard fallback for normalized continuous expression data — with a per-gene Wilcoxon rank-sum test on raw TPM as a robustness cross-check, appropriate for the small n=6/group design. The DE outputs (full ranked list plus FDR<0.05 up/down sets) feed a second, fully offline enrichment step: fgsea ranked enrichment against three locally provisioned human gene-set collections in HGNC symbol space (MSigDB Hallmark, MSigDB GO-BP, WikiPathways — all present in the reference store and matching the symbol-keyed TPM table), plus ORA on the DE lists. No network access exists in the sandbox, so online databases are excluded. Stated limitations carried in the outputs: TPM is compositionally normalized, so effect sizes and FDR are approximate relative to count-based models; n=6 per group is underpowered and FDR is under-determined; single batch means no covariates are adjusted. Candidate independent validation cohorts are noted in the narrative (GSE121212 psoriasis/AD/healthy bulk RNA-seq n=147; GSE295540 psoriasis vs controls n=13; GSE47944 n=84) but their data is not provisioned in this environment, so no validation step is planned — validation would require a separate data-provisioning pass.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"limma DE + Wilcoxon robustness on log2(TPM+1)\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between the 6 psoriasis lesional skin samples and the 6 control skin samples, given only Salmon gene-level TPM (12,000 genes x 12 samples) with no raw counts?\", \"description\": \"Differential expression of psoriasis lesional vs control skin using limma empirical-Bayes linear modeling on log2(TPM+1) — the established approach when only TPM/normalized continuous expression is available — cross-checked with per-gene Wilcoxon rank-sum tests on raw TPM. Produces the full DE table, FDR<0.05 up/down gene lists, QC and DE figures, and the explicit limitation statement that TPM-based DE is approximate relative to count-based models.\", \"context\": \"Inputs: /eval-four-models-v2-without-tpm-input-n6-s1-1/data/inputs/abundance/tpm.csv (12,000 genes x 12 samples; first column gene symbol, one column per sample) and /eval-four-models-v2-without-tpm-input-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows; sample + condition, 6 lesional / 6 control). Design is unpaired, single batch, so the model is condition-only. limma (3.68.5) and ggplot2 are installed in the R track; scipy in Python for the rank-sum test. Rationale for the method: with no raw counts or Salmon quantification directories, dispersion estimation from counts is impossible, so the linear-model/empirical-Bayes route on log2-scaled TPM is used, which is the standard published fallback for TPM-only RNA-seq comparisons.\", \"constraints\": [\"Join tpm.csv and metadata.csv on sample name and verify exactly 6 lesional and 6 control samples; if the split differs, stop and report the mismatch instead of proceeding.\", \"Pre-filter to genes with TPM >= 1 in at least 5 of the 12 samples; report genes retained and filtered.\", \"Transform the retained matrix to log2(TPM + 1); do not apply any further normalization step (TPM is already compositionally scaled).\", \"Run limma: design = model.matrix(~ 0 + condition), makeContrasts(lesional - control), lmFit + eBayes with BH-adjusted p-values; export the full results table with gene, log2FC, mean TPM, t, P.Value, adj.P.Val.\", \"Independently run a per-gene Wilcoxon rank-sum test on the raw TPM; report the Spearman correlation between limma t-statistics and Wilcoxon z-scores and the overlap of each method's top-100 genes.\", \"Write out: (a) DE table TSV with all modeled genes sorted by |t|, (b) up- and down-regulated gene lists at FDR < 0.05, (c) figures: boxplot of per-gene log2(TPM+1) by condition, PCA (PC1/PC2 colored by condition), MA plot of the top-50 DE genes.\", \"Include an explicit limitation statement in the outputs: no raw counts were delivered so this is an approximate alternative to count-based DESeq2/edgeR; n=6 per group is underpowered and the FDR is under-determined; single batch, so no covariates were adjusted.\"], \"acceptance_criteria\": [\"DE table covering all modeled genes with log2FC, mean expression, t, P.Value, and BH-adjusted FDR.\", \"Up- and down-regulated gene lists at FDR < 0.05 (counts reported even if empty).\", \"Boxplot, PCA, and MA figures produced.\", \"Wilcoxon-vs-limma concordance statistics (Spearman of statistics; top-100 overlap) reported.\", \"Limitation statement present in the step output.\"], \"caveats\": [\"Do not present log2(TPM+1) fold changes as count-based fold changes; state the scale in every output.\", \"The +1 pseudo-count dominates genes near-zero TPM — the TPM>=1 filter mitigates this, but mention it when interpreting low-expression hits.\", \"12 samples total: do not report per-sample biology; all claims are group-level with small-n caveats.\"], \"packages\": [\"limma\", \"ggplot2\", \"scipy\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"fgsea enrichment: Hallmark, GO-BP, WikiPathways\", \"track\": \"functional-enrichment\", \"step_type\": \"analysis\", \"question\": \"Which biological pathways are enriched among genes up- or down-regulated in psoriasis lesional skin relative to control?\", \"description\": \"Gene-set enrichment of the T1S1 DE results against three locally provisioned human gene-set collections: MSigDB human Hallmark (50 sets), MSigDB human GO Biological Process (~7,500 sets), and the human WikiPathways GMT (set name in the first GMT field, '%'-delimited; second field is a URL and is not the name). Ranked (fgsea) enrichment is primary, with over-representation on the FDR<0.05 lists as a complement. All collections are HGNC symbol-keyed, matching the symbol-keyed TPM table, so no identifier translation is needed. Entirely offline — no KEGGREST or other network-backed enrichment.\", \"context\": \"Inputs from T1S1: full ranked list of all modeled genes (ranked by limma t-statistic) and the FDR<0.05 up/down gene lists. Reference collections to resolve from the reference store (verify organism = human before use, since the dataset is Homo sapiens): the MSigDB human Hallmark gene-set collection; the MSigDB human GO Biological Process gene-set collection; the human WikiPathways pathway collection (2026.07.10 snapshot). GO sets form a nested hierarchy, so expect blocks of correlated significant terms — collapse/summarize them before reporting a count of significant GO terms. The sandbox has no network access; KEGGREST and online Reactome queries must not be attempted.\", \"constraints\": [\"Run fgsea with the full T1S1 ranked list (all modeled genes, ranked by limma t-statistic) against each of the three collections separately; report NES, pvalue, padj (BH) per set, and report up- and down-regulated enrichment separately (rank direction).\", \"Run over-representation analysis of the FDR<0.05 up- and down-regulated lists against the Hallmark and WikiPathways collections with universe = all T1S1 modeled genes; if a direction has fewer than 15 genes, state that ORA for that direction is underpowered and rely on fgsea for it.\", \"If any of the three collections is missing at run time, report the absence and continue with the remaining collections rather than failing the step.\", \"Do not call any network-backed enrichment (KEGGREST, online Reactome, gseapy's remote databases).\", \"Output: per-collection ranked pathway tables for both directions; dot/bar plots of top pathways per direction and collection; a cross-collection summary table of the top-20 pathways (pathway, collection, NES, padj, direction).\"], \"acceptance_criteria\": [\"fgsea results for all three human collections, or a documented absence for any that is missing at run time.\", \"ORA results for the up/down FDR<0.05 lists with the universe explicitly stated.\", \"Per-collection figures and the cross-collection top-20 summary table produced.\", \"No enrichment claim made from a set collection whose organism does not match human.\"], \"caveats\": [\"If any TPM-table symbols fail to match the HGNC-keyed collections, report the unmatched count and proceed on the matched subset — no silent dropping.\", \"Nested GO: parent and child terms sharing most members are not independent findings; summarize blocks rather than counting raw terms.\", \"WikiPathways set names come from the first GMT field split on '%' — not from the file name or the URL column.\"], \"packages\": [\"fgsea\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 47
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

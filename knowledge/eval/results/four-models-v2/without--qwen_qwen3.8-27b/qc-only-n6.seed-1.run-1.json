@@ -1,0 +1,208 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "qc-only-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:11:40.422Z",
+  "elapsedMs": 124433,
+  "outcome": "plan_submitted",
+  "planId": "pln-289b43a8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library sizes and count-scale characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "sample-qc",
+        "status": "pending",
+        "caveats": [
+          "Salmon output 'as delivered' may be length-scaled (fractional values) even when called counts — the profile does not say; inspect the values, do not assume integers.",
+          "A ~4x-shallow sample implies ratio_to_median ~0.25; confirm the direction and magnitude from the data.",
+          "Gene names arrive in whatever namespace Salmon used; carry them forward unchanged — no ID mapping is needed for QC."
+        ],
+        "context": "Data: /eval-four-models-v2-without-qc-only-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13 CSV; gene-level Salmon output as delivered, 12 samples plus one gene-name column) and /eval-four-models-v2-without-qc-only-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: sample, condition = atopic dermatitis lesional vs control, 6+6, unpaired, single batch). Known caveat: sample_01 has a library size about 4x below the median. No prior QC was run on this dataset (it was delivered without QC), so this step is the first depth check.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "What is the per-sample library size of the 12 skin samples (6 atopic dermatitis lesional vs 6 control), and is the delivered Salmon matrix raw counts or length-corrected — the fact that decides the normalization used by the downstream PCA and distance steps?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Join samples by exact name between counts.csv columns and metadata.csv rows; verify 12/12 match and report any mismatch explicitly rather than dropping silently.",
+          "Do not run differential expression or any downstream biology in this step.",
+          "Persist the normalized matrix and the scale-classification decision (with evidence) to a step output that T1S2 and T1S3 reuse without re-deriving.",
+          "Report the actual measured ratio_to_median for sample_01 — do not assume 0.25."
+        ],
+        "description": "Load counts.csv and metadata.csv; identify the gene-name column and the 12 sample columns. Join to metadata by exact sample name. Compute per-sample library size (column sum) and ratio to the median library size. Characterize the count scale: fraction of integer-valued entries and log10 median of nonzero entries, to classify the matrix as raw counts (integers, totals in the 1e6-1e7 range) or length-scaled/TPM-like (fractional, O(1) or less). Then build the single normalized matrix all later steps consume: log2(CPM+1) if raw counts, log2(TPM+1) if TPM-like — and record which branch was taken and why. Produce a depth bar chart of the 12 library sizes colored by condition with the median line.",
+        "acceptance_criteria": [
+          "library_sizes.tsv with 12 rows: sample, condition, total_counts, ratio_to_median.",
+          "Explicit scale classification (raw counts vs length-scaled) backed by the integer-fraction and magnitude evidence, recorded in the step output.",
+          "Normalized expression matrix (12000 x 12) saved, with the normalization rule documented in the output.",
+          "Depth bar chart (12 samples, colored by condition, median line, sample_01 annotated)."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "PCA of the 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "sample-qc",
+        "status": "pending",
+        "caveats": [
+          "n=12 (6 per arm): one point can visibly move a component axis — note if a component is dominated by a single sample, especially sample_01.",
+          "PCA on log-normalized bulk counts is standard for QC visualization; it is not a statistical test of group separation — do not attach p-values here."
+        ],
+        "context": "Consumes the normalized matrix and the scale-classification decision from T1S1. Conditions: atopic dermatitis lesional (n=6) vs control (n=6). sample_01 is the pre-flagged low-depth sample; its PC position is a deliverable, not a post-hoc finding.",
+        "maxSteps": 200,
+        "packages": [
+          "numpy",
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "In principal components, do atopic dermatitis lesional and control skin samples form distinct patterns, and does sample_01 (the shallow sample) load as an outlier along any major component?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the T1S1 normalized matrix exactly as produced — do not re-normalize or re-filter genes here.",
+          "This is a QC view, not a clustering claim: do not describe PC groupings as clusters or biological subtypes."
+        ],
+        "description": "Run PCA (SVD / prcomp equivalent) on the T1S1 normalized matrix, genes as variables. Report percent variance explained for PC1-PC3. Produce PC1-PC2 (and PC1-PC3 if it adds information) scatter plots: points colored by condition (lesional vs control), labeled by sample name, sample_01 highlighted. Compute each sample's distance from the centroid in PC space (leverage) and report it alongside the condition labels. State plainly whether the conditions separate on PC1/PC2 and exactly where sample_01 sits.",
+        "acceptance_criteria": [
+          "pca.png: PC1-PC2 scatter, colored by condition, all 12 samples labeled, sample_01 highlighted.",
+          "pca_coordinates.csv: 12 rows with PC1-PC3 scores and PC-space distance from centroid.",
+          "Percent variance explained for PC1-PC3 reported.",
+          "Explicit statement: (a) whether lesional vs control is visible on PC1/PC2, (b) sample_01's PC position relative to the other 11."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sample-to-sample distances and hierarchical clustering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "sample-qc",
+        "status": "pending",
+        "caveats": [
+          "With 12 points, dendrogram topology is metric-sensitive — that is why both metrics are reported; do not narrate one topology as 'the' structure.",
+          "A shallow sample tends to be noisier, which can inflate its distance to all others — this is evidence for T1S4's rule, not a verdict by itself."
+        ],
+        "context": "Consumes the same normalized matrix from T1S1. Conditions: atopic dermatitis lesional (n=6) vs control (n=6), single batch, unpaired. sample_01 is the pre-flagged low-depth sample; its rank in sample-to-sample distance is a deliverable.",
+        "maxSteps": 200,
+        "packages": [
+          "scipy",
+          "numpy",
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "What are the pairwise distances among the 12 samples, and does the dendrogram place sample_01 outside the condition-consistent structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the T1S1 normalized matrix exactly as produced.",
+          "Report both metrics side by side; do not silently choose one as 'the' distance."
+        ],
+        "description": "Compute the 12x12 pairwise sample distance on the T1S1 normalized matrix under two metrics: 1 - Pearson correlation and Euclidean. Produce a distance heatmap (samples on both axes, annotated by condition) and a hierarchical-clustering dendrogram (average linkage) per metric, branches annotated by condition. Compute each sample's mean distance to the other 11 under both metrics, rank all 12, and report sample_01's rank and whether it is top-2 under either metric.",
+        "acceptance_criteria": [
+          "distance_heatmap.png (12x12, both metrics or one panel each), dendrogram.png(s) with condition annotations.",
+          "sample_distances.tsv: per sample, mean distance to the other 11 and rank under 1-Pearson and Euclidean.",
+          "Explicit statement of whether sample_01 is top-2 in mean distance under either metric."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Verdict on sample_01 (shallow library)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "sample-qc",
+        "status": "pending",
+        "caveats": [
+          "Depth alone is not grounds for exclusion: CPM/median-ratio style normalization is robust to library size, so a shallow but otherwise typical sample should be retained with a caveat — let the outlier flags drive the call.",
+          "With 6 per arm, any exclusion materially changes the design; the verdict should name that cost, not just the quality benefit.",
+          "If the numbers sit exactly on a rule boundary (e.g., ratio 0.5, tied distance rank), say so and present both readings rather than forcing one."
+        ],
+        "context": "Integrates only the outputs of T1S1 (library_sizes.tsv, sample_01 ratio_to_median), T1S2 (PC leverage), and T1S3 (distance ranks). Read sample_01's condition from metadata.csv (condition: atopic dermatitis lesional vs control) to state the effect on arm balance. The dataset went in without QC, so this verdict is the QC gate for everything downstream.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Given its library size, its PC position, and its sample-to-sample distances, should sample_01 be excluded or retained for the downstream atopic dermatitis lesional vs control test?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S1",
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Do not introduce any new statistic or test in this step — integrate only T1S1-T1S3 outputs.",
+          "The recommendation must state the tradeoff explicitly: exclusion removes one of six samples in its arm, unbalancing the 6 vs 6 design.",
+          "Do not re-run PCA, distances, or library-size computations here."
+        ],
+        "description": "Apply a pre-registered rule to the actual numbers: (a) depth flag — shallow if ratio_to_median < 0.5; (b) outlier flag — top-2 mean sample distance under either metric, or top-2 PC leverage. Decision: shallow AND outlier -> recommend exclusion from downstream testing, report to user; shallow but not an outlier -> retain with an explicit low-depth caveat (reduced per-gene sensitivity in that sample); not shallow -> retain. State the arm-balance consequence of exclusion (e.g., 5 vs 6 if sample_01 is lesional or control) and the power implication in one sentence. Write the verdict as a short report: the rule, the triggering numbers from T1S1-T1S3, and the recommendation.",
+        "acceptance_criteria": [
+          "verdict.md containing: sample_01's condition, its ratio_to_median, its distance rank(s), its PC leverage, the rule applied, and a single unambiguous retain/exclude recommendation with reasoning.",
+          "Explicit arm-balance statement (e.g., 'excluding sample_01 leaves 5 lesional vs 6 control') and a one-sentence power implication.",
+          "No new statistical results beyond what T1S1-T1S3 computed."
+        ]
+      }
+    ],
+    "title": "AD skin RNA-seq pre-DE sample QC and depth verdict",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is explicitly pre-hypothesis-testing: how do the twelve samples look before any atopic dermatitis lesional vs control test is run. The plan therefore produces only QC diagnostics — no differential expression, no enrichment, no references. T1S1 runs first because the delivered Salmon matrix's length-correction status is not recorded in the profile (12000 x 13 gene-level counts as delivered); classifying the count scale (raw integer counts vs length-scaled/TPM-like) determines the correct normalization (log2 CPM vs log2 TPM+1) and T1S1 carries that decision forward. T1S2 (PCA) and T1S3 (pairwise distances + hclust) then run in parallel on the same normalized matrix, both examining whether the known ~4x-shallow sample_01 sits apart from the 6-vs-6 condition structure. T1S4 integrates the three outputs with a pre-registered rule to deliver the requested verdict on sample_01, including the arm-balance cost (5 vs 6) of exclusion. No reference data from /mnt/refs is needed for QC; the human WikiPathways/UniProt files are irrelevant here."
+  },
+  "usage": {
+    "inputTokens": 32734,
+    "outputTokens": 8194,
+    "cacheReadInputTokens": 12096,
+    "reasoningTokens": 5320
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_5765d2d79a8b4d9b82f990bf",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"AD skin RNA-seq pre-DE sample QC and depth verdict\", \"analytical_narrative\": \"The research question is explicitly pre-hypothesis-testing: how do the twelve samples look before any atopic dermatitis lesional vs control test is run. The plan therefore produces only QC diagnostics — no differential expression, no enrichment, no references. T1S1 runs first because the delivered Salmon matrix's length-correction status is not recorded in the profile (12000 x 13 gene-level counts as delivered); classifying the count scale (raw integer counts vs length-scaled/TPM-like) determines the correct normalization (log2 CPM vs log2 TPM+1) and T1S1 carries that decision forward. T1S2 (PCA) and T1S3 (pairwise distances + hclust) then run in parallel on the same normalized matrix, both examining whether the known ~4x-shallow sample_01 sits apart from the 6-vs-6 condition structure. T1S4 integrates the three outputs with a pre-registered rule to deliver the requested verdict on sample_01, including the arm-balance cost (5 vs 6) of exclusion. No reference data from /mnt/refs is needed for QC; the human WikiPathways/UniProt files are irrelevant here.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-22T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Library sizes and count-scale characterization\", \"track\": \"sample-qc\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What is the per-sample library size of the 12 skin samples (6 atopic dermatitis lesional vs 6 control), and is the delivered Salmon matrix raw counts or length-corrected — the fact that decides the normalization used by the downstream PCA and distance steps?\", \"context\": \"Data: /eval-four-models-v2-without-qc-only-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13 CSV; gene-level Salmon output as delivered, 12 samples plus one gene-name column) and /eval-four-models-v2-without-qc-only-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: sample, condition = atopic dermatitis lesional vs control, 6+6, unpaired, single batch). Known caveat: sample_01 has a library size about 4x below the median. No prior QC was run on this dataset (it was delivered without QC), so this step is the first depth check.\", \"description\": \"Load counts.csv and metadata.csv; identify the gene-name column and the 12 sample columns. Join to metadata by exact sample name. Compute per-sample library size (column sum) and ratio to the median library size. Characterize the count scale: fraction of integer-valued entries and log10 median of nonzero entries, to classify the matrix as raw counts (integers, totals in the 1e6-1e7 range) or length-scaled/TPM-like (fractional, O(1) or less). Then build the single normalized matrix all later steps consume: log2(CPM+1) if raw counts, log2(TPM+1) if TPM-like — and record which branch was taken and why. Produce a depth bar chart of the 12 library sizes colored by condition with the median line.\", \"constraints\": [\"Join samples by exact name between counts.csv columns and metadata.csv rows; verify 12/12 match and report any mismatch explicitly rather than dropping silently.\", \"Do not run differential expression or any downstream biology in this step.\", \"Persist the normalized matrix and the scale-classification decision (with evidence) to a step output that T1S2 and T1S3 reuse without re-deriving.\", \"Report the actual measured ratio_to_median for sample_01 — do not assume 0.25.\"], \"acceptance_criteria\": [\"library_sizes.tsv with 12 rows: sample, condition, total_counts, ratio_to_median.\", \"Explicit scale classification (raw counts vs length-scaled) backed by the integer-fraction and magnitude evidence, recorded in the step output.\", \"Normalized expression matrix (12000 x 12) saved, with the normalization rule documented in the output.\", \"Depth bar chart (12 samples, colored by condition, median line, sample_01 annotated).\"], \"caveats\": [\"Salmon output 'as delivered' may be length-scaled (fractional values) even when called counts — the profile does not say; inspect the values, do not assume integers.\", \"A ~4x-shallow sample implies ratio_to_median ~0.25; confirm the direction and magnitude from the data.\", \"Gene names arrive in whatever namespace Salmon used; carry them forward unchanged — no ID mapping is needed for QC.\"], \"packages\": [\"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S2\", \"name\": \"PCA of the 12 samples\", \"track\": \"sample-qc\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"In principal components, do atopic dermatitis lesional and control skin samples form distinct patterns, and does sample_01 (the shallow sample) load as an outlier along any major component?\", \"context\": \"Consumes the normalized matrix and the scale-classification decision from T1S1. Conditions: atopic dermatitis lesional (n=6) vs control (n=6). sample_01 is the pre-flagged low-depth sample; its PC position is a deliverable, not a post-hoc finding.\", \"description\": \"Run PCA (SVD / prcomp equivalent) on the T1S1 normalized matrix, genes as variables. Report percent variance explained for PC1-PC3. Produce PC1-PC2 (and PC1-PC3 if it adds information) scatter plots: points colored by condition (lesional vs control), labeled by sample name, sample_01 highlighted. Compute each sample's distance from the centroid in PC space (leverage) and report it alongside the condition labels. State plainly whether the conditions separate on PC1/PC2 and exactly where sample_01 sits.\", \"constraints\": [\"Use the T1S1 normalized matrix exactly as produced — do not re-normalize or re-filter genes here.\", \"This is a QC view, not a clustering claim: do not describe PC groupings as clusters or biological subtypes.\"], \"acceptance_criteria\": [\"pca.png: PC1-PC2 scatter, colored by condition, all 12 samples labeled, sample_01 highlighted.\", \"pca_coordinates.csv: 12 rows with PC1-PC3 scores and PC-space distance from centroid.\", \"Percent variance explained for PC1-PC3 reported.\", \"Explicit statement: (a) whether lesional vs control is visible on PC1/PC2, (b) sample_01's PC position relative to the other 11.\"], \"caveats\": [\"n=12 (6 per arm): one point can visibly move a component axis — note if a component is dominated by a single sample, especially sample_01.\", \"PCA on log-normalized bulk counts is standard for QC visualization; it is not a statistical test of group separation — do not attach p-values here.\"], \"packages\": [\"numpy\", \"pandas\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S3\", \"name\": \"Sample-to-sample distances and hierarchical clustering\", \"track\": \"sample-qc\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What are the pairwise distances among the 12 samples, and does the dendrogram place sample_01 outside the condition-consistent structure?\", \"context\": \"Consumes the same normalized matrix from T1S1. Conditions: atopic dermatitis lesional (n=6) vs control (n=6), single batch, unpaired. sample_01 is the pre-flagged low-depth sample; its rank in sample-to-sample distance is a deliverable.\", \"description\": \"Compute the 12x12 pairwise sample distance on the T1S1 normalized matrix under two metrics: 1 - Pearson correlation and Euclidean. Produce a distance heatmap (samples on both axes, annotated by condition) and a hierarchical-clustering dendrogram (average linkage) per metric, branches annotated by condition. Compute each sample's mean distance to the other 11 under both metrics, rank all 12, and report sample_01's rank and whether it is top-2 under either metric.\", \"constraints\": [\"Use the T1S1 normalized matrix exactly as produced.\", \"Report both metrics side by side; do not silently choose one as 'the' distance.\"], \"acceptance_criteria\": [\"distance_heatmap.png (12x12, both metrics or one panel each), dendrogram.png(s) with condition annotations.\", \"sample_distances.tsv: per sample, mean distance to the other 11 and rank under 1-Pearson and Euclidean.\", \"Explicit statement of whether sample_01 is top-2 in mean distance under either metric.\"], \"caveats\": [\"With 12 points, dendrogram topology is metric-sensitive — that is why both metrics are reported; do not narrate one topology as 'the' structure.\", \"A shallow sample tends to be noisier, which can inflate its distance to all others — this is evidence for T1S4's rule, not a verdict by itself.\"], \"packages\": [\"scipy\", \"numpy\", \"pandas\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S4\", \"name\": \"Verdict on sample_01 (shallow library)\", \"track\": \"sample-qc\", \"step_type\": \"synthesis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Given its library size, its PC position, and its sample-to-sample distances, should sample_01 be excluded or retained for the downstream atopic dermatitis lesional vs control test?\", \"context\": \"Integrates only the outputs of T1S1 (library_sizes.tsv, sample_01 ratio_to_median), T1S2 (PC leverage), and T1S3 (distance ranks). Read sample_01's condition from metadata.csv (condition: atopic dermatitis lesional vs control) to state the effect on arm balance. The dataset went in without QC, so this verdict is the QC gate for everything downstream.\", \"description\": \"Apply a pre-registered rule to the actual numbers: (a) depth flag — shallow if ratio_to_median < 0.5; (b) outlier flag — top-2 mean sample distance under either metric, or top-2 PC leverage. Decision: shallow AND outlier -> recommend exclusion from downstream testing, report to user; shallow but not an outlier -> retain with an explicit low-depth caveat (reduced per-gene sensitivity in that sample); not shallow -> retain. State the arm-balance consequence of exclusion (e.g., 5 vs 6 if sample_01 is lesional or control) and the power implication in one sentence. Write the verdict as a short report: the rule, the triggering numbers from T1S1-T1S3, and the recommendation.\", \"constraints\": [\"Do not introduce any new statistic or test in this step — integrate only T1S1-T1S3 outputs.\", \"The recommendation must state the tradeoff explicitly: exclusion removes one of six samples in its arm, unbalancing the 6 vs 6 design.\", \"Do not re-run PCA, distances, or library-size computations here.\"], \"acceptance_criteria\": [\"verdict.md containing: sample_01's condition, its ratio_to_median, its distance rank(s), its PC leverage, the rule applied, and a single unambiguous retain/exclude recommendation with reasoning.\", \"Explicit arm-balance statement (e.g., 'excluding sample_01 leaves 5 lesional vs 6 control') and a one-sentence power implication.\", \"No new statistical results beyond what T1S1-T1S3 computed.\"], \"caveats\": [\"Depth alone is not grounds for exclusion: CPM/median-ratio style normalization is robust to library size, so a shallow but otherwise typical sample should be retained with a caveat — let the outlier flags drive the call.\", \"With 6 per arm, any exclusion materially changes the design; the verdict should name that cost, not just the quality benefit.\", \"If the numbers sit exactly on a rule boundary (e.g., ratio 0.5, tied distance rank), say so and present both readings rather than forcing one.\"], \"packages\": [\"pandas\"], \"depends_on\": [\"T1S1\", \"T1S2\", \"T1S3\"], \"resources\": {\"cpu\": 1, \"memoryGb\": 2}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 72
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly fits DESeq2 Wald with ~ sex + age + condition, sets control as the reference, checks model-matrix rank and age balance before fitting, extracts the condition coefficient with apeglm shrinkage and BH at 0.05, and adds a useful unadjusted sensitivity run; it does not center age as the reference does. QC covers library sizes and PCA by condition and sex but omits PCA by age, a XIST/Y-linked sex check, and a stated policy beyond flagging an outlier. The plan explicitly declines any low-count filter beyond independentFiltering with a weak justification, and the |LFC| >= 0.58 subset is applied post hoc rather than via lfcThreshold. Enrichment was not asked but is executed reasonably (ranked list with stated metric, explicit universe, named versioned collections) though without a set-size window; the report does not commit to package versions."
+}

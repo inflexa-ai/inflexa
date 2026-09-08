@@ -1,0 +1,142 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "two-timepoints-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:17:11.204Z",
+  "elapsedMs": 149278,
+  "outcome": "plan_submitted",
+  "planId": "pln-6c31c9f4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "2x2 DE: treatment x time interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "n=3 per condition-time cell gives the interaction term 8 residual degrees of freedom and low power: do not relax FDR to inflate the significant set; if FDR < 0.05 yields few genes, the top nominal-p genes may be listed but must be labeled as nominally significant only.",
+          "Sample columns in counts.csv and rows in metadata.csv must be joined exactly; if names do not match 1:1, stop and report the mismatch rather than guessing a join or silently dropping samples.",
+          "Even integer-looking Salmon values may be length-biased if quantified with default settings; note this uncertainty in the results so downstream interpretation is not over-trusted.",
+          "Do not add exploratory steps: QC figures are part of this step's outputs, not a separate profiling step."
+        ],
+        "context": "Data: /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns: gene-id column + 12 samples, gene-level counts from Salmon as delivered) and /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/metadata/metadata.csv (12 rows; columns condition, time, time_hours, plus a sample identifier column). Design: 2 conditions x 2 time points (t0, t1), 3 replicates per condition-time cell, single batch, Homo sapiens cell line. The profile records that it is NOT established whether the Salmon values are raw (length-uncorrected) counts or length-corrected/TPM-like — the first thing the script must establish, because it determines the model. R toolchain available: DESeq2 1.52.0, apeglm 1.34.0, limma 3.68.5, ggplot2, dplyr, pheatmap.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "ggplot2",
+          "dplyr",
+          "pheatmap"
+        ],
+        "question": "Across all 12,000 genes, which show a treatment effect (difference between the two condition levels in metadata.csv) that differs between t0 and t1, and what is the treatment effect at each time point separately?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Establish count scale before modeling: if all 12,000 x 12 values are non-negative integers, treat as raw counts for DESeq2; if any values are non-integer (length-corrected/TPM-like), do NOT fit the negative-binomial model to them — instead use limma-voom on log2(x + 0.5) with the identical design and state the deviation in the results.",
+          "Join counts.csv sample columns to metadata.csv rows on the sample identifier; set the control/untreated condition level and t0 as reference levels for factor coding, using the actual level values present in metadata.csv (do not assume level names).",
+          "Design formula: condition + time + condition:time. No batch term (single batch). The interaction term (condition:time) is the primary result; the treatment effect at t0 and at t1 are reported as simple-effect contrasts, and the time main effect is reported as context.",
+          "Apply apeglm LFC shrinkage (DESeq2 path) before ranking or reporting log2FC; report both shrunken and unshrunken values in the output table.",
+          "Report BH FDR for each contrast; count genes at FDR < 0.05 for the interaction and report that number explicitly even if zero."
+        ],
+        "description": "Single factorial model over the 2x2 design (12,000 genes x 12 samples) with the condition:time interaction as the primary contrast; answers the research question directly and produces the ranked interaction list for T2S1.",
+        "acceptance_criteria": [
+          "Per-gene table for all 12,000 genes with log2FC, p-value, and FDR for the condition:time interaction, plus separate tables for the treatment effect at t0 and at t1.",
+          "A documented count-scale decision (integer counts -> DESeq2, or non-integer -> limma-voom) and the model actually used.",
+          "PCA (vst/rlog or voom-converted) plot colored by condition and by time, and an MA plot for the interaction term.",
+          "The interaction-significant gene count at FDR < 0.05 reported; zero is a valid, reportable outcome."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of divergent-response genes",
+        "agent": "enrichment-agent",
+        "track": "enrichment",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per cell the FDR-significant interaction set is likely small or empty; the ranked-list fgsea result is the primary evidence and must not be presented as weaker because ORA is absent.",
+          "WikiPathways is curated and heterogeneous in set size; note small-set (e.g., < 5 members) hits as low-confidence.",
+          "Enrichment here is descriptive annotation of the T1S1 finding — do not frame enriched pathways as causal mechanisms for the time-dependent treatment response."
+        ],
+        "context": "Input: the full 12,000-gene ranked list from T1S1, ranked by the signed interaction statistic (sign of shrunk log2FC x |statistic|), plus the FDR < 0.05 interaction gene set if non-empty. Gene-set references available offline: a human WikiPathways GMT (HGNC gene symbols, provisioned under /mnt/refs, 341 KB, 2026.07.10 release) and GO via locally installed GO.db 3.23.1 + org.Hs.eg.db 3.23.1 (clusterProfiler 4.20.0). Mouse and rat WikiPathways GMTs are also present but must NOT be used — the dataset is Homo sapiens. No network access: do not plan KEGG downloads or any remote gene-set source.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "GO.db",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which human pathways are enriched among genes whose treatment effect changes between t0 and t1 (the T1S1 interaction ranking), and among the FDR-significant interaction genes when that set is large enough?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only the human gene sets (WikiPathways Homo sapiens GMT; GO via local org.Hs.eg.db/GO.db). Never use the mouse or rat GMT files.",
+          "Primary analysis: fgsea on the FULL 12,000-gene ranked list (ranked-list methods are valid and more powerful than ORA at this sample size).",
+          "Secondary over-representation analysis on the FDR < 0.05 interaction gene set only if the set has >= 15 genes; if smaller, state that ORA was not run because the set was too small and rely on the ranked-list result.",
+          "If gene identifiers are not HGNC symbols, map to symbols with org.Hs.eg.db and report the mapping rate and the number of dropped genes before running enrichment.",
+          "Report NES and FDR per set for both up- and down-ranked directionality (genes whose interaction log2FC is positive vs negative)."
+        ],
+        "description": "Functional annotation of the divergent-response genes: fgsea on the full interaction-ranked list against human WikiPathways, plus ORA/GO on the FDR-significant set when it is large enough.",
+        "acceptance_criteria": [
+          "Enriched-set table (set name, setSize, NES, p-value, FDR) from fgsea on the full interaction-ranked list, for both rank directions.",
+          "Documented symbol mapping rate (mapped / dropped counts) if an ID conversion was needed.",
+          "ORA table when the significant set qualifies (>= 15 genes), otherwise an explicit statement that ORA was skipped with the reason."
+        ]
+      }
+    ],
+    "title": "Treatment×time interaction DE in 2x2 cell-line RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question — does the treatment effect differ between t0 and t1 — is answered by a single 2x2 factorial design, not by separate pairwise comparisons. Step T1S1 fits one count model (DESeq2 on integer counts, or limma-voom if the Salmon-delivered values turn out to be non-integer/length-corrected, which the profile flags as unknown) to all 12,000 genes x 12 samples with design ~ condition + time + condition:time, taking the interaction term as the primary contrast and the treatment effect at each time point as simple-effect contrasts, with apeglm shrinkage for reporting. Step T2S1 then interprets the genes whose response diverges across time by ranking all genes on the interaction statistic and testing against human WikiPathways (fgsea, full ranked list — robust to the small n) plus GO on the FDR-significant set when it is large enough. Single batch means no batch term; n=3 per condition-time cell means low power, so an empty significant set is reported as a real result, not chased with looser thresholds."
+  },
+  "usage": {
+    "inputTokens": 32712,
+    "outputTokens": 8900,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 6749
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_4c55deda4dd3432bb09885da",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Treatment×time interaction DE in 2x2 cell-line RNA-seq\", \"analytical_narrative\": \"The question — does the treatment effect differ between t0 and t1 — is answered by a single 2x2 factorial design, not by separate pairwise comparisons. Step T1S1 fits one count model (DESeq2 on integer counts, or limma-voom if the Salmon-delivered values turn out to be non-integer/length-corrected, which the profile flags as unknown) to all 12,000 genes x 12 samples with design ~ condition + time + condition:time, taking the interaction term as the primary contrast and the treatment effect at each time point as simple-effect contrasts, with apeglm shrinkage for reporting. Step T2S1 then interprets the genes whose response diverges across time by ranking all genes on the interaction statistic and testing against human WikiPathways (fgsea, full ranked list — robust to the small n) plus GO on the FDR-significant set when it is large enough. Single batch means no batch term; n=3 per condition-time cell means low power, so an empty significant set is reported as a real result, not chased with looser thresholds.\", \"created_at\": \"2026-07-22T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"2x2 DE: treatment x time interaction\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"question\": \"Across all 12,000 genes, which show a treatment effect (difference between the two condition levels in metadata.csv) that differs between t0 and t1, and what is the treatment effect at each time point separately?\", \"context\": \"Data: /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns: gene-id column + 12 samples, gene-level counts from Salmon as delivered) and /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/metadata/metadata.csv (12 rows; columns condition, time, time_hours, plus a sample identifier column). Design: 2 conditions x 2 time points (t0, t1), 3 replicates per condition-time cell, single batch, Homo sapiens cell line. The profile records that it is NOT established whether the Salmon values are raw (length-uncorrected) counts or length-corrected/TPM-like — the first thing the script must establish, because it determines the model. R toolchain available: DESeq2 1.52.0, apeglm 1.34.0, limma 3.68.5, ggplot2, dplyr, pheatmap.\", \"constraints\": [\"Establish count scale before modeling: if all 12,000 x 12 values are non-negative integers, treat as raw counts for DESeq2; if any values are non-integer (length-corrected/TPM-like), do NOT fit the negative-binomial model to them — instead use limma-voom on log2(x + 0.5) with the identical design and state the deviation in the results.\", \"Join counts.csv sample columns to metadata.csv rows on the sample identifier; set the control/untreated condition level and t0 as reference levels for factor coding, using the actual level values present in metadata.csv (do not assume level names).\", \"Design formula: condition + time + condition:time. No batch term (single batch). The interaction term (condition:time) is the primary result; the treatment effect at t0 and at t1 are reported as simple-effect contrasts, and the time main effect is reported as context.\", \"Apply apeglm LFC shrinkage (DESeq2 path) before ranking or reporting log2FC; report both shrunken and unshrunken values in the output table.\", \"Report BH FDR for each contrast; count genes at FDR < 0.05 for the interaction and report that number explicitly even if zero.\"], \"acceptance_criteria\": [\"Per-gene table for all 12,000 genes with log2FC, p-value, and FDR for the condition:time interaction, plus separate tables for the treatment effect at t0 and at t1.\", \"A documented count-scale decision (integer counts -> DESeq2, or non-integer -> limma-voom) and the model actually used.\", \"PCA (vst/rlog or voom-converted) plot colored by condition and by time, and an MA plot for the interaction term.\", \"The interaction-significant gene count at FDR < 0.05 reported; zero is a valid, reportable outcome.\"], \"caveats\": [\"n=3 per condition-time cell gives the interaction term 8 residual degrees of freedom and low power: do not relax FDR to inflate the significant set; if FDR < 0.05 yields few genes, the top nominal-p genes may be listed but must be labeled as nominally significant only.\", \"Sample columns in counts.csv and rows in metadata.csv must be joined exactly; if names do not match 1:1, stop and report the mismatch rather than guessing a join or silently dropping samples.\", \"Even integer-looking Salmon values may be length-biased if quantified with default settings; note this uncertainty in the results so downstream interpretation is not over-trusted.\", \"Do not add exploratory steps: QC figures are part of this step's outputs, not a separate profiling step.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"ggplot2\", \"dplyr\", \"pheatmap\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Single factorial model over the 2x2 design (12,000 genes x 12 samples) with the condition:time interaction as the primary contrast; answers the research question directly and produces the ranked interaction list for T2S1.\"}, {\"id\": \"T2S1\", \"name\": \"Pathway enrichment of divergent-response genes\", \"track\": \"enrichment\", \"step_type\": \"analysis\", \"question\": \"Which human pathways are enriched among genes whose treatment effect changes between t0 and t1 (the T1S1 interaction ranking), and among the FDR-significant interaction genes when that set is large enough?\", \"context\": \"Input: the full 12,000-gene ranked list from T1S1, ranked by the signed interaction statistic (sign of shrunk log2FC x |statistic|), plus the FDR < 0.05 interaction gene set if non-empty. Gene-set references available offline: a human WikiPathways GMT (HGNC gene symbols, provisioned under /mnt/refs, 341 KB, 2026.07.10 release) and GO via locally installed GO.db 3.23.1 + org.Hs.eg.db 3.23.1 (clusterProfiler 4.20.0). Mouse and rat WikiPathways GMTs are also present but must NOT be used — the dataset is Homo sapiens. No network access: do not plan KEGG downloads or any remote gene-set source.\", \"constraints\": [\"Use only the human gene sets (WikiPathways Homo sapiens GMT; GO via local org.Hs.eg.db/GO.db). Never use the mouse or rat GMT files.\", \"Primary analysis: fgsea on the FULL 12,000-gene ranked list (ranked-list methods are valid and more powerful than ORA at this sample size).\", \"Secondary over-representation analysis on the FDR < 0.05 interaction gene set only if the set has >= 15 genes; if smaller, state that ORA was not run because the set was too small and rely on the ranked-list result.\", \"If gene identifiers are not HGNC symbols, map to symbols with org.Hs.eg.db and report the mapping rate and the number of dropped genes before running enrichment.\", \"Report NES and FDR per set for both up- and down-ranked directionality (genes whose interaction log2FC is positive vs negative).\"], \"acceptance_criteria\": [\"Enriched-set table (set name, setSize, NES, p-value, FDR) from fgsea on the full interaction-ranked list, for both rank directions.\", \"Documented symbol mapping rate (mapped / dropped counts) if an ID conversion was needed.\", \"ORA table when the significant set qualifies (>= 15 genes), otherwise an explicit statement that ORA was skipped with the reason.\"], \"caveats\": [\"With n=3 per cell the FDR-significant interaction set is likely small or empty; the ranked-list fgsea result is the primary evidence and must not be presented as weaker because ORA is absent.\", \"WikiPathways is curated and heterogeneous in set size; note small-set (e.g., < 5 members) hits as low-confidence.\", \"Enrichment here is descriptive annotation of the T1S1 finding — do not frame enriched pathways as causal mechanisms for the time-dependent treatment response.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"GO.db\", \"org.Hs.eg.db\", \"ggplot2\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"description\": \"Functional annotation of the divergent-response genes: fgsea on the full interaction-ranked list against human WikiPathways, plus ORA/GO on the FDR-significant set when it is large enough.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 86
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,287 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "python-two-group-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:01:49.451Z",
+  "elapsedMs": 371065,
+  "outcome": "plan_submitted",
+  "planId": "pln-6a5ad8f9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, sample_01 audit, count-format and ID-space check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de",
+        "status": "pending",
+        "caveats": [
+          "PCA and detection fractions are diagnostics, not a basis for dropping samples in this step.",
+          "A 12,000-gene matrix is likely already filtered upstream; do not attempt to recover missing genes."
+        ],
+        "context": "Files: /eval-four-models-v2-without-python-two-group-n6-s1-1/data/inputs/counts/counts.csv (12,000 x 13: gene labels + 12 samples, Salmon gene-level counts; record does not state whether length correction was applied) and /eval-four-models-v2-without-python-two-group-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: one row per sample with condition; condition values expected to be 'treated' = AD lesional and 'control'). Human skin. All scripts Python per user constraint. Known a priori: sample_01 is ~4x below the median library size. Do NOT re-profile the dataset generally; only produce the audit quantities listed in the constraints.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas==3.0.5",
+          "numpy==2.5.2",
+          "scipy==1.16.3",
+          "matplotlib==3.11.1",
+          "scikit-learn==1.9.0"
+        ],
+        "question": "Do the 12 sample columns of counts.csv match the 12 condition labels in metadata.csv (6 treated / 6 control), and exactly how shallow is sample_01 (profiled ~4x below the median library size)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "All scripts in Python (pandas/numpy/scipy/matplotlib/scikit-learn); no R.",
+          "Read both CSVs and assert: the 12 sample columns of counts.csv are exactly the 12 sample rows of metadata.csv; the condition column (identify by content if the column name differs) contains exactly the values 'treated' and 'control', 6 of each. Fail loudly on any mismatch.",
+          "Per sample report: total counts, ratio of total counts to the cohort median (sample_01 must appear ~4x below), its condition group, and the fraction of the 12,000 genes with counts >= 10. State explicitly which group (treated or control) sample_01 belongs to.",
+          "Count-format check: compute the fraction of matrix values that are non-integer (np.floor round-trip). If essentially all values are integer, classify the input as raw counts (valid for pydeseq2). If a material fraction is fractional, classify it as Salmon length-corrected/scaled counts and flag it: downstream count-model DE is then approximate, and the caveat must be carried into T1S2/T1S3 reports.",
+          "ID-space check: classify the row labels as HGNC symbols vs Ensembl (ENSG) vs Entrez numeric, report the dominant class with examples, and persist the mapping need for T2S1 (NCBI human gene-identifier table in the reference data if mapping is required).",
+          "PCA for diagnostics only: log1p(counts/total*1e6), z-score genes, 2 components, scatter PC1-PC2 colored by condition with sample_01 labeled; report whether sample_01 is an extreme point and whether the two groups separate.",
+          "Do NOT exclude, down-weight, or modify any sample in this step — quantify only.",
+          "Outputs: qc_samples.csv (per-sample totals, ratios, detection fractions), qc_report.md, pca.png."
+        ],
+        "description": "Audit of the 12 samples: condition agreement, sample_01 depth quantification, raw-vs-length-corrected count verdict, ID-space classification, diagnostic PCA.",
+        "acceptance_criteria": [
+          "qc_report.md states sample_01's group, its total-count ratio to the median, and a raw-vs-scaled verdict on the count matrix with the measured non-integer fraction.",
+          "The counts/metadata sample set is asserted equal (no silent join drops).",
+          "PCA plot shows all 12 points, colored by condition, with sample_01 annotated.",
+          "ID space of the 12,000 row labels is reported with examples."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DE: treated vs control, all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de",
+        "status": "pending",
+        "caveats": [
+          "pydeseq2 contrast naming is data-dependent (level names from the metadata); confirm the coefficient rather than hard-coding it from memory of the values.",
+          "With n=6 per group, expect modest power: report effect sizes (shrunken LFC) alongside significance; do not over-interpret the tail of the pvalue distribution."
+        ],
+        "context": "Uses the full 12,000 x 12 count matrix (counts.csv) and the verified condition labels (metadata.csv; 'treated' = AD lesional, 'control'). T1S1 provides the count-format verdict, sample_01's group, and the ID space. Python-only per user constraint: use pydeseq2, which implements the DESeq2 median-of-ratios / NB-Wald workflow; its size factors will down-weight the shallow sample_01's library size, but the definitive robustness test is T1S3. No network; no R.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "numpy==2.5.2",
+          "scipy==1.16.3",
+          "matplotlib==3.11.1"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional (treated, n=6) and control (n=6) skin using all 12 samples, with LFC shrinkage and FDR control?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "All scripts in Python (pydeseq2); no R.",
+          "Build the design with condition as a categorical factor and 'control' as the reference level so that positive log2FoldChange means higher in treated (AD lesional). Verify the fitted coefficient/contrast name and the sign convention from the results object before trusting any LFC; report which coefficient was used.",
+          "Run the full pydeseq2 pipeline (size factors, dispersion, Wald test) on all 12 samples, and compute shrunk LFCs (apeglm shrinkage); report both raw and shrunk log2FoldChange.",
+          "Multiple testing: Benjamini-Hochberg; count and report genes at padj < 0.05 (primary) and padj < 0.1 (secondary), in both directions.",
+          "Persist the complete 12,000-row results table de_full.csv: gene id, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, shrunk_log2FoldChange. Also persist the ranked gene list for T2S1 (all genes ranked by sign(shrunk_log2FoldChange) * log10(1 + 1/pvalue), no ties broken by dropping); document the exact ranking metric in the step report.",
+          "Report sample_01's fitted size factor. If T1S1 flagged the matrix as length-corrected/non-integer, carry that caveat verbatim into the results report (DE is approximate under that input).",
+          "Sanity check before reporting: housekeeping genes (e.g., GAPDH, ACTB, HPRT1 if present) should not be among the top |LFC| hits; if zero genes pass padj < 0.05, report the smallest pvalue and its gene instead of silently passing.",
+          "Outputs: de_full.csv, ranked_list_full.tsv (gene, rank_score), volcano plot, top-10 up and top-10 down table, de_report.md."
+        ],
+        "description": "Primary differential-expression result: pydeseq2 (DESeq2-style NB Wald) treated vs control on all 12 samples, shrunk LFCs, BH FDR, full ranked table for downstream enrichment.",
+        "acceptance_criteria": [
+          "de_full.csv contains all 12,000 genes with baseMean, raw and shrunk LFC, pvalue, padj.",
+          "The contrast direction is verified (positive LFC = up in treated) and stated in de_report.md.",
+          "DE gene counts at padj < 0.05 and padj < 0.1 are reported for both directions, plus sample_01's size factor."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity: re-run DE without shallow sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de",
+        "status": "pending",
+        "caveats": [
+          "Do not change any pipeline setting between runs — only the sample set may differ, or the comparison is confounded.",
+          "An unbalanced 5-vs-6 design is fine for a sensitivity check; report the actual group sizes, do not drop more samples to re-balance."
+        ],
+        "context": "T1S1 established sample_01's condition group and depth deficit (~4x below the median library size); T1S2 produced de_full.csv and the full ranked list. Because a ~5x-shallow library has sparse per-gene counts that can inflate gene-wise dispersion in the NB model, leaving sample_01 out and comparing is the decisive robustness test for the shallow-sample concern. Groups will be unbalanced (5 vs 6) if sample_01 is in one arm — report the resulting group sizes. Python-only.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "numpy==2.5.2",
+          "scipy==1.16.3"
+        ],
+        "question": "How much of the treated-vs-control differential expression depends on the shallow sample_01, and which genes remain significant without it?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "sensitivity_analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "All scripts in Python (pydeseq2); no R.",
+          "Re-run the IDENTICAL pydeseq2 pipeline (same size-factor method, same dispersion, same contrast with 'control' as reference, same apeglm shrinkage, same BH FDR) on the 11 samples excluding sample_01. Persist de_reduced.csv in the same schema as de_full.csv and a reduced ranked list ranked_list_reduced.tsv with the same ranking metric as T1S2.",
+          "Comparison, reported with numbers: (a) Spearman correlation of shrunk log2FoldChange between the full and reduced runs across all genes; (b) Jaccard overlap of DE gene sets at padj < 0.05 (both directions); (c) explicit lists of genes DE in the full run but NOT in the reduced run (sample_01-dependent) and the reverse (emergent without sample_01); (d) the top-10 |shrunken LFC| set in each run and how many differ.",
+          "Produce de_robust.csv: the full-run table with an added boolean column significant_without_sample_01 (DE at padj < 0.05 in the reduced run) and a flag column sample_01_dependent (DE only in the full run).",
+          "Decision rule to state in the report: if >20% of full-run DE genes (padj < 0.05) drop out, or the top-10 |LFC| sets differ in >3 genes, the headline conclusions must rest on the reduced run and the affected genes must be flagged sample_01_dependent; otherwise the full-run result is robust to the shallow sample. Say which case applied.",
+          "Outputs: de_reduced.csv, ranked_list_reduced.tsv, de_robust.csv, comparison table, sensitivity_report.md with the decision."
+        ],
+        "description": "Leave-one-out (shallow sample) sensitivity analysis: identical pydeseq2 pipeline on 11 samples, quantitative comparison to the full run, and a flagged robust DE table.",
+        "acceptance_criteria": [
+          "de_reduced.csv covers all 12,000 genes from the 11-sample run, same schema as de_full.csv.",
+          "The report contains the Spearman correlation, Jaccard overlap, both difference lists, and the explicit decision-rule verdict on sample_01 dependence.",
+          "de_robust.csv carries the significant_without_sample_01 and sample_01_dependent flags for every gene."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "HALLMARK GSEA + ORA on the DE signature",
+        "agent": "enrichment-agent",
+        "track": "enrichment",
+        "status": "pending",
+        "caveats": [
+          "HALLMARK sets are HGNC symbols — running them against Ensembl ids fails silently as an empty match; the ID-space check from T1S1 must gate the join.",
+          "FDR < 0.25 is the conventional GSEA threshold; do not silently tighten it, but do state it.",
+          "With 50 sets the multiple-testing burden is light, but the leading-edge (not whole-set) membership should be shown so the reported biology is not an artifact of a few genes."
+        ],
+        "context": "Inputs: ranked_list_full.tsv and de_full.csv from T1S2 (primary), ranked_list_reduced.tsv, de_reduced.csv and de_robust.csv from T1S3. Reference data (resolve via the environment's reference catalog, e.g. query 'hallmark'): the MSigDB human hallmark collection — 50 HALLMARK_* sets, HGNC symbols. If the T1S1 ID-space check found the matrix labeled by Ensembl or Entrez ids, map to HGNC symbols with the NCBI human gene-identifier table in the reference data (Symbol column; Ensembl cross-references in the dbXrefs field) and report mapping coverage for the 12,000 genes and for the DE genes. No network; the GMT and ID table must come from the provisioned reference data. Python-only per user constraint.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy==1.3.1",
+          "pandas==3.0.5",
+          "numpy==2.5.2",
+          "matplotlib==3.11.1"
+        ],
+        "question": "Which of the 50 MSigDB human HALLMARK pathways are enriched in the AD lesional vs control signature, in the full (n=12) and the shallow-sample-excluded (n=11) runs?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "All scripts in Python (gseapy); no R.",
+          "Pre-ranked GSEA with gseapy.prerank (fgsea-style permutation) on both ranked lists against the 50 human HALLMARK sets; rank metric as documented by T1S2/T1S3 (sign of shrunken LFC x log10(1+1/p)). Significance threshold: BH FDR < 0.25. Report NES, nominal p, FDR, and leading-edge genes for the top 10 sets per run.",
+          "Over-representation analysis (hypergeometric, BH-corrected) of DE genes (padj < 0.05) from de_robust.csv against the background of all 12,000 genes in the assay; report top hits separately for up and down genes.",
+          "Concordance: for the sets significant in at least one run, report the NES correlation between the two runs and flag sets significant only in the full run (sample_01-dependent) vs significant in both (robust).",
+          "Report up-regulated and down-regulated sets separately; never merge directions.",
+          "If the hallmark GMT cannot be resolved from the provisioned reference data at runtime, report that failure explicitly in the step output and stop — do not silently substitute another collection.",
+          "Outputs: gsea_full.csv, gsea_reduced.csv (set, NES, pvalue, FDR, leading-edge genes), ora_results.csv, concordance table, enrichment_report.md with a top-10 summary table of robust hallmark sets (significant in both runs) including direction and leading-edge genes."
+        ],
+        "description": "Pathway readout: pre-ranked GSEA plus ORA against the 50 MSigDB human HALLMARK sets on both the full and shallow-sample-excluded ranked lists, with concordance flags tying pathways back to the T1S3 robustness verdict.",
+        "acceptance_criteria": [
+          "gsea_full.csv and gsea_reduced.csv each cover all 50 HALLMARK sets with NES and FDR; the number of sets at FDR < 0.25 is reported per run.",
+          "ORA table is produced from de_robust.csv DE genes vs the full 12,000-gene assay background.",
+          "The concordance section identifies which significant hallmark sets are robust (both runs) vs sample_01-dependent (full run only), and the report's top-10 summary is restricted to robust sets when any exist.",
+          "ID mapping coverage is reported when the matrix is not natively HGNC-labeled."
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Bulk RNA-seq of human skin: 12,000 genes x 12 samples (6 treated = AD lesional, 6 control), unpaired, single batch, raw Salmon gene-level counts. Two issues shape the plan: (1) the record does not confirm whether the Salmon numbers are raw counts or length-corrected scaled counts — DESeq-family models assume raw counts, so QC must check the matrix (integer vs fractional) before DE; (2) sample_01 has a library size ~4x below the median. Median-of-ratios size factors correct library size, but a ~5x-shallow library has sparse per-gene counts that can inflate gene-wise dispersion and create shallow-sample artifacts, so the definitive handling is a leave-out sensitivity run plus an explicit comparison, not silent exclusion. Flow: T1S1 quantifies sample_01, verifies counts/metadata agreement, ID space, and count format; T1S2 runs pydeseq2 (Python-only per user constraint) treated-vs-control with LFC shrinkage and BH FDR; T1S3 repeats the identical pipeline without sample_01 and measures how much the DE result depends on it, producing a flagged 'robust' table; T2S1 takes the full and reduced ranked lists and tests them against the 50 MSigDB human HALLMARK sets (pre-ranked GSEA + ORA), reporting concordance between the two runs so pathway claims can be made on the robust signal. All steps run in Python; no network; hallmark GMT and the NCBI human gene-identifier table are provisioned in the reference data."
+  },
+  "usage": {
+    "inputTokens": 349657,
+    "outputTokens": 22431,
+    "cacheReadInputTokens": 294016,
+    "reasoningTokens": 13779
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_68447f46f29641288f490ef5",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 75
+    },
+    {
+      "toolUseId": "call_d110249a2aad412db459b9e6",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "call_d8e75955b163454292ea34d2",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_0f91fe2db44b4d88b8a493fe",
+      "name": "list_available_refs",
+      "input": {
+        "query": "symbol"
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    },
+    {
+      "toolUseId": "call_99161f2f1d3540d1af3c3928",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "two-group differential expression Wald test with LFC shrinkage and size factors"
+      },
+      "outcome": "error",
+      "durationMs": 1695
+    },
+    {
+      "toolUseId": "call_7292a5c706484cf9b548a1be",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"AD lesional vs control DE + hallmark GSEA\", \"analytical_narrative\": \"Bulk RNA-seq of human skin: 12,000 genes x 12 samples (6 treated = AD lesional, 6 control), unpaired, single batch, raw Salmon gene-level counts. Two issues shape the plan: (1) the record does not confirm whether the Salmon numbers are raw counts or length-corrected scaled counts — DESeq-family models assume raw counts, so QC must check the matrix (integer vs fractional) before DE; (2) sample_01 has a library size ~4x below the median. Median-of-ratios size factors correct library size, but a ~5x-shallow library has sparse per-gene counts that can inflate gene-wise dispersion and create shallow-sample artifacts, so the definitive handling is a leave-out sensitivity run plus an explicit comparison, not silent exclusion. Flow: T1S1 quantifies sample_01, verifies counts/metadata agreement, ID space, and count format; T1S2 runs pydeseq2 (Python-only per user constraint) treated-vs-control with LFC shrinkage and BH FDR; T1S3 repeats the identical pipeline without sample_01 and measures how much the DE result depends on it, producing a flagged 'robust' table; T2S1 takes the full and reduced ranked lists and tests them against the 50 MSigDB human HALLMARK sets (pre-ranked GSEA + ORA), reporting concordance between the two runs so pathway claims can be made on the robust signal. All steps run in Python; no network; hallmark GMT and the NCBI human gene-identifier table are provisioned in the reference data.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, sample_01 audit, count-format and ID-space check\", \"track\": \"de\", \"step_type\": \"qc\", \"question\": \"Do the 12 sample columns of counts.csv match the 12 condition labels in metadata.csv (6 treated / 6 control), and exactly how shallow is sample_01 (profiled ~4x below the median library size)?\", \"context\": \"Files: /eval-four-models-v2-without-python-two-group-n6-s1-1/data/inputs/counts/counts.csv (12,000 x 13: gene labels + 12 samples, Salmon gene-level counts; record does not state whether length correction was applied) and /eval-four-models-v2-without-python-two-group-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: one row per sample with condition; condition values expected to be 'treated' = AD lesional and 'control'). Human skin. All scripts Python per user constraint. Known a priori: sample_01 is ~4x below the median library size. Do NOT re-profile the dataset generally; only produce the audit quantities listed in the constraints.\", \"constraints\": [\"All scripts in Python (pandas/numpy/scipy/matplotlib/scikit-learn); no R.\", \"Read both CSVs and assert: the 12 sample columns of counts.csv are exactly the 12 sample rows of metadata.csv; the condition column (identify by content if the column name differs) contains exactly the values 'treated' and 'control', 6 of each. Fail loudly on any mismatch.\", \"Per sample report: total counts, ratio of total counts to the cohort median (sample_01 must appear ~4x below), its condition group, and the fraction of the 12,000 genes with counts >= 10. State explicitly which group (treated or control) sample_01 belongs to.\", \"Count-format check: compute the fraction of matrix values that are non-integer (np.floor round-trip). If essentially all values are integer, classify the input as raw counts (valid for pydeseq2). If a material fraction is fractional, classify it as Salmon length-corrected/scaled counts and flag it: downstream count-model DE is then approximate, and the caveat must be carried into T1S2/T1S3 reports.\", \"ID-space check: classify the row labels as HGNC symbols vs Ensembl (ENSG) vs Entrez numeric, report the dominant class with examples, and persist the mapping need for T2S1 (NCBI human gene-identifier table in the reference data if mapping is required).\", \"PCA for diagnostics only: log1p(counts/total*1e6), z-score genes, 2 components, scatter PC1-PC2 colored by condition with sample_01 labeled; report whether sample_01 is an extreme point and whether the two groups separate.\", \"Do NOT exclude, down-weight, or modify any sample in this step — quantify only.\", \"Outputs: qc_samples.csv (per-sample totals, ratios, detection fractions), qc_report.md, pca.png.\"], \"acceptance_criteria\": [\"qc_report.md states sample_01's group, its total-count ratio to the median, and a raw-vs-scaled verdict on the count matrix with the measured non-integer fraction.\", \"The counts/metadata sample set is asserted equal (no silent join drops).\", \"PCA plot shows all 12 points, colored by condition, with sample_01 annotated.\", \"ID space of the 12,000 row labels is reported with examples.\"], \"caveats\": [\"PCA and detection fractions are diagnostics, not a basis for dropping samples in this step.\", \"A 12,000-gene matrix is likely already filtered upstream; do not attempt to recover missing genes.\"], \"packages\": [\"pandas==3.0.5\", \"numpy==2.5.2\", \"scipy==1.16.3\", \"matplotlib==3.11.1\", \"scikit-learn==1.9.0\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Audit of the 12 samples: condition agreement, sample_01 depth quantification, raw-vs-length-corrected count verdict, ID-space classification, diagnostic PCA.\"}], {\"id\": \"T1S2\", \"name\": \"DE: treated vs control, all 12 samples\", \"track\": \"de\", \"step_type\": \"differential_expression\", \"question\": \"Which genes are differentially expressed between AD lesional (treated, n=6) and control (n=6) skin using all 12 samples, with LFC shrinkage and FDR control?\", \"context\": \"Uses the full 12,000 x 12 count matrix (counts.csv) and the verified condition labels (metadata.csv; 'treated' = AD lesional, 'control'). T1S1 provides the count-format verdict, sample_01's group, and the ID space. Python-only per user constraint: use pydeseq2, which implements the DESeq2 median-of-ratios / NB-Wald workflow; its size factors will down-weight the shallow sample_01's library size, but the definitive robustness test is T1S3. No network; no R.\", \"constraints\": [\"All scripts in Python (pydeseq2); no R.\", \"Build the design with condition as a categorical factor and 'control' as the reference level so that positive log2FoldChange means higher in treated (AD lesional). Verify the fitted coefficient/contrast name and the sign convention from the results object before trusting any LFC; report which coefficient was used.\", \"Run the full pydeseq2 pipeline (size factors, dispersion, Wald test) on all 12 samples, and compute shrunk LFCs (apeglm shrinkage); report both raw and shrunk log2FoldChange.\", \"Multiple testing: Benjamini-Hochberg; count and report genes at padj < 0.05 (primary) and padj < 0.1 (secondary), in both directions.\", \"Persist the complete 12,000-row results table de_full.csv: gene id, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, shrunk_log2FoldChange. Also persist the ranked gene list for T2S1 (all genes ranked by sign(shrunk_log2FoldChange) * log10(1 + 1/pvalue), no ties broken by dropping); document the exact ranking metric in the step report.\", \"Report sample_01's fitted size factor. If T1S1 flagged the matrix as length-corrected/non-integer, carry that caveat verbatim into the results report (DE is approximate under that input).\", \"Sanity check before reporting: housekeeping genes (e.g., GAPDH, ACTB, HPRT1 if present) should not be among the top |LFC| hits; if zero genes pass padj < 0.05, report the smallest pvalue and its gene instead of silently passing.\", \"Outputs: de_full.csv, ranked_list_full.tsv (gene, rank_score), volcano plot, top-10 up and top-10 down table, de_report.md.\"], \"acceptance_criteria\": [\"de_full.csv contains all 12,000 genes with baseMean, raw and shrunk LFC, pvalue, padj.\", \"The contrast direction is verified (positive LFC = up in treated) and stated in de_report.md.\", \"DE gene counts at padj < 0.05 and padj < 0.1 are reported for both directions, plus sample_01's size factor.\"], \"caveats\": [\"pydeseq2 contrast naming is data-dependent (level names from the metadata); confirm the coefficient rather than hard-coding it from memory of the values.\", \"With n=6 per group, expect modest power: report effect sizes (shrunken LFC) alongside significance; do not over-interpret the tail of the pvalue distribution.\"], \"packages\": [\"pydeseq2==0.5.4\", \"pandas==3.0.5\", \"numpy==2.5.2\", \"scipy==1.16.3\", \"matplotlib==3.11.1\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Primary differential-expression result: pydeseq2 (DESeq2-style NB Wald) treated vs control on all 12 samples, shrunk LFCs, BH FDR, full ranked table for downstream enrichment.\"}], {\"id\": \"T1S3\", \"name\": \"Sensitivity: re-run DE without shallow sample_01\", \"track\": \"de\", \"step_type\": \"sensitivity_analysis\", \"question\": \"How much of the treated-vs-control differential expression depends on the shallow sample_01, and which genes remain significant without it?\", \"context\": \"T1S1 established sample_01's condition group and depth deficit (~4x below the median library size); T1S2 produced de_full.csv and the full ranked list. Because a ~5x-shallow library has sparse per-gene counts that can inflate gene-wise dispersion in the NB model, leaving sample_01 out and comparing is the decisive robustness test for the shallow-sample concern. Groups will be unbalanced (5 vs 6) if sample_01 is in the smaller group's complement — report the resulting group sizes. Python-only.\", \"constraints\": [\"All scripts in Python (pydeseq2); no R.\", \"Re-run the IDENTICAL pydeseq2 pipeline (same size-factor method, same dispersion, same contrast with 'control' as reference, same apeglm shrinkage, same BH FDR) on the 11 samples excluding sample_01. Persist de_reduced.csv in the same schema as de_full.csv and a reduced ranked list ranked_list_reduced.tsv with the same ranking metric as T1S2.\", \"Comparison, reported with numbers: (a) Spearman correlation of shrunk log2FoldChange between the full and reduced runs across all genes; (b) Jaccard overlap of DE gene sets at padj < 0.05 (both directions); (c) explicit lists of genes DE in the full run but NOT in the reduced run (sample_01-dependent) and the reverse (emergent without sample_01); (d) the top-10 |shrunken LFC| set in each run and how many differ.\", \"Produce de_robust.csv: the full-run table with an added boolean column significant_without_sample_01 (DE at padj < 0.05 in the reduced run) and a flag column sample_01_dependent (DE only in the full run).\", \"Decision rule to state in the report: if >20% of full-run DE genes (padj < 0.05) drop out, or the top-10 |LFC| sets differ in >3 genes, the headline conclusions must rest on the reduced run and the affected genes must be flagged sample_01_dependent; otherwise the full-run result is robust to the shallow sample. Say which case applied.\", \"Outputs: de_reduced.csv, ranked_list_reduced.tsv, de_robust.csv, comparison table, sensitivity_report.md with the decision.\"], \"acceptance_criteria\": [\"de_reduced.csv covers all 12,000 genes from the 11-sample run, same schema as de_full.csv.\", \"The report contains the Spearman correlation, Jaccard overlap, both difference lists, and the explicit decision-rule verdict on sample_01 dependence.\", \"de_robust.csv carries the significant_without_sample_01 and sample_01_dependent flags for every gene.\"], \"caveats\": [\"Do not change any pipeline setting between runs — only the sample set may differ, or the comparison is confounded.\", \"An unbalanced 5-vs-6 design is fine for a sensitivity check; report the actual group sizes, do not drop more samples to re-balance.\"], \"packages\": [\"pydeseq2==0.5.4\", \"pandas==3.0.5\", \"numpy==2.5.2\", \"scipy==1.16.3\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Leave-one-out (shallow sample) sensitivity analysis: identical pydeseq2 pipeline on 11 samples, quantitative comparison to the full run, and a flagged robust DE table.\"}], {\"id\": \"T2S1\", \"name\": \"HALLMARK GSEA + ORA on the DE signature\", \"track\": \"enrichment\", \"step_type\": \"pathway_enrichment\", \"question\": \"Which of the 50 MSigDB human HALLMARK pathways are enriched in the AD lesional vs control signature, in the full (n=12) and the shallow-sample-excluded (n=11) runs?\", \"context\": \"Inputs: ranked_list_full.tsv and de_full.csv from T1S2 (primary), ranked_list_reduced.tsv, de_reduced.csv and de_robust.csv from T1S3. Reference data (resolve via the environment's reference catalog, e.g. query 'hallmark'): the MSigDB human hallmark collection — 50 HALLMARK_* sets, HGNC symbols. If the T1S1 ID-space check found the matrix labeled by Ensembl or Entrez ids, map to HGNC symbols with the NCBI human gene-identifier table in the reference data (Symbol column; Ensembl cross-references in the dbXrefs field) and report mapping coverage for the 12,000 genes and for the DE genes. No network; the GMT and ID table must come from the provisioned reference data. Python-only per user constraint.\", \"constraints\": [\"All scripts in Python (gseapy); no R.\", \"Pre-ranked GSEA with gseapy.prerank (fgsea-style permutation) on both ranked lists against the 50 human HALLMARK sets; rank metric as documented by T1S2/T1S3 (sign of shrunken LFC x log10(1+1/p)). Significance threshold: BH FDR < 0.25. Report NES, nominal p, FDR, and leading-edge genes for the top 10 sets per run.\", \"Over-representation analysis (hypergeometric, BH-corrected) of DE genes (padj < 0.05) from de_robust.csv against the background of all 12,000 genes in the assay; report top hits separately for up and down genes.\", \"Concordance: for the sets significant in at least one run, report the NES correlation between the two runs and flag sets significant only in the full run (sample_01-dependent) vs significant in both (robust).\", \"Report up-regulated and down-regulated sets separately; never merge directions.\", \"If the hallmark GMT cannot be resolved from the provisioned reference data at runtime, report that failure explicitly in the step output and stop — do not silently substitute another collection.\", \"Outputs: gsea_full.csv, gsea_reduced.csv (set, NES, pvalue, FDR, leading-edge genes), ora_results.csv, concordance table, enrichment_report.md with a top-10 summary table of robust hallmark sets (significant in both runs) including direction and leading-edge genes.\"], \"acceptance_criteria\": [\"gsea_full.csv and gsea_reduced.csv each cover all 50 HALLMARK sets with NES and FDR; the number of sets at FDR < 0.25 is reported per run.\", \"ORA table is produced from de_robust.csv DE genes vs the full 12,000-gene assay background.\", \"The concordance section identifies which significant hallmark sets are robust (both runs) vs sample_01-dependent (full run only), and the report's top-10 summary is restricted to robust sets when any exist.\", \"ID mapping coverage is reported when the matrix is not natively HGNC-labeled.\"], \"caveats\": [\"HALLMARK sets are HGNC symbols — running them against Ensembl ids fails silently as an empty match; the ID-space check from T1S1 must gate the join.\", \"FDR < 0.25 is the conventional GSEA threshold; do not silently tighten it, but do state it.\", \"With 50 sets the multiple-testing burden is light, but the leading-edge (not whole-set) membership should be shown so the reported biology is not an artifact of a few genes.\"], \"packages\": [\"gseapy==1.3.1\", \"pandas==3.0.5\", \"numpy==2.5.2\", \"matplotlib==3.11.1\"], \"depends_on\": [\"T1S2\", \"T1S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"description\": \"Pathway readout: pre-ranked GSEA plus ORA against the 50 MSigDB human HALLMARK sets on both the full and shallow-sample-excluded ranked lists, with concordance flags tying pathways back to the T1S3 robustness verdict.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_5eac85a110cc4f8eacb105a1",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"AD lesional vs control DE + hallmark GSEA\", \"analytical_narrative\": \"Bulk RNA-seq of human skin: 12,000 genes x 12 samples (6 treated = AD lesional, 6 control), unpaired, single batch, raw Salmon gene-level counts. Two issues shape the plan: (1) the record does not confirm whether the Salmon numbers are raw counts or length-corrected scaled counts — DESeq-family models assume raw counts, so QC must check the matrix (integer vs fractional) before DE; (2) sample_01 has a library size ~4x below the median. Median-of-ratios size factors correct library size, but a ~5x-shallow library has sparse per-gene counts that can inflate gene-wise dispersion and create shallow-sample artifacts, so the definitive handling is a leave-out sensitivity run plus an explicit comparison, not silent exclusion. Flow: T1S1 quantifies sample_01, verifies counts/metadata agreement, ID space, and count format; T1S2 runs pydeseq2 (Python-only per user constraint) treated-vs-control with LFC shrinkage and BH FDR; T1S3 repeats the identical pipeline without sample_01 and measures how much the DE result depends on it, producing a flagged 'robust' table; T2S1 takes the full and reduced ranked lists and tests them against the 50 MSigDB human HALLMARK sets (pre-ranked GSEA + ORA), reporting concordance between the two runs so pathway claims can be made on the robust signal. All steps run in Python; no network; hallmark GMT and the NCBI human gene-identifier table are provisioned in the reference data.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, sample_01 audit, count-format and ID-space check\", \"track\": \"de\", \"step_type\": \"qc\", \"question\": \"Do the 12 sample columns of counts.csv match the 12 condition labels in metadata.csv (6 treated / 6 control), and exactly how shallow is sample_01 (profiled ~4x below the median library size)?\", \"context\": \"Files: /eval-four-models-v2-without-python-two-group-n6-s1-1/data/inputs/counts/counts.csv (12,000 x 13: gene labels + 12 samples, Salmon gene-level counts; record does not state whether length correction was applied) and /eval-four-models-v2-without-python-two-group-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: one row per sample with condition; condition values expected to be 'treated' = AD lesional and 'control'). Human skin. All scripts Python per user constraint. Known a priori: sample_01 is ~4x below the median library size. Do NOT re-profile the dataset generally; only produce the audit quantities listed in the constraints.\", \"constraints\": [\"All scripts in Python (pandas/numpy/scipy/matplotlib/scikit-learn); no R.\", \"Read both CSVs and assert: the 12 sample columns of counts.csv are exactly the 12 sample rows of metadata.csv; the condition column (identify by content if the column name differs) contains exactly the values 'treated' and 'control', 6 of each. Fail loudly on any mismatch.\", \"Per sample report: total counts, ratio of total counts to the cohort median (sample_01 must appear ~4x below), its condition group, and the fraction of the 12,000 genes with counts >= 10. State explicitly which group (treated or control) sample_01 belongs to.\", \"Count-format check: compute the fraction of matrix values that are non-integer (np.floor round-trip). If essentially all values are integer, classify the input as raw counts (valid for pydeseq2). If a material fraction is fractional, classify it as Salmon length-corrected/scaled counts and flag it: downstream count-model DE is then approximate, and the caveat must be carried into T1S2/T1S3 reports.\", \"ID-space check: classify the row labels as HGNC symbols vs Ensembl (ENSG) vs Entrez numeric, report the dominant class with examples, and persist the mapping need for T2S1 (NCBI human gene-identifier table in the reference data if mapping is required).\", \"PCA for diagnostics only: log1p(counts/total*1e6), z-score genes, 2 components, scatter PC1-PC2 colored by condition with sample_01 labeled; report whether sample_01 is an extreme point and whether the two groups separate.\", \"Do NOT exclude, down-weight, or modify any sample in this step — quantify only.\", \"Outputs: qc_samples.csv (per-sample totals, ratios, detection fractions), qc_report.md, pca.png.\"], \"acceptance_criteria\": [\"qc_report.md states sample_01's group, its total-count ratio to the median, and a raw-vs-scaled verdict on the count matrix with the measured non-integer fraction.\", \"The counts/metadata sample set is asserted equal (no silent join drops).\", \"PCA plot shows all 12 points, colored by condition, with sample_01 annotated.\", \"ID space of the 12,000 row labels is reported with examples.\"], \"caveats\": [\"PCA and detection fractions are diagnostics, not a basis for dropping samples in this step.\", \"A 12,000-gene matrix is likely already filtered upstream; do not attempt to recover missing genes.\"], \"packages\": [\"pandas==3.0.5\", \"numpy==2.5.2\", \"scipy==1.16.3\", \"matplotlib==3.11.1\", \"scikit-learn==1.9.0\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Audit of the 12 samples: condition agreement, sample_01 depth quantification, raw-vs-length-corrected count verdict, ID-space classification, diagnostic PCA.\"}, {\"id\": \"T1S2\", \"name\": \"DE: treated vs control, all 12 samples\", \"track\": \"de\", \"step_type\": \"differential_expression\", \"question\": \"Which genes are differentially expressed between AD lesional (treated, n=6) and control (n=6) skin using all 12 samples, with LFC shrinkage and FDR control?\", \"context\": \"Uses the full 12,000 x 12 count matrix (counts.csv) and the verified condition labels (metadata.csv; 'treated' = AD lesional, 'control'). T1S1 provides the count-format verdict, sample_01's group, and the ID space. Python-only per user constraint: use pydeseq2, which implements the DESeq2 median-of-ratios / NB-Wald workflow; its size factors will down-weight the shallow sample_01's library size, but the definitive robustness test is T1S3. No network; no R.\", \"constraints\": [\"All scripts in Python (pydeseq2); no R.\", \"Build the design with condition as a categorical factor and 'control' as the reference level so that positive log2FoldChange means higher in treated (AD lesional). Verify the fitted coefficient/contrast name and the sign convention from the results object before trusting any LFC; report which coefficient was used.\", \"Run the full pydeseq2 pipeline (size factors, dispersion, Wald test) on all 12 samples, and compute shrunk LFCs (apeglm shrinkage); report both raw and shrunk log2FoldChange.\", \"Multiple testing: Benjamini-Hochberg; count and report genes at padj < 0.05 (primary) and padj < 0.1 (secondary), in both directions.\", \"Persist the complete 12,000-row results table de_full.csv: gene id, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, shrunk_log2FoldChange. Also persist the ranked gene list for T2S1 (all genes ranked by sign(shrunk_log2FoldChange) * log10(1 + 1/pvalue), no ties broken by dropping); document the exact ranking metric in the step report.\", \"Report sample_01's fitted size factor. If T1S1 flagged the matrix as length-corrected/non-integer, carry that caveat verbatim into the results report (DE is approximate under that input).\", \"Sanity check before reporting: housekeeping genes (e.g., GAPDH, ACTB, HPRT1 if present) should not be among the top |LFC| hits; if zero genes pass padj < 0.05, report the smallest pvalue and its gene instead of silently passing.\", \"Outputs: de_full.csv, ranked_list_full.tsv (gene, rank_score), volcano plot, top-10 up and top-10 down table, de_report.md.\"], \"acceptance_criteria\": [\"de_full.csv contains all 12,000 genes with baseMean, raw and shrunk LFC, pvalue, padj.\", \"The contrast direction is verified (positive LFC = up in treated) and stated in de_report.md.\", \"DE gene counts at padj < 0.05 and padj < 0.1 are reported for both directions, plus sample_01's size factor.\"], \"caveats\": [\"pydeseq2 contrast naming is data-dependent (level names from the metadata); confirm the coefficient rather than hard-coding it from memory of the values.\", \"With n=6 per group, expect modest power: report effect sizes (shrunken LFC) alongside significance; do not over-interpret the tail of the pvalue distribution.\"], \"packages\": [\"pydeseq2==0.5.4\", \"pandas==3.0.5\", \"numpy==2.5.2\", \"scipy==1.16.3\", \"matplotlib==3.11.1\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Primary differential-expression result: pydeseq2 (DESeq2-style NB Wald) treated vs control on all 12 samples, shrunk LFCs, BH FDR, full ranked table for downstream enrichment.\"}, {\"id\": \"T1S3\", \"name\": \"Sensitivity: re-run DE without shallow sample_01\", \"track\": \"de\", \"step_type\": \"sensitivity_analysis\", \"question\": \"How much of the treated-vs-control differential expression depends on the shallow sample_01, and which genes remain significant without it?\", \"context\": \"T1S1 established sample_01's condition group and depth deficit (~4x below the median library size); T1S2 produced de_full.csv and the full ranked list. Because a ~5x-shallow library has sparse per-gene counts that can inflate gene-wise dispersion in the NB model, leaving sample_01 out and comparing is the decisive robustness test for the shallow-sample concern. Groups will be unbalanced (5 vs 6) if sample_01 is in one arm — report the resulting group sizes. Python-only.\", \"constraints\": [\"All scripts in Python (pydeseq2); no R.\", \"Re-run the IDENTICAL pydeseq2 pipeline (same size-factor method, same dispersion, same contrast with 'control' as reference, same apeglm shrinkage, same BH FDR) on the 11 samples excluding sample_01. Persist de_reduced.csv in the same schema as de_full.csv and a reduced ranked list ranked_list_reduced.tsv with the same ranking metric as T1S2.\", \"Comparison, reported with numbers: (a) Spearman correlation of shrunk log2FoldChange between the full and reduced runs across all genes; (b) Jaccard overlap of DE gene sets at padj < 0.05 (both directions); (c) explicit lists of genes DE in the full run but NOT in the reduced run (sample_01-dependent) and the reverse (emergent without sample_01); (d) the top-10 |shrunken LFC| set in each run and how many differ.\", \"Produce de_robust.csv: the full-run table with an added boolean column significant_without_sample_01 (DE at padj < 0.05 in the reduced run) and a flag column sample_01_dependent (DE only in the full run).\", \"Decision rule to state in the report: if >20% of full-run DE genes (padj < 0.05) drop out, or the top-10 |LFC| sets differ in >3 genes, the headline conclusions must rest on the reduced run and the affected genes must be flagged sample_01_dependent; otherwise the full-run result is robust to the shallow sample. Say which case applied.\", \"Outputs: de_reduced.csv, ranked_list_reduced.tsv, de_robust.csv, comparison table, sensitivity_report.md with the decision.\"], \"acceptance_criteria\": [\"de_reduced.csv covers all 12,000 genes from the 11-sample run, same schema as de_full.csv.\", \"The report contains the Spearman correlation, Jaccard overlap, both difference lists, and the explicit decision-rule verdict on sample_01 dependence.\", \"de_robust.csv carries the significant_without_sample_01 and sample_01_dependent flags for every gene.\"], \"caveats\": [\"Do not change any pipeline setting between runs — only the sample set may differ, or the comparison is confounded.\", \"An unbalanced 5-vs-6 design is fine for a sensitivity check; report the actual group sizes, do not drop more samples to re-balance.\"], \"packages\": [\"pydeseq2==0.5.4\", \"pandas==3.0.5\", \"numpy==2.5.2\", \"scipy==1.16.3\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Leave-one-out (shallow sample) sensitivity analysis: identical pydeseq2 pipeline on 11 samples, quantitative comparison to the full run, and a flagged robust DE table.\"}, {\"id\": \"T2S1\", \"name\": \"HALLMARK GSEA + ORA on the DE signature\", \"track\": \"enrichment\", \"step_type\": \"pathway_enrichment\", \"question\": \"Which of the 50 MSigDB human HALLMARK pathways are enriched in the AD lesional vs control signature, in the full (n=12) and the shallow-sample-excluded (n=11) runs?\", \"context\": \"Inputs: ranked_list_full.tsv and de_full.csv from T1S2 (primary), ranked_list_reduced.tsv, de_reduced.csv and de_robust.csv from T1S3. Reference data (resolve via the environment's reference catalog, e.g. query 'hallmark'): the MSigDB human hallmark collection — 50 HALLMARK_* sets, HGNC symbols. If the T1S1 ID-space check found the matrix labeled by Ensembl or Entrez ids, map to HGNC symbols with the NCBI human gene-identifier table in the reference data (Symbol column; Ensembl cross-references in the dbXrefs field) and report mapping coverage for the 12,000 genes and for the DE genes. No network; the GMT and ID table must come from the provisioned reference data. Python-only per user constraint.\", \"constraints\": [\"All scripts in Python (gseapy); no R.\", \"Pre-ranked GSEA with gseapy.prerank (fgsea-style permutation) on both ranked lists against the 50 human HALLMARK sets; rank metric as documented by T1S2/T1S3 (sign of shrunken LFC x log10(1+1/p)). Significance threshold: BH FDR < 0.25. Report NES, nominal p, FDR, and leading-edge genes for the top 10 sets per run.\", \"Over-representation analysis (hypergeometric, BH-corrected) of DE genes (padj < 0.05) from de_robust.csv against the background of all 12,000 genes in the assay; report top hits separately for up and down genes.\", \"Concordance: for the sets significant in at least one run, report the NES correlation between the two runs and flag sets significant only in the full run (sample_01-dependent) vs significant in both (robust).\", \"Report up-regulated and down-regulated sets separately; never merge directions.\", \"If the hallmark GMT cannot be resolved from the provisioned reference data at runtime, report that failure explicitly in the step output and stop — do not silently substitute another collection.\", \"Outputs: gsea_full.csv, gsea_reduced.csv (set, NES, pvalue, FDR, leading-edge genes), ora_results.csv, concordance table, enrichment_report.md with a top-10 summary table of robust hallmark sets (significant in both runs) including direction and leading-edge genes.\"], \"acceptance_criteria\": [\"gsea_full.csv and gsea_reduced.csv each cover all 50 HALLMARK sets with NES and FDR; the number of sets at FDR < 0.25 is reported per run.\", \"ORA table is produced from de_robust.csv DE genes vs the full 12,000-gene assay background.\", \"The concordance section identifies which significant hallmark sets are robust (both runs) vs sample_01-dependent (full run only), and the report's top-10 summary is restricted to robust sets when any exist.\", \"ID mapping coverage is reported when the matrix is not natively HGNC-labeled.\"], \"caveats\": [\"HALLMARK sets are HGNC symbols — running them against Ensembl ids fails silently as an empty match; the ID-space check from T1S1 must gate the join.\", \"FDR < 0.25 is the conventional GSEA threshold; do not silently tighten it, but do state it.\", \"With 50 sets the multiple-testing burden is light, but the leading-edge (not whole-set) membership should be shown so the reported biology is not an artifact of a few genes.\"], \"packages\": [\"gseapy==1.3.1\", \"pandas==3.0.5\", \"numpy==2.5.2\", \"matplotlib==3.11.1\"], \"depends_on\": [\"T1S2\", \"T1S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"description\": \"Pathway readout: pre-ranked GSEA plus ORA against the 50 MSigDB human HALLMARK sets on both the full and shallow-sample-excluded ranked lists, with concordance flags tying pathways back to the T1S3 robustness verdict.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 60
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

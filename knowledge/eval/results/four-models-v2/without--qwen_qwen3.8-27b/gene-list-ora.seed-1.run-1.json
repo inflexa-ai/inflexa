@@ -1,0 +1,161 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "gene-list-ora",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:51:04.277Z",
+  "elapsedMs": 359379,
+  "outcome": "plan_submitted",
+  "planId": "pln-6088501d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Significant DE gene list (HGNC symbols) + universe",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the 'gene' column is already HGNC symbols, still validate against org.Hs.eg.db and report the fraction not found rather than assuming a perfect match.",
+          "Genes with no valid HGNC symbol (novel loci, some pseudogenes) are dropped from both the gene list and the universe; report how many were dropped.",
+          "Do not apply a |log2FC| filter for the primary 'significant' definition; that is a sensitivity check only, and if run it must be labeled as such."
+        ],
+        "context": "Input is the pre-computed DESeq2 results table at /eval-four-models-v2-without-gene-list-ora-s1-1/data/inputs/results/de_results.csv (12,000 rows x 8 columns, CSV). The profile lists the leading columns as gene, base_mean, log2_fold_change, ... and it is a standard DESeq2 treated-vs-control results table, so a BH-adjusted p-value column (padj / adj.pvalue) and a log2FC column are expected; confirm exact column names on load. Design is 6 treated (AD lesional) vs 6 control, unpaired, single batch. We consume this table as-is; do NOT re-run DESeq2 on counts.csv and do NOT re-quantify. The one caveat in the profile (sample_01 library size ~4x below median) is a count-matrix property and does not affect this step because we are reading the finished results table, not the counts. The output identifier space must be HGNC symbols, matching the human GO biological-process gene sets used downstream.",
+        "maxSteps": 200,
+        "packages": [
+          "org.Hs.eg.db",
+          "data.table"
+        ],
+        "question": "Which of the 12,000 genes in the provided DESeq2 results table are significantly differentially expressed in the atopic dermatitis (AD) lesional vs control (6 vs 6) comparison (BH padj < 0.05), in which direction, and what are their HGNC symbols?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the provided de_results.csv as-is; do not re-run DESeq2 or re-quantify from counts.csv.",
+          "Define significant as BH-adjusted p-value < 0.05 (column named padj or adj.pvalue). If no adjusted p-value column is present, use pvalue < 0.05 and explicitly flag that FDR correction was unavailable.",
+          "Auto-detect the identifier space of the 'gene' column (ENSG* prefix = Ensembl, all-digit = Entrez, otherwise treat as symbol) and resolve every gene to an HGNC symbol via org.Hs.eg.db (keyType ENSSEMBL / ENTREZ / SYMBOL as appropriate).",
+          "Background universe = all 12,000 rows of de_results.csv mapped to HGNC symbols.",
+          "Write the combined significant-gene symbol list, the up/down subsets, and the universe as separate, clearly named output files."
+        ],
+        "description": "Produce (1) a combined list of significantly DE genes (BH padj < 0.05) as HGNC symbols, (2) up-regulated and down-regulated subsets by the sign of log2FC, and (3) the background universe of all 12,000 DE genes as HGNC symbols. Also report the identifier space of the input 'gene' column, the fraction of the 12,000 genes mapped to symbols, and the significance counts (total / up / down).",
+        "acceptance_criteria": [
+          "A file of significant DE genes (padj < 0.05) as HGNC symbols, plus up-regulated and down-regulated subsets by the sign of log2FC.",
+          "A file of the background universe = all 12,000 DE genes as HGNC symbols.",
+          "Reported counts: number of significant genes, number up, number down.",
+          "A statement of the input 'gene' column identifier space and the fraction of the 12,000 genes successfully mapped to HGNC symbols (with unmapped genes listed)."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GO BP over-representation (ORA) on significant DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Expect blocks of correlated significant terms (parent/child share most members); do not present them as independent findings.",
+          "Symbol matching is case- and HGNC-based; if the overlap of significant genes with GO set members is low (high drop rate from T1S1 mapping), report the match rate rather than silently proceeding.",
+          "If very few genes are significant at padj < 0.05, note that the ORA is underpowered and say so; do not silently lower the significance threshold."
+        ],
+        "context": "Consumes the significant-gene symbol list, the up/down subsets, and the background universe (all DE gene symbols) produced by T1S1. Gene sets: the provisioned human Gene Ontology biological-process collection — the MSigDB C5 GO Biological Process branch, release 2026.1, member genes as HGNC symbols (~7,538 sets); resolve it from the reference store (it is a human, biological-process, symbol-based GO set). Organism is Homo sapiens (taxon 9606), so the human set is the only valid choice. Method is classic over-representation analysis: a hypergeometric/Fisher test per GO BP term with BH multiple-testing correction, test set = significant genes, background = all DE genes.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea"
+        ],
+        "question": "Which Gene Ontology biological process terms are over-represented (hypergeometric, BH FDR < 0.05) among the AD lesional vs control significant DE genes, against the background of all 12,000 DE genes, using the provisioned human GO BP gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use ONLY the human GO biological-process gene sets (MSigDB C5 GO BP, HGNC symbols); never a mouse/rat GO set and never the cellular-component or molecular-function branch.",
+          "Test set = significant-gene symbols from T1S1; background = all DE-gene symbols from T1S1 (the genes that were actually tested).",
+          "Run a hypergeometric over-representation test with BH adjustment (e.g. clusterProfiler::enricher with the GMT loaded as TERM2GENE); report terms with p_adjust < 0.05.",
+          "Because GO is a nested hierarchy, collapse/flag redundant near-duplicate terms and report BOTH the full adjusted-p table and a de-redundant top-term summary with an explicit term count.",
+          "If the human GO BP collection is absent from the reference store at run time, STOP and report it; do not silently substitute another organism or branch."
+        ],
+        "description": "Run a hypergeometric over-representation analysis of the significant-gene list against the human GO biological-process gene sets (MSigDB C5 GO BP, HGNC symbols) with all DE genes as background, and report the GO BP terms with BH-adjusted p < 0.05 (term ID, description, p.value, p_adjust, gene set size, overlapping gene count / GeneRatio, and the overlapping core genes), plus a de-redundant summary of the top terms.",
+        "acceptance_criteria": [
+          "A table of enriched GO BP terms (BH p_adjust < 0.05) with term ID, description, p.value, p_adjust, gene set size, overlapping gene count (GeneRatio), and the list of overlapping (core) genes.",
+          "A de-redundant summary of the top GO BP terms (near-duplicate nested terms collapsed) with an explicit count of reported terms.",
+          "A statement of the test-set size (significant genes), the background size (DE genes), and the number of GO BP terms evaluated."
+        ]
+      }
+    ],
+    "title": "GO BP over-representation of AD DE genes",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T09:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which GO biological processes are over-represented among the genes significant in the atopic dermatitis (AD) lesional vs control comparison. The data already ship a pre-computed DESeq2 results table (de_results.csv, 12,000 genes x 8 columns) for the 6-vs-6, unpaired, single-batch treated vs control contrast, so we consume that table as-is rather than re-running DESeq2 on the Salmon counts. The low library size of sample_01 is a property of the raw count matrix (counts.csv); it does not propagate into a step that only reads the provided results table, so we do not re-normalize or re-quantify. Step T1S1 derives the enrichment input: it locates the BH-adjusted p-value and log2FC columns, selects significant genes (padj < 0.05) in both directions, and resolves every gene to an HGNC symbol so the gene list and the full 12,000-gene universe share the identifier space the GO sets use. Step T1S2 then runs a hypergeometric over-representation test (BH FDR) of the significant-gene list against the provisioned human MSigDB GO biological-process collection (C5 GO BP, v2026.1, ~7,538 HGNC-symbol sets), with all DE genes as background, and reports the enriched GO BP terms with the redundancy expected from GO's nested hierarchy collapsed. The two steps are a linear DAG: enrichment cannot start until the symbol gene list and universe exist."
+  },
+  "usage": {
+    "inputTokens": 155483,
+    "outputTokens": 23960,
+    "cacheReadInputTokens": 129536,
+    "reasoningTokens": 21630
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_085082cbe4cf43119e472012",
+      "name": "list_available_refs",
+      "input": {
+        "category": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 52
+    },
+    {
+      "toolUseId": "call_39fc47be1fe648caa21b5e9f",
+      "name": "list_available_refs",
+      "input": {
+        "query": "biological process"
+      },
+      "outcome": "ok",
+      "durationMs": 55
+    },
+    {
+      "toolUseId": "call_bd6f341ad8ca47419b3b97e3",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "gseapy",
+        "query": "over-representation analysis enrich function: gene list, GMT gene sets, background, hypergeometric test"
+      },
+      "outcome": "error",
+      "durationMs": 1581
+    },
+    {
+      "toolUseId": "call_d1c94ac6122949209cfdeabd",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"GO BP over-representation of AD DE genes\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-15T09:00:00Z\", \"analytical_narrative\": \"The question asks which GO biological processes are over-represented among the genes significant in the atopic dermatitis (AD) lesional vs control comparison. The data already ship a pre-computed DESeq2 results table (de_results.csv, 12,000 genes x 8 columns) for the 6-vs-6, unpaired, single-batch treated vs control contrast, so we consume that table as-is rather than re-running DESeq2 on the Salmon counts. The low library size of sample_01 is a property of the raw count matrix (counts.csv); it does not propagate into a step that only reads the provided results table, so we do not re-normalize or re-quantify. Step T1S1 derives the enrichment input: it locates the BH-adjusted p-value and log2FC columns, selects significant genes (padj < 0.05) in both directions, and resolves every gene to an HGNC symbol so the gene list and the full 12,000-gene universe share the identifier space the GO sets use. Step T1S2 then runs a hypergeometric over-representation test (BH FDR) of the significant-gene list against the provisioned human MSigDB GO biological-process collection (C5 GO BP, v2026.1, ~7,538 HGNC-symbol sets), with all DE genes as background, and reports the enriched GO BP terms with the redundancy expected from GO's nested hierarchy collapsed. The two steps are a linear DAG: enrichment cannot start until the symbol gene list and universe exist.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Significant DE gene list (HGNC symbols) + universe\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 genes in the provided DESeq2 results table are significantly differentially expressed in the atopic dermatitis (AD) lesional vs control (6 vs 6) comparison (BH padj < 0.05), in which direction, and what are their HGNC symbols?\", \"context\": \"Input is the pre-computed DESeq2 results table at /eval-four-models-v2-without-gene-list-ora-s1-1/data/inputs/results/de_results.csv (12,000 rows x 8 columns, CSV). The profile lists the leading columns as gene, base_mean, log2_fold_change, ... and it is a standard DESeq2 treated-vs-control results table, so a BH-adjusted p-value column (padj / adj.pvalue) and a log2FC column are expected; confirm exact column names on load. Design is 6 treated (AD lesional) vs 6 control, unpaired, single batch. We consume this table as-is; do NOT re-run DESeq2 on counts.csv and do NOT re-quantify. The one caveat in the profile (sample_01 library size ~4x below median) is a count-matrix property and does not affect this step because we are reading the finished results table, not the counts. The output identifier space must be HGNC symbols, matching the human GO biological-process gene sets used downstream.\", \"description\": \"Produce (1) a combined list of significantly DE genes (BH padj < 0.05) as HGNC symbols, (2) up-regulated and down-regulated subsets by the sign of log2FC, and (3) the background universe of all 12,000 DE genes as HGNC symbols. Also report the identifier space of the input 'gene' column, the fraction of the 12,000 genes mapped to symbols, and the significance counts (total / up / down).\", \"constraints\": [\"Use the provided de_results.csv as-is; do not re-run DESeq2 or re-quantify from counts.csv.\", \"Define significant as BH-adjusted p-value < 0.05 (column named padj or adj.pvalue). If no adjusted p-value column is present, use pvalue < 0.05 and explicitly flag that FDR correction was unavailable.\", \"Auto-detect the identifier space of the 'gene' column (ENSG* prefix = Ensembl, all-digit = Entrez, otherwise treat as symbol) and resolve every gene to an HGNC symbol via org.Hs.eg.db (keyType ENSSEMBL / ENTREZ / SYMBOL as appropriate).\", \"Background universe = all 12,000 rows of de_results.csv mapped to HGNC symbols.\", \"Write the combined significant-gene symbol list, the up/down subsets, and the universe as separate, clearly named output files.\"], \"acceptance_criteria\": [\"A file of significant DE genes (padj < 0.05) as HGNC symbols, plus up-regulated and down-regulated subsets by the sign of log2FC.\", \"A file of the background universe = all 12,000 DE genes as HGNC symbols.\", \"Reported counts: number of significant genes, number up, number down.\", \"A statement of the input 'gene' column identifier space and the fraction of the 12,000 genes successfully mapped to HGNC symbols (with unmapped genes listed).\"], \"caveats\": [\"If the 'gene' column is already HGNC symbols, still validate against org.Hs.eg.db and report the fraction not found rather than assuming a perfect match.\", \"Genes with no valid HGNC symbol (novel loci, some pseudogenes) are dropped from both the gene list and the universe; report how many were dropped.\", \"Do not apply a |log2FC| filter for the primary 'significant' definition; that is a sensitivity check only, and if run it must be labeled as such.\"], \"packages\": [\"org.Hs.eg.db\", \"data.table\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"GO BP over-representation (ORA) on significant DE genes\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which Gene Ontology biological process terms are over-represented (hypergeometric, BH FDR < 0.05) among the AD lesional vs control significant DE genes, against the background of all 12,000 DE genes, using the provisioned human GO BP gene sets?\", \"context\": \"Consumes the significant-gene symbol list, the up/down subsets, and the background universe (all DE gene symbols) produced by T1S1. Gene sets: the provisioned human Gene Ontology biological-process collection — the MSigDB C5 GO Biological Process branch, release 2026.1, member genes as HGNC symbols (~7,538 sets); resolve it from the reference store (it is a human, biological-process, symbol-based GO set). Organism is Homo sapiens (taxon 9606), so the human set is the only valid choice. Method is classic over-representation analysis: a hypergeometric/Fisher test per GO BP term with BH multiple-testing correction, test set = significant genes, background = all DE genes.\", \"description\": \"Run a hypergeometric over-representation analysis of the significant-gene list against the human GO biological-process gene sets (MSigDB C5 GO BP, HGNC symbols) with all DE genes as background, and report the GO BP terms with BH-adjusted p < 0.05 (term ID, description, p.value, p_adjust, gene set size, overlapping gene count / GeneRatio, and the overlapping core genes), plus a de-redundant summary of the top terms.\", \"constraints\": [\"Use ONLY the human GO biological-process gene sets (MSigDB C5 GO BP, HGNC symbols); never a mouse/rat GO set and never the cellular-component or molecular-function branch.\", \"Test set = significant-gene symbols from T1S1; background = all DE-gene symbols from T1S1 (the genes that were actually tested).\", \"Run a hypergeometric over-representation test with BH adjustment (e.g. clusterProfiler::enricher with the GMT loaded as TERM2GENE); report terms with p_adjust < 0.05.\", \"Because GO is a nested hierarchy, collapse/flag redundant near-duplicate terms and report BOTH the full adjusted-p table and a de-redundant top-term summary with an explicit term count.\", \"If the human GO BP collection is absent from the reference store at run time, STOP and report it; do not silently substitute another organism or branch.\"], \"acceptance_criteria\": [\"A table of enriched GO BP terms (BH p_adjust < 0.05) with term ID, description, p.value, p_adjust, gene set size, overlapping gene count (GeneRatio), and the list of overlapping (core) genes.\", \"A de-redundant summary of the top GO BP terms (near-duplicate nested terms collapsed) with an explicit count of reported terms.\", \"A statement of the test-set size (significant genes), the background size (DE genes), and the number of GO BP terms evaluated.\"], \"caveats\": [\"Expect blocks of correlated significant terms (parent/child share most members); do not present them as independent findings.\", \"Symbol matching is case- and HGNC-based; if the overlap of significant genes with GO set members is low (high drop rate from T1S1 mapping), report the match rate rather than silently proceeding.\", \"If very few genes are significant at padj < 0.05, note that the ORA is underpowered and say so; do not silently lower the significance threshold.\"], \"packages\": [\"clusterProfiler\", \"fgsea\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 6}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 95
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: it counts events, censored samples and median follow-up before modelling, scores the pre-specified 20 genes with UCell on log2 size-factor-normalized expression with gene-presence provenance, fits Cox with the standardized score as a continuous term plus condition, checks proportional hazards with scaled Schoenfeld residuals with a stratified/time-varying fallback, and confines KM curves to display. The lifelines substitution is stated and justified. Weaknesses: filterByExpr is run only as a descriptor and the score is computed on the unfiltered matrix (defensible for a rank-based score but departs from the reference's filter-then-score order), the condition reference level is not stated, and the p-value type (likelihood ratio) is not named. Multiple testing and enrichment are correctly identified as not applicable, and the report specification carries versions, seed, thresholds, gene counts and design caveats."
+}

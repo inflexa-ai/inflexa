@@ -1,0 +1,888 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "python-enrichment-only",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T09:22:07.163Z",
+  "elapsedMs": 330890,
+  "outcome": "plan_submitted",
+  "planId": "pln-6dd85442",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on the delivered counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The salmon counts were delivered without a statement of length correction; VST/PCA are robust to this, but note it in the QC output.",
+          "Do not silently drop sample_01: the count model down-weights a low-depth sample through its size factor, so removal is a judgment, not a default."
+        ],
+        "context": "Inputs: /eval-four-models-v2-with-python-enrichment-only-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples; gene-level salmon counts as delivered; the record does not state whether a length correction was applied) and /eval-four-models-v2-with-python-enrichment-only-s1-1/data/inputs/metadata/metadata.csv (12 samples, one condition column: AD-lesional treated vs control). The DE results table is not an input to this step.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "scikit-learn",
+          "matplotlib",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 12 skin samples (6 AD-lesional/treated vs 6 control, unpaired, single batch) group by condition as the delivered DESeq2 table assumes, and where does sample_01 (library size ~4x below the median) sit in the structure?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Python only; no R. Use pydeseq2 for the VST (computed on the count matrix alone, blind to the design), scikit-learn for PCA, matplotlib for figures.",
+          "n_top_genes = 500 for the PCA.",
+          "transform = vst_blind: the transform is design-blind, computed from the count matrix only.",
+          "low_depth_policy = keep_inspect_report: keep sample_01 in every QC artifact; do not drop it. Report its library size and detected-gene count beside the other 11 samples and state whether it departs from its condition group. Removal would require a stated reason, not a default."
+        ],
+        "description": "Blind variance-stabilizing transform of the 12,000 x 12 gene-level salmon count matrix, PCA on the 500 most variable genes, and a Euclidean sample-distance heatmap, all colored by condition. This characterizes the design underlying the delivered DE results (reported as inherited context); it does not re-run differential expression.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap saved as figures, both colored by condition.",
+          "Per-sample table of library sizes and detected genes including sample_01.",
+          "Written statement of whether samples group by condition as the DE design assumes, and how sample_01 sits relative to its group.",
+          "Statement that this QC is inherited context for the delivered DE table (DE is not re-run in this plan)."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pre-ranked GSEA on the delivered DE table (MSigDB Hallmark, human)",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Genes with NA stat/log2FC/padj (zero counts in one group) are excluded from the ranked list with a count; the universe is the genes with a finite statistic and its size is reported.",
+          "If fewer than ~50 genes pass a significance threshold, do not run an over-representation test on that short list — the ranked method on the full list is already the correct analysis (R-0103).",
+          "The delivered DE table includes sample_01 (library size ~4x below the median); DE is not re-run, so this is inherited context to be stated in the report.",
+          "The procedure (R-0098, R-0165) recommends a second pass on Reactome and WikiPathways after Hallmark; this run is scoped to hallmark per the research question — record it only as a suggested follow-up."
+        ],
+        "context": "Inputs: /eval-four-models-v2-with-python-enrichment-only-s1-1/data/inputs/results/de_results.csv (12000 x 8; DESeq2 results of the treated vs control contrast: gene, base_mean, log2_fold_change and the standard SE/stat/p-value columns) and the human hallmark gene set collection from the reference store (MSigDB Hallmark, 50 sets, HGNC symbols, release 2026.1 — the environment reports it present; confirm at run time). The T1S1 QC statement is the inherited design context. Scope per the research question: hallmark only; the procedure's recommended Reactome/WikiPathways follow-up collections are recorded as a possible next step, not executed here.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which of the 50 MSigDB hallmark gene sets are enriched among genes upregulated in AD-lesional (treated) vs control, and which among genes downregulated, ranked over the full list of 12,000 tested genes from the delivered DESeq2 table?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0097@a38e",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@be9e",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0e8a",
+            "R-0110@41cb"
+          ],
+          "reason": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark per R-0098@d01b",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "second_collection",
+              "step": "enrichment",
+              "value": "reactome_c2_cp",
+              "source": "doi:10.1093/nar/gkz1031"
+            },
+            {
+              "name": "further_collections",
+              "step": "enrichment",
+              "value": [
+                "reactome_gmt",
+                "wikipathways"
+              ],
+              "source": "doi:10.1093/nar/gkz1031"
+            },
+            {
+              "name": "collection_release_statement",
+              "step": "enrichment",
+              "value": "release_per_collection",
+              "source": "rule:R-0165"
+            },
+            {
+              "name": "rank_metric",
+              "step": "enrichment",
+              "value": "stat",
+              "source": "doi:10.1101/060012"
+            },
+            {
+              "name": "enrichment_input_default",
+              "step": "enrichment",
+              "value": "ranked_list",
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "gene_set_collection",
+              "step": "enrichment",
+              "value": "msigdb_hallmark_human",
+              "source": "doi:10.1016/j.cels.2015.12.004"
+            },
+            {
+              "name": "follow_up",
+              "step": "enrichment",
+              "value": [
+                "reactome",
+                "wikipathways",
+                "go"
+              ],
+              "source": "doi:10.1038/s41596-018-0103-9"
+            },
+            {
+              "name": "kegg_policy",
+              "step": "enrichment",
+              "value": "local_copy_with_release_and_license",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "id_mapping",
+              "step": "enrichment",
+              "value": "to_entrez_with_orgdb",
+              "source": "doi:10.1016/j.xinn.2021.100141"
+            },
+            {
+              "name": "report_unmapped_share",
+              "step": "enrichment",
+              "value": true,
+              "source": "doi:10.1038/nprot.2009.97"
+            },
+            {
+              "name": "ora_min_significant_genes",
+              "step": "enrichment",
+              "value": 50,
+              "source": "doi:10.3389/fgene.2020.00654"
+            },
+            {
+              "name": "rank_metric_choice",
+              "step": "enrichment",
+              "value": "stated_in_plan",
+              "source": "rule:R-0108"
+            },
+            {
+              "name": "gsea_input",
+              "step": "enrichment",
+              "value": "full_ranked_list",
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "bias_note",
+              "step": "enrichment",
+              "value": "length_and_expression",
+              "source": "doi:10.1186/s13059-015-0761-7"
+            },
+            {
+              "name": "min_size",
+              "step": "enrichment",
+              "value": 15,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "max_size",
+              "step": "enrichment",
+              "value": 500,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "collapse_redundant",
+              "step": "enrichment",
+              "value": true,
+              "source": "doi:10.1101/060012"
+            },
+            {
+              "name": "rank_metric_not",
+              "step": "enrichment",
+              "value": [
+                "unshrunken_log2_fold_change_alone",
+                "signed_p_value_with_ties"
+              ],
+              "source": "doi:10.1186/s12859-017-1674-0"
+            },
+            {
+              "name": "input_contrast_statement",
+              "step": "enrichment",
+              "value": "reference_level_and_sign_convention",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "rank_ties",
+              "step": "enrichment",
+              "value": "state_the_tie_rule",
+              "source": "doi:10.1186/s12859-017-1674-0"
+            },
+            {
+              "name": "collection_pin",
+              "step": "enrichment",
+              "value": "name_and_version_for_each_collection",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-gseapy-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only; no R. Run the fgsea algorithm via gseapy.prerank, fully offline: the GMT is loaded from the reference store, no network access.",
+          "gene_set_collection = msigdb_hallmark_human, pinned to MSigDB 2026.1 (collection_pin: name and version stated in the output). If the collection is absent from the reference store at run time, fail loudly with a clear message; do not substitute another organism's or another collection's sets.",
+          "State the input contrast before ranking (R-0110): contrast = treated (AD-lesional) vs control; reference level = control; sign convention = positive log2FC is up in treated. Verify the table's contrast direction is consistent with the condition labels in metadata.csv and state it in the output.",
+          "rank_metric = stat (Wald statistic) — the stated side of the disputed ranking-metric choice (R-0108): rank all tested genes with a finite statistic, descending. If the table lacks a stat column, recompute stat = log2FC / lfcSE when lfcSE is present; otherwise fall back to sign(log2FC) * -log10(pvalue) with ties broken by base_mean descending, and report the metric actually used. Never rank by unshrunken log2FC alone and never by a signed p-value with ties (R-0099).",
+          "gsea_input = full_ranked_list: no adjusted-p or fold-change threshold before the test (R-0045).",
+          "min_size = 15 and max_size = 500, applied after each set's intersection with the tested genes (R-0047); state the window in the output.",
+          "If the DE table's gene column is not in HGNC symbol space, map it to symbols with the local human gene-identifier reference data and report the share of tested genes that did not map; never mix two identifier spaces in one list (R-0101). Report the per-set overlap with the tested genes.",
+          "Tie rule for the ranking: exact ties broken by base_mean descending; state the rule in the output (R-0110).",
+          "Multiple testing: Benjamini-Hochberg FDR; report sets with FDR < 0.25 in each direction.",
+          "Set and record a fixed random seed in the script for any permutation-based component."
+        ],
+        "description": "Read the delivered DESeq2 results table (treated vs control contrast, 12,000 x 8), verify its identifier space against the HGNC symbol space of the human Hallmark collection and report the unmapped share, build the full ranked list of all tested genes with a finite statistic, and run pre-ranked GSEA (fgsea algorithm) in Python via gseapy.prerank against the human MSigDB Hallmark gene sets (release 2026.1) in both directions (upregulated vs downregulated in treated).",
+        "acceptance_criteria": [
+          "GSEA result table covering all 50 hallmark sets: NES, nominal p, FDR q, and direction (up vs down in treated).",
+          "Stated ranking metric actually used, and the contrast, reference level, and sign convention.",
+          "Stated gene overlap / unmapped share between the DE table and the hallmark collection, and the size of the ranked universe.",
+          "Leading-edge gene list for every significant set (FDR < 0.25)."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report enriched hallmark pathways",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Correlated hallmark sets sharing most of their leading edge are one finding, not many — collapse them in the report."
+        ],
+        "context": "Inputs: the T2S1 GSEA result table with leading edges, and the T1S1 QC statement (inherited design context, including sample_01). This is the user-facing summary of the run.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib",
+          "gseapy"
+        ],
+        "question": "Which hallmark pathways are significantly enriched (FDR < 0.25) in the AD-lesional vs control comparison, in which direction, with which leading-edge genes, and what does the method choice imply about how strongly to claim them?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "enrichment_report",
+              "step": "report",
+              "value": [
+                "database",
+                "version",
+                "rank_metric",
+                "universe",
+                "size_window"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "enrichment_caveat",
+              "step": "report",
+              "value": "method_dependence",
+              "source": "doi:10.1093/bib/bbz158"
+            },
+            {
+              "name": "leading_edge",
+              "step": "report",
+              "value": "per_significant_set",
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Python only.",
+          "enrichment_report: state the gene set database and version (MSigDB Hallmark, 2026.1), the ranking metric actually used, the universe (tested genes with a finite statistic, and its size), and the gene set size window (15-500); also the tool with version (gseapy 1.3.1) and the multiple-testing method (Benjamini-Hochberg).",
+          "leading_edge: list the leading-edge genes of each significant set with the gene-level statistic of each member, and mark the overlap of leading edges between reported sets.",
+          "Collapse redundant significant sets before the report: one representative set per overlap group, full table kept as supplement.",
+          "enrichment_caveat: state that the enrichment result depends on the method, name the method, and present the sets as hypotheses for follow-up rather than proven findings.",
+          "reproducibility_record: store with the results — session info / package versions, the random seed, the gene set collection version (MSigDB 2026.1), and the annotation/ID-mapping release used.",
+          "State explicitly that this enrichment is of the delivered DE table (inherited analysis): sample_01 was kept in the upstream DE and DE was not re-run in this plan."
+        ],
+        "description": "From the T2S1 GSEA output and the T1S1 QC context: a final summary table of significant hallmark sets (pathway, NES, FDR q, direction, leading-edge genes with their gene-level statistics), collapse of redundant significant sets into groups with one representative per group (full table kept as supplement), an enrichment-map figure, and a short written conclusion.",
+        "acceptance_criteria": [
+          "Final table of significant hallmark sets (FDR < 0.25) with NES, FDR q, direction, and leading-edge genes.",
+          "Figure of the enrichment results (enrichment map or ranked NES plot).",
+          "A short written conclusion distinguishing upregulated vs downregulated hallmark programs in treated (AD-lesional) vs control.",
+          "Reproducibility record file stored alongside the results."
+        ]
+      }
+    ],
+    "title": "Hallmark GSEA of AD lesional vs control DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question asks which hallmark pathways are enriched in the atopic dermatitis lesional (treated) vs control comparison, starting from the already-delivered DESeq2 results table (12,000 genes, treated vs control, 6 vs 6 unpaired human skin samples, single batch). No differential expression is re-run. Step T1S1 QC's the sample structure on the delivered 12,000 x 12 salmon count matrix (blind VST, PCA on the top 500 variable genes, distance heatmap) to verify the design the DE table rests on — specifically where sample_01 (library size ~4x below the median) sits — and reports it as inherited context. Step T2S1 maps the delivered DE table into the HGNC symbol space of the human MSigDB Hallmark collection (2026.1), verifies the contrast reference level and sign convention, ranks the full unthresholded list of tested genes by the Wald statistic (stated choice of a disputed ranking metric), and runs pre-ranked GSEA (fgsea algorithm) in Python via gseapy.prerank with a 15-500 size window and Benjamini-Hochberg FDR, both directions. Step T1S3 reports the significant hallmark sets with leading edges, collapses redundant sets, and carries the full reproducibility record. All scripts are Python per the user constraint; no R is used anywhere. The procedure's recommended Reactome/WikiPathways follow-up collections are recorded as a suggested next step but are outside this hallmark-only question."
+  },
+  "usage": {
+    "inputTokens": 205250,
+    "outputTokens": 22149,
+    "cacheReadInputTokens": 145472,
+    "reasoningTokens": 16124
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_6e2cc4ae451d458bbffa927f",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 62
+    },
+    {
+      "toolUseId": "call_8640bf781f074abd886ae7a7",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "python",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    },
+    {
+      "toolUseId": "call_2934487d0d5542bcafb74a4c",
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "python",
+        "enrichment_input": "ranked_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top variable genes, sample distance heatmap (pydeseq2 VST + scikit-learn PCA)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "pre-ranked GSEA (fgsea algorithm) on the Wald statistic with MSigDB Hallmark human (gseapy.prerank, offline local GMT)",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "collection_pin",
+                "value": "MSigDB Hallmark 2026.1 (h.all.v2026.1.Hs.symbols.gmt)"
+              },
+              {
+                "name": "min_size",
+                "value": "15"
+              },
+              {
+                "name": "max_size",
+                "value": "500"
+              },
+              {
+                "name": "enrichment_input",
+                "value": "ranked_list"
+              },
+              {
+                "name": "multiple_testing",
+                "value": "benjamini_hochberg"
+              },
+              {
+                "name": "fdr_threshold",
+                "value": "0.25"
+              },
+              {
+                "name": "rank_ties",
+                "value": "ties broken by base_mean descending"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "summary table with leading edge per significant set, redundancy collapse, method-dependence caveat, reproducibility record",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "enrichment_report",
+                "value": "database, version, rank_metric, universe, size_window"
+              },
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "call_090a03d4c24e4f1697a926cf",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Hallmark GSEA of AD lesional vs control DE\", \"analytical_narrative\": \"The research question asks which hallmark pathways are enriched in the atopic dermatitis lesional (treated) vs control comparison, starting from the already-delivered DESeq2 results table (12,000 genes, treated vs control, 6 vs 6 unpaired human skin samples, single batch). No differential expression is re-run. Step T1S1 QC's the sample structure on the delivered 12,000 x 12 salmon count matrix (blind VST, PCA on the top 500 variable genes, distance heatmap) to verify the design the DE table rests on — specifically where sample_01 (library size ~4x below the median) sits — and reports it as inherited context. Step T2S1 maps the delivered DE table into the HGNC symbol space of the human MSigDB Hallmark collection (2026.1), verifies the contrast reference level and sign convention, ranks the full unthresholded list of tested genes by the Wald statistic (stated choice of a disputed ranking metric), and runs pre-ranked GSEA (fgsea algorithm) in Python via gseapy.prerank with a 15-500 size window and Benjamini-Hochberg FDR, both directions. Step T1S3 reports the significant hallmark sets with leading edges, collapses redundant sets, and carries the full reproducibility record. All scripts are Python per the user constraint; no R is used anywhere. The procedure's recommended Reactome/WikiPathways follow-up collections are recorded as a suggested next step but are outside this hallmark-only question.\", \"created_at\": \"2026-09-07T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC on the delivered counts\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Do the 12 skin samples (6 AD-lesional/treated vs 6 control, unpaired, single batch) group by condition as the delivered DESeq2 table assumes, and where does sample_01 (library size ~4x below the median) sit in the structure?\", \"description\": \"Blind variance-stabilizing transform of the 12,000 x 12 gene-level salmon count matrix, PCA on the 500 most variable genes, and a Euclidean sample-distance heatmap, all colored by condition. This characterizes the design underlying the delivered DE results (reported as inherited context); it does not re-run differential expression.\", \"context\": \"Inputs: /eval-four-models-v2-with-python-enrichment-only-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples; gene-level salmon counts as delivered; the record does not state whether a length correction was applied) and /eval-four-models-v2-with-python-enrichment-only-s1-1/data/inputs/metadata/metadata.csv (12 samples, one condition column: AD-lesional treated vs control). The DE results table is not an input to this step.\", \"constraints\": [\"Python only; no R. Use pydeseq2 for the VST (computed on the count matrix alone, blind to the design), scikit-learn for PCA, matplotlib for figures.\", \"n_top_genes = 500 for the PCA.\", \"transform = vst_blind: the transform is design-blind, computed from the count matrix only.\", \"low_depth_policy = keep_inspect_report: keep sample_01 in every QC artifact; do not drop it. Report its library size and detected-gene count beside the other 11 samples and state whether it departs from its condition group. Removal would require a stated reason, not a default.\"], \"acceptance_criteria\": [\"PCA plot and sample-distance heatmap saved as figures, both colored by condition.\", \"Per-sample table of library sizes and detected genes including sample_01.\", \"Written statement of whether samples group by condition as the DE design assumes, and how sample_01 sits relative to its group.\", \"Statement that this QC is inherited context for the delivered DE table (DE is not re-run in this plan).\"], \"caveats\": [\"The salmon counts were delivered without a statement of length correction; VST/PCA are robust to this, but note it in the QC output.\", \"Do not silently drop sample_01: the count model down-weights a low-depth sample through its size factor, so removal is a judgment, not a default.\"], \"packages\": [\"pydeseq2\", \"scikit-learn\", \"matplotlib\", \"pandas\", \"numpy\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\", \"R-0008@440d\"], \"template\": \"tpl-qc-python@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}, {\"step\": \"qc_sample_structure\", \"name\": \"low_depth_policy\", \"value\": \"keep_inspect_report\", \"source\": \"doi:10.1186/s13059-016-0881-8\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}}, {\"id\": \"T2S1\", \"name\": \"Pre-ranked GSEA on the delivered DE table (MSigDB Hallmark, human)\", \"track\": \"T2\", \"step_type\": \"enrichment\", \"agent\": \"enrichment-agent\", \"question\": \"Which of the 50 MSigDB hallmark gene sets are enriched among genes upregulated in AD-lesional (treated) vs control, and which among genes downregulated, ranked over the full list of 12,000 tested genes from the delivered DESeq2 table?\", \"description\": \"Read the delivered DESeq2 results table (treated vs control contrast, 12,000 x 8), verify its identifier space against the HGNC symbol space of the human Hallmark collection and report the unmapped share, build the full ranked list of all tested genes with a finite statistic, and run pre-ranked GSEA (fgsea algorithm) in Python via gseapy.prerank against the human MSigDB Hallmark gene sets (release 2026.1) in both directions (upregulated vs downregulated in treated).\", \"context\": \"Inputs: /eval-four-models-v2-with-python-enrichment-only-s1-1/data/inputs/results/de_results.csv (12000 x 8; DESeq2 results of the treated vs control contrast: gene, base_mean, log2_fold_change and the standard SE/stat/p-value columns) and the human hallmark gene set collection from the reference store (MSigDB Hallmark, 50 sets, HGNC symbols, release 2026.1 — the environment reports it present; confirm at run time). The T1S1 QC statement is the inherited design context. Scope per the research question: hallmark only; the procedure's recommended Reactome/WikiPathways follow-up collections are recorded as a possible next step, not executed here.\", \"constraints\": [\"Python only; no R. Run the fgsea algorithm via gseapy.prerank, fully offline: the GMT is loaded from the reference store, no network access.\", \"gene_set_collection = msigdb_hallmark_human, pinned to MSigDB 2026.1 (collection_pin: name and version stated in the output). If the collection is absent from the reference store at run time, fail loudly with a clear message; do not substitute another organism's or another collection's sets.\", \"State the input contrast before ranking (R-0110): contrast = treated (AD-lesional) vs control; reference level = control; sign convention = positive log2FC is up in treated. Verify the table's contrast direction is consistent with the condition labels in metadata.csv and state it in the output.\", \"rank_metric = stat (Wald statistic) — the stated side of the disputed ranking-metric choice (R-0108): rank all tested genes with a finite statistic, descending. If the table lacks a stat column, recompute stat = log2FC / lfcSE when lfcSE is present; otherwise fall back to sign(log2FC) * -log10(pvalue) with ties broken by base_mean descending, and report the metric actually used. Never rank by unshrunken log2FC alone and never by a signed p-value with ties (R-0099).\", \"gsea_input = full_ranked_list: no adjusted-p or fold-change threshold before the test (R-0045).\", \"min_size = 15 and max_size = 500, applied after each set's intersection with the tested genes (R-0047); state the window in the output.\", \"If the DE table's gene column is not in HGNC symbol space, map it to symbols with the local human gene-identifier reference data and report the share of tested genes that did not map; never mix two identifier spaces in one list (R-0101). Report the per-set overlap with the tested genes.\", \"Tie rule for the ranking: exact ties broken by base_mean descending; state the rule in the output (R-0110).\", \"Multiple testing: Benjamini-Hochberg FDR; report sets with FDR < 0.25 in each direction.\", \"Set and record a fixed random seed in the script for any permutation-based component.\"], \"acceptance_criteria\": [\"GSEA result table covering all 50 hallmark sets: NES, nominal p, FDR q, and direction (up vs down in treated).\", \"Stated ranking metric actually used, and the contrast, reference level, and sign convention.\", \"Stated gene overlap / unmapped share between the DE table and the hallmark collection, and the size of the ranked universe.\", \"Leading-edge gene list for every significant set (FDR < 0.25).\"], \"caveats\": [\"Genes with NA stat/log2FC/padj (zero counts in one group) are excluded from the ranked list with a count; the universe is the genes with a finite statistic and its size is reported.\", \"If fewer than ~50 genes pass a significance threshold, do not run an over-representation test on that short list — the ranked method on the full list is already the correct analysis (R-0103).\", \"The delivered DE table includes sample_01 (library size ~4x below the median); DE is not re-run, so this is inherited context to be stated in the report.\", \"The procedure (R-0098, R-0165) recommends a second pass on Reactome and WikiPathways after Hallmark; this run is scoped to hallmark per the research question — record it only as a suggested follow-up.\"], \"packages\": [\"gseapy\", \"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0098@d01b\", \"R-0165@e456\", \"R-0107@976c\", \"R-0048@500d\", \"R-0097@a38e\", \"R-0101@06c8\", \"R-0103@93aa\", \"R-0108@409f\", \"R-0045@be9e\", \"R-0046@a0ac\", \"R-0054@801e\", \"R-0047@fd9d\", \"R-0052@620a\", \"R-0099@0e8a\", \"R-0110@41cb\"], \"template\": \"tpl-gseapy-preranked@1.0.0\", \"settings\": [{\"step\": \"enrichment\", \"name\": \"second_collection\", \"value\": \"reactome_c2_cp\", \"source\": \"doi:10.1093/nar/gkz1031\"}, {\"step\": \"enrichment\", \"name\": \"further_collections\", \"value\": [\"reactome_gmt\", \"wikipathways\"], \"source\": \"doi:10.1093/nar/gkz1031\"}, {\"step\": \"enrichment\", \"name\": \"collection_release_statement\", \"value\": \"release_per_collection\", \"source\": \"rule:R-0165\"}, {\"step\": \"enrichment\", \"name\": \"rank_metric\", \"value\": \"stat\", \"source\": \"doi:10.1101/060012\"}, {\"step\": \"enrichment\", \"name\": \"enrichment_input_default\", \"value\": \"ranked_list\", \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"enrichment\", \"name\": \"gene_set_collection\", \"value\": \"msigdb_hallmark_human\", \"source\": \"doi:10.1016/j.cels.2015.12.004\"}, {\"step\": \"enrichment\", \"name\": \"follow_up\", \"value\": [\"reactome\", \"wikipathways\", \"go\"], \"source\": \"doi:10.1038/s41596-018-0103-9\"}, {\"step\": \"enrichment\", \"name\": \"kegg_policy\", \"value\": \"local_copy_with_release_and_license\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"enrichment\", \"name\": \"id_mapping\", \"value\": \"to_entrez_with_orgdb\", \"source\": \"doi:10.1016/j.xinn.2021.100141\"}, {\"step\": \"enrichment\", \"name\": \"report_unmapped_share\", \"value\": true, \"source\": \"doi:10.1038/nprot.2009.97\"}, {\"step\": \"enrichment\", \"name\": \"ora_min_significant_genes\", \"value\": 50, \"source\": \"doi:10.3389/fgene.2020.00654\"}, {\"step\": \"enrichment\", \"name\": \"rank_metric_choice\", \"value\": \"stated_in_plan\", \"source\": \"rule:R-0108\"}, {\"step\": \"enrichment\", \"name\": \"gsea_input\", \"value\": \"full_ranked_list\", \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"enrichment\", \"name\": \"bias_note\", \"value\": \"length_and_expression\", \"source\": \"doi:10.1186/s13059-015-0761-7\"}, {\"step\": \"enrichment\", \"name\": \"min_size\", \"value\": 15, \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"enrichment\", \"name\": \"max_size\", \"value\": 500, \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"enrichment\", \"name\": \"collapse_redundant\", \"value\": true, \"source\": \"doi:10.1101/060012\"}, {\"step\": \"enrichment\", \"name\": \"rank_metric_not\", \"value\": [\"unshrunken_log2_fold_change_alone\", \"signed_p_value_with_ties\"], \"source\": \"doi:10.1186/s12859-017-1674-0\"}, {\"step\": \"enrichment\", \"name\": \"input_contrast_statement\", \"value\": \"reference_level_and_sign_convention\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"enrichment\", \"name\": \"rank_ties\", \"value\": \"state_the_tie_rule\", \"source\": \"doi:10.1186/s12859-017-1674-0\"}, {\"step\": \"enrichment\", \"name\": \"collection_pin\", \"value\": \"name_and_version_for_each_collection\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}], \"reason\": \"fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark per R-0098@d01b\"}}, {\"id\": \"T1S3\", \"name\": \"Report enriched hallmark pathways\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which hallmark pathways are significantly enriched (FDR < 0.25) in the AD-lesional vs control comparison, in which direction, with which leading-edge genes, and what does the method choice imply about how strongly to claim them?\", \"description\": \"From the T2S1 GSEA output and the T1S1 QC context: a final summary table of significant hallmark sets (pathway, NES, FDR q, direction, leading-edge genes with their gene-level statistics), collapse of redundant significant sets into groups with one representative per group (full table kept as supplement), an enrichment-map figure, and a short written conclusion.\", \"context\": \"Inputs: the T2S1 GSEA result table with leading edges, and the T1S1 QC statement (inherited design context, including sample_01). This is the user-facing summary of the run.\", \"constraints\": [\"Python only.\", \"enrichment_report: state the gene set database and version (MSigDB Hallmark, 2026.1), the ranking metric actually used, the universe (tested genes with a finite statistic, and its size), and the gene set size window (15-500); also the tool with version (gseapy 1.3.1) and the multiple-testing method (Benjamini-Hochberg).\", \"leading_edge: list the leading-edge genes of each significant set with the gene-level statistic of each member, and mark the overlap of leading edges between reported sets.\", \"Collapse redundant significant sets before the report: one representative set per overlap group, full table kept as supplement.\", \"enrichment_caveat: state that the enrichment result depends on the method, name the method, and present the sets as hypotheses for follow-up rather than proven findings.\", \"reproducibility_record: store with the results — session info / package versions, the random seed, the gene set collection version (MSigDB 2026.1), and the annotation/ID-mapping release used.\", \"State explicitly that this enrichment is of the delivered DE table (inherited analysis): sample_01 was kept in the upstream DE and DE was not re-run in this plan.\"], \"acceptance_criteria\": [\"Final table of significant hallmark sets (FDR < 0.25) with NES, FDR q, direction, and leading-edge genes.\", \"Figure of the enrichment results (enrichment map or ranked NES plot).\", \"A short written conclusion distinguishing upregulated vs downregulated hallmark programs in treated (AD-lesional) vs control.\", \"Reproducibility record file stored alongside the results.\"], \"caveats\": [\"Correlated hallmark sets sharing most of their leading edge are one finding, not many — collapse them in the report.\"], \"packages\": [\"pandas\", \"matplotlib\", \"gseapy\"], \"depends_on\": [\"T2S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0051@01ca\", \"R-0055@107a\", \"R-0105@c4a8\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"enrichment_report\", \"value\": [\"database\", \"version\", \"rank_metric\", \"universe\", \"size_window\"], \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"report\", \"name\": \"enrichment_caveat\", \"value\": \"method_dependence\", \"source\": \"doi:10.1093/bib/bbz158\"}, {\"step\": \"report\", \"name\": \"leading_edge\", \"value\": \"per_significant_set\", \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 48
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "python"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ],
+          "enrichment_input": "ranked_list"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-python@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0010"
+            },
+            "template": "tpl-gseapy-preranked@1.0.0",
+            "rules": [
+              "R-0098@d01b",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0054@801e",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0099@0e8a",
+              "R-0110@41cb"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0054@801e"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0099@0e8a"
+          },
+          {
+            "id": "R-0110@41cb"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 31699,
+      "elapsedMs": 10
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top variable genes, sample distance heatmap (pydeseq2 VST + scikit-learn PCA)",
+            "package": "pydeseq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "pre-ranked GSEA (fgsea algorithm) on the Wald statistic with MSigDB Hallmark human (gseapy.prerank, offline local GMT)",
+            "package": "gseapy",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "gsea_input",
+                "value": "full_ranked_list"
+              },
+              {
+                "name": "gene_set_collection",
+                "value": "msigdb_hallmark_human"
+              },
+              {
+                "name": "collection_pin",
+                "value": "MSigDB Hallmark 2026.1 (h.all.v2026.1.Hs.symbols.gmt)"
+              },
+              {
+                "name": "min_size",
+                "value": "15"
+              },
+              {
+                "name": "max_size",
+                "value": "500"
+              },
+              {
+                "name": "enrichment_input",
+                "value": "ranked_list"
+              },
+              {
+                "name": "multiple_testing",
+                "value": "benjamini_hochberg"
+              },
+              {
+                "name": "fdr_threshold",
+                "value": "0.25"
+              },
+              {
+                "name": "rank_ties",
+                "value": "ties broken by base_mean descending"
+              },
+              {
+                "name": "collapse_redundant",
+                "value": true
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "summary table with leading edge per significant set, redundancy collapse, method-dependence caveat, reproducibility record",
+            "package": "pandas",
+            "parameters": [
+              {
+                "name": "enrichment_report",
+                "value": "database, version, rank_metric, universe, size_window"
+              },
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 27
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

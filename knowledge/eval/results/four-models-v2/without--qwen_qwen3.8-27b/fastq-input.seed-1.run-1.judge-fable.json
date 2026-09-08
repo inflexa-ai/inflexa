@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 1,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 1
+  },
+  "rationale": "The planner reached the outcome the reference calls correct: it recognized that only FASTQ reads exist, refused to invent a count matrix, and asked a precise question about provisioning a quantifier (salmon/kallisto or STAR+featureCounts) with a named GRCh38/GENCODE reference or supplying a precomputed count matrix, naming DESeq2 as the downstream method. That earns strong credit on method_fits_design. However, no plan was submitted, so nothing is stated about sample QC, the low-count filter, in-model normalization, the design formula and contrast, BH/shrinkage, the low-power caveat for n=3, or report content; these criteria score at or near zero on what is stated. Enrichment was not warranted at this stage and was not proposed, which is appropriate."
+}

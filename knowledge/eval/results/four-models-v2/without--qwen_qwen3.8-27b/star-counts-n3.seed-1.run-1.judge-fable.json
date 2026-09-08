@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly feeds the integer STAR/featureCounts matrix straight into DESeq2 with ~condition, explicitly rejects tximport, uses apeglm shrinkage with BH at 0.05, and states the n=3 power caveat, so it fits the design well. QC is adequate (library size, detection rate, VST PCA, flag-not-drop policy) though sample distances are not mentioned. Normalization is never stated explicitly (no mention of size factors or median-of-ratios), the reference level for the contrast is not set, and low-count handling relies solely on independent filtering rather than a stated minimal prefilter. Enrichment was not asked and is added anyway; it names the ranking metric and collection but omits a version, an explicit ORA universe, and a concrete set-size window. The report specifies thresholds, counts, and caveats but not package versions."
+}

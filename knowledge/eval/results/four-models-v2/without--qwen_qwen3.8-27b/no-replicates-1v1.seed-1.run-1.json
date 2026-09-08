@@ -1,0 +1,172 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:47:34.391Z",
+  "elapsedMs": 209871,
+  "outcome": "plan_submitted",
+  "planId": "pln-4d0fcc3a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "TMM normalization, n=1 count-model attempt, effect-size ranked gene list",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "0 residual df: any p-value a tool emits here (e.g., DESeq2 falling back to prior-only dispersion) is an assumption stated as a statistic. Do not let it into the deliverable.",
+          "A single sample pair can be dominated by technical or batch noise; the top-changed list is a candidate list, not a validated finding. Downstream interpretation must not overclaim.",
+          "Condition values must be read from metadata.csv as-is; do not assume spelling or case of 'treated'/'control'.",
+          "If the gene-id column is not a recognizable ID space (Ensembl / Entrez / symbol), map via the provisioned UniProt human ID mapping (local file) rather than dropping genes silently.",
+          "Salmon length correction is undocumented per the profile; TMM normalization is used precisely because it is robust to this, but note the ambiguity in the methods note."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-no-replicates-1v1-s1-1/data/inputs/counts/counts.csv (Salmon gene-level counts, 12000 x 3; layout expected as one gene-id column + 2 sample columns — verify) and /eval-four-models-v2-without-no-replicates-1v1-s1-1/data/inputs/metadata/metadata.csv (2 rows, one condition column; read the actual condition values, do not hardcode 'treated'/'control'). Organism: Homo sapiens; tissue: liver; design: 1 vs 1, no replication. The profile is silent on whether Salmon applied length correction; treat the matrix as raw counts.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "limma",
+          "SummarizedExperiment",
+          "dplyr"
+        ],
+        "question": "Which of the 12,000 genes in counts.csv show expression change between the treated and control liver samples, and what exactly happens when a standard count model is fit with 1 sample per condition?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Treat the matrix as raw integer counts. Verify integrality at ingestion; if values are non-integer (possible length-corrected salmon output), round, record the observation, and proceed.",
+          "Normalize with edgeR::calcNormFactors (TMM size factors) and report the size factors for both samples.",
+          "Attempt a standard count-model fit: DESeq2::DESeq with design ~ condition (or equivalent limma/edgeR GLM). Capture and verbatim record the exact error, warnings, and any messages produced. Expected: dispersion estimation fails or is prior-only given 0 residual df.",
+          "If the fit completes using prior-only dispersion, discard its p-values: they encode an assumed dispersion, not data. No p-value or FDR from this design may appear in any output as a significance call.",
+          "Deliverable 'change list' definition: genes with |log2FC| >= 1 AND total raw count across both samples >= 10. Also always output the top 50 genes by |log2FC| regardless of threshold.",
+          "Compute log2FC = log2(cpm with prior.count=0.5 in treated) - log2(cpm with prior.count=0.5 in control) using TMM-normalized cpm (edgeR::cpm(log=TRUE, prior.count=0.5)).",
+          "Outputs: (a) full 12,000-gene table with gene id, symbol where mappable (else the raw id), raw counts, TMM size factors, normalized cpm per sample, log2FC, abs(log2FC), rank by |log2FC|; (b) the thresholded change list plus top-50-by-rank list; (c) a short methods note stating 0 residual df, the exact count-model behavior observed, and why no p-values/FDR are reported."
+        ],
+        "acceptance_criteria": [
+          "TMM-normalized 12,000 x 2 count table produced with both size factors reported.",
+          "Per-gene log2FC table covering all 12,000 genes, ranked by |log2FC|.",
+          "The attempted count-model DE fit's exact behavior (error text or warnings) is recorded verbatim in the methods note.",
+          "The change list is defined solely by |log2FC| >= 1 plus total count >= 10, and every output artifact labels it as not significance-tested.",
+          "No p-value or FDR column is presented as a significance call anywhere in the outputs."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway context for top-changed genes (human WikiPathways ORE)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Hypergeometric p-values here measure overlap of a magnitude-ranked list with a pathway — conflating them with DE significance would be a category error; keep the framing strict in all output text.",
+          "The WikiPathways GMT uses HGNC symbols; if mapping fails, check whether the ids are Ensembl and remap via org.Hs.eg.db rather than proceeding with unmapped ids.",
+          "Small input lists (the fallback top-100) yield noisy ORE; report list size so the reader can gauge stability."
+        ],
+        "context": "Input: T1S1's |log2FC| >= 1 change list (fallback: top 100 genes by |log2FC| if fewer than 15 genes pass the threshold — state which input was used). Reference data needed: a human pathway gene set collection — use the provisioned human WikiPathways GMT (HGNC symbols; organism matches Homo sapiens). Do NOT use the mouse or rat WikiPathways files. Symbol mapping must happen locally (no network): org.Hs.eg.db for Ensembl/Entrez -> SYMBOL; if ids are already symbols, use as-is; otherwise the provisioned UniProt human ID mapping as fallback.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "GSEABase",
+          "org.Hs.eg.db",
+          "dplyr"
+        ],
+        "question": "Which human pathways are over-represented among the top-changed genes between treated and control liver, as exploratory context for a not-significance-tested change list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only the human WikiPathways GMT; the mouse and rat GMTs are present in the reference store and must not be used on this human dataset.",
+          "Report the symbol-mapping success rate; drop unmapped ids and report the count.",
+          "Run over-representation (hypergeometric, e.g., clusterProfiler::enricher with GSEABase GMT loading) on the combined change list; additionally, if both the up- and down-regulated sublists contain >= 15 genes, run directional ORE on each.",
+          "Label all enrichment outputs as exploratory context for a not-significance-tested gene list. Do not present hypergeometric p-values as evidence that any gene is significantly differentially expressed."
+        ],
+        "acceptance_criteria": [
+          "ORE result table (pathway, overlap, p, FDR) produced for the stated input list, with the input list size and definition printed alongside.",
+          "Symbol mapping rate reported, with >= 80% of input genes resolved to HGNC symbols (otherwise the id space must be re-examined and remapped before concluding).",
+          "Outputs explicitly framed as exploratory context, not a significance claim."
+        ]
+      }
+    ],
+    "title": "n=1 liver treated-vs-control DE by effect size",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 1 treated vs 1 control human liver bulk RNA-seq libraries (Salmon gene counts, 12,000 genes; counts.csv 12000x3, metadata.csv 2 samples with a condition column). With one sample per condition the design has 0 residual degrees of freedom: dispersion/variance cannot be estimated, so no p-value or FDR exists for this comparison — targeted literature search found no standard significance-testing method for this design, confirming that the defensible deliverable is an effect-size-based change list, clearly labeled as not significance-tested. The plan therefore: (1) normalizes with TMM, attempts a standard count-model DE fit to document its exact behavior under n=1 (discarding any p-values it might emit), and produces the per-gene log2FC table ranked by magnitude with a 2-fold threshold and low-count filter; (2) maps the top-changed genes to HGNC symbols and runs over-representation against the provisioned human WikiPathways sets for exploratory pathway context only. The treatment agent is not named in the context, so no external-validation or drug-target step is planned."
+  },
+  "usage": {
+    "inputTokens": 158204,
+    "outputTokens": 11344,
+    "cacheReadInputTokens": 115584,
+    "reasoningTokens": 9129
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_0c23144d31bc432ba771bb95",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "\"no biological replicates\" AND \"differential expression\" AND (\"one sample per condition\" OR \"single sample per group\") RNA-seq",
+        "maxResults": 10
+      },
+      "outcome": "ok",
+      "durationMs": 1212
+    },
+    {
+      "toolUseId": "call_5fa8abc8ef5048fbb86b7262",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "differential expression analysis RNA-seq without biological replicates single sample per condition method",
+        "limit": 10
+      },
+      "outcome": "ok",
+      "durationMs": 8737
+    },
+    {
+      "toolUseId": "call_44245c639e9f4078b1539413",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 10,
+        "query": "DESeq2 OR edgeR OR limma \"one sample per condition\" OR \"single replicate\" differential expression approach"
+      },
+      "outcome": "ok",
+      "durationMs": 841
+    },
+    {
+      "toolUseId": "call_afdaf6727cb545e28843d3f7",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"n=1 liver treated-vs-control DE by effect size\", \"analytical_narrative\": \"The data are 1 treated vs 1 control human liver bulk RNA-seq libraries (Salmon gene counts, 12,000 genes; counts.csv 12000x3, metadata.csv 2 samples with a condition column). With one sample per condition the design has 0 residual degrees of freedom: dispersion/variance cannot be estimated, so no p-value or FDR exists for this comparison — targeted literature search found no standard significance-testing method for this design, confirming that the defensible deliverable is an effect-size-based change list, clearly labeled as not significance-tested. The plan therefore: (1) normalizes with TMM, attempts a standard count-model DE fit to document its exact behavior under n=1 (discarding any p-values it might emit), and produces the per-gene log2FC table ranked by magnitude with a 2-fold threshold and low-count filter; (2) maps the top-changed genes to HGNC symbols and runs over-representation against the provisioned human WikiPathways sets for exploratory pathway context only. The treatment agent is not named in the context, so no external-validation or drug-target step is planned.\", \"created_at\": \"2026-07-10T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"TMM normalization, n=1 count-model attempt, effect-size ranked gene list\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 genes in counts.csv show expression change between the treated and control liver samples, and what exactly happens when a standard count model is fit with 1 sample per condition?\", \"context\": \"Inputs: /eval-four-models-v2-without-no-replicates-1v1-s1-1/data/inputs/counts/counts.csv (Salmon gene-level counts, 12000 x 3; layout expected as one gene-id column + 2 sample columns — verify) and /eval-four-models-v2-without-no-replicates-1v1-s1-1/data/inputs/metadata/metadata.csv (2 rows, one condition column; read the actual condition values, do not hardcode 'treated'/'control'). Organism: Homo sapiens; tissue: liver; design: 1 vs 1, no replication. The profile is silent on whether Salmon applied length correction; treat the matrix as raw counts.\", \"constraints\": [\"Treat the matrix as raw integer counts. Verify integrality at ingestion; if values are non-integer (possible length-corrected salmon output), round, record the observation, and proceed.\", \"Normalize with edgeR::calcNormFactors (TMM size factors) and report the size factors for both samples.\", \"Attempt a standard count-model fit: DESeq2::DESeq with design ~ condition (or equivalent limma/edgeR GLM). Capture and verbatim record the exact error, warnings, and any messages produced. Expected: dispersion estimation fails or is prior-only given 0 residual df.\", \"If the fit completes using prior-only dispersion, discard its p-values: they encode an assumed dispersion, not data. No p-value or FDR from this design may appear in any output as a significance call.\", \"Deliverable 'change list' definition: genes with |log2FC| >= 1 AND total raw count across both samples >= 10. Also always output the top 50 genes by |log2FC| regardless of threshold.\", \"Compute log2FC = log2(cpm with prior.count=0.5 in treated) - log2(cpm with prior.count=0.5 in control) using TMM-normalized cpm (edgeR::cpm(log=TRUE, prior.count=0.5)).\", \"Outputs: (a) full 12,000-gene table with gene id, symbol where mappable (else the raw id), raw counts, TMM size factors, normalized cpm per sample, log2FC, abs(log2FC), rank by |log2FC|; (b) the thresholded change list plus top-50-by-rank list; (c) a short methods note stating 0 residual df, the exact count-model behavior observed, and why no p-values/FDR are reported.\"], \"acceptance_criteria\": [\"TMM-normalized 12,000 x 2 count table produced with both size factors reported.\", \"Per-gene log2FC table covering all 12,000 genes, ranked by |log2FC|.\", \"The attempted count-model DE fit's exact behavior (error text or warnings) is recorded verbatim in the methods note.\", \"The change list is defined solely by |log2FC| >= 1 plus total count >= 10, and every output artifact labels it as not significance-tested.\", \"No p-value or FDR column is presented as a significance call anywhere in the outputs.\"], \"caveats\": [\"0 residual df: any p-value a tool emits here (e.g., DESeq2 falling back to prior-only dispersion) is an assumption stated as a statistic. Do not let it into the deliverable.\", \"A single sample pair can be dominated by technical or batch noise; the top-changed list is a candidate list, not a validated finding. Downstream interpretation must not overclaim.\", \"Condition values must be read from metadata.csv as-is; do not assume spelling or case of 'treated'/'control'.\", \"If the gene-id column is not a recognizable ID space (Ensembl / Entrez / symbol), map via the provisioned UniProt human ID mapping (local file) rather than dropping genes silently.\", \"Salmon length correction is undocumented per the profile; TMM normalization is used precisely because it is robust to this, but note the ambiguity in the methods note.\"], \"packages\": [\"edgeR\", \"DESeq2\", \"limma\", \"SummarizedExperiment\", \"dplyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Pathway context for top-changed genes (human WikiPathways ORE)\", \"track\": \"T1\", \"step_type\": \"enrichment\", \"question\": \"Which human pathways are over-represented among the top-changed genes between treated and control liver, as exploratory context for a not-significance-tested change list?\", \"context\": \"Input: T1S1's |log2FC| >= 1 change list (fallback: top 100 genes by |log2FC| if fewer than 15 genes pass the threshold — state which input was used). Reference data needed: a human pathway gene set collection — use the provisioned human WikiPathways GMT (HGNC symbols; organism matches Homo sapiens). Do NOT use the mouse or rat WikiPathways files. Symbol mapping must happen locally (no network): org.Hs.eg.db for Ensembl/Entrez -> SYMBOL; if ids are already symbols, use as-is; otherwise the provisioned UniProt human ID mapping as fallback.\", \"constraints\": [\"Use only the human WikiPathways GMT; the mouse and rat GMTs are present in the reference store and must not be used on this human dataset.\", \"Report the symbol-mapping success rate; drop unmapped ids and report the count.\", \"Run over-representation (hypergeometric, e.g., clusterProfiler::enricher with GSEABase GMT loading) on the combined change list; additionally, if both the up- and down-regulated sublists contain >= 15 genes, run directional ORE on each.\", \"Label all enrichment outputs as exploratory context for a not-significance-tested gene list. Do not present hypergeometric p-values as evidence that any gene is significantly differentially expressed.\"], \"acceptance_criteria\": [\"ORE result table (pathway, overlap, p, FDR) produced for the stated input list, with the input list size and definition printed alongside.\", \"Symbol mapping rate reported, with >= 80% of input genes resolved to HGNC symbols (otherwise the id space must be re-examined and remapped before concluding).\", \"Outputs explicitly framed as exploratory context, not a significance claim.\"], \"caveats\": [\"Hypergeometric p-values here measure overlap of a magnitude-ranked list with a pathway — conflating them with DE significance would be a category error; keep the framing strict in all output text.\", \"The WikiPathways GMT uses HGNC symbols; if mapping fails, check whether the ids are Ensembl and remap via org.Hs.eg.db rather than proceeding with unmapped ids.\", \"Small input lists (the fallback top-100) yield noisy ORE; report list size so the reader can gauge stability.\"], \"packages\": [\"clusterProfiler\", \"GSEABase\", \"org.Hs.eg.db\", \"dplyr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 48
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

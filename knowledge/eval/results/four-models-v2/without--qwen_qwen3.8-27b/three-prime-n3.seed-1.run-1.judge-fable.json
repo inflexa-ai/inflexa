@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that 3' tag-seq counts are length-independent, uses DESeq2 with ~condition, median-of-ratios inside the model, apeglm shrinkage, and explicitly forbids TPM or effective-length adjustment, with the n=3 power caveat stated. QC is partial: a PCA and size-factor check with an outlier-flag policy, but no sample-distance heatmap or library-size plot, and it is framed as a post-hoc diagnostic rather than a pre-test step. The low-count handling relies solely on independent filtering with only all-zero removal, rather than the explicit minimal floor (about 5 counts in 3 samples) with genes-kept reported; BH is implied via padj but never named and no single alpha is fixed. Enrichment was neither asked nor warranted at this sample size, yet the plan adds fgsea without stating the ranking metric, collection version, or size window, and the report omits software versions."
+}

@@ -1,0 +1,139 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:36:32.884Z",
+  "elapsedMs": 151193,
+  "outcome": "plan_submitted",
+  "planId": "pln-61c85a62",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE: omnibus LRT + per-treatment vs control contrasts (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "The profiler could not confirm whether Salmon's length correction was applied; 13 columns suggests name + 12 raw count columns, but verify before modeling and state the assumption.",
+          "n=4 per group limits power: treat near-threshold padj values cautiously and present shrunk LFCs for any gene-level interpretation.",
+          "Only 12000 genes are present (filtered Salmon output), so 'all genes' means all genes in this feature space — say so in the report.",
+          "Salmon gene-level rows may carry ENSEMBL IDs or symbols; keep the row identifiers unchanged end-to-end and record which they are."
+        ],
+        "context": "Homo sapiens liver; conditions exactly 'control', 'treated_a', 'treated_b'; 4 replicates per group; unpaired; single batch; raw gene-level counts from Salmon. The feature set is a filtered 12000-gene matrix, not the full ~60k human genome. No batch covariate, no pairing information, no clinical outcome data.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0",
+          "tximport==1.40.0",
+          "edgeR==4.10.3",
+          "limma==3.68.5"
+        ],
+        "question": "In this human liver bulk RNA-seq dataset (3 groups: control, treated_a, treated_b; 4 unpaired replicates each, 12 samples total), which genes differ across the three groups overall, and which genes does each treatment (treated_a, treated_b) change relative to control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Condition factor level order must be c('control','treated_a','treated_b') so control is the reference in both contrasts.",
+          "The LRT must be full model ~condition vs reduced ~1 (2 df); do not replace it with pairwise tests only.",
+          "Report both pvalue and BH-adjusted padj in every table.",
+          "Do not filter low-count genes beyond DESeq2's default behavior; report how many genes appear in the final tables.",
+          "Any sample-name reconciliation or import-path decision (tximport vs direct DESeq2 vs voom fallback) must be stated in the step report.",
+          "Keep the delivered 12000-gene feature space; do not merge in external annotation genes."
+        ],
+        "description": "Load /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples; 13 columns = 1 gene-identifier column + 12 sample columns) and /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/metadata/metadata.csv (12 rows x condition). (1) Verify metadata sample identifiers match the 12 sample columns of the counts matrix after whitespace/case normalization; fail loudly on any mismatch. (2) Inspect the matrix: integer values? presence of salmon length_scale_factor / effective_length columns? If length-scale columns are present, import via tximport; otherwise build a DESeqDataSet directly from the delivered gene-level counts. If values are non-integer (i.e., actually TPM), do not silently use DESeq2 — fall back to edgeR + limma-voom on cpm-normalized data and report which path was taken. (3) Brief QC embedded in this step: per-sample total counts and a PCA of normalized expression for the 3 groups; flag any replicate clearly deviating from its group (report, do not silently drop). (4) Run DESeq2 with design ~condition, factor levels c('control','treated_a','treated_b') so control is the reference. (5) Produce three result sets: (a) LRT omnibus, full=~condition vs reduced=~1 (2 df) — genes differing across all three groups; (b) contrast treated_a vs control; (c) contrast treated_b vs control. (6) Apply apeglm LFC shrinkage to both contrasts for ranking. (7) Save per-gene tables (gene id, baseMean, log2FC, pvalue, padj, shrunk log2FC for contrasts), report counts of genes with padj<0.05 (and a |log2FC|>=1 summary) per test, and produce one volcano plot per contrast plus the PCA plot. Carry whatever identifier the count rows use (ENSG or symbol) unchanged into all outputs, and state it.",
+        "acceptance_criteria": [
+          "Three result tables — treated_a vs control, treated_b vs control, and the LRT omnibus — each covering all 12000 genes with log2FoldChange, pvalue, padj.",
+          "Both contrast tables include apeglm-shrunk log2FC used for ranking.",
+          "A PCA figure showing the 3 groups with per-replicate labels, and one volcano plot per contrast.",
+          "Summary counts of genes with padj<0.05 reported for each of the three tests.",
+          "The step report states the import path taken, the sample-name check outcome, and the identifier type of the gene rows."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway enrichment of DE lists (human WikiPathways, fgsea + ORA)",
+        "agent": "enrichment-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways set sizes vary widely; keep fgsea's default handling of small sets and report how many pathways were actually tested.",
+          "Enrichment on a 12000-gene filtered feature space is a subset-background analysis; state the assumption rather than treating it as genome-wide.",
+          "Do not over-interpret individual pathways from the two contrasts where few genes pass padj<0.05 — the ranked GSEA is the primary result there."
+        ],
+        "context": "Organism is Homo sapiens, so only the human gene set is appropriate (mouse/rat sets in the store must not be used). Input feature space is a 12000-gene filtered set, so enrichment background is that set; state this in the report. No network/PPI step is requested.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "clusterProfiler==4.20.0",
+          "org.Hs.eg.db==3.23.1"
+        ],
+        "question": "Which human pathways are enriched among the genes changed by each treatment relative to control, and among the genes differing across all three groups?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only the human (Homo sapiens) gene-set reference; never the mouse or rat sets.",
+          "GSEA ranking must be based on the T1S1 shrunk LFCs / statistics, not on an independent re-analysis.",
+          "If the human gene-set reference is absent, report absence and still deliver the DE gene lists — no placeholder or invented enrichment."
+        ],
+        "description": "Consume the three DE tables from T1S1 (treated_a vs control, treated_b vs control, LRT omnibus). (1) Resolve the provisioned human pathway gene-set reference in the environment — a human WikiPathways GMT with HGNC symbols (the managed 2026.07.10 human set); if the count-row identifiers are not HGNC symbols (e.g., ENSEMBL IDs), map with org.Hs.eg.db first and report the mapping rate (fraction of the 12000 genes present in the GMT symbol space). (2) Ranked GSEA with fgsea: rank all 12000 genes by shrunk log2FC per contrast and for the LRT set, run against the human GMT, report top pathways with NES and padj. (3) Over-representation analysis (clusterProfiler) on the padj<0.05 up- and down-regulated lists per contrast and the LRT significant set, where non-empty. (4) Output per test: top 20 pathways (gene ratio, NES/pvalue, padj, core genes for the top 5), and the number of pathways tested. If the human GMT cannot be resolved at run time, report its absence explicitly and pass the DE gene lists through as this step's output — do not fabricate enrichment results.",
+        "acceptance_criteria": [
+          "Ranked GSEA results with NES and padj per contrast and for the LRT set, against the human WikiPathways set.",
+          "ORA results on padj<0.05 up/down lists per contrast and the LRT set, for every non-empty list.",
+          "Reported mapping rate of count-matrix genes to GMT symbols and the number of pathways tested.",
+          "An explicit report of reference absence (with gene lists preserved) if the human GMT was not resolvable."
+        ]
+      }
+    ],
+    "title": "Human liver bulk RNA-seq: 3-group DE + per-treatment contrasts + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-10-06T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question has exactly two statistical parts, and the data supports both directly: (1) 'which genes differ across the three groups at all' = a 2-df omnibus likelihood-ratio test in DESeq2 (full ~condition vs reduced ~1) on the 12000-gene x 12-sample Salmon count matrix; (2) 'which genes does each treatment change relative to control' = two planned contrasts (treated_a vs control, treated_b vs control) with control as the reference level, apeglm-shrunk LFCs for ranking, BH correction throughout. Design is unpaired, 4 replicates per group (control, treated_a, treated_b), single batch — no covariates to include. A second step annotates the resulting gene lists against the provisioned human WikiPathways gene set (organism matches: Homo sapiens), using ranked GSEA (fgsea) plus ORA on the significant lists, so the gene lists gain functional context. No outcome/clinical data exist, so no biomarker or modeling steps are warranted."
+  },
+  "usage": {
+    "inputTokens": 32710,
+    "outputTokens": 8462,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 6166
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_5ccd078137144a43874e3df1",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Human liver bulk RNA-seq: 3-group DE + per-treatment contrasts + pathways\", \"analytical_narrative\": \"The question has exactly two statistical parts, and the data supports both directly: (1) 'which genes differ across the three groups at all' = a 2-df omnibus likelihood-ratio test in DESeq2 (full ~condition vs reduced ~1) on the 12000-gene x 12-sample Salmon count matrix; (2) 'which genes does each treatment change relative to control' = two planned contrasts (treated_a vs control, treated_b vs control) with control as the reference level, apeglm-shrunk LFCs for ranking, BH correction throughout. Design is unpaired, 4 replicates per group (control, treated_a, treated_b), single batch — no covariates to include. A second step annotates the resulting gene lists against the provisioned human WikiPathways gene set (organism matches: Homo sapiens), using ranked GSEA (fgsea) plus ORA on the significant lists, so the gene lists gain functional context. No outcome/clinical data exist, so no biomarker or modeling steps are warranted.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-10-06T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DE: omnibus LRT + per-treatment vs control contrasts (DESeq2)\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"In this human liver bulk RNA-seq dataset (3 groups: control, treated_a, treated_b; 4 unpaired replicates each, 12 samples total), which genes differ across the three groups overall, and which genes does each treatment (treated_a, treated_b) change relative to control?\", \"description\": \"Load /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples; 13 columns = 1 gene-identifier column + 12 sample columns) and /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/metadata/metadata.csv (12 rows x condition). (1) Verify metadata sample identifiers match the 12 sample columns of the counts matrix after whitespace/case normalization; fail loudly on any mismatch. (2) Inspect the matrix: integer values? presence of salmon length_scale_factor / effective_length columns? If length-scale columns are present, import via tximport; otherwise build a DESeqDataSet directly from the delivered gene-level counts. If values are non-integer (i.e., actually TPM), do not silently use DESeq2 — fall back to edgeR + limma-voom on cpm-normalized data and report which path was taken. (3) Brief QC embedded in this step: per-sample total counts and a PCA of normalized expression for the 3 groups; flag any replicate clearly deviating from its group (report, do not silently drop). (4) Run DESeq2 with design ~condition, factor levels c('control','treated_a','treated_b') so control is the reference. (5) Produce three result sets: (a) LRT omnibus, full=~condition vs reduced=~1 (2 df) — genes differing across all three groups; (b) contrast treated_a vs control; (c) contrast treated_b vs control. (6) Apply apeglm LFC shrinkage to both contrasts for ranking. (7) Save per-gene tables (gene id, baseMean, log2FC, pvalue, padj, shrunk log2FC for contrasts), report counts of genes with padj<0.05 (and a |log2FC|>=1 summary) per test, and produce one volcano plot per contrast plus the PCA plot. Carry whatever identifier the count rows use (ENSG or symbol) unchanged into all outputs, and state it.\", \"context\": \"Homo sapiens liver; conditions exactly 'control', 'treated_a', 'treated_b'; 4 replicates per group; unpaired; single batch; raw gene-level counts from Salmon. The feature set is a filtered 12000-gene matrix, not the full ~60k human genome. No batch covariate, no pairing information, no clinical outcome data.\", \"constraints\": [\"Condition factor level order must be c('control','treated_a','treated_b') so control is the reference in both contrasts.\", \"The LRT must be full model ~condition vs reduced ~1 (2 df); do not replace it with pairwise tests only.\", \"Report both pvalue and BH-adjusted padj in every table.\", \"Do not filter low-count genes beyond DESeq2's default behavior; report how many genes appear in the final tables.\", \"Any sample-name reconciliation or import-path decision (tximport vs direct DESeq2 vs voom fallback) must be stated in the step report.\", \"Keep the delivered 12000-gene feature space; do not merge in external annotation genes.\"], \"acceptance_criteria\": [\"Three result tables — treated_a vs control, treated_b vs control, and the LRT omnibus — each covering all 12000 genes with log2FoldChange, pvalue, padj.\", \"Both contrast tables include apeglm-shrunk log2FC used for ranking.\", \"A PCA figure showing the 3 groups with per-replicate labels, and one volcano plot per contrast.\", \"Summary counts of genes with padj<0.05 reported for each of the three tests.\", \"The step report states the import path taken, the sample-name check outcome, and the identifier type of the gene rows.\"], \"caveats\": [\"The profiler could not confirm whether Salmon's length correction was applied; 13 columns suggests name + 12 raw count columns, but verify before modeling and state the assumption.\", \"n=4 per group limits power: treat near-threshold padj values cautiously and present shrunk LFCs for any gene-level interpretation.\", \"Only 12000 genes are present (filtered Salmon output), so 'all genes' means all genes in this feature space — say so in the report.\", \"Salmon gene-level rows may carry ENSEMBL IDs or symbols; keep the row identifiers unchanged end-to-end and record which they are.\"], \"packages\": [\"DESeq2==1.52.0\", \"apeglm==1.34.0\", \"tximport==1.40.0\", \"edgeR==4.10.3\", \"limma==3.68.5\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S2\", \"name\": \"Pathway enrichment of DE lists (human WikiPathways, fgsea + ORA)\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"agent\": \"enrichment-agent\", \"question\": \"Which human pathways are enriched among the genes changed by each treatment relative to control, and among the genes differing across all three groups?\", \"description\": \"Consume the three DE tables from T1S1 (treated_a vs control, treated_b vs control, LRT omnibus). (1) Resolve the provisioned human pathway gene-set reference in the environment — a human WikiPathways GMT with HGNC symbols (the managed 2026.07.10 human set); if the count-row identifiers are not HGNC symbols (e.g., ENSEMBL IDs), map with org.Hs.eg.db first and report the mapping rate (fraction of the 12000 genes present in the GMT symbol space). (2) Ranked GSEA with fgsea: rank all 12000 genes by shrunk log2FC per contrast and for the LRT set, run against the human GMT, report top pathways with NES and padj. (3) Over-representation analysis (clusterProfiler) on the padj<0.05 up- and down-regulated lists per contrast and the LRT significant set, where non-empty. (4) Output per test: top 20 pathways (gene ratio, NES/pvalue, padj, core genes for the top 5), and the number of pathways tested. If the human GMT cannot be resolved at run time, report its absence explicitly and pass the DE gene lists through as this step's output — do not fabricate enrichment results.\", \"context\": \"Organism is Homo sapiens, so only the human gene set is appropriate (mouse/rat sets in the store must not be used). Input feature space is a 12000-gene filtered set, so enrichment background is that set; state this in the report. No network/PPI step is requested.\", \"constraints\": [\"Use only the human (Homo sapiens) gene-set reference; never the mouse or rat sets.\", \"GSEA ranking must be based on the T1S1 shrunk LFCs / statistics, not on an independent re-analysis.\", \"If the human gene-set reference is absent, report absence and still deliver the DE gene lists — no placeholder or invented enrichment.\"], \"acceptance_criteria\": [\"Ranked GSEA results with NES and padj per contrast and for the LRT set, against the human WikiPathways set.\", \"ORA results on padj<0.05 up/down lists per contrast and the LRT set, for every non-empty list.\", \"Reported mapping rate of count-matrix genes to GMT symbols and the number of pathways tested.\", \"An explicit report of reference absence (with gene lists preserved) if the human GMT was not resolvable.\"], \"caveats\": [\"WikiPathways set sizes vary widely; keep fgsea's default handling of small sets and report how many pathways were actually tested.\", \"Enrichment on a 12000-gene filtered feature space is a subset-background analysis; state the assumption rather than treating it as genome-wide.\", \"Do not over-interpret individual pathways from the two contrasts where few genes pass padj<0.05 — the ranked GSEA is the primary result there.\"], \"packages\": [\"fgsea==1.38.0\", \"clusterProfiler==4.20.0\", \"org.Hs.eg.db==3.23.1\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 75
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

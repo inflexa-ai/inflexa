@@ -1,0 +1,46 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "transcript-usage-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:48:00.632Z",
+  "elapsedMs": 59580,
+  "outcome": "clarification_needed",
+  "question": "Can you provide transcript-level (isoform-level) quantifications for the same 12 samples — e.g. the Salmon quant.tsv/quant.sf with transcript IDs, TPM, and effective lengths? The delivered counts.csv is gene-level only (12,000 genes × 12 samples, a Salmon gene-level summary), and gene totals carry no isoform information, so \"which genes switch their dominant isoform between treated and control\" cannot be answered from this file by any analysis. If only gene-level data will be available, please confirm and I will plan a gene-level differential-expression analysis instead, with the isoform-switching question explicitly marked out of scope for the delivered data.",
+  "usage": {
+    "inputTokens": 32720,
+    "outputTokens": 2961,
+    "cacheReadInputTokens": 10822,
+    "reasoningTokens": 2550
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_51210fb72f274b7a95b98401",
+      "name": "request_clarification",
+      "input": {
+        "question": "Can you provide transcript-level (isoform-level) quantifications for the same 12 samples — e.g. the Salmon quant.tsv/quant.sf with transcript IDs, TPM, and effective lengths? The delivered counts.csv is gene-level only (12,000 genes × 12 samples, a Salmon gene-level summary), and gene totals carry no isoform information, so \"which genes switch their dominant isoform between treated and control\" cannot be answered from this file by any analysis. If only gene-level data will be available, please confirm and I will plan a gene-level differential-expression analysis instead, with the isoform-switching question explicitly marked out of scope for the delivered data.",
+        "questionContext": "Authoritative data profile: bulk RNA-seq, Homo sapiens, skin, atopic dermatitis lesional (treated) vs control, 6 vs 6, unpaired, single batch. Files: inputs/counts/counts.csv (12,000 x 13, gene-level Salmon counts, \"as delivered; record does not say whether length correction was applied\") and inputs/metadata/metadata.csv (12 rows, condition). Profiled caveat: sample_01 has library size ~4x below the median — if transcript-level data is provided, per-sample isoform ratios in sample_01 will be unreliable for lowly expressed genes, and the plan will include a sensitivity analysis excluding it. The isoform-switching workflow (dominant isoform per gene per sample, then between-group switching test) requires transcript-level quantification as input; no analysis of the 12,000 gene sums can recover isoform ratios, and no public source is identifiable for this sample set (sample_01…sample_12), so the data must come from the user's own pipeline."
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

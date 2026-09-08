@@ -1,0 +1,181 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:36:04.847Z",
+  "elapsedMs": 237914,
+  "outcome": "plan_submitted",
+  "planId": "pln-b45fd84c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, 2×2 DESeq2 factorial model, LRT interaction test",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If counts are non-integer or look length-corrected, label all downstream numbers as coming from the voom fallback and note the assumption in the summary — do not silently round to integers.",
+          "With the interaction in the model, the 'treatmentDrug' coefficient is the drug effect in the reference genotype (WT), not the marginal effect; report it only as the WT-specific effect.",
+          "Do not drop outlier samples; n=4 per cell means any removal breaks the design balance.",
+          "Low power for interaction detection with 4 replicates per cell: report effect sizes and nominal p alongside FDR so the headline can be read with that caveat."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/counts/counts.csv (12000 rows × 17 cols: gene-ID column + 16 sample columns; gene-level counts from salmon, length-correction status unknown) and /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows × 4 cols: sample, genotype WT/KO, treatment vehicle/drug, condition). Balanced design, 4 replicates per genotype×treatment cell, Homo sapiens brain. Organism of all downstream resources must be human.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0",
+          "limma==3.68.5",
+          "SummarizedExperiment==1.42.0",
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13"
+        ],
+        "question": "After QC, which of the 12,000 genes show evidence that the drug's effect differs between KO and WT (factorial interaction), and what are the drug-vs-vehicle effects within each genotype and the marginal main effects?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Align the 16 sample columns of counts.csv one-to-one with the metadata sample rows by header names; confirm exactly 4 samples per genotype × treatment cell; build factors from the genotype and treatment columns (reference levels WT and vehicle); use the condition column only as a cross-check of the cross-product — stop and report if it is inconsistent.",
+          "QC before modeling: per-sample total counts and detected-gene counts, check whether values are integer (record the verdict on raw vs length-corrected salmon output), vst-based PCA and pairwise sample distances, and a mean–MA overview. Report suspicious samples but remove none (n=4 per cell cannot absorb loss).",
+          "Branch on the count-scale verdict: (a) integer, library-size-like totals → DESeq2 with design ~ genotype + treatment + genotype:treatment; (b) non-integer or length-corrected-looking totals → primary test on the same 2×2 factor design via limma-voom (log2CPM, eBayes, interaction contrast via contrasts.fit, BH FDR), labeled as the fallback. State which branch ran.",
+          "Primary test for the research question: LRT, full = ~ genotype + treatment + genotype:treatment, reduced = ~ genotype + treatment; BH FDR 0.05 defines the significant-interaction gene list; also report the count of nominal p < 0.05.",
+          "Decomposition with apeglm-shrunk LFCs: drug-vs-vehicle within KO, drug-vs-vehicle within WT, the marginal (average) drug effect, and the genotype main effect. Report all four; do not present the reference-genotype-specific treatment coefficient as the overall drug effect.",
+          "Export for downstream steps: full LRT results table (all genes, stat/p/padj), the decomposition table, per-sample vst (or log2CPM) expression, the 2×2 condition means for the top 20 interaction genes, and the QC plots.",
+          "Report the number of genes removed or failing to fit and the dispersion/fit diagnostics summary."
+        ],
+        "description": "Validates the 16 samples against metadata, runs count-scale and distribution QC, fits the full 2×2 factorial model, and produces the primary LRT interaction result table plus the decomposition contrasts (per-genotype drug LFCs with apeglm shrinkage, marginal drug effect, genotype main effect) and vst expression / condition means for downstream figures.",
+        "acceptance_criteria": [
+          "A results table for all ~12,000 genes with LRT statistic, p, and padj, plus stated counts of FDR<0.05 and nominal p<0.05 interaction genes.",
+          "A decomposition table with apeglm-shrunk drug-vs-vehicle LFC within KO, within WT, the marginal drug effect, and the genotype main effect.",
+          "QC artifacts saved (PCA, sample distances, mean–MA) and the count-scale verdict (integer/raw vs non-integer/length-corrected, and which branch ran) explicitly stated in the step output."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "WikiPathways enrichment of interaction-ranked genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways GMT first field is '%'-delimited (name, ID, species) — split it to recover readable set names.",
+          "Some sets will contain symbols absent from this dataset; fgsea drops them silently — report the effective universe size.",
+          "Flag pathways with fewer than ~5 shared genes as fragile.",
+          "Do not enrich the top-N genes by expression or by nominal LFC magnitude; the ranking must be the LRT interaction ranking from T1S1."
+        ],
+        "context": "Input: the full-gene LRT interaction ranking (-log10 p) and the significant-interaction gene list from T1S1, plus its reported gene-ID space (Ensembl IDs or symbols). Reference: a human WikiPathways gene-set collection provisioned in the reference store under /mnt/refs (GMT, HGNC symbols, ~341 KB, 2026.07.10 release) — resolve it at run time from the reference store rather than assuming a path. Organism: Homo sapiens (dataset is human brain).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "clusterProfiler==4.20.0",
+          "org.Hs.eg.db==3.23.1",
+          "data.table==1.18.4"
+        ],
+        "question": "Which human pathways are enriched among genes whose drug response differs between genotypes (LRT interaction ranking from T1S1)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Resolve the T1S1 row-ID space from a sample of row names; map to HGNC symbols with org.Hs.eg.db (use the provisioned UniProt human ID mapping table if that route covers more of the data); report mapping coverage as a percentage and drop unmapped genes.",
+          "Run fgsea on the human WikiPathways sets using the FULL ranked list (all genes, not only significant ones); report the number of pathways tested and the effective gene universe.",
+          "Report pathways at FDR < 0.05 (up to 20 top by NES, each with NES, p, padj, and shared-gene count); if none reach FDR, report the top 10 nominally significant (p < 0.05) explicitly labeled as nominal only.",
+          "Only if T1S1 produced FDR-significant interaction genes: run GO Biological Process enrichment (clusterProfiler, org.Hs.eg.db) on that set; otherwise skip with a note.",
+          "Record the exact gene-set source name and version/date used in the output."
+        ],
+        "description": "Maps the T1S1 gene-ID space to HGNC symbols, runs fgsea gene-set enrichment on the provisioned human WikiPathways gene sets against the full LRT-ranked list, and (only if significant interaction genes exist) a GO Biological Process check on that set.",
+        "acceptance_criteria": [
+          "A pathway table with NES, p, padj, and overlap gene count, with the tested set source and version recorded.",
+          "Mapping coverage (fraction of genes converted to HGNC symbols) reported and unmapped genes documented.",
+          "A clear statement of whether any pathway reached FDR < 0.05, or that the enrichment is nominal-only."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Interaction figures and headline summary",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not cherry-pick genes after inspecting the heatmap; the gene selection must be by T1S1 LRT p only.",
+          "Condition means must come from the T1S1 vst/log2CPM export, not raw counts.",
+          "If T1S2 found no FDR-significant pathways, the summary must say the pathway context is nominal/absent rather than implying biological confirmation."
+        ],
+        "context": "Inputs: T1S1 artifacts (full LRT table, per-genotype and marginal drug LFCs, per-sample vst/log2CPM expression, 2×2 condition means for top 20 interaction genes, QC verdicts) and T1S2 pathway results.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13"
+        ],
+        "question": "What does the evidence for genotype-dependent drug action look like (interaction volcano, 2×2 expression patterns, WT-vs-KO effect comparison), and what is the defensible headline answer to 'does the drug act differently in KO than WT'?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "visualization",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Interaction volcano: LRT -log10(p) vs mean vst/log2CPM expression, highlighting FDR-significant genes; rank genes by T1S1 LRT p only.",
+          "For the top 15–20 LRT-ranked interaction genes: a pheatmap of the 2×2 condition means, and a scatter of drug-vs-vehicle LFC in WT (x) vs KO (y) with quadrant lines at 0, classifying each plotted gene's interaction pattern (opposite directions vs amplified/suppressed magnitude).",
+          "Write a plain-language summary answering the research question: number of interaction genes at FDR 0.05 and nominal p < 0.05, the direction of the top examples (from the quadrant plot), the enriched pathways from T1S2 (if any), and explicit caveats — n=4 per cell power, and the T1S1 count-scale/model-branch verdict.",
+          "If zero genes are significant at FDR, the summary must say so directly and present the top nominal hits as context; no threshold relaxation or rescue analysis."
+        ],
+        "description": "Produces the interaction volcano, a 2×2 condition heatmap and WT-vs-KO drug-LFC comparison for the top LRT-ranked interaction genes, and a written plain-language summary with counts, directions, enriched pathways, and caveats.",
+        "acceptance_criteria": [
+          "Volcano figure, 2×2 condition heatmap, and WT-vs-KO LFC scatter all saved.",
+          "A written summary stating interaction gene counts, top-gene directions, pathway context, and caveats, with numbers consistent with the T1S1 tables."
+        ]
+      }
+    ],
+    "title": "Genotype × treatment interaction in 2×2 brain RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-08-01T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is the interaction term of a balanced 2×2 factorial (genotype WT/KO × treatment vehicle/drug, 4 brain samples per cell, 12,000 salmon gene-level counts in 12000×17 counts.csv plus a 16×4 metadata table). One negative-binomial DESeq2 model with the interaction term answers it directly: the LRT of the full model (~genotype + treatment + genotype:treatment) against the main-effects model identifies genes whose drug response differs between genotypes — the literal test of 'does the drug act differently in knockout'. Genotype-specific drug contrasts, the marginal drug effect, and the genotype main effect decompose the interaction; FDR-ranked LRT results define the headline gene list. QC is folded into the modeling step because the profile does not state whether the salmon counts carry length correction (non-integer or length-corrected-looking counts trigger a limma-voom fallback on the same design), and n=4 per cell means no sample can be dropped. Human WikiPathways gene sets (HGNC symbols) are provisioned in the reference store, so the interaction-ranked list gets pathway enrichment after symbol mapping. A final step produces the interaction figures (volcano, 2×2 condition heatmap, WT-vs-KO effect comparison) and a written headline with an explicit power caveat for n=4 per cell."
+  },
+  "usage": {
+    "inputTokens": 32714,
+    "outputTokens": 14455,
+    "cacheReadInputTokens": 9923,
+    "reasoningTokens": 11537
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_e35aaf9b633048e39c2b4f75",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Genotype × treatment interaction in 2×2 brain RNA-seq\", \"analytical_narrative\": \"The question is the interaction term of a balanced 2×2 factorial (genotype WT/KO × treatment vehicle/drug, 4 brain samples per cell, 12,000 salmon gene-level counts in 12000×17 counts.csv plus a 16×4 metadata table). One negative-binomial DESeq2 model with the interaction term answers it directly: the LRT of the full model (~genotype + treatment + genotype:treatment) against the main-effects model identifies genes whose drug response differs between genotypes — the literal test of 'does the drug act differently in knockout'. Genotype-specific drug contrasts, the marginal drug effect, and the genotype main effect decompose the interaction; FDR-ranked LRT results define the headline gene list. QC is folded into the modeling step because the profile does not state whether the salmon counts carry length correction (non-integer or length-corrected-looking counts trigger a limma-voom fallback on the same design), and n=4 per cell means no sample can be dropped. Human WikiPathways gene sets (HGNC symbols) are provisioned in the reference store, so the interaction-ranked list gets pathway enrichment after symbol mapping. A final step produces the interaction figures (volcano, 2×2 condition heatmap, WT-vs-KO effect comparison) and a written headline with an explicit power caveat for n=4 per cell.\", \"created_at\": \"2026-08-01T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, 2×2 DESeq2 factorial model, LRT interaction test\", \"track\": \"T1\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"After QC, which of the 12,000 genes show evidence that the drug's effect differs between KO and WT (factorial interaction), and what are the drug-vs-vehicle effects within each genotype and the marginal main effects?\", \"description\": \"Validates the 16 samples against metadata, runs count-scale and distribution QC, fits the full 2×2 factorial model, and produces the primary LRT interaction result table plus the decomposition contrasts (per-genotype drug LFCs with apeglm shrinkage, marginal drug effect, genotype main effect) and vst expression / condition means for downstream figures.\", \"context\": \"Inputs: /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/counts/counts.csv (12000 rows × 17 cols: gene-ID column + 16 sample columns; gene-level counts from salmon, length-correction status unknown) and /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows × 4 cols: sample, genotype WT/KO, treatment vehicle/drug, condition). Balanced design, 4 replicates per genotype×treatment cell, Homo sapiens brain. Organism of all downstream resources must be human.\", \"constraints\": [\"Align the 16 sample columns of counts.csv one-to-one with the metadata sample rows by header names; confirm exactly 4 samples per genotype × treatment cell; build factors from the genotype and treatment columns (reference levels WT and vehicle); use the condition column only as a cross-check of the cross-product — stop and report if it is inconsistent.\", \"QC before modeling: per-sample total counts and detected-gene counts, check whether values are integer (record the verdict on raw vs length-corrected salmon output), vst-based PCA and pairwise sample distances, and a mean–MA overview. Report suspicious samples but remove none (n=4 per cell cannot absorb loss).\", \"Branch on the count-scale verdict: (a) integer, library-size-like totals → DESeq2 with design ~ genotype + treatment + genotype:treatment; (b) non-integer or length-corrected-looking totals → primary test on the same 2×2 factor design via limma-voom (log2CPM, eBayes, interaction contrast via contrasts.fit, BH FDR), labeled as the fallback. State which branch ran.\", \"Primary test for the research question: LRT, full = ~ genotype + treatment + genotype:treatment, reduced = ~ genotype + treatment; BH FDR 0.05 defines the significant-interaction gene list; also report the count of nominal p < 0.05.\", \"Decomposition with apeglm-shrunk LFCs: drug-vs-vehicle within KO, drug-vs-vehicle within WT, the marginal (average) drug effect, and the genotype main effect. Report all four; do not present the reference-genotype-specific treatment coefficient as the overall drug effect.\", \"Export for downstream steps: full LRT results table (all genes, stat/p/padj), the decomposition table, per-sample vst (or log2CPM) expression, the 2×2 condition means for the top 20 interaction genes, and the QC plots.\", \"Report the number of genes removed or failing to fit and the dispersion/fit diagnostics summary.\"], \"acceptance_criteria\": [\"A results table for all ~12,000 genes with LRT statistic, p, and padj, plus stated counts of FDR<0.05 and nominal p<0.05 interaction genes.\", \"A decomposition table with apeglm-shrunk drug-vs-vehicle LFC within KO, within WT, the marginal drug effect, and the genotype main effect.\", \"QC artifacts saved (PCA, sample distances, mean–MA) and the count-scale verdict (integer/raw vs non-integer/length-corrected, and which branch ran) explicitly stated in the step output.\"], \"caveats\": [\"If counts are non-integer or look length-corrected, label all downstream numbers as coming from the voom fallback and note the assumption in the summary — do not silently round to integers.\", \"With the interaction in the model, the 'treatmentDrug' coefficient is the drug effect in the reference genotype (WT), not the marginal effect; report it only as the WT-specific effect.\", \"Do not drop outlier samples; n=4 per cell means any removal breaks the design balance.\", \"Low power for interaction detection with 4 replicates per cell: report effect sizes and nominal p alongside FDR so the headline can be read with that caveat.\"], \"packages\": [\"DESeq2==1.52.0\", \"apeglm==1.34.0\", \"limma==3.68.5\", \"SummarizedExperiment==1.42.0\", \"ggplot2==4.0.3\", \"pheatmap==1.0.13\"], \"depends_on\": [], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}}, {\"id\": \"T1S2\", \"name\": \"WikiPathways enrichment of interaction-ranked genes\", \"track\": \"T1\", \"step_type\": \"enrichment\", \"agent\": \"enrichment-agent\", \"question\": \"Which human pathways are enriched among genes whose drug response differs between genotypes (LRT interaction ranking from T1S1)?\", \"description\": \"Maps the T1S1 gene-ID space to HGNC symbols, runs fgsea gene-set enrichment on the provisioned human WikiPathways gene sets against the full LRT-ranked list, and (only if significant interaction genes exist) a GO Biological Process check on that set.\", \"context\": \"Input: the full-gene LRT interaction ranking (-log10 p) and the significant-interaction gene list from T1S1, plus its reported gene-ID space (Ensembl IDs or symbols). Reference: a human WikiPathways gene-set collection provisioned in the reference store under /mnt/refs (GMT, HGNC symbols, ~341 KB, 2026.07.10 release) — resolve it at run time from the reference store rather than assuming a path. Organism: Homo sapiens (dataset is human brain).\", \"constraints\": [\"Resolve the T1S1 row-ID space from a sample of row names; map to HGNC symbols with org.Hs.eg.db (use the provisioned UniProt human ID mapping table if that route covers more of the data); report mapping coverage as a percentage and drop unmapped genes.\", \"Run fgsea on the human WikiPathways sets using the FULL ranked list (all genes, not only significant ones); report the number of pathways tested and the effective gene universe.\", \"Report pathways at FDR < 0.05 (up to 20 top by NES, each with NES, p, padj, and shared-gene count); if none reach FDR, report the top 10 nominally significant (p < 0.05) explicitly labeled as nominal only.\", \"Only if T1S1 produced FDR-significant interaction genes: run GO Biological Process enrichment (clusterProfiler, org.Hs.eg.db) on that set; otherwise skip with a note.\", \"Record the exact gene-set source name and version/date used in the output.\"], \"acceptance_criteria\": [\"A pathway table with NES, p, padj, and overlap gene count, with the tested set source and version recorded.\", \"Mapping coverage (fraction of genes converted to HGNC symbols) reported and unmapped genes documented.\", \"A clear statement of whether any pathway reached FDR < 0.05, or that the enrichment is nominal-only.\"], \"caveats\": [\"WikiPathways GMT first field is '%'-delimited (name, ID, species) — split it to recover readable set names.\", \"Some sets will contain symbols absent from this dataset; fgsea drops them silently — report the effective universe size.\", \"Flag pathways with fewer than ~5 shared genes as fragile.\", \"Do not enrich the top-N genes by expression or by nominal LFC magnitude; the ranking must be the LRT interaction ranking from T1S1.\"], \"packages\": [\"fgsea==1.38.0\", \"clusterProfiler==4.20.0\", \"org.Hs.eg.db==3.23.1\", \"data.table==1.18.4\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}, {\"id\": \"T1S3\", \"name\": \"Interaction figures and headline summary\", \"track\": \"T1\", \"step_type\": \"visualization\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What does the evidence for genotype-dependent drug action look like (interaction volcano, 2×2 expression patterns, WT-vs-KO effect comparison), and what is the defensible headline answer to 'does the drug act differently in KO than WT'?\", \"description\": \"Produces the interaction volcano, a 2×2 condition heatmap and WT-vs-KO drug-LFC comparison for the top LRT-ranked interaction genes, and a written plain-language summary with counts, directions, enriched pathways, and caveats.\", \"context\": \"Inputs: T1S1 artifacts (full LRT table, per-genotype and marginal drug LFCs, per-sample vst/log2CPM expression, 2×2 condition means for top 20 interaction genes, QC verdicts) and T1S2 pathway results.\", \"constraints\": [\"Interaction volcano: LRT -log10(p) vs mean vst/log2CPM expression, highlighting FDR-significant genes; rank genes by T1S1 LRT p only.\", \"For the top 15–20 LRT-ranked interaction genes: a pheatmap of the 2×2 condition means, and a scatter of drug-vs-vehicle LFC in WT (x) vs KO (y) with quadrant lines at 0, classifying each plotted gene's interaction pattern (opposite directions vs amplified/suppressed magnitude).\", \"Write a plain-language summary answering the research question: number of interaction genes at FDR 0.05 and nominal p < 0.05, the direction of the top examples (from the quadrant plot), the enriched pathways from T1S2 (if any), and explicit caveats — n=4 per cell power, and the T1S1 count-scale/model-branch verdict.\", \"If zero genes are significant at FDR, the summary must say so directly and present the top nominal hits as context; no threshold relaxation or rescue analysis.\"], \"acceptance_criteria\": [\"Volcano figure, 2×2 condition heatmap, and WT-vs-KO LFC scatter all saved.\", \"A written summary stating interaction gene counts, top-gene directions, pathway context, and caveats, with numbers consistent with the T1S1 tables.\"], \"caveats\": [\"Do not cherry-pick genes after inspecting the heatmap; the gene selection must be by T1S1 LRT p only.\", \"Condition means must come from the T1S1 vst/log2CPM export, not raw counts.\", \"If T1S2 found no FDR-significant pathways, the summary must say the pathway context is nominal/absent rather than implying biological confirmation.\"], \"packages\": [\"ggplot2==4.0.3\", \"pheatmap==1.0.13\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 92
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

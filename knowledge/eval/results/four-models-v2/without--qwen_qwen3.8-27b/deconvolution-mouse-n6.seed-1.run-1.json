@@ -1,0 +1,372 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T16:31:54.590Z",
+  "elapsedMs": 560133,
+  "outcome": "plan_submitted",
+  "planId": "pln-7c040bb6",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, symbol validation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts.csv header layout is not fully specified (Salmon convention puts the gene column first as 'Name'): identify which column is the gene symbol column and which 12 are samples before transposing - do not assume a position.",
+          "If duplicate gene symbols exist across rows, sum their counts and report the duplicate count.",
+          "If any sample column is all-zero, stop and report it rather than continuing.",
+          "Do not install packages; work with what is in the sandbox (readr, dplyr, ggplot2, AnnotationDbi, org.Mm.eg.db)."
+        ],
+        "context": "Organism Mus musculus (taxon 10090). Input files: /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13 - gene symbols plus 12 samples; Salmon gene-level output; the record does not state whether length correction was applied) and /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: one row per sample with its condition). Design: 6 anti-PD-1 treated vs 6 isotype control mice, unpaired, single batch. Known caveat: sample_01 library size ~4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "readr",
+          "dplyr",
+          "ggplot2",
+          "AnnotationDbi",
+          "org.Mm.eg.db"
+        ],
+        "question": "Are all 12 samples (6 anti-PD-1, 6 isotype control) usable, on what scale are the Salmon gene-level abundances, and how many of the 12,000 gene symbols are valid Mus musculus symbols?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc-normalization",
+        "depends_on": [],
+        "constraints": [
+          "Read the condition labels verbatim from metadata.csv and verify they partition exactly 6 vs 6; use the observed labels in every downstream output.",
+          "Normalize per sample by its own total (CPM = counts / sample total * 1e6). If per-sample totals are already near-constant (suggesting the delivered values are TPM-like rather than counts), note this in the QC report and proceed - CPM rescales to the same values.",
+          "Gene filter: keep genes with CPM >= 0.1 in >= 3 of 12 samples; record how many genes are kept vs dropped.",
+          "Validate gene symbols against org.Mm.eg.db (SYMBOL -> ENTREZID); report the fraction of data genes that are valid mouse symbols; keep all genes in the primary matrix but ship a matched/flagged gene table.",
+          "Do NOT drop sample_01 from the primary analysis. Report its library size, ratio to the median, number of detected genes, and its PCA position; carry the flag forward to T1S3 and T2S1 sensitivity analyses.",
+          "Export: (a) CPM matrix with 12 columns named exactly as the metadata sample IDs, (b) sample QC table (library size, ratio to median, genes detected, condition), (c) gene symbol match table, (d) PCA of samples colored by condition."
+        ],
+        "description": "Load counts.csv and metadata.csv, build the analysis matrix, normalize per sample to CPM, filter low-count genes, validate gene symbols against the mouse genome, and flag sample_01 (library ~4x below median) for downstream sensitivity analyses.",
+        "acceptance_criteria": [
+          "CPM matrix with 12 sample columns whose names exactly match metadata.csv sample IDs.",
+          "Sample QC table documents sample_01's ~4x-below-median library size and the other 11 samples.",
+          "Symbol match fraction reported (expect high, e.g. >90%, for a curated mouse gene set).",
+          "Gene-filter decision documented with kept/dropped counts."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Per-sample mouse immune/stromal composition",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "PanglaoDB mouse coverage is expected to be partial - most of the 13 types will likely have no Mm entry; falling back to Panel A for those types is designed behavior, not a failure. Report which types were filled.",
+          "GSVA should be run on the CPM matrix directly - do not log-transform before GSVA.",
+          "Check `?decouple` in the sandbox before calling decoupleR; if a method (UCell/AUCell) errors, drop it from the robustness set and note it - the GSVA primary estimate must not depend on it.",
+          "sample_01 (low library size) is included here; the leave-one-out sensitivity analysis belongs to T1S3.",
+          "Gzipped TSV reads work with readr::read_tsv; PanglaoDB covers human and mouse together, so the species filter is mandatory."
+        ],
+        "context": "Organism is Mus musculus - every panel and every reference used here must be mouse. A true mixture deconvolution (CIBERSORTx-style) requires a mouse reference expression matrix that is NOT provisioned in this environment (published mouse practice uses CIBERSORTx with a custom mouse reference, e.g. PMID 32085618; that reference cannot be obtained offline). Composition is therefore computed as marker-panel-based signature scoring, and outputs must state explicitly that scores are relative expression signals, not strict cell fractions. Panel A (curated mouse TME markers, standard markers from published mouse tumor single-cell studies; starting lists to be verified against the data's gene set): CD8 T = Cd8a, Gzmb, Prf1, Cxcr3, Nkg7, Sh2d1a; CD4 T = Cd4, Il2ra, Ccr7, Tcf7, S1pr1; Treg = Foxp3, Ctla4, Il2ra, Tigit; B cell = Cd79a, Cd19, Pax5, Mzb1; Plasma cell = Mzb1, Xbp1, Sdc1, Iglc2; NK = Ncr1, Klrk1, Klrd1, Eomesh, Gzmb; Macrophage = Cd68, Ly6c1, Itgam, Mrc1, Cx3cr1; Neutrophil = Ly6g, Mmp9, Csf3r1, S100a8, S100a9; Dendritic = Itgax, Cd11c, Flt3, Cx3cr1, Lyz2; Mast = Cma1, Tnc, Hrb2; Endothelial = Pecam1, Cdh5, Vwf, Nos3; Fibroblast/CAF = Col1a1, Col3a1, Pdgfra, Tgfbr1, Fap, Postn; Pericyte/SMC = Acta2, Myh11, Pdgfrb, Rgs5, Cdh5. Panel B (independent source, resolved from the reference store): the PanglaoDB cell-type marker table (2020-03-27 release, gzipped TSV with columns for species, official gene symbol, cell type, organ, ubiquitousness index) - filter species == 'Mm', map its cell-type names onto the 13 types above where possible, and for any of the 13 types with no Mm entry fall back to Panel A's list for that type (flag each such type as 'filled from Panel A'). Scoring: primary = GSVA (method='gsva', kcdf='Gaussian') on the CPM matrix per panel; robustness = UCell and AUCell via decoupleR on the same panels.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "GSVA",
+          "readr",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "What is the immune and stromal cell composition of each of the 12 mouse tumor samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "deconvolution",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do NOT use human-only deconvolution (xCell, MCP-counter, CIBERSORT, TIMER1 via immunedeconv) and do NOT use the human cell-typing models present in the reference store (scGate human TME/generic models, CellTypist human immune models) on this mouse data - organism mismatch would produce confident, meaningless numbers. State this exclusion in the report.",
+          "Validate every panel gene against the CPM matrix rownames; report per-panel, per-cell-type match rates; any cell type with <50% of its panel genes present is excluded for that panel and reported.",
+          "Primary composition estimate = GSVA scores on Panel A, for all 12 samples; report both raw scores and row-normalized fractions per sample (residual = 1 - sum, labeled 'unassigned (tumor + untyped)').",
+          "Report cross-method (GSVA vs UCell vs AUCell, per cell type, Spearman) and cross-panel (A vs B, per cell type, Spearman) concordance.",
+          "Deliverables: (a) 12 x 13 composition table (raw + row-normalized), (b) per-sample composition heatmap colored by condition, (c) panel match-rate table incl. which Panel B types were filled from Panel A, (d) concordance statistics, (e) a written limitations statement (signature scoring is not mixture deconvolution; scores reflect relative expression programs and confound cell number with per-cell activation)."
+        ],
+        "description": "Score the T1S1 CPM matrix for 13 mouse TME cell types (immune + stromal) using two independent mouse-native marker panels; report raw scores and row-normalized fractions per sample, a composition heatmap, and cross-panel/cross-method concordance.",
+        "acceptance_criteria": [
+          "Composition table covers all 12 samples and >= 11 of the 13 cell types with both raw scores and row-normalized fractions.",
+          "Per-panel and per-cell-type match rates reported, with filled-from-Panel-A types flagged.",
+          "Cross-method and cross-panel Spearman concordance reported per cell type (honestly - cross-panel may be lower than cross-method).",
+          "Heatmap and explicit limitations statement present in the output."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Composition difference anti-PD-1 vs isotype",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs 6 is underpowered for subtle shifts - a non-significant result is not evidence of no change; always report effect sizes alongside p values.",
+          "Do not report composition changes as changes in cell NUMBER: an elevated CD8 T score can reflect more CD8 cells or stronger Cd8a/Gzmb expression per cell; T2S2 provides the gene-level evidence to tell these apart.",
+          "If sample_01 sits in the treated arm, the leave-one-out result is the more conservative reading - say so if it differs."
+        ],
+        "context": "Composition table (12 samples x cell types, raw + row-normalized) and per-sample condition labels from T1S2/T1S1. sample_01 is the known low-library-size sample (~4x below the median); determine which arm it belongs to first.",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Do the per-sample immune and stromal cell compositions differ between the 6 anti-PD-1 treated tumors and the 6 isotype control tumors?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential-composition",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "For each cell type, test anti-PD-1 vs isotype with the Wilcoxon rank-sum test (6 vs 6) on raw scores and on row-normalized fractions separately; adjust p values with BH across cell types within each scale.",
+          "Report an effect size per cell type (Cliff's delta or rank-biserial correlation) plus group mean differences and the direction (increased by anti-PD-1 or decreased).",
+          "Sensitivity analysis: repeat the entire comparison with sample_01 excluded; state explicitly whether the FDR-significant set or any direction changes.",
+          "Deliverables: (a) per-cell-type statistics table (n per arm, p, FDR, effect size, group means, direction) for both scales, (b) with/without-sample_01 side-by-side comparison, (c) per-cell-type box/slope plots grouped by condition, (d) a plain-language summary naming which cell types are significantly shifted (FDR < 0.1) and which are trend-level."
+        ],
+        "description": "Two-arm statistical comparison of the T1S2 composition table (raw scores and row-normalized fractions) per cell type, with effect sizes, multiple-testing correction, and a leave-sample_01 sensitivity analysis.",
+        "acceptance_criteria": [
+          "Statistics table covers all reported cell types (>= 11) with FDR-adjusted p values and effect sizes, for both raw and row-normalized scores.",
+          "Sample_01 sensitivity analysis run, with an explicit statement on whether any conclusion changes.",
+          "Summary does not overclaim: n=6 per arm, and scores are relative expression signals, not cell proportions."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DE anti-PD-1 vs isotype",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With 12 samples expect a modest DE list; do not chase significance below the FDR threshold.",
+          "sample_01 gets a large size factor under median-of-ratios; DESeq2 handles it, but the sensitivity analysis quantifies its leverage - if removing it reshuffles the top DE genes, flag the DE results as sample-sensitive.",
+          "Single batch, unpaired design - no covariates in the model."
+        ],
+        "context": "Raw counts from /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv and condition labels from metadata.csv (6 anti-PD-1 vs 6 isotype). Use the same retained-gene decision as T1S1 so the gene universe is identical across tracks. sample_01 is the low-library-size outlier flagged in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "readr",
+          "SummarizedExperiment"
+        ],
+        "question": "Which genes are differentially expressed between the 6 anti-PD-1 treated and the 6 isotype control mouse tumors, providing context for the composition shift?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential-expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Build a DESeq2 object from raw counts with design ~ condition using the actual condition labels from metadata.csv; estimate size factors with DESeq2's default (median-of-ratios).",
+          "Shrink log2 fold changes with apeglm; keep DESeq2's default independent filtering and the Wald test.",
+          "Sensitivity analysis: rerun the full DE with sample_01 excluded; compare the top-100 DE gene overlap (Jaccard) and the FDR < 0.1 set between the two runs.",
+          "Deliverables: (a) full DE table (gene, baseMean, log2FC shrunk, p value, padj), (b) MA plot and sample PCA colored by condition, (c) up- and down-regulated lists at FDR < 0.1 (report at FDR < 0.1 if < 0.05 yields nothing, and say so), (d) sensitivity summary with the Jaccard figure."
+        ],
+        "description": "DESeq2 differential expression on the raw Salmon counts with the T1S1 gene filter and apeglm-shrunk log2 fold changes, plus a leave-sample_01 sensitivity analysis.",
+        "acceptance_criteria": [
+          "DE table with apeglm-shrunk log2FC for the full retained gene set.",
+          "FDR lists reported with the threshold used made explicit.",
+          "Sample_01 leave-out sensitivity analysis quantified (top-100 Jaccard + FDR-set change).",
+          "PCA shows the condition structure, or explicitly states that samples do not separate by condition."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway and cell-program enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "M7 is small (787 sets) and mouse-specific - absence of a match is weaker evidence than it would be for human; say so when relevant.",
+          "WikiPathways mouse sets are redundant (nested pathways) - do not over-interpret near-duplicate hits.",
+          "If the T2S1 DE list is very small (e.g. < 50 genes at FDR < 0.1), state that the enrichment is exploratory and rely more on the ranked-list (fgsea) results than on the DE-overlay counts."
+        ],
+        "context": "Ranked gene list from T2S1 (ranking statistic = sign(log2FC shrunk) * -log10(padj), with padj floored at 1e-3 for genes without a significant adjusted p). Reference data resolved from the reference store, all mouse-native with MGI symbols: (1) MSigDB M7 mouse immunologic signature GMT (787 sets; every set is one arm of a published murine immune contrast and its name encodes the cell type, the stimulus, and the _UP/_DN direction - a hit must be reported with that contrast named); (2) MSigDB mouse hallmark GMT; (3) WikiPathways mouse pathway GMT (2026-07-10 snapshot; split the first field on '%' to recover the readable set name). Cell-type panels from T1S2 for the DE-to-panel overlay.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which mouse pathways and immune contrasts are enriched among the anti-PD-1 vs isotype DE genes, and which TME cell programs (T1S2 panels) do those genes belong to?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Run fgsea on the ranked list (minSize 15, maxSize 500) separately for the M7 mouse immunologic collection, the mouse hallmark collection, and the WikiPathways mouse GMT; report hits at FDR < 0.25 in each table.",
+          "For M7 hits, state the contrast each set encodes (which cell type, which stimulus, UP or DN arm) - a hit on a _DN set means the DE direction resembles that contrast's down-regulated side; state the direction explicitly.",
+          "Overlay: take the T2S1 DE genes at FDR < 0.1 and cross them with each T1S2 cell-type panel: per cell type count up-DE vs down-DE genes and test enrichment against the rest of the DE list (Fisher's exact); report which cell programs are most represented.",
+          "Produce an integrative table connecting T1S3's significant composition shifts with T2S2's enriched programs (e.g., if the CD8 T score rises in anti-PD-1 tumors: are Cd8a/Gzmb/Prf1 among the up-DE genes, and are cytotoxic-T-cell M7 sets enriched in the up direction?).",
+          "Report the symbol-overlap rate between each GMT collection and the DE gene set; a low overlap indicates a symbol-naming problem and must be reported, not silently retried."
+        ],
+        "description": "fgsea enrichment of the T2S1 ranked gene list against three mouse-native gene-set collections (MSigDB M7 immunologic, MSigDB mouse hallmark, WikiPathways mouse), plus an overlay of DE genes onto the T1S2 cell-type panels to connect composition shifts with the gene programs driving them.",
+        "acceptance_criteria": [
+          "Three enrichment tables (M7 immunologic, hallmark, WikiPathways mouse) with FDR, M7 hits annotated with the contrast identity and direction.",
+          "Per-cell-type DE overlay table with up/down counts and Fisher's exact p values.",
+          "Symbol-overlap rates reported for each GMT.",
+          "An integrative statement linking the composition shift to the changed gene programs, with an explicit caveat that enrichment reflects transcriptome change, not direct proof of the composition mechanism."
+        ]
+      }
+    ],
+    "title": "Mouse TME composition: anti-PD-1 vs isotype",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Mouse bulk RNA-seq of 12 subcutaneous tumors (6 anti-PD-1 vs 6 isotype control, unpaired, single batch); Salmon gene-level counts (12,000 genes x 12 samples, length-correction status undocumented) plus a 12 x 2 sample/condition table; sample_01 has a library size ~4x below the median. The question - per-sample immune and stromal composition and whether it differs between arms - is answered by marker-panel-based composition scoring: no mouse mixture-deconvolution reference (a CIBERSORTx-style mouse signature matrix) is provisioned in this environment, and the human-only deconvolution packages/cell-typing models present (xCell, MCP-counter, CIBERSORT/TIMER, scGate human, CellTypist human) are explicitly excluded as organism mismatches. T1S1 normalizes per sample (CPM), validates mouse gene symbols, and flags sample_01 without dropping it. T1S2 scores 13 mouse TME cell types (immune + stromal) with two independent mouse-native panels (curated TME marker panel; PanglaoDB Mm markers from the reference store), primary scorer GSVA with UCell/AUCell robustness. T1S3 tests each cell type between arms (Wilcoxon + BH, effect sizes, leave-sample_01 sensitivity). In parallel, T2S1 runs DESeq2 DE (apeglm-shrunk) as context, and T2S2 enriches the ranked list against mouse-native gene sets (MSigDB M7 immunologic, MSigDB mouse hallmark, WikiPathways mouse) and overlays DE genes onto the T1S2 cell-type panels to connect composition shifts to the gene programs that drive them."
+  },
+  "usage": {
+    "inputTokens": 720227,
+    "outputTokens": 32170,
+    "cacheReadInputTokens": 642560,
+    "reasoningTokens": 26721
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_688aa15e8a4446078bb23e22",
+      "name": "list_available_refs",
+      "input": {
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 111
+    },
+    {
+      "toolUseId": "call_37a1529569874d659e80a500",
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "call_cc635240044247078ea7a4a4",
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "call_47ec749c8bbd4fb0b8e78167",
+      "name": "list_available_refs",
+      "input": {
+        "query": "deconv",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "call_fc1cd3c302e1466e8e715872",
+      "name": "list_available_refs",
+      "input": {
+        "query": "LM22",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "call_97434d3c18434b87b813273a",
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse",
+        "limit": 60
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "call_38f9a6e881fd43aa97b5cbec",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "babelgene",
+        "query": "convert human gene symbols to mouse ortholog symbols cross-species"
+      },
+      "outcome": "error",
+      "durationMs": 1656
+    },
+    {
+      "toolUseId": "call_2a668e9b6e73420e9645abeb",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "mouse tumor bulk RNA-seq immune cell deconvolution CIBERSORTx gene signature scoring",
+        "maxResults": 10
+      },
+      "outcome": "ok",
+      "durationMs": 616
+    },
+    {
+      "toolUseId": "call_912666ee2d15471fabe0a7a9",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 10,
+        "query": "CIBERSORTx mouse RNA-seq immune deconvolution"
+      },
+      "outcome": "ok",
+      "durationMs": 887
+    },
+    {
+      "toolUseId": "call_93f1f5b1ed1c435bb3bb6c6f",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "32085618"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 883
+    },
+    {
+      "toolUseId": "call_3aa1265adfba4a71b17d47c9",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Mouse TME composition: anti-PD-1 vs isotype\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-10T12:00:00Z\", \"analytical_narrative\": \"Mouse bulk RNA-seq of 12 subcutaneous tumors (6 anti-PD-1 vs 6 isotype control, unpaired, single batch); Salmon gene-level counts (12,000 genes x 12 samples, length-correction status undocumented) plus a 12 x 2 sample/condition table; sample_01 has a library size ~4x below the median. The question - per-sample immune and stromal composition and whether it differs between arms - is answered by marker-panel-based composition scoring: no mouse mixture-deconvolution reference (a CIBERSORTx-style mouse signature matrix) is provisioned in this environment, and the human-only deconvolution packages/cell-typing models present (xCell, MCP-counter, CIBERSORT/TIMER, scGate human, CellTypist human) are explicitly excluded as organism mismatches. T1S1 normalizes per sample (CPM), validates mouse gene symbols, and flags sample_01 without dropping it. T1S2 scores 13 mouse TME cell types (immune + stromal) with two independent mouse-native panels (curated TME marker panel; PanglaoDB Mm markers from the reference store), primary scorer GSVA with UCell/AUCell robustness. T1S3 tests each cell type between arms (Wilcoxon + BH, effect sizes, leave-sample_01 sensitivity). In parallel, T2S1 runs DESeq2 DE (apeglm-shrunk) as context, and T2S2 enriches the ranked list against mouse-native gene sets (MSigDB M7 immunologic, MSigDB mouse hallmark, WikiPathways mouse) and overlays DE genes onto the T1S2 cell-type panels to connect composition shifts to the gene programs that drive them.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization, symbol validation\", \"track\": \"T1\", \"step_type\": \"qc-normalization\", \"question\": \"Are all 12 samples (6 anti-PD-1, 6 isotype control) usable, on what scale are the Salmon gene-level abundances, and how many of the 12,000 gene symbols are valid Mus musculus symbols?\", \"description\": \"Load counts.csv and metadata.csv, build the analysis matrix, normalize per sample to CPM, filter low-count genes, validate gene symbols against the mouse genome, and flag sample_01 (library ~4x below median) for downstream sensitivity analyses.\", \"context\": \"Organism Mus musculus (taxon 10090). Input files: /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13 - gene symbols plus 12 samples; Salmon gene-level output; the record does not state whether length correction was applied) and /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2: one row per sample with its condition). Design: 6 anti-PD-1 treated vs 6 isotype control mice, unpaired, single batch. Known caveat: sample_01 library size ~4x below the median.\", \"constraints\": [\"Read the condition labels verbatim from metadata.csv and verify they partition exactly 6 vs 6; use the observed labels in every downstream output.\", \"Normalize per sample by its own total (CPM = counts / sample total * 1e6). If per-sample totals are already near-constant (suggesting the delivered values are TPM-like rather than counts), note this in the QC report and proceed - CPM rescales to the same values.\", \"Gene filter: keep genes with CPM >= 0.1 in >= 3 of 12 samples; record how many genes are kept vs dropped.\", \"Validate gene symbols against org.Mm.eg.db (SYMBOL -> ENTREZID); report the fraction of data genes that are valid mouse symbols; keep all genes in the primary matrix but ship a matched/flagged gene table.\", \"Do NOT drop sample_01 from the primary analysis. Report its library size, ratio to the median, number of detected genes, and its PCA position; carry the flag forward to T1S3 and T2S1 sensitivity analyses.\", \"Export: (a) CPM matrix with 12 columns named exactly as the metadata sample IDs, (b) sample QC table (library size, ratio to median, genes detected, condition), (c) gene symbol match table, (d) PCA of samples colored by condition.\"], \"acceptance_criteria\": [\"CPM matrix with 12 sample columns whose names exactly match metadata.csv sample IDs.\", \"Sample QC table documents sample_01's ~4x-below-median library size and the other 11 samples.\", \"Symbol match fraction reported (expect high, e.g. >90%, for a curated mouse gene set).\", \"Gene-filter decision documented with kept/dropped counts.\"], \"caveats\": [\"The counts.csv header layout is not fully specified (Salmon convention puts the gene column first as 'Name'): identify which column is the gene symbol column and which 12 are samples before transposing - do not assume a position.\", \"If duplicate gene symbols exist across rows, sum their counts and report the duplicate count.\", \"If any sample column is all-zero, stop and report it rather than continuing.\", \"Do not install packages; work with what is in the sandbox (readr, dplyr, ggplot2, AnnotationDbi, org.Mm.eg.db).\"], \"packages\": [\"readr\", \"dplyr\", \"ggplot2\", \"AnnotationDbi\", \"org.Mm.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Per-sample mouse immune/stromal composition\", \"track\": \"T1\", \"step_type\": \"deconvolution\", \"question\": \"What is the immune and stromal cell composition of each of the 12 mouse tumor samples?\", \"description\": \"Score the T1S1 CPM matrix for 13 mouse TME cell types (immune + stromal) using two independent mouse-native marker panels; report raw scores and row-normalized fractions per sample, a composition heatmap, and cross-panel/cross-method concordance.\", \"context\": \"Organism is Mus musculus - every panel and every reference used here must be mouse. A true mixture deconvolution (CIBERSORTx-style) requires a mouse reference expression matrix that is NOT provisioned in this environment (published mouse practice uses CIBERSORTx with a custom mouse reference, e.g. PMID 32085618; that reference cannot be obtained offline). Composition is therefore computed as marker-panel-based signature scoring, and outputs must state explicitly that scores are relative expression signals, not strict cell fractions. Panel A (curated mouse TME markers, standard markers from published mouse tumor single-cell studies; starting lists to be verified against the data's gene set): CD8 T = Cd8a, Gzmb, Prf1, Cxcr3, Nkg7, Sh2d1a; CD4 T = Cd4, Il2ra, Ccr7, Tcf7, S1pr1; Treg = Foxp3, Ctla4, Il2ra, Tigit; B cell = Cd79a, Cd19, Pax5, Mzb1; Plasma cell = Mzb1, Xbp1, Sdc1, Iglc2; NK = Ncr1, Klrk1, Klrd1, Eomesh, Gzmb; Macrophage = Cd68, Ly6c1, Itgam, Mrc1, Cx3cr1; Neutrophil = Ly6g, Mmp9, Csf3r1, S100a8, S100a9; Dendritic = Itgax, Cd11c, Flt3, Cx3cr1, Lyz2; Mast = Cma1, Tnc, Hrb2; Endothelial = Pecam1, Cdh5, Vwf, Nos3; Fibroblast/CAF = Col1a1, Col3a1, Pdgfra, Tgfbr1, Fap, Postn; Pericyte/SMC = Acta2, Myh11, Pdgfrb, Rgs5, Cdh5. Panel B (independent source, resolved from the reference store): the PanglaoDB cell-type marker table (2020-03-27 release, gzipped TSV with columns for species, official gene symbol, cell type, organ, ubiquitousness index) - filter species == 'Mm', map its cell-type names onto the 13 types above where possible, and for any of the 13 types with no Mm entry fall back to Panel A's list for that type (flag each such type as 'filled from Panel A'). Scoring: primary = GSVA (method='gsva', kcdf='Gaussian') on the CPM matrix per panel; robustness = UCell and AUCell via decoupleR on the same panels.\", \"constraints\": [\"Do NOT use human-only deconvolution (xCell, MCP-counter, CIBERSORT, TIMER1 via immunedeconv) and do NOT use the human cell-typing models present in the reference store (scGate human TME/generic models, CellTypist human immune models) on this mouse data - organism mismatch would produce confident, meaningless numbers. State this exclusion in the report.\", \"Validate every panel gene against the CPM matrix rownames; report per-panel, per-cell-type match rates; any cell type with <50% of its panel genes present is excluded for that panel and reported.\", \"Primary composition estimate = GSVA scores on Panel A, for all 12 samples; report both raw scores and row-normalized fractions per sample (residual = 1 - sum, labeled 'unassigned (tumor + untyped)').\", \"Report cross-method (GSVA vs UCell vs AUCell, per cell type, Spearman) and cross-panel (A vs B, per cell type, Spearman) concordance.\", \"Deliverables: (a) 12 x 13 composition table (raw + row-normalized), (b) per-sample composition heatmap colored by condition, (c) panel match-rate table incl. which Panel B types were filled from Panel A, (d) concordance statistics, (e) a written limitations statement (signature scoring is not mixture deconvolution; scores reflect relative expression programs and confound cell number with per-cell activation).\"], \"acceptance_criteria\": [\"Composition table covers all 12 samples and >= 11 of the 13 cell types with both raw scores and row-normalized fractions.\", \"Per-panel and per-cell-type match rates reported, with filled-from-Panel-A types flagged.\", \"Cross-method and cross-panel Spearman concordance reported per cell type (honestly - cross-panel may be lower than cross-method).\", \"Heatmap and explicit limitations statement present in the output.\"], \"caveats\": [\"PanglaoDB mouse coverage is expected to be partial - most of the 13 types will likely have no Mm entry; falling back to Panel A for those types is designed behavior, not a failure. Report which types were filled.\", \"GSVA should be run on the CPM matrix directly - do not log-transform before GSVA.\", \"Check `?decouple` in the sandbox before calling decoupleR; if a method (UCell/AUCell) errors, drop it from the robustness set and note it - the GSVA primary estimate must not depend on it.\", \"sample_01 (low library size) is included here; the leave-one-out sensitivity analysis belongs to T1S3.\", \"Gzipped TSV reads work with readr::read_tsv; PanglaoDB covers human and mouse together, so the species filter is mandatory.\"], \"packages\": [\"decoupleR\", \"GSVA\", \"readr\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"immune-profiling-agent\"}, {\"id\": \"T1S3\", \"name\": \"Composition difference anti-PD-1 vs isotype\", \"track\": \"T1\", \"step_type\": \"differential-composition\", \"question\": \"Do the per-sample immune and stromal cell compositions differ between the 6 anti-PD-1 treated tumors and the 6 isotype control tumors?\", \"description\": \"Two-arm statistical comparison of the T1S2 composition table (raw scores and row-normalized fractions) per cell type, with effect sizes, multiple-testing correction, and a leave-sample_01 sensitivity analysis.\", \"context\": \"Composition table (12 samples x cell types, raw + row-normalized) and per-sample condition labels from T1S2/T1S1. sample_01 is the known low-library-size sample (~4x below the median); determine which arm it belongs to first.\", \"constraints\": [\"For each cell type, test anti-PD-1 vs isotype with the Wilcoxon rank-sum test (6 vs 6) on raw scores and on row-normalized fractions separately; adjust p values with BH across cell types within each scale.\", \"Report an effect size per cell type (Cliff's delta or rank-biserial correlation) plus group mean differences and the direction (increased by anti-PD-1 or decreased).\", \"Sensitivity analysis: repeat the entire comparison with sample_01 excluded; state explicitly whether the FDR-significant set or any direction changes.\", \"Deliverables: (a) per-cell-type statistics table (n per arm, p, FDR, effect size, group means, direction) for both scales, (b) with/without-sample_01 side-by-side comparison, (c) per-cell-type box/slope plots grouped by condition, (d) a plain-language summary naming which cell types are significantly shifted (FDR < 0.1) and which are trend-level.\"], \"acceptance_criteria\": [\"Statistics table covers all reported cell types (>= 11) with FDR-adjusted p values and effect sizes, for both raw and row-normalized scores.\", \"Sample_01 sensitivity analysis run, with an explicit statement on whether any conclusion changes.\", \"Summary does not overclaim: n=6 per arm, and scores are relative expression signals, not cell proportions.\"], \"caveats\": [\"n=6 vs 6 is underpowered for subtle shifts - a non-significant result is not evidence of no change; always report effect sizes alongside p values.\", \"Do not report composition changes as changes in cell NUMBER: an elevated CD8 T score can reflect more CD8 cells or stronger Cd8a/Gzmb expression per cell; T2S2 provides the gene-level evidence to tell these apart.\", \"If sample_01 sits in the treated arm, the leave-one-out result is the more conservative reading - say so if it differs.\"], \"packages\": [\"ggplot2\", \"dplyr\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"immune-profiling-agent\"}, {\"id\": \"T2S1\", \"name\": \"DE anti-PD-1 vs isotype\", \"track\": \"T2\", \"step_type\": \"differential-expression\", \"question\": \"Which genes are differentially expressed between the 6 anti-PD-1 treated and the 6 isotype control mouse tumors, providing context for the composition shift?\", \"description\": \"DESeq2 differential expression on the raw Salmon counts with the T1S1 gene filter and apeglm-shrunk log2 fold changes, plus a leave-sample_01 sensitivity analysis.\", \"context\": \"Raw counts from /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv and condition labels from metadata.csv (6 anti-PD-1 vs 6 isotype). Use the same retained-gene decision as T1S1 so the gene universe is identical across tracks. sample_01 is the low-library-size outlier flagged in T1S1.\", \"constraints\": [\"Build a DESeq2 object from raw counts with design ~ condition using the actual condition labels from metadata.csv; estimate size factors with DESeq2's default (median-of-ratios).\", \"Shrink log2 fold changes with apeglm; keep DESeq2's default independent filtering and the Wald test.\", \"Sensitivity analysis: rerun the full DE with sample_01 excluded; compare the top-100 DE gene overlap (Jaccard) and the FDR < 0.1 set between the two runs.\", \"Deliverables: (a) full DE table (gene, baseMean, log2FC shrunk, p value, padj), (b) MA plot and sample PCA colored by condition, (c) up- and down-regulated lists at FDR < 0.1 (report at FDR < 0.1 if < 0.05 yields nothing, and say so), (d) sensitivity summary with the Jaccard figure.\"], \"acceptance_criteria\": [\"DE table with apeglm-shrunk log2FC for the full retained gene set.\", \"FDR lists reported with the threshold used made explicit.\", \"Sample_01 leave-out sensitivity analysis quantified (top-100 Jaccard + FDR-set change).\", \"PCA shows the condition structure, or explicitly states that samples do not separate by condition.\"], \"caveats\": [\"With 12 samples expect a modest DE list; do not chase significance below the FDR threshold.\", \"sample_01 gets a large size factor under median-of-ratios; DESeq2 handles it, but the sensitivity analysis quantifies its leverage - if removing it reshuffles the top DE genes, flag the DE results as sample-sensitive.\", \"Single batch, unpaired design - no covariates in the model.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"ggplot2\", \"readr\", \"SummarizedExperiment\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T2S2\", \"name\": \"Pathway and cell-program enrichment of DE genes\", \"track\": \"T2\", \"step_type\": \"enrichment\", \"question\": \"Which mouse pathways and immune contrasts are enriched among the anti-PD-1 vs isotype DE genes, and which TME cell programs (T1S2 panels) do those genes belong to?\", \"description\": \"fgsea enrichment of the T2S1 ranked gene list against three mouse-native gene-set collections (MSigDB M7 immunologic, MSigDB mouse hallmark, WikiPathways mouse), plus an overlay of DE genes onto the T1S2 cell-type panels to connect composition shifts with the gene programs driving them.\", \"context\": \"Ranked gene list from T2S1 (ranking statistic = sign(log2FC shrunk) * -log10(padj), with padj floored at 1e-3 for genes without a significant adjusted p). Reference data resolved from the reference store, all mouse-native with MGI symbols: (1) MSigDB M7 mouse immunologic signature GMT (787 sets; every set is one arm of a published murine immune contrast and its name encodes the cell type, the stimulus, and the _UP/_DN direction - a hit must be reported with that contrast named); (2) MSigDB mouse hallmark GMT; (3) WikiPathways mouse pathway GMT (2026-07-10 snapshot; split the first field on '%' to recover the readable set name). Cell-type panels from T1S2 for the DE-to-panel overlay.\", \"constraints\": [\"Run fgsea on the ranked list (minSize 15, maxSize 500) separately for the M7 mouse immunologic collection, the mouse hallmark collection, and the WikiPathways mouse GMT; report hits at FDR < 0.25 in each table.\", \"For M7 hits, state the contrast each set encodes (which cell type, which stimulus, UP or DN arm) - a hit on a _DN set means the DE direction resembles that contrast's down-regulated side; state the direction explicitly.\", \"Overlay: take the T2S1 DE genes at FDR < 0.1 and cross them with each T1S2 cell-type panel: per cell type count up-DE vs down-DE genes and test enrichment against the rest of the DE list (Fisher's exact); report which cell programs are most represented.\", \"Produce an integrative table connecting T1S3's significant composition shifts with T2S2's enriched programs (e.g., if the CD8 T score rises in anti-PD-1 tumors: are Cd8a/Gzmb/Prf1 among the up-DE genes, and are cytotoxic-T-cell M7 sets enriched in the up direction?).\", \"Report the symbol-overlap rate between each GMT collection and the DE gene set; a low overlap indicates a symbol-naming problem and must be reported, not silently retried.\"], \"acceptance_criteria\": [\"Three enrichment tables (M7 immunologic, hallmark, WikiPathways mouse) with FDR, M7 hits annotated with the contrast identity and direction.\", \"Per-cell-type DE overlay table with up/down counts and Fisher's exact p values.\", \"Symbol-overlap rates reported for each GMT.\", \"An integrative statement linking the composition shift to the changed gene programs, with an explicit caveat that enrichment reflects transcriptome change, not direct proof of the composition mechanism.\"], \"caveats\": [\"M7 is small (787 sets) and mouse-specific - absence of a match is weaker evidence than it would be for human; say so when relevant.\", \"WikiPathways mouse sets are redundant (nested pathways) - do not over-interpret near-duplicate hits.\", \"If the T2S1 DE list is very small (e.g. < 50 genes at FDR < 0.1), state that the enrichment is exploratory and rely more on the ranked-list (fgsea) results than on the DE-overlay counts.\"], \"packages\": [\"fgsea\", \"ggplot2\", \"dplyr\"], \"depends_on\": [\"T2S1\", \"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 62
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

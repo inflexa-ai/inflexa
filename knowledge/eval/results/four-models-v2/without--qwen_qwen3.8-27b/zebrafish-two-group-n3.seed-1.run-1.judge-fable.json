@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald with ~condition, size factors in the model, apeglm shrinkage, BH at 0.05, PCA/distance QC with a flag-not-drop outlier policy, and an explicit n=3 power caveat all fit the unpaired single-batch 3v3 design. The plan relies only on DESeq2 default independent filtering and never states a minimal pre-filter, so the low-count filter criterion is thin. Enrichment correctly says no zebrafish pathway collection exists and takes the acceptable zebrafish GO path with annotation-coverage reporting and an explicit universe, but Step 3 runs mouse and human WikiPathways on zebrafish symbols by bare symbol overlap with no ortholog table, which the reference marks as wrong, and no gene-set size window is stated. The report lists versions, thresholds, and DE counts but does not name the Ensembl release."
+}

@@ -1,0 +1,108 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "two-group-n6-enrich",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:28:00.089Z",
+  "elapsedMs": 126463,
+  "outcome": "plan_submitted",
+  "planId": "pln-251bbc4a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, design validation, shallow-sample assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "main",
+        "status": "pending",
+        "caveats": [
+          "Salmon 'counts as delivered' are frequently length-corrected or TPM-rescaled — the integer check is the deciding evidence, not the file name.",
+          "The 12 x 2 metadata dimension may include the header row; reconcile row counts before trusting it.",
+          "With only 12 samples, MDS/PCA are descriptive, not a formal outlier test; report distances, do not apply automated outlier rejection.",
+          "A shallow library does not automatically mean a failed sample — the ~4x deficit is handled by the downstream sensitivity model, not by silent exclusion."
+        ],
+        "context": "Inputs: gene-level counts CSV (12,000 rows x 13 columns = gene ID column + 12 sample columns) and a sample table (12 rows x 2 columns: sample, condition). Design: 6 atopic dermatitis lesional vs 6 control, unpaired, single batch, Homo sapiens, skin. Known issue: sample_01 library size ~4x below the median. This step is the gate for everything downstream — it decides whether the values are raw counts or length-corrected, what the row IDs are, and how extreme sample_01 is.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "tidyr",
+          "ggplot2",
+          "pheatmap",
+          "tibble",
+          "org.Hs.eg.db"
+        ],
+        "question": "Is the 12,000 x 12 matrix genuine raw integer counts for a clean 6 (AD lesional) vs 6 (control) two-group design, what identifier space do the gene rows use, and what is the quantitative footprint of sample_01, whose library size is ~4x below the median?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Read the two input files exactly as delivered; verify that the 12 sample columns in the counts matrix all match metadata rows and that condition has exactly 6 samples per group. If the join fails (the metadata table is 12 x 2, so confirm whether a header row is included and whether all 12 samples are present), report the exact mismatch and stop — do not invent labels.",
+          "Determine integer-ness: compute the fraction of non-zero values that are not integer-valued. If >1% are non-integer, flag the matrix as length-corrected (TPM-like) rather than raw counts — DESeq2 on raw-count assumptions would be invalid and the DE step must take its fallback path.",
+          "Identify the row-name space: check whether gene rows look like Ensembl IDs (ENSG...) or HGNC symbols; report which, and how many map to a unique symbol via the human organism annotation database (org.Hs.eg.db).",
+          "Compute per-sample library size, fraction of zero genes, PCA (first 3 PCs) and class-scaled MDS of the distance matrix; annotate sample_01 and its distance to the centroid of its condition group.",
+          "Report sample_01's median-of-ratios size factor relative to the group.",
+          "Do not exclude, down-weight, or modify any sample in the outputs of this step; do not install any software; work only from the two input files and the organism annotation database."
+        ],
+        "description": "Produce a QC report: per-sample library sizes, fraction of zeros, the integer-ness verdict on the count matrix, the gene-row ID space (Ensembl vs HGNC symbol), a metadata-to-counts join report, PCA and sample-to-sample MDS with sample_01's position and distance to its group centroid annotated, and sample_01's DESeq2-style size factor (median-of-ratios) computed for information. sample_01 is NOT excluded here — its treatment is the sensitivity model in the DE step.",
+        "acceptance_criteria": [
+          "A QC report/table exists containing: per-sample library sizes, zero fractions, size factor per sample (sample_01 flagged), fraction of non-integer values with an explicit raw-vs-length-corrected verdict, and the gene ID space with symbol mapping rate.",
+          "A PCA plot and an MDS plot both exist with all 12 samples labeled by condition and sample_01 explicitly annotated.",
+          "The metadata-to-counts join is verified 12/12 with 6 per condition, or a specific, quoted mismatch is reported as a blocker.",
+          "No sample is dropped or altered."
+        ]
+      }
+    ],
+    "title": "AD vs control bulk RNA-seq DE + enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12 human skin bulk RNA-seq samples (6 atopic dermatitis lesional vs 6 control, unpaired, single batch) as Salmon gene-level counts (12,000 x 13 CSV) plus a 2-column condition table. One known defect: sample_01 has a library size ~4x below the median. The plan therefore (1) validates the matrix before any modeling — integer-ness of the 'counts' (Salmon output is often length-corrected, which would invalidate treating them as raw counts), ID space of gene rows, design integrity, and the quantitative footprint of sample_01 in PCA/MDS — keeping it in the primary 6v6 design since dropping a sample from a 6v6 study costs power and breaks balance; (2) runs DESeq2 (with apeglm LFC shrinkage) on the primary design plus a sensitivity model with sample_01 removed, and quantifies stability between the two so the shallow sample's effect on gene-level conclusions is explicit rather than assumed; (3) tests the full ranked gene list against the MSigDB human hallmark sets (the 'hallmark pathways' the question names, provisioned in this environment for Homo sapiens) with WikiPathways human as a secondary layer, on both the primary and sensitivity ranked lists. The three steps form a strict chain: nothing downstream runs until the matrix type and design are verified."
+  },
+  "usage": {
+    "inputTokens": 72633,
+    "outputTokens": 7666,
+    "cacheReadInputTokens": 47043,
+    "reasoningTokens": 6253
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_ee163e5597e24be2a56e1bc6",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 63
+    },
+    {
+      "toolUseId": "call_99300f92ecdb4ad08b132f81",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"AD vs control bulk RNA-seq DE + enrichment\", \"analytical_narrative\": \"The data are 12 human skin bulk RNA-seq samples (6 atopic dermatitis lesional vs 6 control, unpaired, single batch) as Salmon gene-level counts (12,000 x 13 CSV) plus a 2-column condition table. One known defect: sample_01 has a library size ~4x below the median. The plan therefore (1) validates the matrix before any modeling — integer-ness of the 'counts' (Salmon output is often length-corrected, which would invalidate treating them as raw counts), ID space of gene rows, design integrity, and the quantitative footprint of sample_01 in PCA/MDS — keeping it in the primary 6v6 design since dropping a sample from a 6v6 study costs power and breaks balance; (2) runs DESeq2 (with apeglm LFC shrinkage) on the primary design plus a sensitivity model with sample_01 removed, and quantifies stability between the two so the shallow sample's effect on gene-level conclusions is explicit rather than assumed; (3) tests the full ranked gene list against the MSigDB human hallmark sets (the 'hallmark pathways' the question names, provisioned in this environment for Homo sapiens) with WikiPathways human as a secondary layer, on both the primary and sensitivity ranked lists. The three steps form a strict chain: nothing downstream runs until the matrix type and design are verified.\", \"created_at\": \"2026-07-22T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, design validation, shallow-sample assessment\", \"track\": \"main\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Is the 12,000 x 12 matrix genuine raw integer counts for a clean 6 (AD lesional) vs 6 (control) two-group design, what identifier space do the gene rows use, and what is the quantitative footprint of sample_01, whose library size is ~4x below the median?\", \"context\": \"Inputs: gene-level counts CSV (12,000 rows x 13 columns = gene ID column + 12 sample columns) and a sample table (12 rows x 2 columns: sample, condition). Design: 6 atopic dermatitis lesional vs 6 control, unpaired, single batch, Homo sapiens, skin. Known issue: sample_01 library size ~4x below the median. This step is the gate for everything downstream — it decides whether the values are raw counts or length-corrected, what the row IDs are, and how extreme sample_01 is.\", \"description\": \"Produce a QC report: per-sample library sizes, fraction of zeros, the integer-ness verdict on the count matrix, the gene-row ID space (Ensembl vs HGNC symbol), a metadata-to-counts join report, PCA and sample-to-sample MDS with sample_01's position and distance to its group centroid annotated, and sample_01's DESeq2-style size factor (median-of-ratios) computed for information. sample_01 is NOT excluded here — its treatment is the sensitivity model in the DE step.\", \"constraints\": [\"Read the two input files exactly as delivered; verify that the 12 sample columns in the counts matrix all match metadata rows and that condition has exactly 6 samples per group. If the join fails (the metadata table is 12 x 2, so confirm whether a header row is included and whether all 12 samples are present), report the exact mismatch and stop — do not invent labels.\", \"Determine integer-ness: compute the fraction of non-zero values that are not integer-valued. If >1% are non-integer, flag the matrix as length-corrected (TPM-like) rather than raw counts — DESeq2 on raw-count assumptions would be invalid and the DE step must take its fallback path.\", \"Identify the row-name space: check whether gene rows look like Ensembl IDs (ENSG...) or HGNC symbols; report which, and how many map to a unique symbol via the human organism annotation database (org.Hs.eg.db).\", \"Compute per-sample library size, fraction of zero genes, PCA (first 3 PCs) and class-scaled MDS of the distance matrix; annotate sample_01 and its distance to the centroid of its condition group.\", \"Report sample_01's median-of-ratios size factor relative to the group.\", \"Do not exclude, down-weight, or modify any sample in the outputs of this step; do not install any software; work only from the two input files and the organism annotation database.\"], \"acceptance_criteria\": [\"A QC report/table exists containing: per-sample library sizes, zero fractions, size factor per sample (sample_01 flagged), fraction of non-integer values with an explicit raw-vs-length-corrected verdict, and the gene ID space with symbol mapping rate.\", \"A PCA plot and an MDS plot both exist with all 12 samples labeled by condition and sample_01 explicitly annotated.\", \"The metadata-to-counts join is verified 12/12 with 6 per condition, or a specific, quoted mismatch is reported as a blocker.\", \"No sample is dropped or altered.\"], \"caveats\": [\"Salmon 'counts as delivered' are frequently length-corrected or TPM-rescaled — the integer check is the deciding evidence, not the file name.\", \"The 12 x 2 metadata dimension may include the header row; reconcile row counts before trusting it.\", \"With only 12 samples, MDS/PCA are descriptive, not a formal outlier test; report distances, do not apply automated outlier rejection.\", \"A shallow library does not automatically mean a failed sample — the ~4x deficit is handled by the downstream sensitivity model, not by silent exclusion.\"], \"packages\": [\"dplyr\", \"tidyr\", \"ggplot2\", \"pheatmap\", \"tibble\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}], \"steps_note\": null}"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

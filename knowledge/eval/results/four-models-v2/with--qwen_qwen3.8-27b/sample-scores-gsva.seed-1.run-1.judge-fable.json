@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan answers the per-sample question correctly: blind vst over all genes feeds GSVA with the Gaussian kernel on MSigDB Hallmark 2026.1, limma on the 50x12 score matrix with BH across 50 sets at 0.05, and a heatmap of sets by samples annotated by condition and ordered by the t-statistic. QC is specific to the design (single batch, 6 vs 6, sample_01 kept and inspected with a stated removal policy, and the note that GSVA scores shift if a sample is removed). The added DESeq2/edgeR step is extra but internally sound, with an explicit reference level, numerator/denominator contrast, minimal filter, median-of-ratios normalization inside the model, apeglm shrinkage and the lost-length-offset caveat. Deductions: the design formula is described rather than written, row scaling of the heatmap is not stated, and the enrichment constraint block carries contradictory boilerplate (reactome second collection, ORA thresholds, rank metric) that the narrative has to override."
+}

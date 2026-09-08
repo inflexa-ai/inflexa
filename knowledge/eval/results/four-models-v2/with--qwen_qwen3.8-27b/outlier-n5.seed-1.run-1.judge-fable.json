@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald with apeglm and BH 0.05 on all ten samples, an outlier-aware voomWithQualityWeights fit that keeps and down-weights sample_03, and a refit without it with the gene-level status changes reported and the primary fit designated by a criterion fixed before the test. QC is thorough (blind vst PCA on 500 genes, distance heatmap, library size, detected genes, group-centroid correlation) but the numeric exclusion bound itself is deferred to the step rather than stated in the plan, and mapping/duplication metrics appear only in the caveat. The filter (10 counts in the smallest group size, adapted on refit) is minimal and justified; median-of-ratios is named for DESeq2 but the limma-voom step does not name TMM. Design formula, reference level, and contrast are explicit and correct; enrichment is correctly omitted with a reason; the report specification carries method, versions, design, thresholds, counts per fit, sessionInfo, and the length-offset and outlier caveats."
+}

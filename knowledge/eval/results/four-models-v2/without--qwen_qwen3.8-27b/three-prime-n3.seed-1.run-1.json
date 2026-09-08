@@ -1,0 +1,97 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "three-prime-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:59:20.716Z",
+  "elapsedMs": 232669,
+  "outcome": "plan_submitted",
+  "planId": "pln-a7576d49",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 treated vs control with apeglm shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is underpowered: the padj<0.05 list may be small or empty; report nominal-significant genes alongside and do not over-interpret the biology.",
+          "The panel is targeted (~12,000 genes); a gene absent from the matrix is a panel-design property, not a biological finding.",
+          "No transcript-length or effective-length file exists in the data and none is needed; do not attempt to obtain or infer one.",
+          "If a sample's size factor is an outlier relative to the other five, flag it in the report rather than silently dropping the sample."
+        ],
+        "context": "Raw integer gene-level counts from STAR/featureCounts: /eval-four-models-v2-without-three-prime-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns = gene-ID column + 6 sample columns). Sample table: /eval-four-models-v2-without-three-prime-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample and condition, 3 treated / 3 control). Unpaired design, single batch, no batch covariate. The library is a 3' tag-seq assay: one read per transcript molecule, so counts are length-independent by construction.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples in this 12,000-gene Lexogen QuantSeq 3' tag-seq panel, and in which direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Build the DESeq2 design as ~condition on the unpaired 3 vs 3 samples; do not add a batch or pairing term (single batch, unpaired).",
+          "Verify before running that the condition labels in metadata.csv correspond to exactly 3 treated and 3 control, and that the 6 sample columns of counts.csv match the metadata sample IDs; map labels explicitly.",
+          "Transpose counts.csv so DESeq2 receives genes x samples; confirm the 7th column of the CSV is the gene identifier row name.",
+          "Use DESeq2 median-of-ratios size factors as the normalization; do not apply transcript-length normalization, TPM/CPM length correction, or any per-gene effective-length adjustment, because 3' tag-seq counts carry no length dependence.",
+          "Apply apeglm log2FC shrinkage (lfcShrink(type='apeglm')) and report shrunkLFC as the effect size of record.",
+          "Use DESeq2's independent filtering for low counts; do not pre-filter beyond removing genes with zero counts in all 6 samples.",
+          "If row identifiers are not HGNC symbols, add a symbol column (org.Hs.eg.db is installed; the human UniProt ID mapping under /mnt/refs is an alternative) and report the mapping rate."
+        ],
+        "description": "Ranked DE table for all panel genes (treated vs control) with apeglm-shrunk log2FC, size factors, diagnostic plots, and counts of significant genes by threshold.",
+        "acceptance_criteria": [
+          "Full DE results table covering all 12,000 panel genes with baseMean, log2FC, shrunkLFC (apeglm), pvalue, padj, exported as TSV, with the contrast direction (treated vs control) recorded.",
+          "Summary counts of genes at padj<0.05, padj<0.1, and nominal p<0.05, separately up- and down-regulated, plus the top 20 genes by |shrunkLFC| among significant genes with symbols.",
+          "Diagnostic outputs: MA plot, PCA of variance-stabilized counts colored by condition, dispersion trend plot, and the six size factors reported and checked for comparable magnitude.",
+          "The report states explicitly that n=3 per group limits power and that FDR control is limited at this sample size."
+        ]
+      }
+    ],
+    "title": "Liver 3' tag-seq treated-vs-control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-08-15T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw integer gene-level counts (12,000 genes x 6 samples, STAR/featureCounts) from a targeted Lexogen QuantSeq 3' tag-seq panel on human liver, 3 treated vs 3 control, unpaired, single batch. Because the assay yields one read per transcript molecule, counts are proportional to molecule number and independent of transcript length: DESeq2's median-of-ratios size-factor normalization is appropriate and no length-based normalization may be applied. Step 1 performs the core differential expression (DESeq2, ~condition design with no batch term, apeglm LFC shrinkage for the small n, DESeq2 independent filtering) and yields a ranked gene table with diagnostics. Step 2 maps that ranked table to human WikiPathways (local GMT, organism matches taxon 9606) via fgsea with the 12,000-gene panel as the background universe, so the answer to 'which genes differ' is given at gene and pathway level, with the underpowered n=3/group limitation stated throughout rather than glossed over."
+  },
+  "usage": {
+    "inputTokens": 32757,
+    "outputTokens": 11346,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 10094
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c916ec82b9cf4fe7ad18874e",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Liver 3' tag-seq treated-vs-control DE + pathways\", \"analytical_narrative\": \"The data are raw integer gene-level counts (12,000 genes x 6 samples, STAR/featureCounts) from a targeted Lexogen QuantSeq 3' tag-seq panel on human liver, 3 treated vs 3 control, unpaired, single batch. Because the assay yields one read per transcript molecule, counts are proportional to molecule number and independent of transcript length: DESeq2's median-of-ratios size-factor normalization is appropriate and no length-based normalization may be applied. Step 1 performs the core differential expression (DESeq2, ~condition design with no batch term, apeglm LFC shrinkage for the small n, DESeq2 independent filtering) and yields a ranked gene table with diagnostics. Step 2 maps that ranked table to human WikiPathways (local GMT, organism matches taxon 9606) via fgsea with the 12,000-gene panel as the background universe, so the answer to 'which genes differ' is given at gene and pathway level, with the underpowered n=3/group limitation stated throughout rather than glossed over.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-08-15T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DESeq2 treated vs control with apeglm shrinkage\", \"track\": \"differential-expression\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which genes are differentially expressed between treated (n=3) and control (n=3) liver samples in this 12,000-gene Lexogen QuantSeq 3' tag-seq panel, and in which direction?\", \"description\": \"Ranked DE table for all panel genes (treated vs control) with apeglm-shrunk log2FC, size factors, diagnostic plots, and counts of significant genes by threshold.\", \"context\": \"Raw integer gene-level counts from STAR/featureCounts: /eval-four-models-v2-without-three-prime-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns = gene-ID column + 6 sample columns). Sample table: /eval-four-models-v2-without-three-prime-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample and condition, 3 treated / 3 control). Unpaired design, single batch, no batch covariate. The library is a 3' tag-seq assay: one read per transcript molecule, so counts are length-independent by construction.\", \"constraints\": [\"Build the DESeq2 design as ~condition on the unpaired 3 vs 3 samples; do not add a batch or pairing term (single batch, unpaired).\", \"Verify before running that the condition labels in metadata.csv correspond to exactly 3 treated and 3 control, and that the 6 sample columns of counts.csv match the metadata sample IDs; map labels explicitly.\", \"Transpose counts.csv so DESeq2 receives genes x samples; confirm the 7th column of the CSV is the gene identifier row name.\", \"Use DESeq2 median-of-ratios size factors as the normalization; do not apply transcript-length normalization, TPM/CPM length correction, or any per-gene effective-length adjustment, because 3' tag-seq counts carry no length dependence.\", \"Apply apeglm log2FC shrinkage (lfcShrink(type='apeglm')) and report shrunkLFC as the effect size of record.\", \"Use DESeq2's independent filtering for low counts; do not pre-filter beyond removing genes with zero counts in all 6 samples.\", \"If row identifiers are not HGNC symbols, add a symbol column (org.Hs.eg.db is installed; the human UniProt ID mapping under /mnt/refs is an alternative) and report the mapping rate.\"], \"acceptance_criteria\": [\"Full DE results table covering all 12,000 panel genes with baseMean, log2FC, shrunkLFC (apeglm), pvalue, padj, exported as TSV, with the contrast direction (treated vs control) recorded.\", \"Summary counts of genes at padj<0.05, padj<0.1, and nominal p<0.05, separately up- and down-regulated, plus the top 20 genes by |shrunkLFC| among significant genes with symbols.\", \"Diagnostic outputs: MA plot, PCA of variance-stabilized counts colored by condition, dispersion trend plot, and the six size factors reported and checked for comparable magnitude.\", \"The report states explicitly that n=3 per group limits power and that FDR control is limited at this sample size.\"], \"caveats\": [\"n=3 per group is underpowered: the padj<0.05 list may be small or empty; report nominal-significant genes alongside and do not over-interpret the biology.\", \"The panel is targeted (~12,000 genes); a gene absent from the matrix is a panel-design property, not a biological finding.\", \"No transcript-length or effective-length file exists in the data and none is needed; do not attempt to obtain or infer one.\", \"If a sample's size factor is an outlier relative to the other five, flag it in the report rather than silently dropping the sample.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}}], \"created_at_note\": \"placeholder\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 103
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

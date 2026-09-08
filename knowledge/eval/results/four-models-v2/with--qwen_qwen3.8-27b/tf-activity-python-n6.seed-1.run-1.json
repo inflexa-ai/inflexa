@@ -1,0 +1,761 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T12:25:42.637Z",
+  "elapsedMs": 565031,
+  "outcome": "plan_submitted",
+  "planId": "pln-6dc28323",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The transform must stay blind: do not condition on condition when estimating dispersion.",
+          "The metadata carries no batch column and the design is a single batch; do not invent a batch factor.",
+          "If the template's blind-VST helper needs pydeseq2 (0.5.4 installed) or rnanorm (2.2.0 installed), use it and state which in the summary."
+        ],
+        "context": "Inputs: /eval-four-models-v2-with-tf-activity-python-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples; salmon gene-level; length-correction state unknown per the data profile) and /eval-four-models-v2-with-tf-activity-python-n6-s1-1/data/inputs/metadata/metadata.csv (one row per sample with condition; aldosterone treatment vs vehicle; single batch; unpaired; 6 per group). Compute per-sample library sizes; apply the variance-stabilizing transformation blind to the design; PCA on the 500 genes with the highest variance; Euclidean-distance heatmap between samples; color every plot by condition. If the count matrix holds non-integer values (salmon estimated counts), note that in the summary. Save plots and the summary to the step results directory.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Do the 12 human kidney samples — 6 aldosterone-treated, 6 vehicle per the condition column of metadata.csv — separate by condition in PC space, with no outlier sample and no hidden batch structure, before TF-activity inference?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "All scripts in this step are Python; do not write or execute .R scripts (user constraint)."
+        ],
+        "description": "PCA plot and Euclidean-distance heatmap of the 12 samples (colored by condition), per-sample library sizes, and a one-page QC summary in the results directory.",
+        "acceptance_criteria": [
+          "PCA (PC1-PC2, 500 most variable genes) and the Euclidean-distance heatmap are saved, colored by condition, and show the 6 aldosterone samples and 6 vehicle samples as two coherent clusters.",
+          "Per-sample library sizes and variance explained per PC are reported in the summary.",
+          "Any sample departing from its group is explicitly flagged with its nearest-neighbor distance; none is silently dropped."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "TF regulon activity: decoupler ulm on CollecTRI, score contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Salmon length-correction state is unknown per the data profile; log2(CPM+1) scoring is not affected by the gene-length normalization choice, but state the unknown in the summary.",
+          "The contrast has 6 replicates per group and is underpowered: significant scores are hypotheses for follow-up, not proven findings.",
+          "The prior-knowledge network is tissue-agnostic (ARACNe/VIPER cannot be supported by 12 samples, R-0121): tissue-specific regulators may be missed and silent targets add noise; state this in the summary.",
+          "The motif complement (TFBSTools + JASPAR 2020 on hg38 promoters) is excluded: no JASPAR matrix and no hg38 genome FASTA exist in the reference store, and TFBSTools is R-only against the Python-only constraint — record as a limitation.",
+          "If the installed decoupler 2.2.0 API differs from expectations, inspect the signature at runtime (help/inspect) and adapt within the fixed method (ulm on the log matrix, signed edges, min regulon size 5); note any adaptation in the summary.",
+          "Do not recompute the QC of T1S1 here; read its summary for the sample-structure result."
+        ],
+        "context": "Inputs: counts.csv and metadata.csv from /eval-four-models-v2-with-tf-activity-python-n6-s1-1/data/inputs/ (12,000 genes x 12 samples; condition: aldosterone treatment vs vehicle; 6 per group). Procedure: (1) Identify the row-ID space of the count matrix; if gene symbols, use as-is; if Ensembl IDs, map to symbols using the reference store's STRING v12.0 info file (preferred_name per STRING id) or the UniProt human idmapping (Ensembl -> Entrez), report the mapping rate, and drop unmapped genes. (2) Filter: keep genes with count > 0 in at least 6 of the 12 samples; report the gene count kept. (3) Normalize: per-sample log2(CPM + 1) (CPM = count / library size * 1e6). (4) Network: human CollecTRI v2.0 CSV from the reference store — one interaction per row with source (TF symbol), target (gene symbol), weight (+1 activating / -1 repressing) plus curation provenance columns; drop the provenance columns, deduplicate (source, target) keeping the first row and report the deduplication count. (5) Test only regulators with at least 5 targets among the tested genes; report n_regulators_tested. (6) Run decoupler (2.2.0, the Python port of decoupleR) method 'ulm' on the per-sample log2CPM matrix with the signed network, keeping the mode of regulation on each edge (repressor targets lower the score); result is one score per sample and regulator. (7) Contrast: compare each regulator's score between the 6 aldosterone and 6 vehicle samples — per-regulator Welch t-test (statsmodels) plus Benjamini-Hochberg FDR across regulators (statsmodels multipletests, method='fdr_bh') — and report the score matrix and the test table side by side; ranked driver list = padj < 0.05, sorted, with direction of change. (8) Save score matrix, contrast table, driver list, and method summary (gene count kept, n_regulators_tested, network name/version/provenance: CollecTRI 2.0, Zenodo 8192729, all stated numbers) to the step results directory. A score is an inference from a prior network, not a measurement — say so in the summary.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "statsmodels",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which transcription factor regulons show altered activity in the 6 aldosterone-treated samples compared with the 6 vehicle controls, and in which direction (activity up or down in treatment)?",
+        "grounding": {
+          "claims": [
+            "R-0112@f200",
+            "R-0120@7639",
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "Transcription factor activity with decoupleR ulm on the CollecTRI regulons per R-0112@f200; the PROGENy/STRING pathway-activity sub-step bundled in the skeleton step was removed because knowledge_check (rule R-0112@f200) does not permit pathway activity in a tf_activity step for this situation, and the score test is run as its documented Python substitute (Welch t + BH).",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "activity_input",
+              "step": "tf_activity",
+              "value": "per_sample_log_matrix",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "activity_method",
+              "step": "tf_activity",
+              "value": "ulm",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "score_test",
+              "step": "tf_activity",
+              "value": "limma_on_scores_bh_across_regulators",
+              "source": "rule:R-0112"
+            },
+            {
+              "name": "motif_complement",
+              "step": "tf_activity",
+              "value": "tfbstools_jaspar2020_hg38_promoters",
+              "source": "doi:10.1093/bioinformatics/btw024"
+            },
+            {
+              "name": "motif_background",
+              "step": "tf_activity",
+              "value": "promoters_of_tested_genes",
+              "source": "rule:R-0120"
+            },
+            {
+              "name": "regulon_collection",
+              "step": "tf_activity",
+              "value": "collectri_human",
+              "source": "doi:10.1093/nar/gkad841"
+            },
+            {
+              "name": "min_regulon_size",
+              "step": "tf_activity",
+              "value": 5,
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "edge_sign",
+              "step": "tf_activity",
+              "value": "keep_mode_of_regulation",
+              "source": "doi:10.1093/nar/gkad841"
+            },
+            {
+              "name": "alternative_regulon",
+              "step": "tf_activity",
+              "value": "dorothea_confidence_A_to_C",
+              "source": "doi:10.1101/gr.240663.118"
+            },
+            {
+              "name": "regulon_preference",
+              "step": "tf_activity",
+              "value": "collectri_first",
+              "source": "doi:10.1093/nar/gkad841"
+            },
+            {
+              "name": "aracne_regulon_policy",
+              "step": "tf_activity",
+              "value": "viper_absent_prior_network_with_decoupler_instead",
+              "source": "doi:10.1038/ng.3593"
+            },
+            {
+              "name": "network_source",
+              "step": "tf_activity",
+              "value": "prior_knowledge_network_only",
+              "source": "doi:10.1093/bioinformatics/btw216"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-decoupler-py-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "activity",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "tf_activity: activity_input = per_sample_log_matrix (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: score_test = limma_on_scores_bh_across_regulators (rule:R-0112) — substituted in Python per the user constraint: per-regulator Welch t-test + Benjamini-Hochberg FDR via statsmodels, because limma is an R tool and no R script may be run; state the substitution in the output",
+          "tf_activity: motif_complement = tfbstools_jaspar2020_hg38_promoters (doi:10.1093/bioinformatics/btw024) — NOT executed: no JASPAR matrices and no hg38 genome FASTA are provisioned in the reference store, and TFBSTools is R-only under the Python-only constraint; record as a limitation",
+          "tf_activity: motif_background = promoters_of_tested_genes (rule:R-0120) — not applicable, motif complement not executed (see motif_complement)",
+          "tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)",
+          "tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)",
+          "tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)",
+          "tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118) — available in the reference store but not run; CollecTRI is first choice",
+          "tf_activity: regulon_preference = collectri_first (doi:10.1093/nar/gkad841)",
+          "tf_activity: aracne_regulon_policy = viper_absent_prior_network_with_decoupler_instead (doi:10.1038/ng.3593)",
+          "tf_activity: network_source = prior_knowledge_network_only (doi:10.1093/bioinformatics/btw216)",
+          "All scripts in this step are Python; do not write or execute .R scripts (user constraint)."
+        ],
+        "description": "Per-TF per-sample activity score matrix (decoupler ulm on the filtered per-sample log2CPM matrix with the human CollecTRI v2.0 signed regulons), the aldosterone-vs-vehicle contrast table (mean difference, Welch t p, BH-adjusted p), the ranked significant-driver list, and a method summary — all computed in Python.",
+        "acceptance_criteria": [
+          "A TF x 12-sample score matrix from decoupler ulm on the per-sample log2CPM matrix with the human CollecTRI v2.0 signed regulons (deduplicated), with n_regulators_tested (>=5 targets among tested genes) and the network provenance (CollecTRI 2.0, Zenodo 8192729) reported.",
+          "A per-regulator contrast table (aldosterone vs vehicle): mean score difference, Welch t p-value, BH-adjusted p-value; ranked significant-driver list (padj < 0.05) with direction of activity change in treatment.",
+          "The method summary states: input statistic (log2 CPM + 1, number of filtered genes), the Welch t + BH substitution for limma with its reason, the n=6-per-group power caveat, and that scores are inferences from a prior network, not measurements.",
+          "All outputs (score matrix, contrast table, driver list, summary) are written to the step results directory."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Reproducibility record + activity report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "This step only assembles and writes the report; do not recompute any analysis."
+        ],
+        "context": "Assemble the final report from T1S1 (QC summary, plots) and T2S2 (score matrix, contrast table, driver list, method summary). Content: (1) Reproducibility record — version of every package used (decoupler, scikit-learn, statsmodels, pandas, numpy, matplotlib), the random seed (set in the scripts before use and listed here), reference-collection versions (CollecTRI 2.0 / Zenodo 8192729; no other network used), and the ID-mapping release if one was used. (2) Activity-report fields — network_name (CollecTRI), network_version (2.0), input_statistic (per-sample log2CPM, number of filtered genes), contrast (aldosterone vs vehicle), estimator (ulm), min_regulon_size (5), n_regulators_tested, inference_caution ('activity scores are inferences from a prior-knowledge network, not measurements; a top score is a hypothesis for follow-up, not a proven finding'). (3) Carried-forward limitations: Welch t + BH substituted for limma (R forbidden by user constraint); motif complement excluded (no JASPAR matrices, no hg38 genome FASTA in the reference store, TFBSTools R-only); PROGENy pathway footprint excluded (not permitted for tf_activity in this situation per knowledge_check, and the question is about TFs); salmon length-correction state unknown; 6 replicates per group. Do not recompute any analysis; write one report file to the results directory.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What must the final report state so the TF-activity results on the aldosterone vs vehicle kidney data are reproducible and interpreted correctly?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0119@5f4d"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            },
+            {
+              "name": "activity_report_fields",
+              "step": "report",
+              "value": [
+                "network_name",
+                "network_version",
+                "input_statistic",
+                "contrast",
+                "estimator",
+                "min_regulon_size",
+                "n_regulators_tested",
+                "inference_caution"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "report: activity_report_fields = network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution (doi:10.1371/journal.pcbi.1009935)",
+          "All scripts in this step are Python; do not write or execute .R scripts (user constraint)."
+        ],
+        "description": "A single markdown report in the results directory: reproducibility record, activity-report fields, QC summary, score matrices, contrast tables, driver list, and documented limitations.",
+        "acceptance_criteria": [
+          "A single report file in the results directory containing every activity_report_field and the full reproducibility record.",
+          "The random seed and all package and collection versions are listed.",
+          "The inference caution is stated verbatim, and every limitation carried forward from T2S2 is present."
+        ]
+      }
+    ],
+    "title": "Aldosterone kidney TF regulon activity (Decoupler ulm)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Human kidney bulk RNA-seq, 12 samples (6 aldosterone-treated vs 6 vehicle, unpaired, single batch), 12,000 salmon gene-level counts with unknown length-correction state. The question — which transcription factors drive the treated vs control response — is answered per the knowledge service's tf_activity procedure (R-0112@f200) for this situation: (1) sample-structure QC (blind VST, PCA on top-500 variable genes, distance heatmap) to confirm condition separation and rule out outliers before inference; (2) per-sample TF activity: filter low-count genes, log2(CPM+1), decoupleR univariate linear model (ulm) — run in Python as decoupler 2.2.0, the port — on the human CollecTRI v2.0 signed regulons (CollecTRI first choice per R-0113; one score per TF per sample, repressor edges subtracting), testing only regulons with >=5 targets among the tested genes, then the aldosterone-vs-vehicle contrast on the per-regulator score matrix with BH-adjusted p-values; (3) a report carrying the reproducibility record and the activity-report fields with the inference caution. No separate DE step: R-0112 prescribes the per-sample activity route for this situation, and the contrast on the scores directly answers the question. User constraint (Python for every script) drives three documented substitutions/exclusions: limma (R) is replaced by per-regulator Welch t-tests + BH FDR in statsmodels; the TFBSTools/JASPAR motif complement is excluded (no JASPAR matrices and no hg38 genome FASTA in the reference store, and TFBSTools is R-only); and the PROGENy/STRING pathway-activity sub-step bundled in the service's skeleton is excluded because knowledge_check (rule R-0112@f200) does not permit pathway activity in a tf_activity step for this situation, and the question is about TFs, not pathways."
+  },
+  "usage": {
+    "inputTokens": 597130,
+    "outputTokens": 36283,
+    "cacheReadInputTokens": 512832,
+    "reasoningTokens": 30203
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_d1032ca7447348a89ff67451",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "python"
+      },
+      "outcome": "ok",
+      "durationMs": 56
+    },
+    {
+      "toolUseId": "call_2639b1a1eb724cd99caf70e9",
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      },
+      "outcome": "ok",
+      "durationMs": 66
+    },
+    {
+      "toolUseId": "call_95b92e5df6f54078be7cdca6",
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "call_d3b6b8b6539a415e918909e9",
+      "name": "list_available_refs",
+      "input": {
+        "query": "jaspar"
+      },
+      "outcome": "ok",
+      "durationMs": 81
+    },
+    {
+      "toolUseId": "call_35dc61b0127549e08923999c",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hg38"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "call_354fca1319db499c9026a5c6",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "decoupler decouple function ulm mlm network DataFrame columns PPI matrix"
+      },
+      "outcome": "error",
+      "durationMs": 1661
+    },
+    {
+      "toolUseId": "call_c6218e3195534ec19495ef1b",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "call_86a504f65cbd484c82517a52",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene",
+        "limit": 100
+      },
+      "outcome": "ok",
+      "durationMs": 54
+    },
+    {
+      "toolUseId": "call_f88987f3bdb440688455e0b3",
+      "name": "knowledge_check",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST + PCA on top variable genes + Euclidean distance heatmap (template tpl-qc-python@1.0.0)",
+            "package": "scikit-learn",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupler (Python) univariate linear model (ulm) on the per-sample log2CPM matrix with the CollecTRI human v2.0 signed regulons, min regulon size 5, then contrast on the per-regulator scores; PROGENy mlm pathway footprint with STRING PPI where the installed mlm supports it",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "score_test",
+                "value": "per_regulator_welch_t_plus_bh (python substitute for limma_on_scores_bh_across_regulators; R forbidden by user constraint)"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "pathway_activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "string_confidence_cutoff",
+                "value": 0.7
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record (session info, seed, package versions, collection versions) + activity report (network, statistic, contrast, estimator, min regulon size, n regulators tested, inference caution)",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              },
+              {
+                "name": "activity_report_fields",
+                "value": "network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    },
+    {
+      "toolUseId": "call_d93f11a584ff412c93abe26b",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Aldosterone kidney TF regulon activity (Decoupler ulm)\", \"analytical_narrative\": \"Human kidney bulk RNA-seq, 12 samples (6 aldosterone-treated vs 6 vehicle, unpaired, single batch), 12,000 salmon gene-level counts with unknown length-correction state. The question — which transcription factors drive the treated vs control response — is answered per the knowledge service's tf_activity procedure (R-0112@f200) for this situation: (1) sample-structure QC (blind VST, PCA on top-500 variable genes, distance heatmap) to confirm condition separation and rule out outliers before inference; (2) per-sample TF activity: filter low-count genes, log2(CPM+1), decoupleR univariate linear model (ulm) — run in Python as decoupler 2.2.0, the port — on the human CollecTRI v2.0 signed regulons (CollecTRI first choice per R-0113; one score per TF per sample, repressor edges subtracting), testing only regulons with >=5 targets among the tested genes, then the aldosterone-vs-vehicle contrast on the per-regulator score matrix with BH-adjusted p-values; (3) a report carrying the reproducibility record and the activity-report fields with the inference caution. No separate DE step: R-0112 prescribes the per-sample activity route for this situation, and the contrast on the scores directly answers the question. User constraint (Python for every script) drives three documented substitutions/exclusions: limma (R) is replaced by per-regulator Welch t-tests + BH FDR in statsmodels; the TFBSTools/JASPAR motif complement is excluded (no JASPAR matrices and no hg38 genome FASTA in the reference store, and TFBSTools is R-only); and the PROGENy/STRING pathway-activity sub-step bundled in the service's skeleton is excluded because knowledge_check (rule R-0112@f200) does not permit pathway activity in a tf_activity step for this situation, and the question is about TFs, not pathways.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-09-07T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC (blind VST, PCA, distances)\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Do the 12 human kidney samples — 6 aldosterone-treated, 6 vehicle per the condition column of metadata.csv — separate by condition in PC space, with no outlier sample and no hidden batch structure, before TF-activity inference?\", \"description\": \"PCA plot and Euclidean-distance heatmap of the 12 samples (colored by condition), per-sample library sizes, and a one-page QC summary in the results directory.\", \"context\": \"Inputs: /eval-four-models-v2-with-tf-activity-python-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples; salmon gene-level; length-correction state unknown per the data profile) and /eval-four-models-v2-with-tf-activity-python-n6-s1-1/data/inputs/metadata/metadata.csv (one row per sample with condition; aldosterone treatment vs vehicle; single batch; unpaired; 6 per group). Compute per-sample library sizes; apply the variance-stabilizing transformation blind to the design; PCA on the 500 genes with the highest variance; Euclidean-distance heatmap between samples; color every plot by condition. If the count matrix holds non-integer values (salmon estimated counts), note that in the summary. Save plots and the summary to the step results directory.\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"All scripts in this step are Python; do not write or execute .R scripts (user constraint).\"], \"acceptance_criteria\": [\"PCA (PC1-PC2, 500 most variable genes) and the Euclidean-distance heatmap are saved, colored by condition, and show the 6 aldosterone samples and 6 vehicle samples as two coherent clusters.\", \"Per-sample library sizes and variance explained per PC are reported in the summary.\", \"Any sample departing from its group is explicitly flagged with its nearest-neighbor distance; none is silently dropped.\"], \"caveats\": [\"The transform must stay blind: do not condition on condition when estimating dispersion.\", \"The metadata carries no batch column and the design is a single batch; do not invent a batch factor.\", \"If the template's blind-VST helper needs pydeseq2 (0.5.4 installed) or rnanorm (2.2.0 installed), use it and state which in the summary.\"], \"packages\": [\"scikit-learn\", \"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-python@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}}, {\"id\": \"T2S2\", \"name\": \"TF regulon activity: decoupler ulm on CollecTRI, score contrast\", \"track\": \"T2\", \"step_type\": \"activity\", \"agent\": \"enrichment-agent\", \"question\": \"Which transcription factor regulons show altered activity in the 6 aldosterone-treated samples compared with the 6 vehicle controls, and in which direction (activity up or down in treatment)?\", \"description\": \"Per-TF per-sample activity score matrix (decoupler ulm on the filtered per-sample log2CPM matrix with the human CollecTRI v2.0 signed regulons), the aldosterone-vs-vehicle contrast table (mean difference, Welch t p, BH-adjusted p), the ranked significant-driver list, and a method summary — all computed in Python.\", \"context\": \"Inputs: counts.csv and metadata.csv from /eval-four-models-v2-with-tf-activity-python-n6-s1-1/data/inputs/ (12,000 genes x 12 samples; condition: aldosterone treatment vs vehicle; 6 per group). Procedure: (1) Identify the row-ID space of the count matrix; if gene symbols, use as-is; if Ensembl IDs, map to symbols using the reference store's STRING v12.0 info file (preferred_name per STRING id) or the UniProt human idmapping (Ensembl -> Entrez), report the mapping rate, and drop unmapped genes. (2) Filter: keep genes with count > 0 in at least 6 of the 12 samples; report the gene count kept. (3) Normalize: per-sample log2(CPM + 1) (CPM = count / library size * 1e6). (4) Network: human CollecTRI v2.0 CSV from the reference store — one interaction per row with source (TF symbol), target (gene symbol), weight (+1 activating / -1 repressing) plus curation provenance columns; drop the provenance columns, deduplicate (source, target) keeping the first row and report the deduplication count. (5) Test only regulators with at least 5 targets among the tested genes; report n_regulators_tested. (6) Run decoupler (2.2.0, the Python port of decoupleR) method 'ulm' on the per-sample log2CPM matrix with the signed network, keeping the mode of regulation on each edge (repressor targets lower the score); result is one score per sample and regulator. (7) Contrast: compare each regulator's score between the 6 aldosterone and 6 vehicle samples — per-regulator Welch t-test (statsmodels) plus Benjamini-Hochberg FDR across regulators (statsmodels multipletests, method='fdr_bh') — and report the score matrix and the test table side by side; ranked driver list = padj < 0.05, sorted, with direction of change. (8) Save score matrix, contrast table, driver list, and method summary (gene count kept, n_regulators_tested, network name/version/provenance: CollecTRI 2.0, Zenodo 8192729, all stated numbers) to the step results directory. A score is an inference from a prior network, not a measurement — say so in the summary.\", \"constraints\": [\"tf_activity: activity_input = per_sample_log_matrix (doi:10.1093/bioadv/vbac016)\", \"tf_activity: activity_method = ulm (doi:10.1093/bioadv/vbac016)\", \"tf_activity: score_test = limma_on_scores_bh_across_regulators (rule:R-0112) — substituted in Python per the user constraint: per-regulator Welch t-test + Benjamini-Hochberg FDR via statsmodels, because limma is an R tool and no R script may be run; state the substitution in the output\", \"tf_activity: motif_complement = tfbstools_jaspar2020_hg38_promoters (doi:10.1093/bioinformatics/btw024) — NOT executed: no JASPAR matrices and no hg38 genome FASTA are provisioned in the reference store, and TFBSTools is R-only under the Python-only constraint; record as a limitation\", \"tf_activity: motif_background = promoters_of_tested_genes (rule:R-0120) — not applicable, motif complement not executed (see motif_complement)\", \"tf_activity: regulon_collection = collectri_human (doi:10.1093/nar/gkad841)\", \"tf_activity: min_regulon_size = 5 (doi:10.1093/bioadv/vbac016)\", \"tf_activity: edge_sign = keep_mode_of_regulation (doi:10.1093/nar/gkad841)\", \"tf_activity: alternative_regulon = dorothea_confidence_A_to_C (doi:10.1101/gr.240663.118) — available in the reference store but not run; CollecTRI is first choice\", \"tf_activity: regulon_preference = collectri_first (doi:10.1093/nar/gkad841)\", \"tf_activity: aracne_regulon_policy = viper_absent_prior_network_with_decoupler_instead (doi:10.1038/ng.3593)\", \"tf_activity: network_source = prior_knowledge_network_only (doi:10.1093/bioinformatics/btw216)\", \"All scripts in this step are Python; do not write or execute .R scripts (user constraint).\"], \"acceptance_criteria\": [\"A TF x 12-sample score matrix from decoupler ulm on the per-sample log2CPM matrix with the human CollecTRI v2.0 signed regulons (deduplicated), with n_regulators_tested (>=5 targets among tested genes) and the network provenance (CollecTRI 2.0, Zenodo 8192729) reported.\", \"A per-regulator contrast table (aldosterone vs vehicle): mean score difference, Welch t p-value, BH-adjusted p-value; ranked significant-driver list (padj < 0.05) with direction of activity change in treatment.\", \"The method summary states: input statistic (log2 CPM + 1, number of filtered genes), the Welch t + BH substitution for limma with its reason, the n=6-per-group power caveat, and that scores are inferences from a prior network, not measurements.\", \"All outputs (score matrix, contrast table, driver list, summary) are written to the step results directory.\"], \"caveats\": [\"Salmon length-correction state is unknown per the data profile; log2(CPM+1) scoring is not affected by the gene-length normalization choice, but state the unknown in the summary.\", \"The contrast has 6 replicates per group and is underpowered: significant scores are hypotheses for follow-up, not proven findings.\", \"The prior-knowledge network is tissue-agnostic (ARACNe/VIPER cannot be supported by 12 samples, R-0121): tissue-specific regulators may be missed and silent targets add noise; state this in the summary.\", \"The motif complement (TFBSTools + JASPAR 2020 on hg38 promoters) is excluded: no JASPAR matrix and no hg38 genome FASTA exist in the reference store, and TFBSTools is R-only against the Python-only constraint — record as a limitation.\", \"If the installed decoupler 2.2.0 API differs from expectations, inspect the signature at runtime (help/inspect) and adapt within the fixed method (ulm on the log matrix, signed edges, min regulon size 5); note any adaptation in the summary.\", \"Do not recompute the QC of T1S1 here; read its summary for the sample-structure result.\"], \"packages\": [\"decoupler\", \"statsmodels\", \"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0112@f200\", \"R-0120@7639\", \"R-0111@b668\", \"R-0113@7a4d\", \"R-0114@9db7\", \"R-0121@5f27\"], \"template\": \"tpl-decoupler-py-tf-activity@1.0.0\", \"settings\": [{\"step\": \"tf_activity\", \"name\": \"activity_input\", \"value\": \"per_sample_log_matrix\", \"source\": \"doi:10.1093/bioadv/vbac016\"}, {\"step\": \"tf_activity\", \"name\": \"activity_method\", \"value\": \"ulm\", \"source\": \"doi:10.1093/bioadv/vbac016\"}, {\"step\": \"tf_activity\", \"name\": \"score_test\", \"value\": \"limma_on_scores_bh_across_regulators\", \"source\": \"rule:R-0112\"}, {\"step\": \"tf_activity\", \"name\": \"motif_complement\", \"value\": \"tfbstools_jaspar2020_hg38_promoters\", \"source\": \"doi:10.1093/bioinformatics/btw024\"}, {\"step\": \"tf_activity\", \"name\": \"motif_background\", \"value\": \"promoters_of_tested_genes\", \"source\": \"rule:R-0120\"}, {\"step\": \"tf_activity\", \"name\": \"regulon_collection\", \"value\": \"collectri_human\", \"source\": \"doi:10.1093/nar/gkad841\"}, {\"step\": \"tf_activity\", \"name\": \"min_regulon_size\", \"value\": 5, \"source\": \"doi:10.1093/bioadv/vbac016\"}, {\"step\": \"tf_activity\", \"name\": \"edge_sign\", \"value\": \"keep_mode_of_regulation\", \"source\": \"doi:10.1093/nar/gkad841\"}, {\"step\": \"tf_activity\", \"name\": \"alternative_regulon\", \"value\": \"dorothea_confidence_A_to_C\", \"source\": \"doi:10.1101/gr.240663.118\"}, {\"step\": \"tf_activity\", \"name\": \"regulon_preference\", \"value\": \"collectri_first\", \"source\": \"doi:10.1093/nar/gkad841\"}, {\"step\": \"tf_activity\", \"name\": \"aracne_regulon_policy\", \"value\": \"viper_absent_prior_network_with_decoupler_instead\", \"source\": \"doi:10.1038/ng.3593\"}, {\"step\": \"tf_activity\", \"name\": \"network_source\", \"value\": \"prior_knowledge_network_only\", \"source\": \"doi:10.1093/bioinformatics/btw216\"}], \"reason\": \"Transcription factor activity with decoupleR ulm on the CollecTRI regulons per R-0112@f200; the PROGENy/STRING pathway-activity sub-step bundled in the skeleton step was removed because knowledge_check (rule R-0112@f200) does not permit pathway activity in a tf_activity step for this situation, and the score test is run as its documented Python substitute (Welch t + BH).\"}}, {\"id\": \"T1S3\", \"name\": \"Reproducibility record + activity report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What must the final report state so the TF-activity results on the aldosterone vs vehicle kidney data are reproducible and interpreted correctly?\", \"description\": \"A single markdown report in the results directory: reproducibility record, activity-report fields, QC summary, score matrices, contrast tables, driver list, and documented limitations.\", \"context\": \"Assemble the final report from T1S1 (QC summary, plots) and T2S2 (score matrix, contrast table, driver list, method summary). Content: (1) Reproducibility record — version of every package used (decoupler, scikit-learn, statsmodels, pandas, numpy, matplotlib), the random seed (set in the scripts before use and listed here), reference-collection versions (CollecTRI 2.0 / Zenodo 8192729; no other network used), and the ID-mapping release if one was used. (2) Activity-report fields — network_name (CollecTRI), network_version (2.0), input_statistic (per-sample log2CPM, number of filtered genes), contrast (aldosterone vs vehicle), estimator (ulm), min_regulon_size (5), n_regulators_tested, inference_caution ('activity scores are inferences from a prior-knowledge network, not measurements; a top score is a hypothesis for follow-up, not a proven finding'). (3) Carried-forward limitations: Welch t + BH substituted for limma (R forbidden by user constraint); motif complement excluded (no JASPAR matrices, no hg38 genome FASTA in the reference store, TFBSTools R-only); PROGENy pathway footprint excluded (not permitted for tf_activity in this situation per knowledge_check, and the question is about TFs); salmon length-correction state unknown; 6 replicates per group. Do not recompute any analysis; write one report file to the results directory.\", \"constraints\": [\"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\", \"report: activity_report_fields = network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution (doi:10.1371/journal.pcbi.1009935)\", \"All scripts in this step are Python; do not write or execute .R scripts (user constraint).\"], \"acceptance_criteria\": [\"A single report file in the results directory containing every activity_report_field and the full reproducibility record.\", \"The random seed and all package and collection versions are listed.\", \"The inference caution is stated verbatim, and every limitation carried forward from T2S2 is present.\"], \"caveats\": [\"This step only assembles and writes the report; do not recompute any analysis.\"], \"packages\": [], \"depends_on\": [\"T2S2\"], \"resources\": {\"cpu\": 1, \"memoryGb\": 2}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0086@becf\", \"R-0119@5f4d\"], \"settings\": [{\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}, {\"step\": \"report\", \"name\": \"activity_report_fields\", \"value\": [\"network_name\", \"network_version\", \"input_statistic\", \"contrast\", \"estimator\", \"min_regulon_size\", \"n_regulators_tested\", \"inference_caution\"], \"source\": \"doi:10.1371/journal.pcbi.1009935\"}], \"reason\": \"no rule covers this step\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 85
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "python"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-python@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "tf_activity",
+            "method": {
+              "id": "M-0035"
+            },
+            "template": "tpl-decoupler-py-tf-activity@1.0.0",
+            "rules": [
+              "R-0112@f200",
+              "R-0120@7639",
+              "R-0111@b668",
+              "R-0113@7a4d",
+              "R-0114@9db7",
+              "R-0121@5f27"
+            ]
+          },
+          {
+            "step": "pathway_activity",
+            "method": {
+              "id": "M-0036"
+            },
+            "template": "tpl-progeny-pathway-activity@1.0.0",
+            "rules": [
+              "R-0123@5521",
+              "R-0115@1504",
+              "R-0122@08af"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf",
+              "R-0119@5f4d"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0112@f200"
+          },
+          {
+            "id": "R-0120@7639"
+          },
+          {
+            "id": "R-0123@5521"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0111@b668"
+          },
+          {
+            "id": "R-0113@7a4d"
+          },
+          {
+            "id": "R-0114@9db7"
+          },
+          {
+            "id": "R-0115@1504"
+          },
+          {
+            "id": "R-0119@5f4d"
+          },
+          {
+            "id": "R-0121@5f27"
+          },
+          {
+            "id": "R-0122@08af"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 21555,
+      "elapsedMs": 27
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST + PCA on top variable genes + Euclidean distance heatmap (template tpl-qc-python@1.0.0)",
+            "package": "scikit-learn",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupler (Python) univariate linear model (ulm) on the per-sample log2CPM matrix with the CollecTRI human v2.0 signed regulons, min regulon size 5, then contrast on the per-regulator scores; PROGENy mlm pathway footprint with STRING PPI where the installed mlm supports it",
+            "package": "decoupler",
+            "parameters": [
+              {
+                "name": "activity_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "score_test",
+                "value": "per_regulator_welch_t_plus_bh (python substitute for limma_on_scores_bh_across_regulators; R forbidden by user constraint)"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "edge_sign",
+                "value": "keep_mode_of_regulation"
+              },
+              {
+                "name": "pathway_activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "string_confidence_cutoff",
+                "value": 0.7
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "reproducibility record (session info, seed, package versions, collection versions) + activity report (network, statistic, contrast, estimator, min regulon size, n regulators tested, inference caution)",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              },
+              {
+                "name": "activity_report_fields",
+                "value": "network_name, network_version, input_statistic, contrast, estimator, min_regulon_size, n_regulators_tested, inference_caution"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "tf_activity",
+            "severity": "violation",
+            "rule": "R-0112@f200",
+            "message": "Pathway activity with decoupleR mlm on the PROGENy footprint model is not a permitted method for tf_activity in this situation.",
+            "permitted": [
+              "Transcription factor activity with decoupleR ulm on the CollecTRI regulons",
+              "Transcription factor activity with decoupleR on the DoRothEA regulons of confidence A to C",
+              "Promoter motif scan with TFBSTools and JASPAR on hg38, with a background of the tested genes"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 666,
+      "elapsedMs": 44
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

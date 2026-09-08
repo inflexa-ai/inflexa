@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly uses a single paired model ~ subject + condition with an LRT against ~ subject and three explicit contrasts with control as reference, which matches the reference design; the fallback branch is flawed (log2-transformed pre-normalized values fed to voom, which expects counts) and apeglm cannot shrink the a-vs-b non-reference contrast without releveling. QC covers PCA by subject and condition, distances and library sizes but gives no policy for a shallow or outlier sample beyond flagging mislabelling. No low count filter is stated at all, and normalization is never made explicit (size factors are only implied in the DESeq2 branch). Enrichment is added though not asked; it names the collection and version and uses the full shrunken-LFC ranking for fgsea, but states no ORA universe or set-size window. The report specifies branch, residual df, thresholds, set sizes and power caveats but omits software versions."
+}

@@ -1,0 +1,214 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "population-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:23:38.871Z",
+  "elapsedMs": 290400,
+  "outcome": "plan_submitted",
+  "planId": "pln-ed8d2f52",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample QC and count-type determination",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TPM detection: per-sample sums near 1e6. Raw counts: all-integer. Scaled counts (raw/effective-length): non-integer, per-sample sums well below raw totals.",
+          "No covariates exist in the metadata — do not invent any for downstream modeling.",
+          "If the identifier space is mixed or non-standard, document the exact format; downstream mapping will use org.Hs.eg.db."
+        ],
+        "context": "Single-batch unpaired human (Homo sapiens) whole-blood cohort; 60 cases vs 60 controls. The data profile records the file as 'gene-level counts from salmon as delivered' and explicitly does not say whether the length correction was applied — the empirical count-type test exists because of that. Metadata has only sample ID and condition: no batch, age, or sex columns.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2",
+          "readr",
+          "tibble"
+        ],
+        "question": "Are all 120 samples (60 cases, 60 controls, unpaired, single batch) suitable for the case vs control differential expression analysis, and what does the delivered Salmon matrix actually contain — raw integer counts, effective-length-scaled counts, or TPM?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not modify or renormalize the input counts in this step; only measure and report.",
+          "Use the observed condition level values from metadata.csv verbatim; do not assume spelling ('case'/'control').",
+          "Exclude a sample only on an extreme QC failure (detected genes far below the cohort minimum and/or an unambiguous PCA outlier) and document each exclusion with its reason; default to keeping all 120 samples.",
+          "If condition does not split 60/60, stop and report the discrepancy instead of proceeding with a different design."
+        ],
+        "description": "Load /eval-four-models-v2-without-population-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 120 samples) and /eval-four-models-v2-without-population-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows: sample ID + condition). Verify the 120 sample columns and metadata rows align 1:1 and that condition levels split exactly 60 vs 60. Determine the gene-row identifier space (Ensembl 'ENST...' IDs vs HGNC symbols vs mixed). Empirically classify the count type: fraction of non-integer entries, per-sample sum distribution (TPM sums to ~1e6 per sample; raw count sums are far larger; scaled counts are non-integer), and whether per-gene totals look length-normalized. Then sample-level QC: total counts per sample, genes detected (count >= 10), PCA on the top 500 variable genes of log2-transformed expression with case/control overlay; flag extreme outliers (very low detection and/or unambiguous PCA outlier) as exclusion candidates. Save: per-sample QC table, PCA figure, count-type decision with its numeric evidence, identifier-space note, and the final sample list (default: all 120; exclusions only for extreme, documented failures).",
+        "acceptance_criteria": [
+          "Per-sample QC table (one row per sample: total counts, genes detected, PCA coordinates) saved to disk.",
+          "PCA figure with case/control overlay saved.",
+          "Explicit count-type decision — raw integer, scaled, or TPM — with the numeric evidence quoted (e.g. fraction non-integer, per-sample sum range).",
+          "Gene-row identifier space documented (Ensembl / symbols / mixed).",
+          "Final sample list saved, equal to all 120 unless exclusions are individually documented."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Case vs control differential expression with LFC shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Standard low-count filtering will drop a large fraction of the 12,000 Salmon gene rows (many are lowly expressed); that is expected — document the tested-gene count.",
+          "Whole blood: top hits frequently reflect hematopoietic cell-composition shifts; report them as bulk-level differences, not single-cell-type biology.",
+          "If the observed condition labels differ from 'case'/'control', map them to case/control semantics before fitting and record the mapping."
+        ],
+        "context": "Depends on T1S1: final sample list, count-type decision, identifier space. Single batch, unpaired design — exactly one fixed factor (condition). Method note: gene-level Salmon quasi-counts are valid input to both routes (Soneson, Love & Robinson 2015, PMID 26925227); the raw-vs-non-integer test is what selects the route.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "limma",
+          "dplyr",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which of the 12,000 genes differ between the 60 cases and 60 controls, with shrunken log2 fold change (95% CI) and Benjamini-Hochberg adjusted p-value per gene?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Model exactly one factor, condition. No covariates (none exist), no pairing term (unpaired cohort).",
+          "Set the reference level to control so positive LFC means up in cases.",
+          "Follow the T1S1 count-type decision; if the chosen tool rejects the matrix (e.g. DESeq2 on non-integer counts), switch to the voom route rather than forcing the first choice.",
+          "padj by Benjamini-Hochberg; report how many genes passed the low-count filter and remain tested.",
+          "Save the normalized expression matrix as a separate artifact for T1S3."
+        ],
+        "description": "Run the case-vs-control contrast on the T1S1 final sample set, branching on the T1S1 count-type decision: (a) raw integer counts -> DESeq2 with design ~condition (single unpaired factor, no covariates), default median-of-ratios size factors, negative-binomial GLM, and apeglm log2 fold-change shrinkage; (b) scaled or TPM (non-integer) counts -> edgeR TMM normalization + voom + limma empirical-Bayes linear model with filterByExpr low-count filtering. Annotate gene rows with symbols (or Ensembl IDs) via org.Hs.eg.db where needed. Save the full DE table (gene ID, symbol, baseMean, log2FC, shrunken LFC, lfcSE, statistic, p-value, padj) and the normalized expression matrix used for downstream steps (VST for the DESeq2 route; TMM-CPM for the voom route).",
+        "acceptance_criteria": [
+          "DE table saved with one row per tested gene, containing gene ID, symbol, baseMean, log2FC, shrunken LFC, lfcSE, p-value, and padj.",
+          "Model route (DESeq2 or voom) and the T1S1 decision that selected it recorded in the step report.",
+          "Normalized expression matrix (VST or TMM-CPM) for the final sample set saved.",
+          "Top 10 up- and down-regulated genes by padj listed in the step report with their shrunken LFC."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Effect-size stratification: significant vs large enough to matter",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Highly expressed, low-variance genes can be significant with trivial LFC — the tier table must make that visible (significant-but-small is a distinct category from 'matters').",
+          "Do not present the sensitivity tiers as additional claims; they are robustness views of the same data."
+        ],
+        "context": "60 vs 60 unpaired, single batch — moderate LFCs are well powered, so a large-but-nonsignificant gene most plausibly reflects high within-group variance rather than a design defect. Shrunken LFCs from T1S2 (apeglm or limma EB) are the effect-size metric throughout.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2",
+          "tibble"
+        ],
+        "question": "Of the genes that differ between cases and controls, which have effect sizes large enough to matter on their own — not merely statistically significant — and which large effects failed to reach significance?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Thresholds are pre-specified (padj < 0.05; 2-fold primary) and must not be tuned to reach a desired hit count; report the 1.5-fold and 3-fold sensitivity tiers instead.",
+          "Use the shrunken LFC — not the unshrunken one — for all thresholding and ranking.",
+          "Label the large-but-nonsignificant list as a candidate list, not as evidence of differential expression.",
+          "Every gene in the output files must carry both its p-value-based tier and its effect-size tier so the distinction is explicit per gene."
+        ],
+        "description": "From the T1S2 DE table and normalized expression matrix: (1) pre-specify tiers — significant: padj < 0.05; large effect: |shrunken LFC| >= 1.0 (2-fold), with sensitivity tiers 1.5-fold (|LFC| >= 0.585) and 3-fold (|LFC| >= 1.585); 'matters' set = padj < 0.05 AND |shrunken LFC| >= 1.0. (2) Rank all tested genes by |shrunken LFC| with 95% CI, and list separately the large-but-nonsignificant genes (|LFC| >= 1.0, padj >= 0.05) as a low-power/high-variance candidate list. (3) Consistency check on the T1S2 normalized expression: for the 'matters' set, compute case and control mean log-expression and pooled within-group SD per gene; flag genes whose mean shift is inconsistent with their within-group scatter. (4) Produce a volcano plot (padj vs LFC with 0.05 and 2-fold threshold lines, top genes labelled), an MA plot, a bar chart of the top 25 up- and down-regulated genes with 95% CI, and a tier contingency count (significant / large / both / neither, plus sensitivity-tier counts). Save the tiered gene list (gene, symbol, direction, shrunken LFC, 95% CI, padj, tier), the large-but-nonsignificant candidate list, tier-count summary, and figures.",
+        "acceptance_criteria": [
+          "A 'matters' gene list (padj < 0.05 AND |shrunken LFC| >= 1.0) saved as CSV with symbol, direction, shrunken LFC, 95% CI, padj, and tier.",
+          "Tier contingency summary saved: significant, large-effect, both, neither, plus sensitivity-tier counts.",
+          "Volcano, MA, and top-25 up/down bar figures saved.",
+          "Large-but-nonsignificant candidate list saved and explicitly labelled as such.",
+          "Per-gene consistency statistic (mean case-control difference in normalized log-expression vs pooled within-group SD) computed for the 'matters' set, with inconsistent genes flagged."
+        ]
+      }
+    ],
+    "title": "Whole-blood case-control DE with effect-size stratification",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "12,000-gene x 120-sample (60 cases vs 60 controls) unpaired, single-batch human whole-blood bulk RNA-seq cohort, with Salmon gene-level counts whose length correction is not recorded in the profile. Step T1S1 validates the sample set and empirically classifies the count type (raw integer vs effective-length scaled vs TPM-scale), because that one fact determines the statistical model — the profile explicitly does not say whether Salmon's length correction was applied. Step T1S2 runs case-vs-control differential expression with the matching model (DESeq2 negative-binomial GLM + apeglm LFC shrinkage for raw counts; edgeR TMM + voom + limma for non-integer counts), no covariates since metadata carries only sample ID and condition. Step T1S3 separates statistical significance from biological magnitude: pre-specified tiers (padj < 0.05; |shrunken LFC| >= 1, with 1.5-fold and 3-fold sensitivity tiers), a CI-ranked magnitude list, a within-group consistency check, and a large-but-nonsignificant candidate list — directly answering 'which differences are large enough to matter, not just significant'."
+  },
+  "usage": {
+    "inputTokens": 169257,
+    "outputTokens": 16009,
+    "cacheReadInputTokens": 123392,
+    "reasoningTokens": 12900
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_6367550ddc084773841dcf4d",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Salmon quasi-counts gene-level expression estimation DESeq2 voom",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 383
+    },
+    {
+      "toolUseId": "call_08e16265701542509eeb0879",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 5,
+        "query": "\"quasi-counts\" RNA-seq differential expression"
+      },
+      "outcome": "ok",
+      "durationMs": 426
+    },
+    {
+      "toolUseId": "call_33422954242047b3ac92ab02",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "maxResults": 5,
+        "query": "Soneson Robinson RNA-seq gene-level expression"
+      },
+      "outcome": "ok",
+      "durationMs": 868
+    },
+    {
+      "toolUseId": "call_c5e34bf975f446a3b48b067c",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Whole-blood case-control DE with effect-size stratification\", \"analytical_narrative\": \"12,000-gene x 120-sample (60 cases vs 60 controls) unpaired, single-batch human whole-blood bulk RNA-seq cohort, with Salmon gene-level counts whose length correction is not recorded in the profile. Step T1S1 validates the sample set and empirically classifies the count type (raw integer vs effective-length scaled vs TPM-scale), because that one fact determines the statistical model — the profile explicitly does not say whether Salmon's length correction was applied. Step T1S2 runs case-vs-control differential expression with the matching model (DESeq2 negative-binomial GLM + apeglm LFC shrinkage for raw counts; edgeR TMM + voom + limma for non-integer counts), no covariates since metadata carries only sample ID and condition. Step T1S3 separates statistical significance from biological magnitude: pre-specified tiers (padj < 0.05; |shrunken LFC| >= 1, with 1.5-fold and 3-fold sensitivity tiers), a CI-ranked magnitude list, a within-group consistency check, and a large-but-nonsignificant candidate list — directly answering 'which differences are large enough to matter, not just significant'.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-22T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample QC and count-type determination\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Are all 120 samples (60 cases, 60 controls, unpaired, single batch) suitable for the case vs control differential expression analysis, and what does the delivered Salmon matrix actually contain — raw integer counts, effective-length-scaled counts, or TPM?\", \"description\": \"Load /eval-four-models-v2-without-population-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 120 samples) and /eval-four-models-v2-without-population-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows: sample ID + condition). Verify the 120 sample columns and metadata rows align 1:1 and that condition levels split exactly 60 vs 60. Determine the gene-row identifier space (Ensembl 'ENST...' IDs vs HGNC symbols vs mixed). Empirically classify the count type: fraction of non-integer entries, per-sample sum distribution (TPM sums to ~1e6 per sample; raw count sums are far larger; scaled counts are non-integer), and whether per-gene totals look length-normalized. Then sample-level QC: total counts per sample, genes detected (count >= 10), PCA on the top 500 variable genes of log2-transformed expression with case/control overlay; flag extreme outliers (very low detection and/or unambiguous PCA outlier) as exclusion candidates. Save: per-sample QC table, PCA figure, count-type decision with its numeric evidence, identifier-space note, and the final sample list (default: all 120; exclusions only for extreme, documented failures).\", \"context\": \"Single-batch unpaired human (Homo sapiens) whole-blood cohort; 60 cases vs 60 controls. The data profile records the file as 'gene-level counts from salmon as delivered' and explicitly does not say whether the length correction was applied — the empirical count-type test exists because of that. Metadata has only sample ID and condition: no batch, age, or sex columns.\", \"constraints\": [\"Do not modify or renormalize the input counts in this step; only measure and report.\", \"Use the observed condition level values from metadata.csv verbatim; do not assume spelling ('case'/'control').\", \"Exclude a sample only on an extreme QC failure (detected genes far below the cohort minimum and/or an unambiguous PCA outlier) and document each exclusion with its reason; default to keeping all 120 samples.\", \"If condition does not split 60/60, stop and report the discrepancy instead of proceeding with a different design.\"], \"acceptance_criteria\": [\"Per-sample QC table (one row per sample: total counts, genes detected, PCA coordinates) saved to disk.\", \"PCA figure with case/control overlay saved.\", \"Explicit count-type decision — raw integer, scaled, or TPM — with the numeric evidence quoted (e.g. fraction non-integer, per-sample sum range).\", \"Gene-row identifier space documented (Ensembl / symbols / mixed).\", \"Final sample list saved, equal to all 120 unless exclusions are individually documented.\"], \"caveats\": [\"TPM detection: per-sample sums near 1e6. Raw counts: all-integer. Scaled counts (raw/effective-length): non-integer, per-sample sums well below raw totals.\", \"No covariates exist in the metadata — do not invent any for downstream modeling.\", \"If the identifier space is mixed or non-standard, document the exact format; downstream mapping will use org.Hs.eg.db.\"], \"packages\": [\"dplyr\", \"ggplot2\", \"readr\", \"tibble\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Case vs control differential expression with LFC shrinkage\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 genes differ between the 60 cases and 60 controls, with shrunken log2 fold change (95% CI) and Benjamini-Hochberg adjusted p-value per gene?\", \"description\": \"Run the case-vs-control contrast on the T1S1 final sample set, branching on the T1S1 count-type decision: (a) raw integer counts -> DESeq2 with design ~condition (single unpaired factor, no covariates), default median-of-ratios size factors, negative-binomial GLM, and apeglm log2 fold-change shrinkage; (b) scaled or TPM (non-integer) counts -> edgeR TMM normalization + voom + limma empirical-Bayes linear model with filterByExpr low-count filtering. Annotate gene rows with symbols (or Ensembl IDs) via org.Hs.eg.db where needed. Save the full DE table (gene ID, symbol, baseMean, log2FC, shrunken LFC, lfcSE, statistic, p-value, padj) and the normalized expression matrix used for downstream steps (VST for the DESeq2 route; TMM-CPM for the voom route).\", \"context\": \"Depends on T1S1: final sample list, count-type decision, identifier space. Single batch, unpaired design — exactly one fixed factor (condition). Method note: gene-level Salmon quasi-counts are valid input to both routes (Soneson, Love & Robinson 2015, PMID 26925227); the raw-vs-non-integer test is what selects the route.\", \"constraints\": [\"Model exactly one factor, condition. No covariates (none exist), no pairing term (unpaired cohort).\", \"Set the reference level to control so positive LFC means up in cases.\", \"Follow the T1S1 count-type decision; if the chosen tool rejects the matrix (e.g. DESeq2 on non-integer counts), switch to the voom route rather than forcing the first choice.\", \"padj by Benjamini-Hochberg; report how many genes passed the low-count filter and remain tested.\", \"Save the normalized expression matrix as a separate artifact for T1S3.\"], \"acceptance_criteria\": [\"DE table saved with one row per tested gene, containing gene ID, symbol, baseMean, log2FC, shrunken LFC, lfcSE, p-value, and padj.\", \"Model route (DESeq2 or voom) and the T1S1 decision that selected it recorded in the step report.\", \"Normalized expression matrix (VST or TMM-CPM) for the final sample set saved.\", \"Top 10 up- and down-regulated genes by padj listed in the step report with their shrunken LFC.\"], \"caveats\": [\"Standard low-count filtering will drop a large fraction of the 12,000 Salmon gene rows (many are lowly expressed); that is expected — document the tested-gene count.\", \"Whole blood: top hits frequently reflect hematopoietic cell-composition shifts; report them as bulk-level differences, not single-cell-type biology.\", \"If the observed condition labels differ from 'case'/'control', map them to case/control semantics before fitting and record the mapping.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"edgeR\", \"limma\", \"dplyr\", \"org.Hs.eg.db\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"Effect-size stratification: significant vs large enough to matter\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Of the genes that differ between cases and controls, which have effect sizes large enough to matter on their own — not merely statistically significant — and which large effects failed to reach significance?\", \"description\": \"From the T1S2 DE table and normalized expression matrix: (1) pre-specify tiers — significant: padj < 0.05; large effect: |shrunken LFC| >= 1.0 (2-fold), with sensitivity tiers 1.5-fold (|LFC| >= 0.585) and 3-fold (|LFC| >= 1.585); 'matters' set = padj < 0.05 AND |shrunken LFC| >= 1.0. (2) Rank all tested genes by |shrunken LFC| with 95% CI, and list separately the large-but-nonsignificant genes (|LFC| >= 1.0, padj >= 0.05) as a low-power/high-variance candidate list. (3) Consistency check on the T1S2 normalized expression: for the 'matters' set, compute case and control mean log-expression and pooled within-group SD per gene; flag genes whose mean shift is inconsistent with their within-group scatter. (4) Produce a volcano plot (padj vs LFC with 0.05 and 2-fold threshold lines, top genes labelled), an MA plot, a bar chart of the top 25 up- and down-regulated genes with 95% CI, and a tier contingency count (significant / large / both / neither, plus sensitivity-tier counts). Save the tiered gene list (gene, symbol, direction, shrunken LFC, 95% CI, padj, tier), the large-but-nonsignificant candidate list, tier-count summary, and figures.\", \"context\": \"60 vs 60 unpaired, single batch — moderate LFCs are well powered, so a large-but-nonsignificant gene most plausibly reflects high within-group variance rather than a design defect. Shrunken LFCs from T1S2 (apeglm or limma EB) are the effect-size metric throughout.\", \"constraints\": [\"Thresholds are pre-specified (padj < 0.05; 2-fold primary) and must not be tuned to reach a desired hit count; report the 1.5-fold and 3-fold sensitivity tiers instead.\", \"Use the shrunken LFC — not the unshrunken one — for all thresholding and ranking.\", \"Label the large-but-nonsignificant list as a candidate list, not as evidence of differential expression.\", \"Every gene in the output files must carry both its p-value-based tier and its effect-size tier so the distinction is explicit per gene.\"], \"acceptance_criteria\": [\"A 'matters' gene list (padj < 0.05 AND |shrunken LFC| >= 1.0) saved as CSV with symbol, direction, shrunken LFC, 95% CI, padj, and tier.\", \"Tier contingency summary saved: significant, large-effect, both, neither, plus sensitivity-tier counts.\", \"Volcano, MA, and top-25 up/down bar figures saved.\", \"Large-but-nonsignificant candidate list saved and explicitly labelled as such.\", \"Per-gene consistency statistic (mean case-control difference in normalized log-expression vs pooled within-group SD) computed for the 'matters' set, with inconsistent genes flagged.\"], \"caveats\": [\"Highly expressed, low-variance genes can be significant with trivial LFC — the tier table must make that visible (significant-but-small is a distinct category from 'matters').\", \"Do not present the sensitivity tiers as additional claims; they are robustness views of the same data.\"], \"packages\": [\"dplyr\", \"ggplot2\", \"tibble\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

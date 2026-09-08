@@ -1,0 +1,151 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "survival-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:41:04.204Z",
+  "elapsedMs": 179662,
+  "outcome": "plan_submitted",
+  "planId": "pln-66a258ed",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "TMM normalization and 20-gene signature scoring",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "signature-tte",
+        "status": "pending",
+        "caveats": [
+          "The record does not state whether Salmon length correction was applied; for a fixed 20-gene panel this does not materially affect cross-sample score comparison, but state it in the report",
+          "If the values look like TPM/FPKM rather than counts, say so and justify the normalization choice before proceeding",
+          "A median score can diverge from the mean score when individual signature genes are extreme in some samples; report both so the downstream step can use the mean as primary"
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/counts/counts.csv (Salmon gene-level counts, 12000 genes x 120 samples; the record does not state whether length correction was applied); /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 4: sample, condition case/control, follow-up time, event); /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/signature/signature_genes.csv (20 gene symbols, one per row, no weights). Design: 60 cases vs. 60 controls, unpaired, single batch. R is available with edgeR 4.10.3 and ggplot2 4.0.3.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "What is each of the 120 tumor-biopsy samples' level of the pre-specified 20-gene signature (unweighted), on a scale comparable across the case and control samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Score all 120 samples; no sample exclusion at this step",
+          "If a signature symbol is absent from the count matrix, score on the remaining genes and flag it prominently in the output — never impute",
+          "Save the per-sample score table as a CSV artifact in the step output directory"
+        ],
+        "description": "Load counts.csv and metadata.csv; join on sample id and verify exactly 120/120 match, reporting any mismatch. Map the 20 signature symbols to count rows and report the exact matched/unmatched list. Sanity-check that values look like raw counts (non-negative, integer-like). TMM-normalize the full 12000x120 matrix with edgeR (calcNormFactors + cpm) and compute, per sample, the unweighted mean of the 20 signature genes' normalized expression as the primary score, plus the unweighted median as a robustness variant. QC: per-sample total counts and detected-gene counts; flag low-count or outlier samples (flag only, do not drop). Write a per-sample CSV (sample, condition, score_mean, score_median, norm_factor, QC flags) and a brief distribution summary/plot of the scores by condition.",
+        "acceptance_criteria": [
+          "Per-sample score table (CSV) covering all 120 samples with condition carried through, containing both mean- and median-based scores",
+          "Explicit report of how many of the 20 signature symbols matched the count rows, naming any unmatched",
+          "TMM normalization factors reported and raw-count sanity check documented",
+          "QC flags (not drops) for any low-count or outlier samples, with the flagged sample list"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Cox PH: time-to-event ~ signature score + condition",
+        "agent": "statistical-modeling-agent",
+        "track": "signature-tte",
+        "status": "pending",
+        "caveats": [
+          "Median-score split KM is descriptive and does not adjust for condition; do not present it as a test of the adjusted association",
+          "If condition is strongly associated with the event, the adjusted HR for score reflects association partly within strata; the within-case sensitivity makes the single-stratum view visible",
+          "The signature is pre-specified by the study and not derived from this cohort's data, so the test is not inflated by in-sample feature selection — state this as an assumption of the analysis",
+          "Censoring is assumed non-informative; no competing risks are modeled (single binary event indicator)"
+        ],
+        "context": "Uses T1S1's per-sample table (score_mean, score_median, condition) joined to metadata.csv columns: time (follow-up) and event (0/1 indicator). Validate before modeling: time >= 0, event in {0,1}, and 0 < event rate < 100%; if the event column is degenerate (all 0 or all 1), stop and report — a Cox model is undefined. Python environment has lifelines 0.30.0; R's survival package is NOT installed, so all survival modeling must run in Python with lifelines.",
+        "maxSteps": 200,
+        "packages": [
+          "lifelines",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "In the full 120-sample cohort (60 cases vs. 60 controls), does the 20-gene signature score associate with time to the event after accounting for case versus control status, and is that association stable under PH diagnostics and within-case sensitivity?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Fit the primary model with BOTH score and condition; never drop the condition covariate from the primary analysis",
+          "Use the mean-based score as the primary predictor; the median-based score is sensitivity only",
+          "Count and report events before interpreting any p-value",
+          "Run survival modeling in Python with lifelines (R survival package is not installed)"
+        ],
+        "description": "Report total events overall and per condition before any inference, and state explicitly whether the cohort is underpowered (rule-of-thumb events per covariate) if few. Primary model: Cox PH event(time) ~ score_z + condition with score_z = T1S1 mean-based score standardized to 1-SD units; report HR per 1-SD of score with 95% CI and Wald p-value, plus the unadjusted score-only model for reference. PH assumption: Schoenfeld residual tests (overall and per covariate); if violated for score, additionally fit a time-varying effect (product with log time) and a model restricted to the early follow-up window, and interpret in light of the violation. Descriptive: Kaplan-Meier curves with log-rank p-values for median-score split (high vs. low) and for condition, labeled as unadjusted. Sensitivity: Cox restricted to the 60 cases, with its own event count; median-based score as an alternate predictor in the primary model. State explicitly that this is a prognostic (not predictive) association because the metadata carries no treatment variable.",
+        "acceptance_criteria": [
+          "Condition-adjusted Cox result: HR per 1-SD of signature score with 95% CI and p-value, alongside the unadjusted score-only model",
+          "Event counts (overall and per condition) reported before interpretation, with an explicit power statement",
+          "Schoenfeld PH test results, with a documented response (time-varying effect and/or early-window model) if the assumption is violated",
+          "Kaplan-Meier curves plus log-rank p-values for median score split and for condition, explicitly labeled unadjusted",
+          "Within-cases-only sensitivity result with its event count",
+          "Explicit statement that the test is prognostic, not predictive, and that the signature is pre-specified rather than derived on this cohort"
+        ]
+      }
+    ],
+    "title": "20-gene signature score vs. time-to-event, case-adjusted",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The cohort is 60 cases vs. 60 controls of unpaired human tumor biopsies: Salmon gene-level counts (12000 genes x 120 samples), per-sample follow-up time and 0/1 event indicator, and a pre-specified, unweighted 20-gene signature (symbols only, no weights). The research question is a prognostic association test of a pre-specified signature, not model discovery. Step 1 reduces the matrix to one comparable per-sample score: edgeR TMM normalization over the full 12000x120 matrix (the record's unknown Salmon length-correction status does not materially affect a fixed 20-gene panel, and will be stated as such), then the unweighted mean (plus median robustness variant) of the 20 signature genes per sample, with symbol-mapping and sample-level QC reported rather than silently fixed. Step 2 tests the question: Cox proportional hazards with event(time) ~ score + condition on the full 120-sample cohort — condition is a required covariate per the question, so the primary result is the condition-adjusted HR per 1-SD of score — with event-count/power checks upfront, Schoenfeld PH diagnostics and a documented response if violated, descriptive Kaplan-Meier by median score split and by condition, and a within-cases-only sensitivity. R's survival package is absent from the sandbox, so the modeling runs in Python with lifelines."
+  },
+  "usage": {
+    "inputTokens": 74781,
+    "outputTokens": 10800,
+    "cacheReadInputTokens": 32774,
+    "reasoningTokens": 8690
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_3a399b72339b4979a697082d",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "lifelines",
+          "edgeR",
+          "survival",
+          "ggplot2",
+          "pandas"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "call_a902e84fd2c141d1be6b6856",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"20-gene signature score vs. time-to-event, case-adjusted\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"analytical_narrative\": \"The cohort is 60 cases vs. 60 controls of unpaired human tumor biopsies: Salmon gene-level counts (12000 genes x 120 samples), per-sample follow-up time and 0/1 event indicator, and a pre-specified, unweighted 20-gene signature (symbols only, no weights). The research question is a prognostic association test of a pre-specified signature, not model discovery. Step 1 reduces the matrix to one comparable per-sample score: edgeR TMM normalization over the full 12000x120 matrix (the record's unknown Salmon length-correction status does not materially affect a fixed 20-gene panel, and will be stated as such), then the unweighted mean (plus median robustness variant) of the 20 signature genes per sample, with symbol-mapping and sample-level QC reported rather than silently fixed. Step 2 tests the question: Cox proportional hazards with event(time) ~ score + condition on the full 120-sample cohort — condition is a required covariate per the question, so the primary result is the condition-adjusted HR per 1-SD of score — with event-count/power checks upfront, Schoenfeld PH diagnostics and a documented response if violated, descriptive Kaplan-Meier by median score split and by condition, and a within-cases-only sensitivity. R's survival package is absent from the sandbox, so the modeling runs in Python with lifelines.\", \"created_at\": \"2026-07-10T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"TMM normalization and 20-gene signature scoring\", \"track\": \"signature-tte\", \"step_type\": \"analysis\", \"question\": \"What is each of the 120 tumor-biopsy samples' level of the pre-specified 20-gene signature (unweighted), on a scale comparable across the case and control samples?\", \"context\": \"Inputs: /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/counts/counts.csv (Salmon gene-level counts, 12000 genes x 120 samples; the record does not state whether length correction was applied); /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 4: sample, condition case/control, follow-up time, event); /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/signature/signature_genes.csv (20 gene symbols, one per row, no weights). Design: 60 cases vs. 60 controls, unpaired, single batch. R is available with edgeR 4.10.3 and ggplot2 4.0.3.\", \"description\": \"Load counts.csv and metadata.csv; join on sample id and verify exactly 120/120 match, reporting any mismatch. Map the 20 signature symbols to count rows and report the exact matched/unmatched list. Sanity-check that values look like raw counts (non-negative, integer-like). TMM-normalize the full 12000x120 matrix with edgeR (calcNormFactors + cpm) and compute, per sample, the unweighted mean of the 20 signature genes' normalized expression as the primary score, plus the unweighted median as a robustness variant. QC: per-sample total counts and detected-gene counts; flag low-count or outlier samples (flag only, do not drop). Write a per-sample CSV (sample, condition, score_mean, score_median, norm_factor, QC flags) and a brief distribution summary/plot of the scores by condition.\", \"acceptance_criteria\": [\"Per-sample score table (CSV) covering all 120 samples with condition carried through, containing both mean- and median-based scores\", \"Explicit report of how many of the 20 signature symbols matched the count rows, naming any unmatched\", \"TMM normalization factors reported and raw-count sanity check documented\", \"QC flags (not drops) for any low-count or outlier samples, with the flagged sample list\"], \"constraints\": [\"Score all 120 samples; no sample exclusion at this step\", \"If a signature symbol is absent from the count matrix, score on the remaining genes and flag it prominently in the output — never impute\", \"Save the per-sample score table as a CSV artifact in the step output directory\"], \"caveats\": [\"The record does not state whether Salmon length correction was applied; for a fixed 20-gene panel this does not materially affect cross-sample score comparison, but state it in the report\", \"If the values look like TPM/FPKM rather than counts, say so and justify the normalization choice before proceeding\", \"A median score can diverge from the mean score when individual signature genes are extreme in some samples; report both so the downstream step can use the mean as primary\"], \"packages\": [\"edgeR\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Cox PH: time-to-event ~ signature score + condition\", \"track\": \"signature-tte\", \"step_type\": \"analysis\", \"question\": \"In the full 120-sample cohort (60 cases vs. 60 controls), does the 20-gene signature score associate with time to the event after accounting for case versus control status, and is that association stable under PH diagnostics and within-case sensitivity?\", \"context\": \"Uses T1S1's per-sample table (score_mean, score_median, condition) joined to metadata.csv columns: time (follow-up) and event (0/1 indicator). Validate before modeling: time >= 0, event in {0,1}, and 0 < event rate < 100%; if the event column is degenerate (all 0 or all 1), stop and report — a Cox model is undefined. Python environment has lifelines 0.30.0; R's survival package is NOT installed, so all survival modeling must run in Python with lifelines.\", \"description\": \"Report total events overall and per condition before any inference, and state explicitly whether the cohort is underpowered (rule-of-thumb events per covariate) if few. Primary model: Cox PH event(time) ~ score_z + condition with score_z = T1S1 mean-based score standardized to 1-SD units; report HR per 1-SD of score with 95% CI and Wald p-value, plus the unadjusted score-only model for reference. PH assumption: Schoenfeld residual tests (overall and per covariate); if violated for score, additionally fit a time-varying effect (product with log time) and a model restricted to the early follow-up window, and interpret in light of the violation. Descriptive: Kaplan-Meier curves with log-rank p-values for median-score split (high vs. low) and for condition, labeled as unadjusted. Sensitivity: Cox restricted to the 60 cases, with its own event count; median-based score as an alternate predictor in the primary model. State explicitly that this is a prognostic (not predictive) association because the metadata carries no treatment variable.\", \"acceptance_criteria\": [\"Condition-adjusted Cox result: HR per 1-SD of signature score with 95% CI and p-value, alongside the unadjusted score-only model\", \"Event counts (overall and per condition) reported before interpretation, with an explicit power statement\", \"Schoenfeld PH test results, with a documented response (time-varying effect and/or early-window model) if the assumption is violated\", \"Kaplan-Meier curves plus log-rank p-values for median score split and for condition, explicitly labeled unadjusted\", \"Within-cases-only sensitivity result with its event count\", \"Explicit statement that the test is prognostic, not predictive, and that the signature is pre-specified rather than derived on this cohort\"], \"constraints\": [\"Fit the primary model with BOTH score and condition; never drop the condition covariate from the primary analysis\", \"Use the mean-based score as the primary predictor; the median-based score is sensitivity only\", \"Count and report events before interpreting any p-value\", \"Run survival modeling in Python with lifelines (R survival package is not installed)\"], \"caveats\": [\"Median-score split KM is descriptive and does not adjust for condition; do not present it as a test of the adjusted association\", \"If condition is strongly associated with the event, the adjusted HR for score reflects association partly within strata; the within-case sensitivity makes the single-stratum view visible\", \"The signature is pre-specified by the study and not derived from this cohort's data, so the test is not inflated by in-sample feature selection — state this as an assumption of the analysis\", \"Censoring is assumed non-informative; no competing risks are modeled (single binary event indicator)\"], \"packages\": [\"lifelines\", \"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"statistical-modeling-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 52
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

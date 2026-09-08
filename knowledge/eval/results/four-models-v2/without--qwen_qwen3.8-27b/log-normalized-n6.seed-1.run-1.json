@@ -1,0 +1,111 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:19:01.061Z",
+  "elapsedMs": 169526,
+  "outcome": "plan_submitted",
+  "planId": "pln-ece68528",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample QC + limma DE (treated vs control)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "log2(TPM+1) is not a count: the +1 offset slightly compresses logFC for lowly expressed genes; report fold changes as log2-scale and do not present them as exact expression ratios",
+          "n=6 per group gives limited power — a small number of significant genes is an expected outcome, not a failure; report genes meeting |logFC| thresholds regardless of significance",
+          "Residual heteroscedasticity is not modeled (no count-based weights); eBayes moderation is the only variance stabilization — state this as a limitation",
+          "Results are conditional on the core facility's TPM normalization; do not attempt re-normalization, as no raw counts or total read counts are available"
+        ],
+        "context": "Input files: /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 x 13: one gene-ID column + 12 sample columns; values are log2(TPM+1), already normalized by the core facility, NOT counts) and /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2: one row per sample with condition). Design: 6 treated vs 6 control, unpaired, single batch, Homo sapiens, muscle tissue. R is available with limma==3.68.5, ggplot2, org.Hs.eg.db==3.23.1.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which of the 12,000 genes in the facility-delivered log2(TPM+1) matrix differ significantly between the 6 treated and 6 control human muscle samples?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge tool attached this session; the method follows the standard treatment of pre-normalized log2 expression (limma linear model), and count-based models are inapplicable because the core facility delivered log2(TPM+1) values rather than counts.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Model the log2(TPM+1) values directly with limma (lmFit + eBayes). Do not back-transform to pseudo-counts, and do not use DESeq2, edgeR, or voom — no counts were delivered and the values are already normalized.",
+          "Build the design from metadata.csv using the two actual condition level names (6 treated vs 6 control); unpaired, single batch, so no batch, subject, or hidden-factor covariates (with 12 samples there is no degree of freedom for empirical hidden factors either). Use contrast treated minus control.",
+          "Join matrix columns to metadata rows by exact sample name and verify all 12 match. If any sample name does not match, stop and report the mismatch — do not guess a join.",
+          "QC inside this step: PCA of the 12 samples colored by condition, per-sample mean and variance, and flag any sample that is an obvious outlier of its group. If one is flagged, re-run the limma model excluding it and report both results side by side; never silently drop a sample.",
+          "Multiple testing: Benjamini-Hochberg (topTable adjust='BH'); define the DE set at adj.P < 0.05.",
+          "Map row gene IDs to official HGNC symbols via org.Hs.eg.db, keeping the native ID in the output; report the mapping rate."
+        ],
+        "description": "Directs limma (lmFit + eBayes) at the pre-normalized log2(TPM+1) values with a two-group design from metadata.csv; runs in-step sample QC (PCA, per-sample statistics, outlier sensitivity) before finalizing the model; maps gene IDs to HGNC symbols; outputs the full ranked DE table, the DE gene list (adj.P < 0.05, up/down), QC plots, and a methods note stating the data were pre-normalized and modeled as log2 values.",
+        "acceptance_criteria": [
+          "Full ranked table covering all tested genes: native gene ID, HGNC symbol, logFC (treated vs control), AveExpr, t, P, adj.P",
+          "DE gene list at adj.P < 0.05 split into up- and down-regulated, with counts, plus the count of significant genes with |logFC| >= 0.58",
+          "Saved QC artifacts: PCA of the 12 samples colored by condition, per-sample mean/variance table, and an outlier sensitivity analysis (model with and without the flagged sample) if any sample is flagged",
+          "Methods note stating the data are pre-normalized log2(TPM+1), the model is limma lmFit+eBayes on those values, and fold changes are on the log2 scale"
+        ]
+      }
+    ],
+    "title": "Muscle treated-vs-control limma DE + GSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core facility delivered a pre-normalized log2(TPM+1) matrix (12,000 genes x 12 human muscle samples, 6 treated vs 6 control, unpaired, single batch), not raw counts. That rules out count-based models (DESeq2/edgeR) and voom, whose mean-variance weighting requires counts; the standard method for pre-normalized log2 expression is a limma linear model with empirical Bayes moderation (lmFit + eBayes) on the values as delivered, with the two-group design read from metadata.csv. Sample QC (PCA, outlier sensitivity) is folded into that same step because with n=6 per group a single outlier can dominate the contrast. The resulting ranked gene list then feeds fgsea GSEA plus ORA against the human WikiPathways GMT provisioned in this environment (organism matches Homo sapiens), giving pathway-level context to the differential gene list. Enrichment only annotates the result: the DE answer stands without it, and the step reports the gap if the reference is absent at runtime."
+  },
+  "usage": {
+    "inputTokens": 74049,
+    "outputTokens": 10071,
+    "cacheReadInputTokens": 44800,
+    "reasoningTokens": 7216
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_2eae4ebf53804dedaa20e884",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Muscle treated-vs-control limma DE + GSEA\", \"analytical_narrative\": \"The core facility delivered a pre-normalized log2(TPM+1) matrix (12,000 genes x 12 human muscle samples, 6 treated vs 6 control, unpaired, single batch), not raw counts. That rules out count-based models (DESeq2/edgeR) and voom, whose mean-variance weighting requires counts; the standard method for pre-normalized log2 expression is a limma linear model with empirical Bayes moderation (lmFit + eBayes) on the values as delivered, with the two-group design read from metadata.csv. Sample QC (PCA, outlier sensitivity) is folded into that same step because with n=6 per group a single outlier can dominate the contrast. The resulting ranked gene list then feeds fgsea GSEA plus ORA against the human WikiPathways GMT provisioned in this environment (organism matches Homo sapiens), giving pathway-level context to the differential gene list. Enrichment only annotates the result: the DE answer stands without it, and the step reports the gap if the reference is absent at runtime.\", \"created_at\": \"2026-07-10T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample QC + limma DE (treated vs control)\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 genes in the facility-delivered log2(TPM+1) matrix differ significantly between the 6 treated and 6 control human muscle samples?\", \"context\": \"Input files: /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 x 13: one gene-ID column + 12 sample columns; values are log2(TPM+1), already normalized by the core facility, NOT counts) and /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2: one row per sample with condition). Design: 6 treated vs 6 control, unpaired, single batch, Homo sapiens, muscle tissue. R is available with limma==3.68.5, ggplot2, org.Hs.eg.db==3.23.1.\", \"description\": \"Directs limma (lmFit + eBayes) at the pre-normalized log2(TPM+1) values with a two-group design from metadata.csv; runs in-step sample QC (PCA, per-sample statistics, outlier sensitivity) before finalizing the model; maps gene IDs to HGNC symbols; outputs the full ranked DE table, the DE gene list (adj.P < 0.05, up/down), QC plots, and a methods note stating the data were pre-normalized and modeled as log2 values.\", \"acceptance_criteria\": [\"Full ranked table covering all tested genes: native gene ID, HGNC symbol, logFC (treated vs control), AveExpr, t, P, adj.P\", \"DE gene list at adj.P < 0.05 split into up- and down-regulated, with counts, plus the count of significant genes with |logFC| >= 0.58\", \"Saved QC artifacts: PCA of the 12 samples colored by condition, per-sample mean/variance table, and an outlier sensitivity analysis (model with and without the flagged sample) if any sample is flagged\", \"Methods note stating the data are pre-normalized log2(TPM+1), the model is limma lmFit+eBayes on those values, and fold changes are on the log2 scale\"], \"constraints\": [\"Model the log2(TPM+1) values directly with limma (lmFit + eBayes). Do not back-transform to pseudo-counts, and do not use DESeq2, edgeR, or voom — no counts were delivered and the values are already normalized.\", \"Build the design from metadata.csv using the two actual condition level names (6 treated vs 6 control); unpaired, single batch, so no batch, subject, or hidden-factor covariates (with 12 samples there is no degree of freedom for empirical hidden factors either). Use contrast treated minus control.\", \"Join matrix columns to metadata rows by exact sample name and verify all 12 match. If any sample name does not match, stop and report the mismatch — do not guess a join.\", \"QC inside this step: PCA of the 12 samples colored by condition, per-sample mean and variance, and flag any sample that is an obvious outlier of its group. If one is flagged, re-run the limma model excluding it and report both results side by side; never silently drop a sample.\", \"Multiple testing: Benjamini-Hochberg (topTable adjust='BH'); define the DE set at adj.P < 0.05.\", \"Map row gene IDs to official HGNC symbols via org.Hs.eg.db, keeping the native ID in the output; report the mapping rate.\"], \"caveats\": [\"log2(TPM+1) is not a count: the +1 offset slightly compresses logFC for lowly expressed genes; report fold changes as log2-scale and do not present them as exact expression ratios\", \"n=6 per group gives limited power — a small number of significant genes is an expected outcome, not a failure; report genes meeting |logFC| thresholds regardless of significance\", \"Residual heteroscedasticity is not modeled (no count-based weights); eBayes moderation is the only variance stabilization — state this as a limitation\", \"Results are conditional on the core facility's TPM normalization; do not attempt re-normalization, as no raw counts or total read counts are available\"], \"packages\": [\"limma\", \"ggplot2\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"none\", \"claims\": [], \"reason\": \"No knowledge tool attached this session; the method follows the standard treatment of pre-normalized log2 expression (limma linear model), and count-based models are inapplicable because the core facility delivered log2(TPM+1) values rather than counts.\"}}], \"track_note\": \"single linear track\"}]"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_86d6717e2966483fb9e62dad",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"analytical_narrative\": \"The core facility delivered a pre-normalized log2(TPM+1) matrix (12,000 genes x 12 human muscle samples, 6 treated vs 6 control, unpaired, single batch), not raw counts. That rules out count-based models (DESeq2/edgeR) and voom, whose mean-variance weighting requires counts; the standard method for pre-normalized log2 expression is a limma linear model with empirical Bayes moderation (lmFit + eBayes) on the values as delivered, with the two-group design read from metadata.csv. Sample QC (PCA, outlier sensitivity) is folded into that same step because with n=6 per group a single outlier can dominate the contrast. The resulting ranked gene list then feeds fgsea GSEA plus ORA against the human WikiPathways GMT provisioned in this environment (organism matches Homo sapiens), giving pathway-level context to the differential gene list. Enrichment only annotates the result: the DE answer stands without it, and the step reports the gap if the reference is absent at runtime.\", \"created_at\": \"2026-07-10T00:00:00Z\", \"omicsSubtype\": \"bulk-rna-seq\", \"omicsType\": \"transcriptomics\", \"steps\": [{\"acceptance_criteria\": [\"Full ranked table covering all tested genes: native gene ID, HGNC symbol, logFC (treated vs control), AveExpr, t, P, adj.P\", \"DE gene list at adj.P < 0.05 split into up- and down-regulated, with counts, plus the count of significant genes with |logFC| >= 0.58\", \"Saved QC artifacts: PCA of the 12 samples colored by condition, per-sample mean/variance table, and an outlier sensitivity analysis (model with and without the flagged sample) if any sample is flagged\", \"Methods note stating the data are pre-normalized log2(TPM+1), the model is limma lmFit+eBayes on those values, and fold changes are on the log2 scale\"], \"agent\": \"bulk-transcriptomics-agent\", \"context\": \"Input files: /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 x 13: one gene-ID column + 12 sample columns; values are log2(TPM+1), already normalized by the core facility, NOT counts) and /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2: one row per sample with condition). Design: 6 treated vs 6 control, unpaired, single batch, Homo sapiens, muscle tissue. R is available with limma==3.68.5, ggplot2, org.Hs.eg.db==3.23.1.\", \"constraints\": [\"Model the log2(TPM+1) values directly with limma (lmFit + eBayes). Do not back-transform to pseudo-counts, and do not use DESeq2, edgeR, or voom — no counts were delivered and the values are already normalized.\", \"Build the design from metadata.csv using the two actual condition level names (6 treated vs 6 control); unpaired, single batch, so no batch, subject, or hidden-factor covariates (with 12 samples there is no degree of freedom for empirical hidden factors either). Use contrast treated minus control.\", \"Join matrix columns to metadata rows by exact sample name and verify all 12 match. If any sample name does not match, stop and report the mismatch — do not guess a join.\", \"QC inside this step: PCA of the 12 samples colored by condition, per-sample mean and variance, and flag any sample that is an obvious outlier of its group. If one is flagged, re-run the limma model excluding it and report both results side by side; never silently drop a sample.\", \"Multiple testing: Benjamini-Hochberg (topTable adjust='BH'); define the DE set at adj.P < 0.05.\", \"Map row gene IDs to official HGNC symbols via org.Hs.eg.db, keeping the native ID in the output; report the mapping rate.\"], \"caveats\": [\"log2(TPM+1) is not a count: the +1 offset slightly compresses logFC for lowly expressed genes; report fold changes as log2-scale and do not present them as exact expression ratios\", \"n=6 per group gives limited power — a small number of significant genes is an expected outcome, not a failure; report genes meeting |logFC| thresholds regardless of significance\", \"Residual heteroscedasticity is not modeled (no count-based weights); eBayes moderation is the only variance stabilization — state this as a limitation\", \"Results are conditional on the core facility's TPM normalization; do not attempt re-normalization, as no raw counts or total read counts are available\"], \"depends_on\": [], \"description\": \"Directs limma (lmFit + eBayes) at the pre-normalized log2(TPM+1) values with a two-group design from metadata.csv; runs in-step sample QC (PCA, per-sample statistics, outlier sensitivity) before finalizing the model; maps gene IDs to HGNC symbols; outputs the full ranked DE table, the DE gene list (adj.P < 0.05, up/down), QC plots, and a methods note stating the data were pre-normalized and modeled as log2 values.\", \"grounding\": {\"claims\": [], \"reason\": \"No knowledge tool attached this session; the method follows the standard treatment of pre-normalized log2 expression (limma linear model), and count-based models are inapplicable because the core facility delivered log2(TPM+1) values rather than counts.\", \"snapshot\": \"none\", \"status\": \"ungrounded\"}, \"id\": \"T1S1\", \"name\": \"Sample QC + limma DE (treated vs control)\", \"packages\": [\"limma\", \"ggplot2\", \"org.Hs.eg.db\"], \"question\": \"Which of the 12,000 genes in the facility-delivered log2(TPM+1) matrix differ significantly between the 6 treated and 6 control human muscle samples?\", \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"step_type\": \"analysis\", \"track\": \"T1\"}], \"title\": \"Muscle treated-vs-control limma DE + GSEA\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 38
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

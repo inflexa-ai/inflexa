@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly stops at sample-structure QC with no differential test, no p-values and no gene list, and delivers exactly what was asked: raw library sizes with detected-gene counts and ratio to median, a blind VST PCA on the 500 most variable genes colored by condition, a Euclidean distance heatmap, and a quantitative, evidence-based keep-unless-outlier verdict on sample_01 that distinguishes depth from mislabel or contamination. The main omission is any low-count gene filter before the transform, which the reference expects; the plan also never states that the VST rests on size factors, only that testing normalization is deferred. It correctly omits model, contrasts, FDR and enrichment for a QC-only question but gives no recommendation for the later test (design formula, reference level) and no package versions, which the reference report asks for."
+}

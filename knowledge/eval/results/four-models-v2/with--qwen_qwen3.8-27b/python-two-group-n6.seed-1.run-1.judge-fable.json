@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "PyDESeq2 Wald with in-model median-of-ratios size factors, explicit reference level and contrast direction, apeglm-style shrinkage with a stated fallback, independent filtering and BH at 0.05 fits the 6v6 unpaired single-batch Python-only design exactly, and the shallow sample_01 is kept under an explicit inspect-and-report policy with a sensitivity re-run as the robustness check. QC is complete (library sizes, detected genes, blind VST PCA, distance heatmap, condition coloring) and the ~10 counts in >=6 samples filter is minimal and tied to the smallest group. Enrichment uses gseapy prerank on the full Wald-statistic-ranked list with Hallmark 2026.1 named, a 15-500 window and the tested-gene universe, but the fixed seed is only mentioned as something to record in the report rather than set in the enrichment step, and the added Reactome/WikiPathways/GO collections exceed the hallmark question asked; the plan also loosely calls gseapy prerank 'fgsea'. The report specification covers method, versions, design, thresholds, gene counts and the design caveats thoroughly."
+}

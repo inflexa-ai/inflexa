@@ -1,0 +1,195 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "python-enrichment-only",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:08:00.535Z",
+  "elapsedMs": 219876,
+  "outcome": "plan_submitted",
+  "planId": "pln-ad42f4e1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE gene lists and ranked list from de_results.csv",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the table has no stat column, use the signed -log10(pvalue) metric and say so in the report — do not invent a statistic.",
+          "sample_01 (library size ~4x below median) is already inside this table; flag it as an interpretive caveat, do not attempt to re-estimate DE or impute counts.",
+          "pvalue and padj may contain zero or non-finite entries (e.g. padj NA when p is not small enough); handle -log10(0) explicitly (cap or rank-last) rather than letting it become inf in the sort."
+        ],
+        "context": "Input: /eval-four-models-v2-without-python-enrichment-only-s1-1/data/inputs/results/de_results.csv (12000 x 8, DESeq2 treated vs control; per the profile the columns start gene, base_mean, log2_fold_change, log2_fo... — the remaining names must be read from the header). Companion files: /eval-four-models-v2-without-python-enrichment-only-s1-1/data/inputs/metadata/metadata.csv (12 x 2, one row per sample with condition) and /eval-four-models-v2-without-python-enrichment-only-s1-1/data/inputs/counts/counts.csv (12000 x 13 = gene + 12 samples, Salmon gene-level counts). Design: 6 treated (AD lesional skin) vs 6 control, unpaired, single batch. Known upstream caveat: sample_01 has a library size about 4x below the median, so it is already baked into this DE table.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are significantly up- or down-regulated in the AD-lesional (treated) vs control contrast according to the existing DESeq2 table, and on what signed metric should all 12,000 genes be ranked for GSEA?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Python only (pandas, numpy). No R, no rpy2, no Rscript calls.",
+          "Read de_results.csv and print the actual column headers; map columns by inspection (gene, base_mean, log2_fold_change, LFC SE or CI columns, pvalue, padj, and a Wald stat column if one exists). Do not assume truncated profile names are the real names.",
+          "Read metadata.csv and confirm exactly 6 treated and 6 control labels; confirm the 12 sample columns of counts.csv match the 12 sample names in metadata.csv (gene-column identity check between counts.csv and de_results.csv too — report any mismatch).",
+          "Do NOT re-run differential expression. Treat de_results.csv as the fixed upstream DESeq2 output.",
+          "Primary DE definition: padj < 0.05; split into up (log2_fold_change > 0) and down (log2_fold_change < 0). Sensitivities: report counts at padj < 0.1, and at padj < 0.05 with |log2_fold_change| >= 0.585 (1.5-fold).",
+          "Ranked list for GSEA: all 12,000 genes sorted descending by a signed metric — use the Wald stat column if present, otherwise sign(log2_fold_change) * -log10(pvalue) with ties broken by |log2_fold_change|; genes with non-finite values rank last.",
+          "Write artifacts: de_genes_up.csv, de_genes_down.csv (padj < 0.05, with gene, log2FC, padj), ranked_list.csv (gene, metric, rank), and ranked_list.txt with exactly one gene symbol per line in descending metric order (no header) for gseapy."
+        ],
+        "acceptance_criteria": [
+          "de_genes_up.csv, de_genes_down.csv, ranked_list.csv, and ranked_list.txt all exist and are non-empty (unless zero genes pass the threshold, which must then be reported explicitly).",
+          "Report states: number of up and down genes at padj < 0.05 and at padj < 0.1, the fraction of genes with finite padj, the exact ranking metric used (stat column or signed -log10 p-value), and the metadata cross-check outcome (6 vs 6 confirmed).",
+          "Metadata check confirms 6 treated / 6 control and that counts.csv and de_results.csv share the same 12,000-gene row set."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pre-ranked GSEA on MSigDB human Hallmark v2026.1",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "gseapy column names in res2d may differ from older versions (e.g. 'NES familywise q'); read the returned DataFrame columns rather than hard-coding them, and map to (Term, ES, NES, nominal p, FDR q) in the saved CSV.",
+          "Pre-ranked GSEA inherits all caveats of the upstream DE table (including sample_01's low library size) — state this once in the report.",
+          "If fewer than 50 sets pass any significance threshold, report that plainly; 'no hallmark pathway reached q < 0.25' is a valid result and must not be papered over."
+        ],
+        "context": "Inputs from T1S1: ranked_list.txt (one gene per line, descending signed metric) and ranked_list.csv. Gene sets: the MSigDB human Hallmark collection, 50 HALLMARK_* sets with HGNC symbols, staged locally at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (MSigDB 2026.1, immutable release). gseapy 1.3.1 is installed; the sandbox has no network, so only this local GMT may be used. Do NOT use the mouse hallmark (mh.all, MGI symbols) or the oncogenic C6 collection for this question.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which of the 50 MSigDB human Hallmark pathways are significantly enriched in the AD-lesional (treated) vs control direction, and which are enriched in the opposite direction, per pre-ranked GSEA on the DE-ranked gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only. Run pre-ranked GSEA with gseapy.gsea.prerank (verify the installed 1.3.1 signature via inspect/help before calling and adapt argument names if they differ), feeding the one-gene-per-line ranked file and the Hallmark GMT path, with min_size 15 and max_size 500.",
+          "Report for all 50 sets: NES, nominal p, and FDR (familywise) q; classify direction by NES sign (positive = enriched in the treated/AD-lesional direction of the ranked list).",
+          "Flag FDR q < 0.25 as the primary significance call and also report which sets reach q < 0.05; with only 6 vs 6 samples do not overstate the strength of any call.",
+          "Save the full 50-set result table as CSV (gsea_hallmark_results.csv) plus top10_up and top10_down CSVs ordered by |NES|.",
+          "Produce plots with gseapy: plot_rbar of the top pathways (NES vs FDR q) and plot_enrichment running-enrichment curves for the top up and top down pathway (at least one each); save as PNGs.",
+          "Coverage check: for each Hallmark set, report how many of its member symbols appear among the 12,000 ranked genes; note any set losing more than 10% of its members to the gene-list intersection.",
+          "No downloads of any kind; the GMT is local and immutable."
+        ],
+        "acceptance_criteria": [
+          "gsea_hallmark_results.csv contains all 50 Hallmark sets with NES, nominal p, and FDR q columns populated.",
+          "Top-10 up and top-10 down pathway tables exist and are ordered by |NES| with direction stated.",
+          "At least two PNG plots exist (rbar + running-enrichment curve for a top up and a top down pathway).",
+          "Report names the exact GMT file and MSigDB version used, and states the coverage check outcome."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "ORA cross-check of DE gene lists against Hallmark",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 samples the DE lists may be small; if a direction has fewer than ~50 significant genes, label the ORA results for that direction as low-confidence in the report.",
+          "ORA is less sensitive than GSEA by construction; discordance between methods is expected and should be reported, not 'resolved' in favor of either."
+        ],
+        "context": "Inputs from T1S1: de_genes_up.csv and de_genes_down.csv (padj < 0.05). Background: the 12,000 genes in de_results.csv. Gene sets: the same local MSigDB human Hallmark v2026.1 GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt). gseapy 1.3.1 installed; Python only; no network.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "Which Hallmark pathways are over-represented among the significant DE genes (padj < 0.05) in each direction, and does that agree with the GSEA result?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only. Run over-representation analysis with gseapy.enrichment (verify the installed signature before calling) once on the up list and once on the down list, against the Hallmark GMT, with the 12,000-gene DE table as background.",
+          "Report per set: OR (over/under), raw p, and BH-adjusted q; flag q < 0.25.",
+          "Save ora_up.csv and ora_down.csv (all sets, sorted by q) and one bar chart per direction (top 10 sets by q or OR).",
+          "Cross-compare with T1S2: list the sets significant in both GSEA and ORA (with matching direction) and the sets significant in only one method.",
+          "State explicitly that ORA uses only membership of the DE lists (ranking information is discarded) and is a secondary cross-check, not the primary answer."
+        ],
+        "acceptance_criteria": [
+          "ora_up.csv and ora_down.csv exist with OR, p, and BH-adjusted q for every Hallmark set that had >= 1 member in the respective DE list.",
+          "A written agreement/disagreement summary against the T1S2 GSEA result exists (sets concordant, GSEA-only, ORA-only).",
+          "At least one bar plot PNG per direction exists."
+        ]
+      }
+    ],
+    "title": "Hallmark pathway GSEA on AD lesional vs control DE genes",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-25T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The user already has the DESeq2 result for the AD-lesional (treated) vs control contrast in de_results.csv (12,000 genes, 6 vs 6 unpaired, single batch), so per the request the plan starts from that table rather than re-running differential expression on the Salmon counts. T1S1 turns the table into two artifacts: significant up/down DE gene lists (padj < 0.05 primary, with padj < 0.1 and |log2FC| >= 0.585 as sensitivities) and a full ranked gene list on a signed metric. T1S2 runs pre-ranked GSEA (gseapy, Python only per the user constraint) of that ranked list against the 50 MSigDB human Hallmark sets (v2026.1, staged locally at /mnt/refs) — the primary answer to 'which hallmark pathways are enriched'. T1S3 runs over-representation analysis on the DE lists as an orthogonal cross-check, since ORA discards ranking information. All scripts are Python (pandas/numpy/gseapy/matplotlib); no R. Two caveats travel with the numbers: the upstream DESeq2 included sample_01, whose library size is ~4x below the median, and the delivered Salmon counts are not documented as length-corrected — neither changes anything here since DE is consumed as given, but both are flagged for interpretation."
+  },
+  "usage": {
+    "inputTokens": 117641,
+    "outputTokens": 13896,
+    "cacheReadInputTokens": 81664,
+    "reasoningTokens": 10874
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_5abd1d56165044e1999c4870",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 58
+    },
+    {
+      "toolUseId": "call_90bc85a5de1645b2915fb9ea",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "gseapy",
+        "query": "preranked GSEA: gseapy.gsea.prerank function signature, how to pass ranked gene list and GMT file, output columns NES fdr qvalue"
+      },
+      "outcome": "error",
+      "durationMs": 1651
+    },
+    {
+      "toolUseId": "call_da58f6a4e14948268363a3de",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Hallmark pathway GSEA on AD lesional vs control DE genes\", \"analytical_narrative\": \"The user already has the DESeq2 result for the AD-lesional (treated) vs control contrast in de_results.csv (12,000 genes, 6 vs 6 unpaired, single batch), so per the request the plan starts from that table rather than re-running differential expression on the Salmon counts. T1S1 turns the table into two artifacts: significant up/down DE gene lists (padj < 0.05 primary, with padj < 0.1 and |log2FC| >= 0.585 as sensitivities) and a full ranked gene list on a signed metric. T1S2 runs pre-ranked GSEA (gseapy, Python only per the user constraint) of that ranked list against the 50 MSigDB human Hallmark sets (v2026.1, staged locally at /mnt/refs) — the primary answer to 'which hallmark pathways are enriched'. T1S3 runs over-representation analysis on the DE lists as an orthogonal cross-check, since ORA discards ranking information. All scripts are Python (pandas/numpy/gseapy/matplotlib); no R. Two caveats travel with the numbers: the upstream DESeq2 included sample_01, whose library size is ~4x below the median, and the delivered Salmon counts are not documented as length-corrected — neither changes anything here since DE is consumed as given, but both are flagged for interpretation.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"DE gene lists and ranked list from de_results.csv\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which genes are significantly up- or down-regulated in the AD-lesional (treated) vs control contrast according to the existing DESeq2 table, and on what signed metric should all 12,000 genes be ranked for GSEA?\", \"context\": \"Input: /eval-four-models-v2-without-python-enrichment-only-s1-1/data/inputs/results/de_results.csv (12000 x 8, DESeq2 treated vs control; per the profile the columns start gene, base_mean, log2_fold_change, log2_fo... — the remaining names must be read from the header). Companion files: /eval-four-models-v2-without-python-enrichment-only-s1-1/data/inputs/metadata/metadata.csv (12 x 2, one row per sample with condition) and /eval-four-models-v2-without-python-enrichment-only-s1-1/data/inputs/counts/counts.csv (12000 x 13 = gene + 12 samples, Salmon gene-level counts). Design: 6 treated (AD lesional skin) vs 6 control, unpaired, single batch. Known upstream caveat: sample_01 has a library size about 4x below the median, so it is already baked into this DE table.\", \"constraints\": [\"Python only (pandas, numpy). No R, no rpy2, no Rscript calls.\", \"Read de_results.csv and print the actual column headers; map columns by inspection (gene, base_mean, log2_fold_change, LFC SE or CI columns, pvalue, padj, and a Wald stat column if one exists). Do not assume truncated profile names are the real names.\", \"Read metadata.csv and confirm exactly 6 treated and 6 control labels; confirm the 12 sample columns of counts.csv match the 12 sample names in metadata.csv (gene-column identity check between counts.csv and de_results.csv too — report any mismatch).\", \"Do NOT re-run differential expression. Treat de_results.csv as the fixed upstream DESeq2 output.\", \"Primary DE definition: padj < 0.05; split into up (log2_fold_change > 0) and down (log2_fold_change < 0). Sensitivities: report counts at padj < 0.1, and at padj < 0.05 with |log2_fold_change| >= 0.585 (1.5-fold).\", \"Ranked list for GSEA: all 12,000 genes sorted descending by a signed metric — use the Wald stat column if present, otherwise sign(log2_fold_change) * -log10(pvalue) with ties broken by |log2_fold_change|; genes with non-finite values rank last.\", \"Write artifacts: de_genes_up.csv, de_genes_down.csv (padj < 0.05, with gene, log2FC, padj), ranked_list.csv (gene, metric, rank), and ranked_list.txt with exactly one gene symbol per line in descending metric order (no header) for gseapy.\"], \"acceptance_criteria\": [\"de_genes_up.csv, de_genes_down.csv, ranked_list.csv, and ranked_list.txt all exist and are non-empty (unless zero genes pass the threshold, which must then be reported explicitly).\", \"Report states: number of up and down genes at padj < 0.05 and at padj < 0.1, the fraction of genes with finite padj, the exact ranking metric used (stat column or signed -log10 p-value), and the metadata cross-check outcome (6 vs 6 confirmed).\", \"Metadata check confirms 6 treated / 6 control and that counts.csv and de_results.csv share the same 12,000-gene row set.\"], \"caveats\": [\"If the table has no stat column, use the signed -log10(pvalue) metric and say so in the report — do not invent a statistic.\", \"sample_01 (library size ~4x below median) is already inside this table; flag it as an interpretive caveat, do not attempt to re-estimate DE or impute counts.\", \"pvalue and padj may contain zero or non-finite entries (e.g. padj NA when p is not small enough); handle -log10(0) explicitly (cap or rank-last) rather than letting it become inf in the sort.\"], \"packages\": [\"pandas\", \"numpy\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T1S2\", \"name\": \"Pre-ranked GSEA on MSigDB human Hallmark v2026.1\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 50 MSigDB human Hallmark pathways are significantly enriched in the AD-lesional (treated) vs control direction, and which are enriched in the opposite direction, per pre-ranked GSEA on the DE-ranked gene list?\", \"context\": \"Inputs from T1S1: ranked_list.txt (one gene per line, descending signed metric) and ranked_list.csv. Gene sets: the MSigDB human Hallmark collection, 50 HALLMARK_* sets with HGNC symbols, staged locally at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (MSigDB 2026.1, immutable release). gseapy 1.3.1 is installed; the sandbox has no network, so only this local GMT may be used. Do NOT use the mouse hallmark (mh.all, MGI symbols) or the oncogenic C6 collection for this question.\", \"constraints\": [\"Python only. Run pre-ranked GSEA with gseapy.gsea.prerank (verify the installed 1.3.1 signature via inspect/help before calling and adapt argument names if they differ), feeding the one-gene-per-line ranked file and the Hallmark GMT path, with min_size 15 and max_size 500.\", \"Report for all 50 sets: NES, nominal p, and FDR (familywise) q; classify direction by NES sign (positive = enriched in the treated/AD-lesional direction of the ranked list).\", \"Flag FDR q < 0.25 as the primary significance call and also report which sets reach q < 0.05; with only 6 vs 6 samples do not overstate the strength of any call.\", \"Save the full 50-set result table as CSV (gsea_hallmark_results.csv) plus top10_up and top10_down CSVs ordered by |NES|.\", \"Produce plots with gseapy: plot_rbar of the top pathways (NES vs FDR q) and plot_enrichment running-enrichment curves for the top up and top down pathway (at least one each); save as PNGs.\", \"Coverage check: for each Hallmark set, report how many of its member symbols appear among the 12,000 ranked genes; note any set losing more than 10% of its members to the gene-list intersection.\", \"No downloads of any kind; the GMT is local and immutable.\"], \"acceptance_criteria\": [\"gsea_hallmark_results.csv contains all 50 Hallmark sets with NES, nominal p, and FDR q columns populated.\", \"Top-10 up and top-10 down pathway tables exist and are ordered by |NES| with direction stated.\", \"At least two PNG plots exist (rbar + running-enrichment curve for a top up and a top down pathway).\", \"Report names the exact GMT file and MSigDB version used, and states the coverage check outcome.\"], \"caveats\": [\"gseapy column names in res2d may differ from older versions (e.g. 'NES familywise q'); read the returned DataFrame columns rather than hard-coding them, and map to (Term, ES, NES, nominal p, FDR q) in the saved CSV.\", \"Pre-ranked GSEA inherits all caveats of the upstream DE table (including sample_01's low library size) — state this once in the report.\", \"If fewer than 50 sets pass any significance threshold, report that plainly; 'no hallmark pathway reached q < 0.25' is a valid result and must not be papered over.\"], \"packages\": [\"gseapy\", \"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T1S3\", \"name\": \"ORA cross-check of DE gene lists against Hallmark\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which Hallmark pathways are over-represented among the significant DE genes (padj < 0.05) in each direction, and does that agree with the GSEA result?\", \"context\": \"Inputs from T1S1: de_genes_up.csv and de_genes_down.csv (padj < 0.05). Background: the 12,000 genes in de_results.csv. Gene sets: the same local MSigDB human Hallmark v2026.1 GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt). gseapy 1.3.1 installed; Python only; no network.\", \"constraints\": [\"Python only. Run over-representation analysis with gseapy.enrichment (verify the installed signature before calling) once on the up list and once on the down list, against the Hallmark GMT, with the 12,000-gene DE table as background.\", \"Report per set: OR (over/under), raw p, and BH-adjusted q; flag q < 0.25.\", \"Save ora_up.csv and ora_down.csv (all sets, sorted by q) and one bar chart per direction (top 10 sets by q or OR).\", \"Cross-compare with T1S2: list the sets significant in both GSEA and ORA (with matching direction) and the sets significant in only one method.\", \"State explicitly that ORA uses only membership of the DE lists (ranking information is discarded) and is a secondary cross-check, not the primary answer.\"], \"acceptance_criteria\": [\"ora_up.csv and ora_down.csv exist with OR, p, and BH-adjusted q for every Hallmark set that had >= 1 member in the respective DE list.\", \"A written agreement/disagreement summary against the T1S2 GSEA result exists (sets concordant, GSEA-only, ORA-only).\", \"At least one bar plot PNG per direction exists.\"], \"caveats\": [\"With 6 vs 6 samples the DE lists may be small; if a direction has fewer than ~50 significant genes, label the ORA results for that direction as low-confidence in the report.\", \"ORA is less sensitive than GSEA by construction; discordance between methods is expected and should be reported, not 'resolved' in favor of either.\"], \"packages\": [\"gseapy\", \"pandas\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}], \"created_at\": \"2026-07-25T00:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

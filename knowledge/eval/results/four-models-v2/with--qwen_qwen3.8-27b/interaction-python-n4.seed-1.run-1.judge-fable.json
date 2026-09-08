@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: pure-Python PyDESeq2 with ~ genotype + treatment + genotype:treatment, explicit WT/vehicle reference levels, Wald test on the interaction first, then simple effects including the drug@KO composite (treatment + interaction) with SE from the coefficient covariance, BH within contrast at 0.05 with independent filtering and a p-value histogram. QC is design-blind (VST, PCA top 500, distance heatmap, library sizes, zero fractions) with a named flag-not-drop policy, the filter is minimal and justified by the smallest group size, and size factors are estimated inside the model with the lost Salmon length offset explicitly stated. Shrinkage is handled honestly (single-coefficient shrinker if available, composite reported unshrunken, fallback stated), though the plan gives no explicit fallback if the installed PyDESeq2 cannot express the interaction formula, and the constraint block carries an unused lfc-threshold policy. Report fields, per-contrast DE counts, and the three design caveats are all stated; enrichment is correctly omitted."
+}

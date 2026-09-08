@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 1,
+    "normalization": 1,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 4
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that a gene-level count matrix carries no isoform information, refused to fabricate switches, and asked for per-sample Salmon quant.sf files plus the reference build, which is what the reference demands. It fell short of the reference by not requesting the transcript-to-gene map with its annotation version and by not naming the method of record (DRIMSeq or DEXSeq on tximport scaledTPM, dmFilter, stageR at FDR 0.05) that would apply once the data arrive. Because no plan was submitted, the QC, filter, normalization, formula, FDR, and report criteria are essentially unstated; only the flagging of shallow sample_01 and a clear statement of the data caveat earn partial credit. Enrichment is correctly absent for a stop-and-clarify outcome."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald with ~condition on raw counts fits the unpaired 6v6 single-batch design, and the shallow sample is retained in the primary run with a stated sensitivity exclusion, library sizes, size factors, and PCA distance to the group centroid (no sample distance heatmap is mentioned). Normalization is median-of-ratios inside the model, apeglm shrinkage precedes ranking, and padj<0.05 is the stated cutoff, but no low-count filter is specified anywhere. Enrichment correctly uses the species-matched mouse Hallmark (MH) collection with version and a symbol match-rate check, runs fgsea on the full ranked list with the metric stated, yet omits the set-size window and does not state the ORA universe; ranking on padj with p as fallback is also an awkward mixed metric. The report covers design, thresholds, and power/shallow-sample caveats but does not commit to package versions or explicit tested/significant gene counts."
+}

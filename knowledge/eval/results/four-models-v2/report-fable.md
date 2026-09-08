@@ -3,20 +3,22 @@
 Manifest: `/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json` (sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623), frozen at 2026-09-07T18:08:55.625Z, corpus sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8.
 Calibration: absent, thus every decision is uncalibrated.
 Judge: claude-fable-5-1 (tag fable).
-Runs: 288. Judge verdicts: 288 (0 failed, 0 absent). Service for claim resolution: reachable.
+Runs: 384. Judge verdicts: 384 (0 failed, 0 absent). Service for claim resolution: reachable.
 Statistics: margin 5, one-sided alpha 0.025, cluster by pattern, 4000 resamples.
 Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without [primary]; qwen_with vs sonnet_without [primary]; qwen_with vs opus_without [primary]; glm_with vs glm_without [primary]; glm_with vs qwen_without [primary]; qwen_with vs glm_without [primary]; qwen_with vs qwen_without [primary]; sonnet_with vs sonnet_without [primary]; sonnet_with vs opus_without [primary]; opus_with vs sonnet_without [primary]; opus_with vs opus_without [primary]; glm_with vs sonnet_with [primary]; glm_with vs opus_with [primary]; qwen_with vs sonnet_with [primary]; qwen_with vs opus_with [primary].
 
-## Split development, seed 1: 288 runs, 48 tasks
+## Split development, seed 1: 384 runs, 48 tasks
 
 | Arm | Runs | Judged | Usage missing | Planned | Rubric mean | Within-task SD | Variability | Expectations | Recommend rate | Check rate | Grounded (applicable) | Pinned steps | Claims A/I/U/F | Fabricated refs | Valid completion | DE recall | DE FDR | Failed steps | Tok/step | Tool calls | In tok | Out tok | Cache tok | Time s |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | with--claude-opus-5 | 48 | 48/48 | 0 | 100% | 88.9 | n/a | unknown | 99% | 100% | 94% | 77% | 99% | 935/1/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 4.3 | 230097 | 10170 | 123286 | 117 |
 | with--claude-sonnet-5 | 48 | 48/48 | 0 | 100% | 84.4 | n/a | unknown | 97% | 100% | 88% | 77% | 100% | 1282/1/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 15.8 | 1203104 | 10083 | 1028685 | 112 |
-| with--z-ai_glm-5.3-flash | 48 | 48/48 | 0 | 90% | 77.7 | n/a | unknown | 90% | 96% | 83% | 69% | 99% | 877/0/0/2 | 1 | n/a | n/a | n/a | n/a | n/a | 4.4 | 193497 | 9544 | 114871 | 379 |
+| with--qwen_qwen3.8-27b | 48 | 48/48 | 0 | 100% | 84.8 | n/a | unknown | 96% | 98% | 96% | 74% | 100% | 842/0/0/1 | 0 | n/a | n/a | n/a | n/a | n/a | 5.3 | 309666 | 26774 | 249017 | 396 |
+| with--z-ai_glm-5.3-flash | 48 | 48/48 | 0 | 100% | 87.0 | n/a | unknown | 98% | 96% | 88% | 69% | 99% | 996/0/0/2 | 1 | n/a | n/a | n/a | n/a | n/a | 4.4 | 188810 | 10094 | 108656 | 356 |
 | without--claude-opus-5 | 48 | 48/48 | 0 | 100% | 80.1 | n/a | unknown | 96% | 0% | 0% | 0% | 0% | 0/0/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 4.0 | 143995 | 7468 | 58338 | 101 |
 | without--claude-sonnet-5 | 48 | 48/48 | 0 | 98% | 61.6 | n/a | unknown | 94% | 0% | 0% | 0% | 0% | 0/0/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 18.8 | 1138889 | 5005 | 1031536 | 86 |
-| without--z-ai_glm-5.3-flash | 48 | 48/48 | 0 | 96% | 66.4 | n/a | unknown | 91% | 0% | 0% | 0% | 0% | 0/0/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 2.2 | 62823 | 4837 | 23645 | 143 |
+| without--qwen_qwen3.8-27b | 48 | 48/48 | 0 | 100% | 63.2 | n/a | unknown | 89% | 0% | 0% | 0% | 0% | 0/0/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 2.8 | 123067 | 14148 | 84982 | 250 |
+| without--z-ai_glm-5.3-flash | 48 | 48/48 | 0 | 100% | 69.3 | n/a | unknown | 93% | 0% | 0% | 0% | 0% | 0/0/0/0 | 0 | n/a | n/a | n/a | n/a | n/a | 2.3 | 65018 | 5004 | 25077 | 140 |
 
 ### Rubric criteria, mean of 0 to 10
 
@@ -24,31 +26,33 @@ Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without 
 |---|---|---|---|---|---|---|---|---|
 | with--claude-opus-5 | 9.1 | 8.9 | 8.5 | 9.0 | 8.7 | 8.6 | 9.3 | 9.1 |
 | with--claude-sonnet-5 | 8.6 | 8.1 | 8.3 | 8.7 | 8.5 | 8.6 | 8.0 | 8.7 |
-| with--z-ai_glm-5.3-flash | 7.7 | 7.3 | 7.5 | 8.1 | 7.7 | 7.7 | 8.2 | 7.9 |
+| with--qwen_qwen3.8-27b | 8.7 | 8.4 | 8.4 | 8.8 | 8.2 | 8.3 | 8.8 | 8.3 |
+| with--z-ai_glm-5.3-flash | 8.7 | 8.2 | 8.4 | 9.0 | 8.6 | 8.6 | 9.2 | 8.8 |
 | without--claude-opus-5 | 8.7 | 8.2 | 7.8 | 8.0 | 8.7 | 7.8 | 7.3 | 7.6 |
 | without--claude-sonnet-5 | 7.6 | 5.7 | 4.6 | 7.1 | 6.3 | 6.2 | 5.7 | 6.0 |
-| without--z-ai_glm-5.3-flash | 7.5 | 6.5 | 5.5 | 6.9 | 6.9 | 6.4 | 6.7 | 6.8 |
+| without--qwen_qwen3.8-27b | 7.1 | 6.4 | 4.4 | 6.7 | 7.0 | 6.8 | 5.6 | 6.5 |
+| without--z-ai_glm-5.3-flash | 7.8 | 6.8 | 5.8 | 7.2 | 7.1 | 6.7 | 6.9 | 7.1 |
 
 ### Contrasts, paired by cluster (first arm minus second arm)
 
 | Family | Contrast | Arms | Pairs | Missing | Diff | Lower (one-sided 97.5%) | Upper | p one-sided | Holm p | Rejected | Decision |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| primary (primary) | glm_with vs sonnet_without | with--z-ai_glm-5.3-flash vs without--claude-sonnet-5 | 17 | 0 | 16.0 | 0.2 | 29.2 | 0.0065 | 0.0780 | no | uncalibrated |
-| primary | glm_with vs opus_without | with--z-ai_glm-5.3-flash vs without--claude-opus-5 | 17 | 0 | -2.9 | -19.6 | 10.6 | 0.3580 | 1.0000 | no | uncalibrated |
-| primary | qwen_with vs sonnet_without | with--qwen_qwen3.8-27b vs without--claude-sonnet-5 | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
-| primary | qwen_with vs opus_without | with--qwen_qwen3.8-27b vs without--claude-opus-5 | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
-| primary | glm_with vs glm_without | with--z-ai_glm-5.3-flash vs without--z-ai_glm-5.3-flash | 17 | 0 | 10.1 | -7.1 | 24.7 | 0.0393 | 0.4318 | no | uncalibrated |
-| primary | glm_with vs qwen_without | with--z-ai_glm-5.3-flash vs without--qwen_qwen3.8-27b | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
-| primary | qwen_with vs glm_without | with--qwen_qwen3.8-27b vs without--z-ai_glm-5.3-flash | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
-| primary | qwen_with vs qwen_without | with--qwen_qwen3.8-27b vs without--qwen_qwen3.8-27b | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
+| primary (primary) | glm_with vs sonnet_without | with--z-ai_glm-5.3-flash vs without--claude-sonnet-5 | 17 | 0 | 28.7 | 23.9 | 33.9 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | glm_with vs opus_without | with--z-ai_glm-5.3-flash vs without--claude-opus-5 | 17 | 0 | 9.8 | 6.2 | 14.3 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | qwen_with vs sonnet_without | with--qwen_qwen3.8-27b vs without--claude-sonnet-5 | 17 | 0 | 30.4 | 26.2 | 35.4 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | qwen_with vs opus_without | with--qwen_qwen3.8-27b vs without--claude-opus-5 | 17 | 0 | 11.4 | 7.1 | 16.3 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | glm_with vs glm_without | with--z-ai_glm-5.3-flash vs without--z-ai_glm-5.3-flash | 17 | 0 | 20.4 | 15.6 | 24.9 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | glm_with vs qwen_without | with--z-ai_glm-5.3-flash vs without--qwen_qwen3.8-27b | 17 | 0 | 22.7 | 17.4 | 27.8 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | qwen_with vs glm_without | with--qwen_qwen3.8-27b vs without--z-ai_glm-5.3-flash | 17 | 0 | 22.0 | 18.0 | 26.2 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | qwen_with vs qwen_without | with--qwen_qwen3.8-27b vs without--qwen_qwen3.8-27b | 17 | 0 | 24.3 | 21.0 | 28.3 | 0.0000 | 0.0000 | yes | uncalibrated |
 | primary | sonnet_with vs sonnet_without | with--claude-sonnet-5 vs without--claude-sonnet-5 | 17 | 0 | 26.0 | 23.5 | 28.7 | 0.0000 | 0.0000 | yes | uncalibrated |
 | primary | sonnet_with vs opus_without | with--claude-sonnet-5 vs without--claude-opus-5 | 17 | 0 | 7.1 | 4.2 | 10.1 | 0.0000 | 0.0000 | yes | uncalibrated |
 | primary | opus_with vs sonnet_without | with--claude-opus-5 vs without--claude-sonnet-5 | 17 | 0 | 32.5 | 28.9 | 36.8 | 0.0000 | 0.0000 | yes | uncalibrated |
 | primary | opus_with vs opus_without | with--claude-opus-5 vs without--claude-opus-5 | 17 | 0 | 13.5 | 9.8 | 17.8 | 0.0000 | 0.0000 | yes | uncalibrated |
-| primary | glm_with vs sonnet_with | with--z-ai_glm-5.3-flash vs with--claude-sonnet-5 | 17 | 0 | -10.0 | -26.2 | 3.0 | 0.7125 | 1.0000 | no | uncalibrated |
-| primary | glm_with vs opus_with | with--z-ai_glm-5.3-flash vs with--claude-opus-5 | 17 | 0 | -16.4 | -32.3 | -3.6 | 0.9470 | 1.0000 | no | uncalibrated |
-| primary | qwen_with vs sonnet_with | with--qwen_qwen3.8-27b vs with--claude-sonnet-5 | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
-| primary | qwen_with vs opus_with | with--qwen_qwen3.8-27b vs with--claude-opus-5 | 0 | 0 | n/a | n/a | n/a | n/a | n/a | no | uncalibrated |
+| primary | glm_with vs sonnet_with | with--z-ai_glm-5.3-flash vs with--claude-sonnet-5 | 17 | 0 | 2.7 | -1.4 | 6.4 | 0.0008 | 0.0023 | yes | uncalibrated |
+| primary | glm_with vs opus_with | with--z-ai_glm-5.3-flash vs with--claude-opus-5 | 17 | 0 | -3.7 | -7.1 | -0.6 | 0.2052 | 0.2052 | no | uncalibrated |
+| primary | qwen_with vs sonnet_with | with--qwen_qwen3.8-27b vs with--claude-sonnet-5 | 17 | 0 | 4.3 | 0.9 | 7.8 | 0.0000 | 0.0000 | yes | uncalibrated |
+| primary | qwen_with vs opus_with | with--qwen_qwen3.8-27b vs with--claude-opus-5 | 17 | 0 | -2.1 | -3.9 | -0.5 | 0.0018 | 0.0035 | yes | uncalibrated |
 
 ## Per run
 
@@ -150,9 +154,57 @@ Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without 
 | with--claude-sonnet-5 | development | 1 | two-timepoints-n3 | 1 | plan_submitted | 89 | 6/6 | 3/0/0/0/1 | 4/4 | 40/0/0/0 | 1 | 2 | n/a | 9256 | 86.3 |  |
 | with--claude-sonnet-5 | development | 1 | variance-partition-n6 | 1 | plan_submitted | 85 | 7/7 | 4/0/0/0/1 | 5/5 | 37/0/0/0 | 1 | 2 | n/a | 10153 | 92.2 |  |
 | with--claude-sonnet-5 | development | 1 | zebrafish-two-group-n3 | 1 | plan_submitted | 86 | 6/6 | 4/0/0/0/1 | 5/5 | 37/0/0/0 | 1 | 1 | n/a | 11561 | 200.5 |  |
+| with--qwen_qwen3.8-27b | development | 1 | batch-balanced-n6 | 1 | plan_submitted | 94 | 4/4 | 3/0/0/0/1 | 4/4 | 22/0/0/0 | 1 | 2 | n/a | 23488 | 415.4 |  |
+| with--qwen_qwen3.8-27b | development | 1 | classifier-n60 | 1 | plan_submitted | 86 | 7/7 | 4/0/0/0/1 | 5/5 | 20/0/0/0 | 3 | 2 | n/a | 63685 | 844.3 |  |
+| with--qwen_qwen3.8-27b | development | 1 | clustering-n60 | 1 | plan_submitted | 86 | 7/7 | 3/0/0/0/1 | 4/4 | 12/0/0/0 | 1 | 1 | n/a | 26962 | 387.9 |  |
+| with--qwen_qwen3.8-27b | development | 1 | coexpression-n60 | 1 | plan_submitted | 74 | 7/7 | 3/0/0/0/1 | 4/4 | 8/0/0/0 | 1 | 1 | n/a | 23701 | 332.6 |  |
+| with--qwen_qwen3.8-27b | development | 1 | coexpression-too-few-n3 | 1 | plan_submitted | 45 | 5/6 | 1/0/0/0/0 | 1/1 | 1/0/0/0 | 1 | 3 | n/a | 28130 | 433.7 | must match /(too few|not enough|insufficient|cannot support|(at least|minimum of) (15|20|fifteen|twenty))/ |
+| with--qwen_qwen3.8-27b | development | 1 | confounded-batch-n6 | 1 | plan_submitted | 98 | 4/4 | 3/0/0/0/1 | 4/4 | 21/0/0/0 | 1 | 3 | n/a | 25414 | 352.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | covariates-n6 | 1 | plan_submitted | 94 | 7/7 | 3/0/0/0/1 | 4/4 | 20/0/0/0 | 1 | 2 | n/a | 28002 | 437.4 |  |
+| with--qwen_qwen3.8-27b | development | 1 | de-plus-tf-activity-n6 | 1 | plan_submitted | 94 | 7/7 | 4/0/0/0/1 | 5/5 | 24/0/0/0 | 1 | 2 | n/a | 43221 | 634.8 |  |
+| with--qwen_qwen3.8-27b | development | 1 | deconvolution-mouse-n6 | 1 | plan_submitted | 86 | 7/7 | 2/0/0/0/1 | 3/3 | 9/0/0/0 | 1 | 2 | n/a | 45605 | 757.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | deconvolution-tpm-n6 | 1 | plan_submitted | 85 | 8/8 | 2/0/0/0/2 | 4/4 | 12/0/0/0 | 1 | 2 | n/a | 39066 | 596.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | enrichment-only-ranked | 1 | plan_submitted | 63 | 5/7 | 1/0/0/0/0 | 1/1 | 2/0/0/0 | 1 | 2 | n/a | 20907 | 313.8 | must match /(no cutoff|full (ranked )?list|every tested gene|all (tested )?genes|without a cutoff)/; must not match /re-?run (the )?(DESeq2|differential expression)/ |
+| with--qwen_qwen3.8-27b | development | 1 | fastq-input | 1 | clarification_needed | 46 | 4/5 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 1 | 0 | n/a | 6725 | 142.9 | must match /(ask|clarif|question|confirm|missing|not (yet )?quantified)/ |
+| with--qwen_qwen3.8-27b | development | 1 | gene-list-ora | 1 | plan_submitted | 79 | 5/6 | 2/0/0/0/1 | 3/3 | 25/0/0/0 | 1 | 1 | n/a | 23090 | 360.8 | must not match /(rerun|re-run|refit|re-fit|repeat) (the )?DESeq2/ |
+| with--qwen_qwen3.8-27b | development | 1 | interaction-2x2-n4 | 1 | plan_submitted | 96 | 4/4 | 2/0/0/0/1 | 3/3 | 24/0/0/0 | 1 | 2 | n/a | 22520 | 325.2 |  |
+| with--qwen_qwen3.8-27b | development | 1 | interaction-python-n4 | 1 | plan_submitted | 96 | 8/8 | 2/0/0/0/1 | 3/3 | 24/0/0/0 | 1 | 3 | n/a | 26697 | 405.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | log-normalized-n6 | 1 | plan_submitted | 90 | 7/7 | 2/0/0/0/1 | 3/3 | 11/0/0/0 | 1 | 3 | n/a | 15300 | 224.8 |  |
+| with--qwen_qwen3.8-27b | development | 1 | mouse-two-group-n6 | 1 | plan_submitted | 98 | 7/7 | 3/0/0/0/1 | 4/4 | 38/0/0/0 | 1 | 1 | n/a | 24900 | 338.4 |  |
+| with--qwen_qwen3.8-27b | development | 1 | multi-group-3x4 | 1 | plan_submitted | 98 | 6/6 | 2/0/0/0/1 | 3/3 | 23/0/0/0 | 1 | 1 | n/a | 25133 | 362.3 |  |
+| with--qwen_qwen3.8-27b | development | 1 | no-replicates-1v1 | 1 | plan_submitted | 96 | 6/6 | 2/0/0/0/1 | 3/3 | 8/0/0/0 | 1 | 1 | n/a | 11144 | 163.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | outlier-n5 | 1 | plan_submitted | 90 | 7/7 | 4/0/0/0/1 | 5/5 | 22/0/0/0 | 1 | 1 | n/a | 21766 | 308.3 |  |
+| with--qwen_qwen3.8-27b | development | 1 | paired-3groups-n4 | 1 | plan_submitted | 99 | 6/6 | 2/0/0/0/1 | 3/3 | 24/0/0/0 | 1 | 3 | n/a | 19417 | 260 |  |
+| with--qwen_qwen3.8-27b | development | 1 | paired-n5 | 1 | plan_submitted | 96 | 3/3 | 2/0/0/0/1 | 3/3 | 21/0/0/0 | 1 | 3 | n/a | 29264 | 399.9 |  |
+| with--qwen_qwen3.8-27b | development | 1 | pathway-activity-n6 | 1 | plan_submitted | 63 | 6/7 | 1/0/0/0/0 | 1/1 | 2/0/0/0 | 2 | 3 | n/a | 49265 | 782.1 | must match /(downstream|responsive genes|target genes|not (the )?(membership|members))/ |
+| with--qwen_qwen3.8-27b | development | 1 | population-n60 | 1 | plan_submitted | 76 | 5/6 | 2/0/0/0/1 | 3/3 | 16/0/0/0 | 1 | 2 | n/a | 19172 | 283.3 | must match /(camera|fgsea|preranked|moderated t)/ |
+| with--qwen_qwen3.8-27b | development | 1 | python-enrichment-only | 1 | plan_submitted | 83 | 7/7 | 2/0/0/0/1 | 3/3 | 21/0/0/0 | 1 | 1 | n/a | 22149 | 330.9 |  |
+| with--qwen_qwen3.8-27b | development | 1 | python-two-group-n6 | 1 | plan_submitted | 95 | 8/8 | 3/0/0/0/2 | 5/5 | 38/0/0/0 | 1 | 3 | n/a | 49373 | 728.6 |  |
+| with--qwen_qwen3.8-27b | development | 1 | qc-only-n6 | 1 | plan_submitted | 76 | 8/8 | 1/0/0/0/0 | 1/1 | 2/0/0/0 | 1 | 1 | n/a | 7090 | 137.4 |  |
+| with--qwen_qwen3.8-27b | development | 1 | rsem-counts-n6 | 1 | plan_submitted | 96 | 6/6 | 3/0/0/0/1 | 4/4 | 21/0/0/0 | 1 | 2 | n/a | 23900 | 337.6 |  |
+| with--qwen_qwen3.8-27b | development | 1 | salmon-counts-unknown-n6 | 1 | plan_submitted | 91 | 5/5 | 3/0/0/0/1 | 4/4 | 19/0/0/0 | 1 | 2 | n/a | 23714 | 315.8 |  |
+| with--qwen_qwen3.8-27b | development | 1 | salmon-quant-n6 | 1 | plan_submitted | 95 | 6/6 | 2/0/0/0/1 | 3/3 | 19/0/0/0 | 1 | 2 | n/a | 23830 | 319.8 |  |
+| with--qwen_qwen3.8-27b | development | 1 | sample-scores-gsva | 1 | plan_submitted | 88 | 6/6 | 3/0/0/0/1 | 4/4 | 38/0/0/0 | 1 | 2 | n/a | 29825 | 453 |  |
+| with--qwen_qwen3.8-27b | development | 1 | signature-scores-n6 | 1 | plan_submitted | 64 | 7/7 | 2/0/0/0/0 | 2/2 | 5/0/0/0 | 1 | 1 | n/a | 16948 | 269.9 |  |
+| with--qwen_qwen3.8-27b | development | 1 | star-counts-n3 | 1 | plan_submitted | 90 | 7/7 | 3/0/0/0/0 | 3/3 | 16/0/0/0 | 1 | 2 | n/a | 24910 | 373.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | strandedness-unknown-n3 | 1 | plan_submitted | 71 | 6/6 | 0/0/0/0/1 | 1/1 | 0/0/0/0 | 1 | 2 | n/a | 46329 | 719 |  |
+| with--qwen_qwen3.8-27b | development | 1 | survival-n60 | 1 | plan_submitted | 86 | 7/7 | 4/0/0/0/1 | 5/5 | 12/0/0/0 | 1 | 1 | n/a | 28366 | 415.2 |  |
+| with--qwen_qwen3.8-27b | development | 1 | suspected-batch-n6 | 1 | plan_submitted | 93 | 7/7 | 3/0/0/0/1 | 4/4 | 27/0/0/0 | 1 | 1 | n/a | 36296 | 549.5 |  |
+| with--qwen_qwen3.8-27b | development | 1 | tf-activity-n6 | 1 | plan_submitted | 76 | 5/7 | 2/0/0/0/0 | 2/2 | 14/0/0/0 | 2 | 3 | n/a | 34337 | 509.2 | must match /(Wald statistic|\bstat\b|t[- ]statistic|moderated t|contrast statistic)/; must match /(regulon size|min_n|minsize|minimum (number of )?targets|at least (five|5) targets)/ |
+| with--qwen_qwen3.8-27b | development | 1 | tf-activity-python-n6 | 1 | plan_submitted | 65 | 8/8 | 2/0/0/0/1 | 3/3 | 9/0/0/0 | 1 | 1 | n/a | 36283 | 565 |  |
+| with--qwen_qwen3.8-27b | development | 1 | three-prime-n3 | 1 | plan_submitted | 95 | 6/6 | 3/0/0/0/1 | 4/4 | 26/0/0/0 | 1 | 2 | n/a | 27800 | 377.1 |  |
+| with--qwen_qwen3.8-27b | development | 1 | timecourse-2x4-n3 | 1 | plan_submitted | 98 | 3/3 | 2/0/0/0/1 | 3/3 | 28/0/0/0 | 1 | 3 | n/a | 22645 | 346.9 |  |
+| with--qwen_qwen3.8-27b | development | 1 | total-rna-highdup-n6 | 1 | plan_submitted | 85 | 6/8 | 3/0/0/0/1 | 4/4 | 22/0/0/0 | 1 | 1 | n/a | 30004 | 389.9 | must match /(mitochondrial|mt-|chrM)/; must match /(intron|intergenic|genomic DNA|gene body)/ |
+| with--qwen_qwen3.8-27b | development | 1 | tpm-input-n6 | 1 | plan_submitted | 95 | 7/7 | 2/0/0/0/1 | 3/3 | 11/0/0/0 | 1 | 2 | n/a | 19175 | 272 |  |
+| with--qwen_qwen3.8-27b | development | 1 | transcript-usage-n6 | 1 | clarification_needed | 39 | 5/6 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 0 | 0 | n/a | 2777 | 61.4 | must match /(DEXSeq|DRIMSeq)/ |
+| with--qwen_qwen3.8-27b | development | 1 | two-group-n3 | 1 | plan_submitted | 95 | 5/5 | 2/0/0/0/1 | 3/3 | 22/0/0/0 | 1 | 2 | n/a | 22484 | 312.7 |  |
+| with--qwen_qwen3.8-27b | development | 1 | two-group-n6-enrich | 1 | plan_submitted | 96 | 5/6 | 4/0/0/0/1 | 5/5 | 38/0/0/0 | 1 | 2 | n/a | 26408 | 368.9 | must not match /KEGG/ |
+| with--qwen_qwen3.8-27b | development | 1 | two-timepoints-n3 | 1 | plan_submitted | 99 | 6/6 | 2/0/0/0/1 | 3/3 | 28/0/0/0 | 1 | 2 | n/a | 25393 | 348.3 |  |
+| with--qwen_qwen3.8-27b | development | 1 | variance-partition-n6 | 1 | plan_submitted | 90 | 7/7 | 4/0/0/0/1 | 5/5 | 20/0/0/1 | 1 | 2 | n/a | 23434 | 350.7 |  |
+| with--qwen_qwen3.8-27b | development | 1 | zebrafish-two-group-n3 | 1 | plan_submitted | 83 | 6/6 | 3/0/0/0/0 | 3/3 | 17/0/0/0 | 1 | 2 | n/a | 19095 | 276 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | batch-balanced-n6 | 1 | plan_submitted | 95 | 4/4 | 3/0/0/0/1 | 4/4 | 22/0/0/0 | 1 | 2 | n/a | 14031 | 398 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | classifier-n60 | 1 | plan_submitted | 78 | 6/7 | 2/0/0/1/1 | 4/4 | 7/0/0/1 | 1 | 1 | n/a | 6914 | 206.9 | must match /(external|independent) (cohort|validation|data ?set)/ |
-| with--z-ai_glm-5.3-flash | development | 1 | clustering-n60 | 1 | error | 0 | 2/7 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 1 | 1 | n/a | 3217 | 232.9 | must match /(consensus|ConsensusClusterPlus)/; must match /(resampl|subsampl|bootstrap)/; must match /(delta area|CDF|cumulative distribution)/; must match /(agreement|Rand index|contingency|cross-?tab|tabulat)[^.]{0,80}condition|condition[^.]{0,80}(agreement|Rand index|contingency|cross-?tab|tabulat)/; must match /(structure in noise|noise|spurious|confound)/ |
+| with--z-ai_glm-5.3-flash | development | 1 | clustering-n60 | 1 | plan_submitted | 81 | 7/7 | 3/0/0/0/1 | 4/4 | 12/0/0/0 | 2 | 1 | n/a | 6170 | 805.5 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | coexpression-n60 | 1 | plan_submitted | 75 | 7/7 | 3/0/0/0/1 | 4/4 | 8/0/0/0 | 1 | 1 | n/a | 5226 | 204.4 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | coexpression-too-few-n3 | 1 | plan_submitted | 63 | 5/6 | 2/0/0/0/1 | 3/3 | 7/0/0/0 | 1 | 2 | n/a | 12947 | 491.9 | must match /(too few|not enough|insufficient|cannot support|(at least|minimum of) (15|20|fifteen|twenty))/ |
 | with--z-ai_glm-5.3-flash | development | 1 | confounded-batch-n6 | 1 | plan_submitted | 95 | 4/4 | 1/0/0/1/1 | 3/3 | 21/0/0/1 | 1 | 1 | n/a | 7369 | 417.3 |  |
@@ -160,7 +212,7 @@ Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without 
 | with--z-ai_glm-5.3-flash | development | 1 | de-plus-tf-activity-n6 | 1 | plan_submitted | 89 | 7/7 | 4/0/0/0/1 | 5/5 | 40/0/0/0 | 1 | 0 | n/a | 12671 | 318.8 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | deconvolution-mouse-n6 | 1 | plan_submitted | 85 | 7/7 | 2/0/0/0/2 | 4/4 | 9/0/0/0 | 1 | 2 | n/a | 12283 | 604.8 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | deconvolution-tpm-n6 | 1 | plan_submitted | 78 | 8/8 | 3/0/0/0/2 | 5/5 | 12/0/0/0 | 1 | 2 | n/a | 9178 | 358 |  |
-| with--z-ai_glm-5.3-flash | development | 1 | enrichment-only-ranked | 1 | error | 0 | 2/7 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 1 | 1 | n/a | 1798 | 287.7 | must match /hallmark/; must match /(fgsea|gseapy|preranked|prerank|GSEA)/; must match /rank/; must match /(stat|Wald statistic|signed|-log10|log2 ?fold)/; must match /(no cutoff|full (ranked )?list|every tested gene|all (tested )?genes|without a cutoff)/ |
+| with--z-ai_glm-5.3-flash | development | 1 | enrichment-only-ranked | 1 | plan_submitted | 79 | 7/7 | 3/0/0/0/1 | 4/4 | 21/0/0/0 | 1 | 1 | n/a | 6838 | 613.6 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | fastq-input | 1 | clarification_needed | 54 | 5/5 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 1 | 0 | n/a | 1806 | 33.7 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | gene-list-ora | 1 | plan_submitted | 78 | 6/6 | 2/0/0/0/1 | 3/3 | 25/0/0/0 | 1 | 1 | n/a | 9968 | 687.4 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | interaction-2x2-n4 | 1 | plan_submitted | 93 | 4/4 | 3/0/0/0/1 | 4/4 | 42/0/0/0 | 1 | 2 | n/a | 19652 | 578.3 |  |
@@ -170,9 +222,9 @@ Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without 
 | with--z-ai_glm-5.3-flash | development | 1 | multi-group-3x4 | 1 | plan_submitted | 95 | 6/6 | 3/0/0/0/1 | 4/4 | 23/0/0/0 | 1 | 1 | n/a | 8716 | 130 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | no-replicates-1v1 | 1 | plan_submitted | 94 | 6/6 | 2/0/0/0/1 | 3/3 | 7/0/0/0 | 1 | 1 | n/a | 3721 | 85.2 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | outlier-n5 | 1 | plan_submitted | 96 | 7/7 | 3/0/0/0/1 | 4/4 | 22/0/0/0 | 1 | 2 | n/a | 11159 | 184.7 |  |
-| with--z-ai_glm-5.3-flash | development | 1 | paired-3groups-n4 | 1 | error | 0 | 2/6 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 1 | 0 | n/a | 700 | 925.9 | must match /subject/; must match /(likelihood ratio|LRT|joint|F-test|ANOVA|any condition)/; must match /(pairwise|contrast)/; must match /DESeq2|edgeR|limma/ |
-| with--z-ai_glm-5.3-flash | development | 1 | paired-n5 | 1 | error | 0 | 1/3 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 1 | 0 | n/a | 222 | 906.7 | must match /(subject|block|pair)/; must match /DESeq2|edgeR|limma/ |
-| with--z-ai_glm-5.3-flash | development | 1 | pathway-activity-n6 | 1 | error | 0 | 2/7 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 2 | 0 | n/a | 10342 | 1463.2 | must match /PROGENy/; must match /decoupl/; must match /footprint/; must match /(mlm|multivariate linear|ulm|univariate linear|wmean)/; must match /(downstream|responsive genes|target genes|not (the )?(membership|members))/ |
+| with--z-ai_glm-5.3-flash | development | 1 | paired-3groups-n4 | 1 | plan_submitted | 96 | 6/6 | 3/0/0/0/1 | 4/4 | 42/0/0/0 | 1 | 1 | n/a | 8685 | 218.6 |  |
+| with--z-ai_glm-5.3-flash | development | 1 | paired-n5 | 1 | plan_submitted | 90 | 3/3 | 3/0/0/0/0 | 3/3 | 19/0/0/0 | 1 | 0 | n/a | 4572 | 114.2 |  |
+| with--z-ai_glm-5.3-flash | development | 1 | pathway-activity-n6 | 1 | plan_submitted | 96 | 7/7 | 3/0/0/0/2 | 5/5 | 25/0/0/0 | 2 | 3 | n/a | 16391 | 957.9 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | population-n60 | 1 | plan_submitted | 84 | 5/6 | 2/0/0/0/2 | 4/4 | 16/0/0/0 | 1 | 3 | n/a | 9026 | 181.5 | must match /(camera|fgsea|preranked|moderated t)/ |
 | with--z-ai_glm-5.3-flash | development | 1 | python-enrichment-only | 1 | plan_submitted | 86 | 7/7 | 3/0/0/0/1 | 4/4 | 18/0/0/0 | 1 | 2 | n/a | 12169 | 573.1 |  |
 | with--z-ai_glm-5.3-flash | development | 1 | python-two-group-n6 | 1 | plan_submitted | 99 | 8/8 | 4/0/0/0/1 | 5/5 | 37/0/0/0 | 1 | 0 | n/a | 15640 | 608.4 |  |
@@ -294,8 +346,56 @@ Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without 
 | without--claude-sonnet-5 | development | 1 | two-timepoints-n3 | 1 | plan_submitted | 64 | 6/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 2528 | 38.1 |  |
 | without--claude-sonnet-5 | development | 1 | variance-partition-n6 | 1 | plan_submitted | 63 | 6/7 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 3966 | 42 | must match /(random effect|random term|\(1 ?\| ?)/ |
 | without--claude-sonnet-5 | development | 1 | zebrafish-two-group-n3 | 1 | plan_submitted | 65 | 5/6 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 7658 | 135 | must not match /KEGG/ |
+| without--qwen_qwen3.8-27b | development | 1 | batch-balanced-n6 | 1 | plan_submitted | 75 | 4/4 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 13788 | 204.6 |  |
+| without--qwen_qwen3.8-27b | development | 1 | classifier-n60 | 1 | plan_submitted | 73 | 7/7 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 18868 | 579.4 |  |
+| without--qwen_qwen3.8-27b | development | 1 | clustering-n60 | 1 | plan_submitted | 55 | 5/7 | 0/0/0/0/1 | 0/1 | 0/0/0/0 | 0 | 0 | n/a | 19153 | 388.7 | must match /(delta area|CDF|cumulative distribution)/; must match /(structure in noise|noise|spurious|confound)/ |
+| without--qwen_qwen3.8-27b | development | 1 | coexpression-n60 | 1 | plan_submitted | 65 | 6/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 12984 | 198.1 | must match /(vst|variance[- ]stabiliz|log2 ?CPM|rlog)/ |
+| without--qwen_qwen3.8-27b | development | 1 | coexpression-too-few-n3 | 1 | plan_submitted | 45 | 3/6 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 15346 | 286.6 | must match /(too few|not enough|insufficient|cannot support|(at least|minimum of) (15|20|fifteen|twenty))/; must match /(STRING|prior network|curated|stop)/; must match /(noise|unstable|unreliable|not (be )?reliable)/ |
+| without--qwen_qwen3.8-27b | development | 1 | confounded-batch-n6 | 1 | plan_submitted | 58 | 4/4 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 15544 | 270.6 |  |
+| without--qwen_qwen3.8-27b | development | 1 | covariates-n6 | 1 | plan_submitted | 73 | 7/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 13206 | 256.9 |  |
+| without--qwen_qwen3.8-27b | development | 1 | de-plus-tf-activity-n6 | 1 | plan_submitted | 53 | 6/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 15780 | 256.2 | must match /CollecTRI/ |
+| without--qwen_qwen3.8-27b | development | 1 | deconvolution-mouse-n6 | 1 | plan_submitted | 69 | 7/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 32170 | 560.1 |  |
+| without--qwen_qwen3.8-27b | development | 1 | deconvolution-tpm-n6 | 1 | plan_submitted | 69 | 8/8 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 17762 | 278 |  |
+| without--qwen_qwen3.8-27b | development | 1 | enrichment-only-ranked | 1 | plan_submitted | 59 | 5/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 11889 | 226.6 | must match /(no cutoff|full (ranked )?list|every tested gene|all (tested )?genes|without a cutoff)/; must not match /re-?run (the )?(DESeq2|differential expression)/ |
+| without--qwen_qwen3.8-27b | development | 1 | fastq-input | 1 | clarification_needed | 23 | 4/5 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 0 | 0 | n/a | 4307 | 85.4 | must match /(ask|clarif|question|confirm|missing|not (yet )?quantified)/ |
+| without--qwen_qwen3.8-27b | development | 1 | gene-list-ora | 1 | plan_submitted | 75 | 5/6 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 23960 | 359.4 | must not match /(rerun|re-run|refit|re-fit|repeat) (the )?DESeq2/ |
+| without--qwen_qwen3.8-27b | development | 1 | interaction-2x2-n4 | 1 | plan_submitted | 71 | 4/4 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 14455 | 237.9 |  |
+| without--qwen_qwen3.8-27b | development | 1 | interaction-python-n4 | 1 | plan_submitted | 74 | 8/8 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 15674 | 280.2 |  |
+| without--qwen_qwen3.8-27b | development | 1 | log-normalized-n6 | 1 | plan_submitted | 64 | 6/7 | 0/0/0/0/1 | 0/1 | 0/0/0/0 | 0 | 0 | n/a | 10071 | 169.5 | must match /trend/ |
+| without--qwen_qwen3.8-27b | development | 1 | mouse-two-group-n6 | 1 | plan_submitted | 70 | 7/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 13411 | 219.5 |  |
+| without--qwen_qwen3.8-27b | development | 1 | multi-group-3x4 | 1 | plan_submitted | 75 | 6/6 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 8462 | 151.2 |  |
+| without--qwen_qwen3.8-27b | development | 1 | no-replicates-1v1 | 1 | plan_submitted | 60 | 5/6 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 11344 | 209.9 | must match /(descriptive|fold change)/ |
+| without--qwen_qwen3.8-27b | development | 1 | outlier-n5 | 1 | plan_submitted | 70 | 6/7 | 0/0/0/0/1 | 0/1 | 0/0/0/0 | 0 | 0 | n/a | 9407 | 160.9 | must match /(criterion|threshold|rule|justif|reason)/ |
+| without--qwen_qwen3.8-27b | development | 1 | paired-3groups-n4 | 1 | plan_submitted | 63 | 6/6 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 14342 | 238.4 |  |
+| without--qwen_qwen3.8-27b | development | 1 | paired-n5 | 1 | plan_submitted | 76 | 3/3 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 9333 | 153.7 |  |
+| without--qwen_qwen3.8-27b | development | 1 | pathway-activity-n6 | 1 | plan_submitted | 55 | 5/7 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 35754 | 613.1 | must match /decoupl/; must match /(mlm|multivariate linear|ulm|univariate linear|wmean)/ |
+| without--qwen_qwen3.8-27b | development | 1 | population-n60 | 1 | plan_submitted | 70 | 5/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 16009 | 290.4 | must match /(camera|fgsea|preranked|moderated t)/ |
+| without--qwen_qwen3.8-27b | development | 1 | python-enrichment-only | 1 | plan_submitted | 66 | 7/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 13896 | 219.9 |  |
+| without--qwen_qwen3.8-27b | development | 1 | python-two-group-n6 | 1 | plan_submitted | 76 | 8/8 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 22431 | 371.1 |  |
+| without--qwen_qwen3.8-27b | development | 1 | qc-only-n6 | 1 | plan_submitted | 69 | 8/8 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 8194 | 124.4 |  |
+| without--qwen_qwen3.8-27b | development | 1 | rsem-counts-n6 | 1 | plan_submitted | 71 | 5/6 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 8997 | 168 | must match /tximport/ |
+| without--qwen_qwen3.8-27b | development | 1 | salmon-counts-unknown-n6 | 1 | plan_submitted | 4 | 3/5 | 0/0/0/0/1 | 0/1 | 0/0/0/0 | 0 | 0 | n/a | 26431 | 458.6 | must match /(quant\.sf|quantification director|average transcript length)/; must match /(missing|not delivered|ask|request|lost)/ |
+| without--qwen_qwen3.8-27b | development | 1 | salmon-quant-n6 | 1 | plan_submitted | 71 | 5/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 8644 | 138.9 | must match /(avgTxLength|length offset|offset)/ |
+| without--qwen_qwen3.8-27b | development | 1 | sample-scores-gsva | 1 | plan_submitted | 66 | 6/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 12709 | 200.3 |  |
+| without--qwen_qwen3.8-27b | development | 1 | signature-scores-n6 | 1 | plan_submitted | 70 | 7/7 | 0/0/0/0/5 | 0/5 | 0/0/0/0 | 0 | 0 | n/a | 17139 | 252 |  |
+| without--qwen_qwen3.8-27b | development | 1 | star-counts-n3 | 1 | plan_submitted | 70 | 6/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 8478 | 137.2 | must not match /(run|use|apply|call) tximport/ |
+| without--qwen_qwen3.8-27b | development | 1 | strandedness-unknown-n3 | 1 | plan_submitted | 70 | 6/6 | 0/0/0/0/5 | 0/5 | 0/0/0/0 | 0 | 0 | n/a | 12972 | 206.3 |  |
+| without--qwen_qwen3.8-27b | development | 1 | survival-n60 | 1 | plan_submitted | 70 | 6/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 10800 | 179.7 | must match /continuous/ |
+| without--qwen_qwen3.8-27b | development | 1 | suspected-batch-n6 | 1 | plan_submitted | 66 | 7/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 12157 | 203.8 |  |
+| without--qwen_qwen3.8-27b | development | 1 | tf-activity-n6 | 1 | plan_submitted | 50 | 4/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 20168 | 452.4 | must match /CollecTRI/; must match /(Wald statistic|\bstat\b|t[- ]statistic|moderated t|contrast statistic)/; must match /(regulon size|min_n|minsize|minimum (number of )?targets|at least (five|5) targets)/ |
+| without--qwen_qwen3.8-27b | development | 1 | tf-activity-python-n6 | 1 | plan_submitted | 68 | 8/8 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 22673 | 395.2 |  |
+| without--qwen_qwen3.8-27b | development | 1 | three-prime-n3 | 1 | plan_submitted | 70 | 6/6 | 0/0/0/0/1 | 0/1 | 0/0/0/0 | 0 | 0 | n/a | 11346 | 232.7 |  |
+| without--qwen_qwen3.8-27b | development | 1 | timecourse-2x4-n3 | 1 | plan_submitted | 83 | 3/3 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 10666 | 181 |  |
+| without--qwen_qwen3.8-27b | development | 1 | total-rna-highdup-n6 | 1 | plan_submitted | 65 | 6/8 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 15612 | 286.7 | must match /(mitochondrial|mt-|chrM)/; must match /(intron|intergenic|genomic DNA|gene body)/ |
+| without--qwen_qwen3.8-27b | development | 1 | tpm-input-n6 | 1 | plan_submitted | 75 | 6/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 10588 | 182.1 | must match /trend/ |
+| without--qwen_qwen3.8-27b | development | 1 | transcript-usage-n6 | 1 | clarification_needed | 26 | 5/6 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 0 | 0 | n/a | 2961 | 59.6 | must match /(DEXSeq|DRIMSeq)/ |
+| without--qwen_qwen3.8-27b | development | 1 | two-group-n3 | 1 | plan_submitted | 56 | 5/5 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 8247 | 131.3 |  |
+| without--qwen_qwen3.8-27b | development | 1 | two-group-n6-enrich | 1 | plan_submitted | 38 | 6/6 | 0/0/0/0/1 | 0/1 | 0/0/0/0 | 0 | 0 | n/a | 7666 | 126.5 |  |
+| without--qwen_qwen3.8-27b | development | 1 | two-timepoints-n3 | 1 | plan_submitted | 61 | 6/6 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 8900 | 149.3 |  |
+| without--qwen_qwen3.8-27b | development | 1 | variance-partition-n6 | 1 | plan_submitted | 61 | 5/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 12798 | 236.7 | must match /variancePartition/; must match /(random effect|random term|\(1 ?\| ?)/ |
+| without--qwen_qwen3.8-27b | development | 1 | zebrafish-two-group-n3 | 1 | plan_submitted | 73 | 5/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 11589 | 212.8 | must not match /KEGG/ |
 | without--z-ai_glm-5.3-flash | development | 1 | batch-balanced-n6 | 1 | plan_submitted | 76 | 4/4 | 0/0/0/0/5 | 0/5 | 0/0/0/0 | 0 | 0 | n/a | 7202 | 92.7 |  |
-| without--z-ai_glm-5.3-flash | development | 1 | classifier-n60 | 1 | error | 0 | 2/7 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 0 | 0 | n/a | 4377 | 339.3 | must match /(penali[sz]ed|glmnet|lasso|elastic net|ridge|regulari[sz]ed)/; must match /nested|inner[^.]{0,40}outer|outer[^.]{0,40}inner/; must match /(ROC|AUC|area under)/; must match /(confidence interval|\bCI\b|bootstrap)/; must match /(external|independent) (cohort|validation|data ?set)/ |
+| without--z-ai_glm-5.3-flash | development | 1 | classifier-n60 | 1 | plan_submitted | 75 | 6/7 | 0/0/0/0/5 | 0/5 | 0/0/0/0 | 0 | 0 | n/a | 8151 | 98 | must match /(confidence interval|\bCI\b|bootstrap)/ |
 | without--z-ai_glm-5.3-flash | development | 1 | clustering-n60 | 1 | plan_submitted | 68 | 6/7 | 0/0/0/0/5 | 0/5 | 0/0/0/0 | 0 | 0 | n/a | 4578 | 141.3 | must match /(structure in noise|noise|spurious|confound)/ |
 | without--z-ai_glm-5.3-flash | development | 1 | coexpression-n60 | 1 | plan_submitted | 78 | 7/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 4432 | 104.7 |  |
 | without--z-ai_glm-5.3-flash | development | 1 | coexpression-too-few-n3 | 1 | plan_submitted | 51 | 4/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 4756 | 123.1 | must match /(too few|not enough|insufficient|cannot support|(at least|minimum of) (15|20|fifteen|twenty))/; must match /(STRING|prior network|curated|stop)/ |
@@ -331,7 +431,7 @@ Family: glm_with vs sonnet_without [primary, primary]; glm_with vs opus_without 
 | without--z-ai_glm-5.3-flash | development | 1 | survival-n60 | 1 | plan_submitted | 68 | 7/7 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 7610 | 290.8 |  |
 | without--z-ai_glm-5.3-flash | development | 1 | suspected-batch-n6 | 1 | plan_submitted | 68 | 7/7 | 0/0/0/0/4 | 0/4 | 0/0/0/0 | 0 | 0 | n/a | 7575 | 258.1 |  |
 | without--z-ai_glm-5.3-flash | development | 1 | tf-activity-n6 | 1 | plan_submitted | 59 | 5/7 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 5840 | 341.3 | must match /(regulon size|min_n|minsize|minimum (number of )?targets|at least (five|5) targets)/; must match /(per[- ]sample|each sample|every sample|sample[- ]level)/ |
-| without--z-ai_glm-5.3-flash | development | 1 | tf-activity-python-n6 | 1 | error | 0 | 3/8 | 0/0/0/0/0 | 0/0 | 0/0/0/0 | 0 | 0 | n/a | 1325 | 262.6 | must match /PyDESeq2/; must match /decoupler/; must match /CollecTRI/; must match /python/; must match /(csv|local (copy|file|network|table)|offline)/ |
+| without--z-ai_glm-5.3-flash | development | 1 | tf-activity-python-n6 | 1 | plan_submitted | 68 | 8/8 | 0/0/0/0/2 | 0/2 | 0/0/0/0 | 0 | 0 | n/a | 5567 | 365.8 |  |
 | without--z-ai_glm-5.3-flash | development | 1 | three-prime-n3 | 1 | plan_submitted | 84 | 6/6 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 3983 | 79.1 |  |
 | without--z-ai_glm-5.3-flash | development | 1 | timecourse-2x4-n3 | 1 | plan_submitted | 59 | 3/3 | 0/0/0/0/3 | 0/3 | 0/0/0/0 | 0 | 0 | n/a | 2476 | 59.2 |  |
 | without--z-ai_glm-5.3-flash | development | 1 | total-rna-highdup-n6 | 1 | plan_submitted | 69 | 6/8 | 0/0/0/0/5 | 0/5 | 0/0/0/0 | 0 | 0 | n/a | 3907 | 161.5 | must match /(mitochondrial|mt-|chrM)/; must match /(intron|intergenic|genomic DNA|gene body)/ |

@@ -1,0 +1,253 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:13:44.863Z",
+  "elapsedMs": 206331,
+  "outcome": "plan_submitted",
+  "planId": "pln-58f3af1e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count QC and validation",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "12,000 genes is a smaller-than-usual feature space; expect low library sizes and many zero rows — use a count >= 10 detection threshold rather than CPM to avoid penalizing low depth.",
+          "Mild replicate variation is normal at n=3; only flag a sample as broken if it is a clear outlier (e.g. correlation < 0.9 with the others on normalized counts or extreme PC distance).",
+          "Do not attempt to download or fetch any reference or alignment — work only with the staged files and installed packages."
+        ],
+        "context": "counts.csv: 12,000 rows (genes) x 7 columns (gene ID + 6 samples), raw integer gene-level counts from STAR/featureCounts; library strandedness was NOT recorded and NO BAM/FASTQ files are in the inputs, so the counting cannot be redone. metadata.csv: 6 rows x 2 columns, one row per sample with a condition column (3 treated, 3 control). Tissue: human liver (Homo sapiens). Single batch, unpaired design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "org.Hs.eg.db",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Are the 12,000 x 6 raw gene counts in counts.csv internally consistent and plausibly human liver — correct gene annotation, integer counts, balanced library sizes, concordant replicates — so they can be trusted for differential expression given that the strandedness used at featureCounts time is unknown?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality-control",
+        "depends_on": [],
+        "constraints": [
+          "Identify the gene-ID space of the first column (Ensembl, HGNC symbol, or other) before any biological interpretation; map to HGNC symbol + Entrez via org.Hs.eg.db (installed), with the UniProt human ID mapping under /mnt/refs as fallback, and report the mapping rate.",
+          "Verify every count is a non-negative integer; if any cell is non-integer or negative, flag it as a data-integrity failure in the report — this directly addresses the user's doubt that the counts are right.",
+          "State explicitly in the report: alignment files are absent, so the strandedness used at counting cannot be re-derived; at gene level a wrong strandedness choice affects mainly antisense-overlapping genes, so downstream DE should carry this caveat.",
+          "Flag any discordant sample but do not silently drop it; if a sample is clearly broken, report which subset should proceed to DE."
+        ],
+        "description": "QC report on counts.csv: integer integrity, per-sample library size and detection counts, gene-ID to HGNC/Entrez mapping rate, liver-tissue plausibility via canonical markers, sample correlation heatmap and PCA, plus an explicit statement that strandedness is unresolvable from these inputs and how much that can affect gene-level results.",
+        "acceptance_criteria": [
+          "Per-sample QC table: library size, number and fraction of genes detected (count >= 10), integer-ness check result.",
+          "Liver-plausibility table: CPM of canonical liver markers (e.g. ALB, CYP2A6, CYP2C9, CYP2B6, CYP3A4, CYP2E1, AFP, HNF4A, SERPINA1) per sample, with a pass/fail per sample.",
+          "Sample correlation heatmap and PCA (top 2-3 PCs) on normalized counts with any outlier labeled.",
+          "A go/no-go statement naming which samples proceed (expected all 6) and the strandedness limitation stated verbatim."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression with DESeq2",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "With 3 replicates per group, dispersions are heavily shrunk and individual-gene LFCs can be unstable; apeglm mitigates but does not eliminate this — do not present single-gene fold changes as precise.",
+          "If DESeq2 fails on low-count genes, that is expected with 12,000 pre-filtered features; report how many were excluded by independent filtering rather than forcing them in."
+        ],
+        "context": "Primary DE method on raw integer counts from counts.csv with condition from metadata.csv (use the exact condition strings recorded in the file; the design is 3 treated vs 3 control). Use the sample set that passed T1S1 (expected all 6; if T1S1 flagged one, exclude it and note it). Single batch: no batch covariate. 12,000 genes. Contrast direction: treated vs control, so positive log2FC = up in treated.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "org.Hs.eg.db",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between the treated and control liver samples (3 vs 3, unpaired) under the DESeq2 negative-binomial model, with what magnitude and direction of change?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential-expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Model DESeq2 with design ~ condition on raw integer counts (no pre-normalization, no manual filtering before DESeq2 beyond what DESeq2 itself does).",
+          "Shrink log2 fold changes with apeglm for the reported effect sizes; keep p-values/padj from the unshrunken Wald test for significance.",
+          "Report DE calls at padj < 0.05 (BH) and also give the count at padj < 0.10.",
+          "No covariates beyond condition (no batch, sex, or other columns in metadata)."
+        ],
+        "description": "Primary DE analysis: DESeq2 with design ~ condition, independent filtering, apeglm-shrunk log2 fold changes, results table with full statistics, MA and volcano plots, and summary counts at FDR 0.05 and 0.10.",
+        "acceptance_criteria": [
+          "Full DE table: gene ID, HGNC symbol, baseMean, log2FoldChange (shrunk), lfcSE, stat, pvalue, padj, DE call at padj < 0.05, direction.",
+          "MA plot and volcano plot saved as figures.",
+          "Summary: number of genes tested after independent filtering, number padj < 0.05, split up/down, and the top 20 genes by |shrunk LFC| with padj < 0.05.",
+          "Explicit statement that n=3 per group limits power, especially for small fold changes."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DE robustness cross-check with limma-voom",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Voom t-statistics at n=3 have low residual degrees of freedom; that is the point of an independent-framework check — reconciliation happens in T1S4, not here."
+        ],
+        "context": "Same sample set, counts, and design as T1S2 (3 treated vs 3 control, design ~ condition, no other covariates). voom with trend=TRUE borrows information along the mean-variance trend, which is the recommended setting for small-n RNA-seq.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "org.Hs.eg.db",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Does an independent modeling framework (voom + limma with empirical-Bayes moderation) identify the same differentially expressed genes as DESeq2 for treated vs control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "robustness-check",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pipeline: edgeR::calcNormFactors (TMM) -> voom(design = ~ condition, trend = TRUE) -> eBayes.",
+          "Threshold: adj.P < 0.05 (BH) for DE calls.",
+          "Output a table with the same gene-key structure as T1S2 (logFC, P, adj.P, direction) so T1S4 can join them directly."
+        ],
+        "description": "Independent cross-check: TMM normalization, voom(trend=TRUE), eBayes, BH-adjusted significance at 0.05, with an MA plot and summary counts.",
+        "acceptance_criteria": [
+          "Voom DE table keyed by the same gene IDs as T1S2, with logFC, P, adj.P and DE call at adj.P < 0.05.",
+          "MA plot saved; summary counts (tested, significant, up/down)."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Concordance and final integrated DE list",
+        "agent": "statistical-modeling-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Do not re-run any statistics here; this is a merge-and-label step on the two existing result tables.",
+          "Signs must be compared in the same direction (up in treated) for both methods before calling concordance."
+        ],
+        "context": "Inputs are the two result tables from T1S2 (DESeq2: shrunk LFC, padj) and T1S3 (voom: logFC, adj.P), joined on gene ID with symbol as secondary key. This step answers the user's question directly: the concordant set is the robust answer, the method-specific sets are tentative.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which differential-expression calls are concordant between DESeq2 and voom, and what is the final integrated list of genes that differ between treated and control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "integration",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Classify each gene: concordant (both methods padj/adj.P < 0.05 AND same sign of fold change), DESeq2-only, voom-only, or neither; report counts per class and the Jaccard overlap of the two significant sets.",
+          "Final table: gene ID, symbol, DESeq2 baseMean, DESeq2 shrunk LFC, DESeq2 padj, voom logFC, voom adj.P, concordance class; mark the concordant class as the robust answer to 'which genes differ'.",
+          "State explicitly that both tests share the same samples, so concordance is a consistency indicator, not a multiple-testing correction."
+        ],
+        "description": "Merges the two DE tables, classifies every gene's concordance, and emits the final integrated table of drug-regulated genes with robustness labels plus an honest summary of agreement.",
+        "acceptance_criteria": [
+          "Integrated table with per-method statistics and a concordance class for every gene.",
+          "Summary: counts per concordance class, Jaccard overlap, and the top concordant genes by |LFC|.",
+          "If the two significant sets disagree substantially, the report says so plainly and labels the affected genes as method-dependent rather than forcing a narrative."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway annotation of the final DE list",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways GMT descriptors are '%' delimited — split the first field on '%' to recover readable set names before reporting.",
+          "Enrichment on a small DE list from n=3/group is exploratory; frame hits as hypothesis-generating, not confirmatory."
+        ],
+        "context": "Organism: Homo sapiens — use only human gene sets. Reference data available in this environment: a human WikiPathways GMT (2026.07.10 release) and org.Hs.eg.db (installed) for GO. Inputs: the T1S4 integrated table (significant gene sets) plus the full ranked list of all 12,000 genes from T1S2 ranked by DESeq2 Wald statistic (or shrunk LFC) for the preranked test.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "dplyr"
+        ],
+        "question": "Which human pathways and biological processes are over-represented among the integrated DE genes, and is an n=3/group design powered enough to call this reliable?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S4"
+        ],
+        "constraints": [
+          "Preranked test with fgsea over the FULL 12,000-gene ranked list, not just the significant subset.",
+          "Over-representation on the significant gene sets only; BH-adjust all p-values.",
+          "Use only human gene sets (human WikiPathways GMT; org.Hs.eg.db). The environment also holds mouse and rat GMTs — do not use them on this human data.",
+          "If the final DE list is smaller than ~15 genes, state that enrichment is underpowered, rely on the preranked test only, and do not over-interpret isolated pathway hits."
+        ],
+        "description": "Preranked enrichment (fgsea on the full ranked list) and over-representation (WikiPathways ORA + GO biological process via clusterProfiler) of the final DE genes, with BH correction and an explicit power statement.",
+        "acceptance_criteria": [
+          "Preranked pathway table (WikiPathways) with NES, nominal p, BH-adjusted p; top enriched up- and down-regulated pathways.",
+          "ORA/GO table for the significant sets with BH-adjusted p and gene counts.",
+          "A one-paragraph power statement tied to the actual DE list size, and a mapping of top pathways to the top concordant DE genes."
+        ]
+      }
+    ],
+    "title": "Liver treated-vs-control RNA-seq DE with count QC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The inputs are raw gene-level counts (12,000 genes x 6 samples; 3 treated vs 3 control, unpaired, single batch, human liver) from STAR/featureCounts, with the counting strandedness unrecorded and no alignment files present. Because strandedness cannot be re-derived from counts alone, the plan first validates that the counts are internally consistent and biologically plausible — integer integrity, balanced library sizes, gene-ID annotation mapping, liver marker expression, replicate concordance (PCA/correlation) — and documents the strandedness caveat as an irreducible limitation. The core question 'which genes differ' is then answered with DESeq2 (negative-binomial GLM on raw counts, apeglm-shrunk LFCs) as the primary method and limma-voom (trend=TRUE, appropriate for n=3/group) as an independent-framework cross-check. The two result sets are compared for concordance to separate robust calls from method-dependent ones, and the final gene list is annotated against human WikiPathways and GO so the drug-regulated genes sit in a pathway context. All steps are sized for a 12k x 6 dataset."
+  },
+  "usage": {
+    "inputTokens": 32746,
+    "outputTokens": 12972,
+    "cacheReadInputTokens": 12096,
+    "reasoningTokens": 9640
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_2ee8ac705ed347339a792fc5",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Liver treated-vs-control RNA-seq DE with count QC\", \"analytical_narrative\": \"The inputs are raw gene-level counts (12,000 genes x 6 samples; 3 treated vs 3 control, unpaired, single batch, human liver) from STAR/featureCounts, with the counting strandedness unrecorded and no alignment files present. Because strandedness cannot be re-derived from counts alone, the plan first validates that the counts are internally consistent and biologically plausible — integer integrity, balanced library sizes, gene-ID annotation mapping, liver marker expression, replicate concordance (PCA/correlation) — and documents the strandedness caveat as an irreducible limitation. The core question 'which genes differ' is then answered with DESeq2 (negative-binomial GLM on raw counts, apeglm-shrunk LFCs) as the primary method and limma-voom (trend=TRUE, appropriate for n=3/group) as an independent-framework cross-check. The two result sets are compared for concordance to separate robust calls from method-dependent ones, and the final gene list is annotated against human WikiPathways and GO so the drug-regulated genes sit in a pathway context. All steps are sized for a 12k x 6 dataset.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-10T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Count QC and validation\", \"track\": \"1\", \"step_type\": \"quality-control\", \"question\": \"Are the 12,000 x 6 raw gene counts in counts.csv internally consistent and plausibly human liver — correct gene annotation, integer counts, balanced library sizes, concordant replicates — so they can be trusted for differential expression given that the strandedness used at featureCounts time is unknown?\", \"context\": \"counts.csv: 12,000 rows (genes) x 7 columns (gene ID + 6 samples), raw integer gene-level counts from STAR/featureCounts; library strandedness was NOT recorded and NO BAM/FASTQ files are in the inputs, so the counting cannot be redone. metadata.csv: 6 rows x 2 columns, one row per sample with a condition column (3 treated, 3 control). Tissue: human liver (Homo sapiens). Single batch, unpaired design.\", \"description\": \"QC report on counts.csv: integer integrity, per-sample library size and detection counts, gene-ID to HGNC/Entrez mapping rate, liver-tissue plausibility via canonical markers, sample correlation heatmap and PCA, plus an explicit statement that strandedness is unresolvable from these inputs and how much that can affect gene-level results.\", \"constraints\": [\"Identify the gene-ID space of the first column (Ensembl, HGNC symbol, or other) before any biological interpretation; map to HGNC symbol + Entrez via org.Hs.eg.db (installed), with the UniProt human ID mapping under /mnt/refs as fallback, and report the mapping rate.\", \"Verify every count is a non-negative integer; if any cell is non-integer or negative, flag it as a data-integrity failure in the report — this directly addresses the user's doubt that the counts are right.\", \"State explicitly in the report: alignment files are absent, so the strandedness used at counting cannot be re-derived; at gene level a wrong strandedness choice affects mainly antisense-overlapping genes, so downstream DE should carry this caveat.\", \"Flag any discordant sample but do not silently drop it; if a sample is clearly broken, report which subset should proceed to DE.\"], \"acceptance_criteria\": [\"Per-sample QC table: library size, number and fraction of genes detected (count >= 10), integer-ness check result.\", \"Liver-plausibility table: CPM of canonical liver markers (e.g. ALB, CYP2A6, CYP2C9, CYP2B6, CYP3A4, CYP2E1, AFP, HNF4A, SERPINA1) per sample, with a pass/fail per sample.\", \"Sample correlation heatmap and PCA (top 2-3 PCs) on normalized counts with any outlier labeled.\", \"A go/no-go statement naming which samples proceed (expected all 6) and the strandedness limitation stated verbatim.\"], \"caveats\": [\"12,000 genes is a smaller-than-usual feature space; expect low library sizes and many zero rows — use a count >= 10 detection threshold rather than CPM to avoid penalizing low depth.\", \"Mild replicate variation is normal at n=3; only flag a sample as broken if it is a clear outlier (e.g. correlation < 0.9 with the others on normalized counts or extreme PC distance).\", \"Do not attempt to download or fetch any reference or alignment — work only with the staged files and installed packages.\"], \"packages\": [\"DESeq2\", \"edgeR\", \"org.Hs.eg.db\", \"dplyr\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Differential expression with DESeq2\", \"track\": \"1\", \"step_type\": \"differential-expression\", \"question\": \"Which genes are differentially expressed between the treated and control liver samples (3 vs 3, unpaired) under the DESeq2 negative-binomial model, with what magnitude and direction of change?\", \"context\": \"Primary DE method on raw integer counts from counts.csv with condition from metadata.csv (use the exact condition strings recorded in the file; the design is 3 treated vs 3 control). Use the sample set that passed T1S1 (expected all 6; if T1S1 flagged one, exclude it and note it). Single batch: no batch covariate. 12,000 genes. Contrast direction: treated vs control, so positive log2FC = up in treated.\", \"description\": \"Primary DE analysis: DESeq2 with design ~ condition, independent filtering, apeglm-shrunk log2 fold changes, results table with full statistics, MA and volcano plots, and summary counts at FDR 0.05 and 0.10.\", \"constraints\": [\"Model DESeq2 with design ~ condition on raw integer counts (no pre-normalization, no manual filtering before DESeq2 beyond what DESeq2 itself does).\", \"Shrink log2 fold changes with apeglm for the reported effect sizes; keep p-values/padj from the unshrunken Wald test for significance.\", \"Report DE calls at padj < 0.05 (BH) and also give the count at padj < 0.10.\", \"No covariates beyond condition (no batch, sex, or other columns in metadata).\"], \"acceptance_criteria\": [\"Full DE table: gene ID, HGNC symbol, baseMean, log2FoldChange (shrunk), lfcSE, stat, pvalue, padj, DE call at padj < 0.05, direction.\", \"MA plot and volcano plot saved as figures.\", \"Summary: number of genes tested after independent filtering, number padj < 0.05, split up/down, and the top 20 genes by |shrunk LFC| with padj < 0.05.\", \"Explicit statement that n=3 per group limits power, especially for small fold changes.\"], \"caveats\": [\"With 3 replicates per group, dispersions are heavily shrunk and individual-gene LFCs can be unstable; apeglm mitigates but does not eliminate this — do not present single-gene fold changes as precise.\", \"If DESeq2 fails on low-count genes, that is expected with 12,000 pre-filtered features; report how many were excluded by independent filtering rather than forcing them in.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"org.Hs.eg.db\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"DE robustness cross-check with limma-voom\", \"track\": \"1\", \"step_type\": \"robustness-check\", \"question\": \"Does an independent modeling framework (voom + limma with empirical-Bayes moderation) identify the same differentially expressed genes as DESeq2 for treated vs control?\", \"context\": \"Same sample set, counts, and design as T1S2 (3 treated vs 3 control, design ~ condition, no other covariates). voom with trend=TRUE borrows information along the mean-variance trend, which is the recommended setting for small-n RNA-seq.\", \"description\": \"Independent cross-check: TMM normalization, voom(trend=TRUE), eBayes, BH-adjusted significance at 0.05, with an MA plot and summary counts.\", \"constraints\": [\"Pipeline: edgeR::calcNormFactors (TMM) -> voom(design = ~ condition, trend = TRUE) -> eBayes.\", \"Threshold: adj.P < 0.05 (BH) for DE calls.\", \"Output a table with the same gene-key structure as T1S2 (logFC, P, adj.P, direction) so T1S4 can join them directly.\"], \"acceptance_criteria\": [\"Voom DE table keyed by the same gene IDs as T1S2, with logFC, P, adj.P and DE call at adj.P < 0.05.\", \"MA plot saved; summary counts (tested, significant, up/down).\"], \"caveats\": [\"Voom t-statistics at n=3 have low residual degrees of freedom; that is the point of an independent-framework check — reconciliation happens in T1S4, not here.\"], \"packages\": [\"edgeR\", \"limma\", \"org.Hs.eg.db\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S4\", \"name\": \"Concordance and final integrated DE list\", \"track\": \"1\", \"step_type\": \"integration\", \"question\": \"Which differential-expression calls are concordant between DESeq2 and voom, and what is the final integrated list of genes that differ between treated and control?\", \"context\": \"Inputs are the two result tables from T1S2 (DESeq2: shrunk LFC, padj) and T1S3 (voom: logFC, adj.P), joined on gene ID with symbol as secondary key. This step answers the user's question directly: the concordant set is the robust answer, the method-specific sets are tentative.\", \"description\": \"Merges the two DE tables, classifies every gene's concordance, and emits the final integrated table of drug-regulated genes with robustness labels plus an honest summary of agreement.\", \"constraints\": [\"Classify each gene: concordant (both methods padj/adj.P < 0.05 AND same sign of fold change), DESeq2-only, voom-only, or neither; report counts per class and the Jaccard overlap of the two significant sets.\", \"Final table: gene ID, symbol, DESeq2 baseMean, DESeq2 shrunk LFC, DESeq2 padj, voom logFC, voom adj.P, concordance class; mark the concordant class as the robust answer to 'which genes differ'.\", \"State explicitly that both tests share the same samples, so concordance is a consistency indicator, not a multiple-testing correction.\"], \"acceptance_criteria\": [\"Integrated table with per-method statistics and a concordance class for every gene.\", \"Summary: counts per concordance class, Jaccard overlap, and the top concordant genes by |LFC|.\", \"If the two significant sets disagree substantially, the report says so plainly and labels the affected genes as method-dependent rather than forcing a narrative.\"], \"caveats\": [\"Do not re-run any statistics here; this is a merge-and-label step on the two existing result tables.\", \"Signs must be compared in the same direction (up in treated) for both methods before calling concordance.\"], \"packages\": [\"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S2\", \"T1S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"statistical-modeling-agent\"}, {\"id\": \"T2S1\", \"name\": \"Pathway annotation of the final DE list\", \"track\": \"2\", \"step_type\": \"enrichment\", \"question\": \"Which human pathways and biological processes are over-represented among the integrated DE genes, and is an n=3/group design powered enough to call this reliable?\", \"context\": \"Organism: Homo sapiens — use only human gene sets. Reference data available in this environment: a human WikiPathways GMT (2026.07.10 release) and org.Hs.eg.db (installed) for GO. Inputs: the T1S4 integrated table (significant gene sets) plus the full ranked list of all 12,000 genes from T1S2 ranked by DESeq2 Wald statistic (or shrunk LFC) for the preranked test.\", \"description\": \"Preranked enrichment (fgsea on the full ranked list) and over-representation (WikiPathways ORA + GO biological process via clusterProfiler) of the final DE genes, with BH correction and an explicit power statement.\", \"constraints\": [\"Preranked test with fgsea over the FULL 12,000-gene ranked list, not just the significant subset.\", \"Over-representation on the significant gene sets only; BH-adjust all p-values.\", \"Use only human gene sets (human WikiPathways GMT; org.Hs.eg.db). The environment also holds mouse and rat GMTs — do not use them on this human data.\", \"If the final DE list is smaller than ~15 genes, state that enrichment is underpowered, rely on the preranked test only, and do not over-interpret isolated pathway hits.\"], \"acceptance_criteria\": [\"Preranked pathway table (WikiPathways) with NES, nominal p, BH-adjusted p; top enriched up- and down-regulated pathways.\", \"ORA/GO table for the significant sets with BH-adjusted p and gene counts.\", \"A one-paragraph power statement tied to the actual DE list size, and a mapping of top pathways to the top concordant DE genes.\"], \"caveats\": [\"WikiPathways GMT descriptors are '%' delimited — split the first field on '%' to recover readable set names before reporting.\", \"Enrichment on a small DE list from n=3/group is exploratory; frame hits as hypothesis-generating, not confirmatory.\"], \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"dplyr\"], \"depends_on\": [\"T1S4\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 123
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

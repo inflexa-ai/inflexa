@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 3,
+    "low_count_filter": 3,
+    "normalization": 3,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 2
+  },
+  "rationale": "The planner correctly stopped: it recognized that only paired-end FASTQs exist, that no quantifier or transcriptome index is available, and it asked precisely for a count matrix, per-sample quantifications with a tx2gene map, or provisioning of a named reference plus quantifier — exactly the outcome the reference describes, and it did not invent a matrix. It also sketched the correct downstream method (DESeq2 for a 3 vs 3 unpaired single-batch design). However, no plan was submitted, so the downstream steps are only named (QC, filtering, LFC shrinkage, FDR) without PCA/outlier policy, filter thresholds, in-model normalization, an explicit design formula and reference level, BH at a stated alpha, a low-power caveat, or a report specification. Enrichment is correctly omitted for this data state."
+}

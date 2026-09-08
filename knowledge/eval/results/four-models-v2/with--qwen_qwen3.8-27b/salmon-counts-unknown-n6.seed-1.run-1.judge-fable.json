@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the key point: it does not run tximport on the gene table, does not invent a length input, asks for quant.sf or the average transcript length table, fits DESeq2 Wald (plus edgeR QL) on the counts as delivered with no offset, and states in plan and report that the offset is lost and isoform switching can masquerade as DE. Design formula, explicit control reference, contrast, minimal filter, in-model normalization, BH at 0.05, and apeglm are all explicit and correct. Weaknesses: it does not clearly state what changes when the quant files arrive (tximport with tx2gene and the length offset), its hard stop on fractional values is questionable since Salmon estimated counts are normally non-integer and the reference asks only to report the finding, the QC lacks library sizes and an explicit outlier/shallow-sample policy, and an 'lfc_threshold_policy = test_against_threshold' constraint is listed without any threshold actually being specified or used."
+}

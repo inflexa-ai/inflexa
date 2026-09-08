@@ -5,14 +5,14 @@
   "tag": "fable",
   "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
   "scores": {
-    "method_fits_design": 0,
-    "qc_present": 0,
-    "low_count_filter": 0,
-    "normalization": 0,
-    "model_formula_contrasts": 0,
-    "fdr_shrinkage": 0,
-    "enrichment_universe_sets": 0,
-    "report_completeness": 0
+    "method_fits_design": 10,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
   },
-  "rationale": "No plan was submitted; the planner terminated with a provider network error before producing any content. There is nothing to evaluate against the reference paired design (~ subject + condition), QC, filtering, normalization, contrasts, FDR/shrinkage, or reporting requirements. All criteria score 0 as absent, including enrichment, since the credit for correctly omitting enrichment requires a plan that makes that choice."
+  "rationale": "The plan matches the reference exactly on the core point: DESeq2 with ~ subject + condition, control as explicit reference, a named treated-vs-control contrast, Wald test, apeglm shrinkage, BH at alpha 0.05 with independent filtering, and an edgeR-QL cross-check with the same blocking design. The pre-filter (>=10 counts in >=5 samples) is minimal and tied to the group size, and normalization is inside the model. QC is well specified (blind VST, PCA, distance heatmap, library sizes, colored by condition and subject) but it only says outliers will be 'detected' and states no policy for what to do with an outlier or shallow sample, which in a paired design means dropping the whole pair. Enrichment is correctly and explicitly omitted. The report step lists method, versions, design, thresholds, n_tested/n_de and a reproducibility record, though it does not explicitly commit to stating the design caveats (n=5 pairs, subject fixed effects consuming degrees of freedom); the '11 samples / 1 extra column' oddity is handled by the ID-alignment check."
 }

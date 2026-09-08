@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly recognizes that a TPM table is not count data and fits limma on log2(TPM+1) with eBayes(trend=TRUE, robust=TRUE), an explicit control reference level, a named lesional/control contrast, and BH at 0.05 via topTable, with no size factors, no TMM, and no voom, matching the reference. QC runs on the log values (PCA/MDS on top 500 genes, distance heatmap, detected genes, colored by condition) with a stated flag-not-drop policy, and the filter (TPM >= 1 in >= 6 samples) is minimal and tied to the smallest group size. Minor gaps: it notes that counts would be preferred if available but does not explicitly request the raw counts or quantification directories from the core, and the design formula is described rather than written out. Enrichment is correctly omitted, and the report step names method, versions, design, thresholds, n_tested, n_de, sessionInfo, and the TPM-only caveat."
+}

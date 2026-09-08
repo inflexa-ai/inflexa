@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 6,
+    "low_count_filter": 2,
+    "normalization": 4,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The DE half is sound: DESeq2 Wald with ~condition, explicit reference level, apeglm shrinkage, and condition-colored PCA. The activity half is not: 'decoupleNPI' with 'NPI' and 'Umax' are not decoupleR estimators, the plan never runs ulm on the Wald statistic against the regulons, and the DoRothEA resource carries no version. Two further methodological errors: rescaling fractional Salmon counts by 1e6 before DESeq2 (a pre-model count manipulation that would wreck dispersion estimates, where rounding or tximport is correct), and an explicit refusal to apply any low-count filter. Thresholding at |log2FC|>0.25 post hoc rather than in the test, the absence of a sample-distance heatmap and outlier policy, and no package or network versions in the report also cost points."
+}

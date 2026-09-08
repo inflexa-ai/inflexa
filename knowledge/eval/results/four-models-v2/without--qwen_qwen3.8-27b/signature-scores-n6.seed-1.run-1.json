@@ -1,0 +1,269 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T16:41:14.733Z",
+  "elapsedMs": 251985,
+  "outcome": "plan_submitted",
+  "planId": "pln-9c4253ae",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, count-type determination, shallow-sample characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "core",
+        "status": "pending",
+        "caveats": [
+          "The 12000 rows are 'as delivered' from Salmon; verify the ID space (Ensembl gene ID, transcript ID, or symbol) before symbol mapping; do not assume symbols.",
+          "Length-corrected values invalidate DESeq2's negative binomial model; the verdict must be unambiguous because T2S1 branches on it.",
+          "Do not normalize per group; global scaling keeps the two conditions on a comparable scale."
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, gene-level counts from Salmon as delivered; the profile does not record whether length correction was applied) and /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/metadata/metadata.csv (one row per sample: sample id + condition). Design: 6 inflamed vs 6 control ileum, unpaired, single batch, Homo sapiens. Known caveat: sample_01 library size ~4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "ggplot2",
+          "dplyr",
+          "data.table",
+          "Matrix"
+        ],
+        "question": "Is the delivered Salmon matrix integer counts or length-corrected values, and how does sample_01 (library size ~4x below median) sit relative to the inflamed (n=6) vs control (n=6) group structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Read counts.csv and metadata.csv; use the condition column's actual values as group labels verbatim (expected inflamed/control variants).",
+          "Determine count type: if all matrix values are within 1e-6 of integers, treat as raw counts; otherwise treat as length-corrected (TPM-like). Record this verdict prominently in the step output; it gates the T2S1 method branch.",
+          "Per-sample QC: total counts, fraction of zero-count genes, 25th percentile of counts.",
+          "PCA on log2-CPM (top 500 most variable genes) colored by condition, plus a pairwise Pearson correlation matrix of log2-CPM profiles.",
+          "Characterize sample_01 specifically: its condition group, its library size as a fraction of the group median, its PC coordinates, and whether inflamed/control separation is preserved with and without sample_01.",
+          "Emit a normalized expression matrix: log2(1 + CPM) using global library-size scaling (one set of size factors across all 12 samples, not per-group), rows = genes annotated with HGNC symbols where resolvable (report the symbol-mapping rate), columns = samples.",
+          "Do NOT exclude sample_01 from any artifact in this step; exclusion is handled as a sensitivity analysis in T1S3."
+        ],
+        "acceptance_criteria": [
+          "QC table with one row per sample: condition, total counts, % zero genes, library size, shallow flag (sample_01 flagged).",
+          "Explicit integer vs length-corrected verdict, recorded in the output artifacts.",
+          "PCA and correlation artifacts with sample_01 flagged; a written assessment of group-structure preservation with and without sample_01.",
+          "log2-CPM normalized matrix (12 x 12000) with gene-symbol annotation and reported mapping rate."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GSVA scoring of all hallmark sets, all 12 samples",
+        "agent": "enrichment-agent",
+        "track": "core",
+        "status": "pending",
+        "caveats": [
+          "GSVA scores are centered per sample column by construction; that is fine for cross-sample comparison since all samples share the same normalization, but do not rescale per set before the differential test in T1S3.",
+          "Report any low symbol-match rate per set rather than silently dropping members."
+        ],
+        "context": "Consumes the log2-CPM matrix and metadata from T1S1. The human hallmark GMT (MSigDB 2026.1, 50 HALLMARK_* sets, HGNC symbols, Homo sapiens) is provisioned in the reference store under the msigdb-hallmark-human dataset; resolve it at run time via list_available_refs (query 'hallmark'). A mouse hallmark collection is also provisioned and must NOT be used (organism mismatch).",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "data.table",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "What is the GSVA score of each of the 50 human hallmark gene sets (MSigDB 2026.1) in each of the 12 ileum samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature-scoring",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Verify the GMT's organism is human before use; the dataset is human (taxon 9606).",
+          "Score all 12 samples with GSVA (Gaussian kernel) on the T1S1 log2-CPM matrix exactly as emitted; do not re-normalize.",
+          "Map GMT members to matrix rows by HGNC symbol; report per-set match rate; drop any set matching fewer than 5 genes (expected: none).",
+          "Emit the score matrix (rows = 12 samples, columns = up to 50 hallmark sets) and a sample x hallmark heatmap colored by condition."
+        ],
+        "acceptance_criteria": [
+          "Score matrix with one row per sample and one column per hallmark set, with the per-set gene match rate reported for every set used.",
+          "Sample x hallmark heatmap with condition coloring and sample_01 labeled."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential hallmark scores + shallow-sample sensitivity",
+        "agent": "enrichment-agent",
+        "track": "core",
+        "status": "pending",
+        "caveats": [
+          "n=6/6 is underpowered; report effect sizes (mean score differences) alongside p-values and say so in the summary.",
+          "The reduced run is unbalanced (5 vs 6); state which group lost sample_01.",
+          "Related hallmarks (e.g., co-expression modules) are correlated, not independent; list them as a block rather than counting each as an independent finding."
+        ],
+        "context": "Consumes the GSVA score matrix from T1S2 and group labels from T1S1. sample_01 was identified in T1S1 as ~4x below median library size; its condition group is known from the T1S1 QC table. This step directly answers the user's second question and the shallow-sample concern.",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which hallmark scores differ between inflamed (n=6) and control (n=6) ileum, and does the answer change when shallow sample_01 is excluded?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential-signatures",
+        "depends_on": [
+          "T1S2",
+          "T1S1"
+        ],
+        "constraints": [
+          "Primary test: Welch two-sample t-test per hallmark (inflamed vs control) on the 12 scores; Benjamini-Hochberg FDR across the ~50 hallmarks; also run Wilcoxon rank-sum per hallmark as a nonparametric robustness check, explicitly noting that n=6 per group makes Wilcoxon underpowered and low-resolution.",
+          "Sensitivity: re-run the primary test on the 11 samples excluding sample_01 (5 vs 6); flag every hallmark whose direction of effect, or its q<0.05 significance status, changes between the full and reduced runs.",
+          "Rank all ~50 hallmarks by mean score difference (inflamed minus control) regardless of significance; the full ranked table is an output, not just the significant subset."
+        ],
+        "acceptance_criteria": [
+          "Ranked table covering every scored hallmark: per-group mean score, difference, t-statistic, p, BH q, Wilcoxon p, reduced-run q, and a flag for whether excluding sample_01 changed the result.",
+          "Score heatmap with group coloring and sample_01 labeled.",
+          "Written summary: how many hallmarks are significant at q<0.05 in the primary and reduced runs, and whether the top-ranked hallmarks (by effect size) are robust to excluding sample_01."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Gene-level DE: inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "gene-level-context",
+        "status": "pending",
+        "caveats": [
+          "Never feed length-corrected values to DESeq2; the negative binomial model assumption is broken, and the step must fail loudly rather than produce numbers if the verdict is ambiguous.",
+          "With 6 vs 6 unpaired samples power is low: if fewer than ~10 genes pass padj < 0.1, also report the nominal top list (padj < 0.25) and say the gene list is context, not a discovery claim."
+        ],
+        "context": "Uses the counts and metadata from T1S1. The integer-vs-length-corrected verdict from T1S1 selects the method branch. sample_01 stays in the primary model; shallow-sample impact is quantified at signature level in T1S3.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between inflamed and control ileum, providing gene-level grounding for the differential hallmark signatures?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential-expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "If T1S1 verdict is integer counts: DESeq2 with design ~ condition (unpaired, single batch, no batch term), apeglm LFC shrinkage; report DE genes at padj < 0.1.",
+          "If T1S1 verdict is length-corrected: do NOT run DESeq2; use limma-voom on the T1S1 log2-CPM matrix with trended variances instead, and declare the branch taken in the output.",
+          "Include sample_01 in the primary model.",
+          "Emit the DE table (gene symbol, baseMean, log2FC, shrunk log2FC, p, padj) and a volcano plot; list the top 20 genes per direction."
+        ],
+        "acceptance_criteria": [
+          "DE table covering all genes with an explicit statement of which method branch was used and why, tied to the T1S1 verdict.",
+          "Volcano plot; top 20 up- and down-regulated genes listed with their fold changes."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "fgsea cross-check on hallmark sets + concordance",
+        "agent": "enrichment-agent",
+        "track": "gene-level-context",
+        "status": "pending",
+        "caveats": [
+          "fgsea quality inherits from the DE ranking; if the DE step is underpowered, say the cross-check is weak rather than presenting it as confirmatory.",
+          "Do not treat the two methods as independent evidence of two effects; they are two views of the same contrast. Frame as concordance, not replication."
+        ],
+        "context": "Consumes the T2S1 DE ranking (log2FC with sign as direction; genes without a finite log2FC excluded), the same human hallmark GMT used in T1S2 (MSigDB 2026.1), and the T1S3 score-based results for the concordance comparison.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Do the hallmark sets show set-level enrichment when genes are ranked by DE log2FC, an independent cross-check of the GSVA score-based differential signatures, and where do the two methods disagree?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "set-enrichment",
+        "depends_on": [
+          "T2S1",
+          "T1S3"
+        ],
+        "constraints": [
+          "Run fgsea on the T2S1 log2FC ranking over the hallmark sets; report NES, p, and padj per set; use |NES| >= 2 and padj < 0.05 as the conventional enrichment thresholds.",
+          "Concordance: classify each hallmark as up / down / neutral under both methods (T1S3 score-difference call and this rank-based call); report the agreement counts and an explicit list of disagreements with directions.",
+          "Use the identical GMT file and identical symbol mapping as T1S2 so set identities are directly comparable."
+        ],
+        "acceptance_criteria": [
+          "fgsea table over all scored hallmarks with NES and padj.",
+          "Concordance table (score-based call vs rank-based call) with the disagreement list and a statement on whether the two methods agree on the top differential hallmarks.",
+          "If T2S1 yielded few or no significant genes, an explicit statement that the fgsea cross-check is weak on this dataset."
+        ]
+      }
+    ],
+    "title": "CD ileum: hallmark GSVA scoring + differential signatures",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12 human ileum bulk RNA-seq samples (Crohn inflamed n=6 vs control n=6, unpaired, single batch) delivered as Salmon gene-level counts (12000 x 12), with one shallow sample (sample_01, library size ~4x below median). The research question is signature-level: score every hallmark (MSigDB human hallmark 2026.1, 50 sets, provisioned in the environment) in every sample, then test which hallmark scores differ between groups, while quantifying how much the shallow sample moves that answer. Track 1 (core): T1S1 QC first resolves the one ambiguity that gates method choice (integer counts vs Salmon length-corrected values), characterizes sample_01 against the group structure, and emits the log2-CPM matrix everything downstream consumes. T1S2 scores all 50 hallmarks per sample with GSVA; T1S3 tests inflamed-vs-control score differences (Welch t + BH, Wilcoxon robustness) and reruns excluding sample_01 as the sensitivity analysis the user asked about. Track 2 (context/cross-check): T2S1 gene-level DE (DESeq2, or limma-voom if the matrix proves length-corrected) grounds which genes drive the hallmark shifts; T2S2 runs fgsea on the DE ranking and reports concordance with the GSVA-based calls, giving the differential-signature answer two independent methods."
+  },
+  "usage": {
+    "inputTokens": 124785,
+    "outputTokens": 17139,
+    "cacheReadInputTokens": 81664,
+    "reasoningTokens": 10305
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_391dca76e36743fcbca973f4",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 67
+    },
+    {
+      "toolUseId": "call_651502fadb1540889d1de217",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\n  \"title\": \"CD ileum: hallmark GSVA scoring + differential signatures\",\n  \"analytical_narrative\": \"The data are 12 human ileum bulk RNA-seq samples (Crohn inflamed n=6 vs control n=6, unpaired, single batch) delivered as Salmon gene-level counts (12000 x 12), with one shallow sample (sample_01, library size ~4x below median). The research question is signature-level: score every hallmark (MSigDB human hallmark 2026.1, 50 sets, provisioned in the environment) in every sample, then test which hallmark scores differ between groups, while quantifying how much the shallow sample moves that answer. Track 1 (core): T1S1 QC first resolves the one ambiguity that gates method choice (integer counts vs Salmon length-corrected values), characterizes sample_01 against the group structure, and emits the log2-CPM matrix everything downstream consumes. T1S2 scores all 50 hallmarks per sample with GSVA; T1S3 tests inflamed-vs-control score differences (Welch t + BH, Wilcoxon robustness) and reruns excluding sample_01 as the sensitivity analysis the user asked about. Track 2 (context/cross-check): T2S1 gene-level DE (DESeq2, or limma-voom if the matrix proves length-corrected) grounds which genes drive the hallmark shifts; T2S2 runs fgsea on the DE ranking and reports concordance with the GSVA-based calls, giving the differential-signature answer two independent methods.\",\n  \"created_at\": \"2026-07-22T12:00:00Z\",\n  \"omicsType\": \"transcriptomics\",\n  \"omicsSubtype\": \"bulk-rna-seq\",\n  \"steps\": [\n    {\n      \"id\": \"T1S1\",\n      \"name\": \"QC, count-type determination, shallow-sample characterization\",\n      \"track\": \"core\",\n      \"step_type\": \"qc\",\n      \"question\": \"Is the delivered Salmon matrix integer counts or length-corrected values, and how does sample_01 (library size ~4x below median) sit relative to the inflamed (n=6) vs control (n=6) group structure?\",\n      \"context\": \"Inputs: /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, gene-level counts from Salmon as delivered — the profile does not record whether length correction was applied) and /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/metadata/metadata.csv (one row per sample: sample id + condition). Design: 6 inflamed vs 6 control ileum, unpaired, single batch, Homo sapiens. Known caveat: sample_01 library size ~4x below the median.\",\n      \"constraints\": [\n        \"Read counts.csv and metadata.csv; use the condition column's actual values as group labels verbatim (expected to be inflamed/control variants).\",\n        \"Determine count type: if all matrix values are within 1e-6 of integers, treat as raw counts; otherwise treat as length-corrected (TPM-like). Record this verdict prominently in the step output — it gates the T2S1 method branch.\",\n        \"Per-sample QC: total counts, fraction of zero-count genes, 25th percentile of counts.\",\n        \"PCA on log2-CPM (top 500 most variable genes) colored by condition, plus a pairwise Pearson correlation matrix of log2-CPM profiles.\",\n        \"Characterize sample_01 specifically: its condition group, its library size as a fraction of the group median, its PC coordinates, and whether inflamed/control separation (group centroids or group mean distances) is preserved with and without sample_01.\",\n        \"Emit a normalized expression matrix: log2(1 + CPM) using global library-size scaling (one set of size factors across all 12 samples, not per-group), rows = genes annotated with HGNC symbols where resolvable (report the symbol-mapping rate), columns = samples.\",\n        \"Do NOT exclude sample_01 from any artifact in this step — exclusion is handled as a sensitivity analysis in T1S3.\"\n      ],\n      \"acceptance_criteria\": [\n        \"QC table with one row per sample: condition, total counts, % zero genes, library size, shallow flag (sample_01 flagged).\",\n        \"Explicit integer vs length-corrected verdict, recorded in the output artifacts.\",\n        \"PCA and correlation artifacts with sample_01 flagged; a written assessment of group-structure preservation with and without sample_01.\",\n        \"log2-CPM normalized matrix (12 x 12000) with gene-symbol annotation and reported mapping rate.\"\n      ],\n      \"caveats\": [\n        \"The 12000 rows are 'as delivered' from Salmon — verify the ID space (Ensembl gene ID, transcript ID, or symbol) before symbol mapping; do not assume symbols.\",\n        \"Length-corrected values invalidate DESeq2's negative binomial model; the verdict must be unambiguous because T2S1 branches on it.\",\n        \"Do not normalize per group — global scaling keeps the two conditions on a comparable scale.\"\n      ],\n      \"packages\": [\"edgeR\", \"ggplot2\", \"dplyr\", \"data.table\", \"Matrix\"],\n      \"depends_on\": [],\n      \"resources\": {\"cpu\": 2, \"memoryGb\": 4}\n    },\n    {\n      \"id\": \"T1S2\",\n      \"name\": \"GSVA scoring of all hallmark sets, all 12 samples\",\n      \"track\": \"core\",\n      \"step_type\": \"signature-scoring\",\n      \"question\": \"What is the GSVA score of each of the 50 human hallmark gene sets (MSigDB 2026.1) in each of the 12 ileum samples?\",\n      \"context\": \"Consumes the log2-CPM matrix and metadata from T1S1. The human hallmark GMT (MSigDB 2026.1, 50 HALLMARK_* sets, HGNC symbols, Homo sapiens) is provisioned in the reference store under the msigdb-hallmark-human dataset — resolve it at run time via list_available_refs (category 'pathways' / query 'hallmark'). A mouse hallmark collection is also provisioned and must NOT be used (organism mismatch).\",\n      \"constraints\": [\n        \"Verify the GMT's organism is human before use; the dataset is human (taxon 9606).\",\n        \"Score all 12 samples with GSVA (Gaussian kernel) on the T1S1 log2-CPM matrix exactly as emitted — do not re-normalize.\",\n        \"Map GMT members to matrix rows by HGNC symbol; report per-set match rate; drop any set matching fewer than 5 genes (expected: none).\",\n        \"Emit the score matrix (rows = 12 samples, columns = up to 50 hallmark sets) and a sample x hallmark heatmap colored by condition.\"\n      ],\n      \"acceptance_criteria\": [\n        \"Score matrix with one row per sample and one column per hallmark set, with the per-set gene match rate reported for every set used.\",\n        \"Sample x hallmark heatmap with condition coloring and sample_01 labeled.\"\n      ],\n      \"caveats\": [\n        \"GSVA scores are centered per sample column by construction — that is fine for cross-sample comparison since all samples share the same normalization, but do not rescale per set before the differential test in T1S3.\",\n        \"Report any low symbol-match rate per set rather than silently dropping members.\"\n      ],\n      \"packages\": [\"GSVA\", \"data.table\", \"pheatmap\", \"ggplot2\"],\n      \"depends_on\": [\"T1S1\"],\n      \"resources\": {\"cpu\": 2, \"memoryGb\": 4}\n    },\n    {\n      \"id\": \"T1S3\",\n      \"name\": \"Differential hallmark scores + shallow-sample sensitivity\",\n      \"track\": \"core\",\n      \"step_type\": \"differential-signatures\",\n      \"question\": \"Which hallmark scores differ between inflamed (n=6) and control (n=6) ileum, and does the answer change when shallow sample_01 is excluded?\",\n      \"context\": \"Consumes the GSVA score matrix from T1S2 and group labels from T1S1. sample_01 was identified in T1S1 as ~4x below median library size; its condition group is known from T1S1's QC table. This step directly answers the user's second question and the shallow-sample concern.\",\n      \"constraints\": [\n        \"Primary test: Welch two-sample t-test per hallmark (inflamed vs control) on the 12 scores; Benjamini-Hochberg FDR across the ~50 hallmarks; also run Wilcoxon rank-sum per hallmark as a nonparametric robustness check, explicitly noting that n=6 per group makes Wilcoxon underpowered and low-resolution.\",\n        \"Sensitivity: re-run the primary test on the 11 samples excluding sample_01 (5 vs 6); flag every hallmark whose direction of effect, or its q<0.05 significance status, changes between the full and reduced runs.\",\n        \"Rank all ~50 hallmarks by mean score difference (inflamed minus control) regardless of significance; the full ranked table is an output, not just the significant subset.\"\n      ],\n      \"acceptance_criteria\": [\n        \"Ranked table covering every scored hallmark: per-group mean score, difference, t-statistic, p, BH q, Wilcoxon p, reduced-run q, and a flag for whether excluding sample_01 changed the result.\",\n        \"Score heatmap with group coloring and sample_01 labeled.\",\n        \"Written summary: how many hallmarks are significant at q<0.05 in the primary and reduced runs, and whether the top-ranked hallmarks (by effect size) are robust to excluding sample_01.\"\n      ],\n      \"caveats\": [\n        \"n=6/6 is underpowered — report effect sizes (mean score differences) alongside p-values and say so in the summary.\",\n        \"The reduced run is unbalanced (5 vs 6); state which group lost sample_01.\",\n        \"Related hallmarks (e.g., co-expression modules) are correlated, not independent; list them as a block rather than counting each as an independent finding.\"\n      ],\n      \"packages\": [\"dplyr\", \"pheatmap\", \"ggplot2\"],\n      \"depends_on\": [\"T1S2\", \"T1S1\"],\n      \"resources\": {\"cpu\": 2, \"memoryGb\": 4}\n    },\n    {\n      \"id\": \"T2S1\",\n      \"name\": \"Gene-level DE: inflamed vs control\",\n      \"track\": \"gene-level-context\",\n      \"step_type\": \"differential-expression\",\n      \"question\": \"Which genes are differentially expressed between inflamed and control ileum, providing gene-level grounding for the differential hallmark signatures?\",\n      \"context\": \"Uses the counts and metadata from T1S1. The integer-vs-length-corrected verdict from T1S1 selects the method branch. sample_01 stays in the primary model; shallow-sample impact is quantified at signature level in T1S3, not by dropping genes' sample here.\",\n      \"constraints\": [\n        \"If T1S1 verdict is integer counts: DESeq2 with design ~ condition (unpaired, single batch, no batch term), apeglm LFC shrinkage; report DE genes at padj < 0.1.\",\n        \"If T1S1 verdict is length-corrected: do NOT run DESeq2; use limma-voom on the T1S1 log2-CPM matrix with trended variances instead, and declare the branch taken in the output.\",\n        \"Include sample_01 in the primary model.\",\n        \"Emit the DE table (gene symbol, baseMean/mean, log2FC, shrunk log2FC, p, padj) and a volcano plot; list the top 20 genes per direction.\"\n      ],\n      \"acceptance_criteria\": [\n        \"DE table covering all genes with an explicit statement of which method branch was used and why (tie the branch to the T1S1 verdict).\",\n        \"Volcano plot; top 20 up- and down-regulated genes listed with their fold changes.\"\n      ],\n      \"caveats\": [\n        \"Never feed length-corrected values to DESeq2 — the negative binomial model assumption is broken and the step must fail loudly rather than produce numbers if the verdict is ambiguous.\",\n        \"With 6 vs 6 unpaired samples power is low: if fewer than ~10 genes pass padj < 0.1, also report the nominal top list (padj < 0.25) and say the gene list is context, not a discovery claim.\"\n      ],\n      \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"ggplot2\"],\n      \"depends_on\": [\"T1S1\"],\n      \"resources\": {\"cpu\": 2, \"memoryGb\": 4}\n    },\n    {\n      \"id\": \"T2S2\",\n      \"name\": \"fgsea cross-check on hallmark sets + concordance\",\n      \"track\": \"gene-level-context\",\n      \"step_type\": \"set-enrichment\",\n      \"question\": \"Do the hallmark sets show set-level enrichment when genes are ranked by DE log2FC — an independent cross-check of the GSVA score-based differential signatures, and where do the two methods disagree?\",\n      \"context\": \"Consumes the T2S1 DE ranking (log2FC with sign as direction; genes without a finite log2FC excluded), the same human hallmark GMT used in T1S2 (MSigDB 2026.1), and the T1S3 score-based results for the concordance comparison.\",\n      \"constraints\": [\n        \"Run fgsea on the T2S1 log2FC ranking over the hallmark sets; report NES, p, and padj per set; use |NES| >= 2 and padj < 0.05 as the conventional enrichment thresholds.\",\n        \"Concordance: classify each hallmark as up / down / neutral under both methods (T1S3 score-difference call and this rank-based call); report the agreement counts and an explicit list of disagreements with directions.\",\n        \"Use the identical GMT file and identical symbol mapping as T1S2 so set identities are directly comparable.\"\n      ],\n      \"acceptance_criteria\": [\n        \"fgsea table over all scored hallmarks with NES and padj.\",\n        \"Concordance table (score-based call vs rank-based call) with the disagreement list and a statement on whether the two methods agree on the top differential hallmarks.\",\n        \"If T2S1 yielded few or no significant genes, an explicit statement that the fgsea cross-check is weak on this dataset.\"\n      ],\n      \"caveats\": [\n        \"fgsea quality inherits from the DE ranking — if the DE step is underpowered, say the cross-check is weak rather than presenting it as confirmatory.\",\n        \"Do not treat the two methods as independent evidence of two effects; they are two views of the same contrast. Frame as concordance, not replication.\"\n      ],\n      \"packages\": [\"fgsea\", \"dplyr\", \"ggplot2\"],\n      \"depends_on\": [\"T2S1\", \"T1S3\"],\n      \"resources\": {\"cpu\": 2, \"memoryGb\": 4}\n    }\n  ]\n}"
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_1399fb3f3f764da29ebd1fc0",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"CD ileum: hallmark GSVA scoring + differential signatures\", \"analytical_narrative\": \"The data are 12 human ileum bulk RNA-seq samples (Crohn inflamed n=6 vs control n=6, unpaired, single batch) delivered as Salmon gene-level counts (12000 x 12), with one shallow sample (sample_01, library size ~4x below median). The research question is signature-level: score every hallmark (MSigDB human hallmark 2026.1, 50 sets, provisioned in the environment) in every sample, then test which hallmark scores differ between groups, while quantifying how much the shallow sample moves that answer. Track 1 (core): T1S1 QC first resolves the one ambiguity that gates method choice (integer counts vs Salmon length-corrected values), characterizes sample_01 against the group structure, and emits the log2-CPM matrix everything downstream consumes. T1S2 scores all 50 hallmarks per sample with GSVA; T1S3 tests inflamed-vs-control score differences (Welch t + BH, Wilcoxon robustness) and reruns excluding sample_01 as the sensitivity analysis the user asked about. Track 2 (context/cross-check): T2S1 gene-level DE (DESeq2, or limma-voom if the matrix proves length-corrected) grounds which genes drive the hallmark shifts; T2S2 runs fgsea on the DE ranking and reports concordance with the GSVA-based calls, giving the differential-signature answer two independent methods.\", \"created_at\": \"2026-07-22T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, count-type determination, shallow-sample characterization\", \"track\": \"core\", \"step_type\": \"qc\", \"question\": \"Is the delivered Salmon matrix integer counts or length-corrected values, and how does sample_01 (library size ~4x below median) sit relative to the inflamed (n=6) vs control (n=6) group structure?\", \"context\": \"Inputs: /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, gene-level counts from Salmon as delivered; the profile does not record whether length correction was applied) and /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/metadata/metadata.csv (one row per sample: sample id + condition). Design: 6 inflamed vs 6 control ileum, unpaired, single batch, Homo sapiens. Known caveat: sample_01 library size ~4x below the median.\", \"constraints\": [\"Read counts.csv and metadata.csv; use the condition column's actual values as group labels verbatim (expected inflamed/control variants).\", \"Determine count type: if all matrix values are within 1e-6 of integers, treat as raw counts; otherwise treat as length-corrected (TPM-like). Record this verdict prominently in the step output; it gates the T2S1 method branch.\", \"Per-sample QC: total counts, fraction of zero-count genes, 25th percentile of counts.\", \"PCA on log2-CPM (top 500 most variable genes) colored by condition, plus a pairwise Pearson correlation matrix of log2-CPM profiles.\", \"Characterize sample_01 specifically: its condition group, its library size as a fraction of the group median, its PC coordinates, and whether inflamed/control separation is preserved with and without sample_01.\", \"Emit a normalized expression matrix: log2(1 + CPM) using global library-size scaling (one set of size factors across all 12 samples, not per-group), rows = genes annotated with HGNC symbols where resolvable (report the symbol-mapping rate), columns = samples.\", \"Do NOT exclude sample_01 from any artifact in this step; exclusion is handled as a sensitivity analysis in T1S3.\"], \"acceptance_criteria\": [\"QC table with one row per sample: condition, total counts, % zero genes, library size, shallow flag (sample_01 flagged).\", \"Explicit integer vs length-corrected verdict, recorded in the output artifacts.\", \"PCA and correlation artifacts with sample_01 flagged; a written assessment of group-structure preservation with and without sample_01.\", \"log2-CPM normalized matrix (12 x 12000) with gene-symbol annotation and reported mapping rate.\"], \"caveats\": [\"The 12000 rows are 'as delivered' from Salmon; verify the ID space (Ensembl gene ID, transcript ID, or symbol) before symbol mapping; do not assume symbols.\", \"Length-corrected values invalidate DESeq2's negative binomial model; the verdict must be unambiguous because T2S1 branches on it.\", \"Do not normalize per group; global scaling keeps the two conditions on a comparable scale.\"], \"packages\": [\"edgeR\", \"ggplot2\", \"dplyr\", \"data.table\", \"Matrix\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"GSVA scoring of all hallmark sets, all 12 samples\", \"track\": \"core\", \"step_type\": \"signature-scoring\", \"question\": \"What is the GSVA score of each of the 50 human hallmark gene sets (MSigDB 2026.1) in each of the 12 ileum samples?\", \"context\": \"Consumes the log2-CPM matrix and metadata from T1S1. The human hallmark GMT (MSigDB 2026.1, 50 HALLMARK_* sets, HGNC symbols, Homo sapiens) is provisioned in the reference store under the msigdb-hallmark-human dataset; resolve it at run time via list_available_refs (query 'hallmark'). A mouse hallmark collection is also provisioned and must NOT be used (organism mismatch).\", \"constraints\": [\"Verify the GMT's organism is human before use; the dataset is human (taxon 9606).\", \"Score all 12 samples with GSVA (Gaussian kernel) on the T1S1 log2-CPM matrix exactly as emitted; do not re-normalize.\", \"Map GMT members to matrix rows by HGNC symbol; report per-set match rate; drop any set matching fewer than 5 genes (expected: none).\", \"Emit the score matrix (rows = 12 samples, columns = up to 50 hallmark sets) and a sample x hallmark heatmap colored by condition.\"], \"acceptance_criteria\": [\"Score matrix with one row per sample and one column per hallmark set, with the per-set gene match rate reported for every set used.\", \"Sample x hallmark heatmap with condition coloring and sample_01 labeled.\"], \"caveats\": [\"GSVA scores are centered per sample column by construction; that is fine for cross-sample comparison since all samples share the same normalization, but do not rescale per set before the differential test in T1S3.\", \"Report any low symbol-match rate per set rather than silently dropping members.\"], \"packages\": [\"GSVA\", \"data.table\", \"pheatmap\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T1S3\", \"name\": \"Differential hallmark scores + shallow-sample sensitivity\", \"track\": \"core\", \"step_type\": \"differential-signatures\", \"question\": \"Which hallmark scores differ between inflamed (n=6) and control (n=6) ileum, and does the answer change when shallow sample_01 is excluded?\", \"context\": \"Consumes the GSVA score matrix from T1S2 and group labels from T1S1. sample_01 was identified in T1S1 as ~4x below median library size; its condition group is known from the T1S1 QC table. This step directly answers the user's second question and the shallow-sample concern.\", \"constraints\": [\"Primary test: Welch two-sample t-test per hallmark (inflamed vs control) on the 12 scores; Benjamini-Hochberg FDR across the ~50 hallmarks; also run Wilcoxon rank-sum per hallmark as a nonparametric robustness check, explicitly noting that n=6 per group makes Wilcoxon underpowered and low-resolution.\", \"Sensitivity: re-run the primary test on the 11 samples excluding sample_01 (5 vs 6); flag every hallmark whose direction of effect, or its q<0.05 significance status, changes between the full and reduced runs.\", \"Rank all ~50 hallmarks by mean score difference (inflamed minus control) regardless of significance; the full ranked table is an output, not just the significant subset.\"], \"acceptance_criteria\": [\"Ranked table covering every scored hallmark: per-group mean score, difference, t-statistic, p, BH q, Wilcoxon p, reduced-run q, and a flag for whether excluding sample_01 changed the result.\", \"Score heatmap with group coloring and sample_01 labeled.\", \"Written summary: how many hallmarks are significant at q<0.05 in the primary and reduced runs, and whether the top-ranked hallmarks (by effect size) are robust to excluding sample_01.\"], \"caveats\": [\"n=6/6 is underpowered; report effect sizes (mean score differences) alongside p-values and say so in the summary.\", \"The reduced run is unbalanced (5 vs 6); state which group lost sample_01.\", \"Related hallmarks (e.g., co-expression modules) are correlated, not independent; list them as a block rather than counting each as an independent finding.\"], \"packages\": [\"dplyr\", \"pheatmap\", \"ggplot2\"], \"depends_on\": [\"T1S2\", \"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}, {\"id\": \"T2S1\", \"name\": \"Gene-level DE: inflamed vs control\", \"track\": \"gene-level-context\", \"step_type\": \"differential-expression\", \"question\": \"Which genes are differentially expressed between inflamed and control ileum, providing gene-level grounding for the differential hallmark signatures?\", \"context\": \"Uses the counts and metadata from T1S1. The integer-vs-length-corrected verdict from T1S1 selects the method branch. sample_01 stays in the primary model; shallow-sample impact is quantified at signature level in T1S3.\", \"constraints\": [\"If T1S1 verdict is integer counts: DESeq2 with design ~ condition (unpaired, single batch, no batch term), apeglm LFC shrinkage; report DE genes at padj < 0.1.\", \"If T1S1 verdict is length-corrected: do NOT run DESeq2; use limma-voom on the T1S1 log2-CPM matrix with trended variances instead, and declare the branch taken in the output.\", \"Include sample_01 in the primary model.\", \"Emit the DE table (gene symbol, baseMean, log2FC, shrunk log2FC, p, padj) and a volcano plot; list the top 20 genes per direction.\"], \"acceptance_criteria\": [\"DE table covering all genes with an explicit statement of which method branch was used and why, tied to the T1S1 verdict.\", \"Volcano plot; top 20 up- and down-regulated genes listed with their fold changes.\"], \"caveats\": [\"Never feed length-corrected values to DESeq2; the negative binomial model assumption is broken, and the step must fail loudly rather than produce numbers if the verdict is ambiguous.\", \"With 6 vs 6 unpaired samples power is low: if fewer than ~10 genes pass padj < 0.1, also report the nominal top list (padj < 0.25) and say the gene list is context, not a discovery claim.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T2S2\", \"name\": \"fgsea cross-check on hallmark sets + concordance\", \"track\": \"gene-level-context\", \"step_type\": \"set-enrichment\", \"question\": \"Do the hallmark sets show set-level enrichment when genes are ranked by DE log2FC, an independent cross-check of the GSVA score-based differential signatures, and where do the two methods disagree?\", \"context\": \"Consumes the T2S1 DE ranking (log2FC with sign as direction; genes without a finite log2FC excluded), the same human hallmark GMT used in T1S2 (MSigDB 2026.1), and the T1S3 score-based results for the concordance comparison.\", \"constraints\": [\"Run fgsea on the T2S1 log2FC ranking over the hallmark sets; report NES, p, and padj per set; use |NES| >= 2 and padj < 0.05 as the conventional enrichment thresholds.\", \"Concordance: classify each hallmark as up / down / neutral under both methods (T1S3 score-difference call and this rank-based call); report the agreement counts and an explicit list of disagreements with directions.\", \"Use the identical GMT file and identical symbol mapping as T1S2 so set identities are directly comparable.\"], \"acceptance_criteria\": [\"fgsea table over all scored hallmarks with NES and padj.\", \"Concordance table (score-based call vs rank-based call) with the disagreement list and a statement on whether the two methods agree on the top differential hallmarks.\", \"If T2S1 yielded few or no significant genes, an explicit statement that the fgsea cross-check is weak on this dataset.\"], \"caveats\": [\"fgsea quality inherits from the DE ranking; if the DE step is underpowered, say the cross-check is weak rather than presenting it as confirmatory.\", \"Do not treat the two methods as independent evidence of two effects; they are two views of the same contrast. Frame as concordance, not replication.\"], \"packages\": [\"fgsea\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T2S1\", \"T1S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

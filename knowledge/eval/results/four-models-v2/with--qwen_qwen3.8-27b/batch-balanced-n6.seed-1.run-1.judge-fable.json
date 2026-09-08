@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: balanced batch enters as a fixed covariate in ~ batch + condition with an explicit control reference and named contrast, counts are not adjusted before the model, and ComBat-seq/Harmony are explicitly excluded. Blind-VST PCA and distance heatmap are colored by both batch and condition with a flag-only outlier policy and library sizes reported. The pre-filter (>=10 counts in >=6 samples, the smallest group) is minimal and justified, normalization is median-of-ratios/TMM inside the models, BH at 0.05 with apeglm shrinkage and no post hoc fold-change thresholds. Enrichment is correctly omitted, and the report carries versions, design, thresholds, tested/DE counts, and design caveats; the only minor quibble is that reporting the DESeq2/edgeR intersection as the headline set is conservative rather than required."
+}

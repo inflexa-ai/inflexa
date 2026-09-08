@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 7
+  },
+  "rationale": "The primary path (DESeq2 Wald, ~condition, BH at 0.05, no spurious covariates, honest n=3 caveats) fits the design, but the plan hedges on a data type the task already states and offers a wrong fallback (voom on log2 TPM), and it misapplies ashr to p-values rather than shrinking the reported log2 fold change with apeglm/ashr on effect sizes. No explicit minimal low-count filter is stated beyond DESeq2 independent filtering, and the reference level is not set. QC is solid with a clear flag-not-drop outlier policy. Enrichment is not warranted here, and as written it lacks an ORA universe, a stated ranking metric, a collection version, and a size window; report versions are not required."
+}

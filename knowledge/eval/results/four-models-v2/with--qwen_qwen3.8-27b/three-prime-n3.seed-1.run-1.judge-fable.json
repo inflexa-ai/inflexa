@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: raw QuantSeq counts go straight into DESeq2 Wald and edgeR QL with no length offset, no tximport, and an explicit statement that TPM/FPKM do not apply; normalization is inside the model (median-of-ratios, TMM), the low-count floor is 5 counts in 3 samples with genes kept reported, BH at 0.05 with apeglm shrinkage and no post-hoc fold-change filter, and the power limit at n=3 is stated. QC has blind-vst PCA, distance heatmap and library sizes colored by condition, though the outlier policy is only 'flag for follow-up' rather than a stated decision rule. One constraint line ('import = tximport_raw_counts_no_offset') contradicts the surrounding 'import_tool = none' text, and the DESeq2 step names the contrast but does not write the ~condition formula itself (only the edgeR step does), so small deductions there. Enrichment is correctly omitted and the report lists method, versions, design, thresholds, n_tested, n_de, caveats and sessionInfo."
+}

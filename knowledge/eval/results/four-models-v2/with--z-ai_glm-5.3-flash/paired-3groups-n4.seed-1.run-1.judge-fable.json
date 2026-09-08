@@ -5,14 +5,14 @@
   "tag": "fable",
   "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
   "scores": {
-    "method_fits_design": 0,
-    "qc_present": 0,
-    "low_count_filter": 0,
-    "normalization": 0,
-    "model_formula_contrasts": 0,
-    "fdr_shrinkage": 0,
-    "enrichment_universe_sets": 0,
-    "report_completeness": 0
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
   },
-  "rationale": "No plan was submitted; the planner ended with a network error and produced no content. There is nothing to evaluate against any criterion, including the enrichment criterion, since the plan cannot be said to have correctly omitted enrichment when it states nothing at all. All criteria score zero."
+  "rationale": "The plan matches the reference on the core design: subject as a blocking term, DESeq2 LRT of ~ subject + condition against ~ subject for any-condition effect, then three named pairwise Wald contrasts with ashr shrinkage and BH at 0.05 within contrast, with reference level control stated explicitly. QC is blind vst PCA and distance heatmap colored by subject and condition with library sizes and a shallow-sample flag, though the outlier policy stops at flagging; the filter (>=10 counts in >=4 samples, smallest group) and median-of-ratios normalization inside the model are explicit and justified. Enrichment was not requested; it is nevertheless specified well (full stat-ranked list, Hallmark and WikiPathways with releases, 15-500 window), but the constraint block is internally inconsistent (Reactome and a KEGG policy listed yet not run), so it loses some credit. The report section names method, versions, design, thresholds, n_tested/n_DE, the small-n and length-offset caveats, and a reproducibility record."
 }

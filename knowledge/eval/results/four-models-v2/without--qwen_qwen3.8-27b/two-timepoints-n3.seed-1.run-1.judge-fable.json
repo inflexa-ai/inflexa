@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 1,
+    "normalization": 4,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the two time points as a 2x2 factorial with time as a factor, fits ~ condition + time + condition:time with explicit reference levels and no batch term, takes the interaction as the primary contrast, and reports simple effects at t0 and t1 with shrinkage and BH at 0.05. It omits any low count filter entirely and never states size-factor normalization inside the model, though it does correctly refuse to fit a count model to TPM-like values. QC is limited to a PCA colored by condition and time with no library size check, sample distances, or outlier policy. Enrichment is not warranted here; the plan adds fgsea with a stated metric, named human collection and version, but no set-size window and no explicit ORA universe. Reporting is otherwise complete with versions, thresholds, significant counts, and design caveats."
+}

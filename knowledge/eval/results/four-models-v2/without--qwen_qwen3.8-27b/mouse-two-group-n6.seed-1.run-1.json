@@ -1,0 +1,188 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "mouse-two-group-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:47:21.697Z",
+  "elapsedMs": 219495,
+  "outcome": "plan_submitted",
+  "planId": "pln-c20390fa",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and shallow-sample triage (sample_01)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "sample_01's ~4x lower depth produces a small size factor; do not exclude it on depth alone — a shallow sample that still clusters with its group is normally retained, so the PCA check decides.",
+          "With only 12 samples PCA is indicative, not a formal outlier test; present it as such.",
+          "If counts are non-integer, note it and carry the treatment decision (treat as counts) forward to the DE step rather than silently rounding."
+        ],
+        "context": "Files: /eval-four-models-v2-without-mouse-two-group-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, Salmon gene-level, row names are mouse gene symbols) and /eval-four-models-v2-without-mouse-two-group-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; HFD vs chow, 6 per group, unpaired, single batch). The data profile explicitly flags sample_01's library size as ~4x below the median and does not record whether Salmon applied effective-length correction. No network access: the two files above are the only inputs.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Of the 12 mouse liver libraries, what is the QC state, and specifically how far does sample_01 — library size ~4x below the median — deviate from its own condition group, and do the Salmon counts look like raw integers or length-corrected decimals?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality-control",
+        "depends_on": [],
+        "constraints": [
+          "Load the count matrix and the sample table, and verify sample IDs match 1:1 between the two files before any computation.",
+          "Check whether count values are integers (raw counts) or non-integer (effective-length-corrected) and record the result explicitly — the profile does not say which was delivered.",
+          "Compute per-sample library sizes and DESeq2 median-of-ratios size factors; report sample_01's size factor relative to the median.",
+          "PCA on log2-CPM (or DESeq2 VST) colored by condition; compute sample_01's distance to its condition-group centroid and to the overall mean in PC space, and state whether sample_01 separates from its group.",
+          "The primary analysis retains all 12 samples (6v6). sample_01 is handled as a sensitivity exclusion in the DE step, not removed here — do not drop it unilaterally.",
+          "No downloads; all inputs are the two provided files."
+        ],
+        "description": "Per-sample QC and an explicit triage of the shallow sample_01, producing a documented retain/exclude decision that drives the DE design.",
+        "acceptance_criteria": [
+          "QC table (per sample: condition, library size, size factor) and a PC1-PC2 plot colored by condition saved as artifacts.",
+          "Explicit written verdict: integer vs non-integer counts, sample_01's depth ratio and PC-space distance, and the retained primary design (all 12 samples plus a sensitivity run)."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: HFD vs chow, with and without sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Small n per group: expect large but unstable log2FCs on low-count genes; apeglm shrinkage is required for ranking, not optional.",
+          "Do not add batch or other covariates — the design is single-batch and unpaired.",
+          "sample_01's shallow depth inflates variance for the genes it contributes to; the sensitivity run exists to bound that effect, so both results must be reported even if the primary looks fine."
+        ],
+        "context": "Primary object: the Salmon gene-level count matrix (12,000 genes x 12 samples) with the condition design from metadata.csv. T1S1 supplies the QC verdict (size factors, PCA) and the integer-vs-decimal determination on the counts. Single batch, unpaired — no batch term exists to add. n=6 per group is low power; interpret accordingly.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Which genes change expression between HFD and chow mouse liver (6v6, unpaired), and how robust is the differentially expressed gene set to excluding the shallow sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Model: DESeq2, design ~ condition, contrast HFD vs chow with HFD as the numerator of log2FC.",
+          "Shrink log2FC with apeglm (lfcShrink, type='apeglm') before any ranking or reporting.",
+          "Run the primary analysis on all 12 samples, plus a sensitivity analysis with sample_01 excluded (per the T1S1 verdict); report the overlap of the DE gene sets at padj < 0.05 and the maximum/median shift in shrunk log2FC among shared genes.",
+          "Significance: padj < 0.05 (FDR) as the primary cutoff; also tabulate padj < 0.1. Do not present raw-p-only genes as findings.",
+          "Outputs: full ranked table (gene symbol, baseMean, shrunk log2FC, padj, per-group mean counts) for both runs; volcano plot; heatmap of the top 50 genes (padj < 0.05 by |shrunk log2FC|).",
+          "If T1S1 found the counts to be non-integer (length-corrected), record that DESeq2's median-of-ratios normalization was applied anyway and flag it as a caveat in the results.",
+          "State the power caveat in the write-up: with 6 samples per group, FDR-controlled p-values at n=12 have optimistic reliability, and individual-gene claims beyond the ranked table are hypotheses."
+        ],
+        "description": "Ranked differentially expressed gene list for HFD vs chow mouse liver with apeglm-shrunk LFCs, plus a leave-out sensitivity comparison for the shallow sample_01.",
+        "acceptance_criteria": [
+          "DE table with gene, baseMean, shrunk log2FC, and padj for both the primary (12-sample) and sensitivity (11-sample) runs, plus a written comparison of the two runs.",
+          "Volcano plot and top-gene heatmap saved as artifacts.",
+          "The shallow-sample sensitivity result is reported, not just the primary run."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Hallmark pathway enrichment (MSigDB mouse hallmark) on the DE ranked list",
+        "agent": "enrichment-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "At n=6 per group the significant-gene lists can be small, which weakens ORA; the full-list fgsea is the primary test and ORA is the complement — say so if ORA lists are sparse.",
+          "fgsea assumes the ranking is informative across the full list; do not re-rank only the significant genes.",
+          "Salmon gene-level rows should be plain symbols; if any row carries a non-symbol suffix, resolve it, count what was dropped, and report the count."
+        ],
+        "context": "Input: the ranked gene list from T1S2 (primary all-12 run; include the sensitivity run if it materially differs). Gene IDs are mouse symbols (Salmon gene names, MGI-style). The environment provisions the MSigDB mouse hallmark gene sets (2026.1 release, species-matched MGI symbols) as the pathway reference — use these; the human hallmark, human GO, human oncogenic, and rat sets are wrong-species for this data and must not be used.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which hallmark pathways are enriched among the up- and down-regulated HFD genes in mouse liver?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use only the mouse hallmark gene set collection; do not apply human or rat sets to mouse symbols.",
+          "Before running, verify symbol matching: count how many of the 12,000 matrix genes (and how many DE genes) are absent from the hallmark universe and report the unmatched fraction; if the DE-list match rate is below ~80%, stop and report the mismatch rather than run on a silently truncated list.",
+          "Run fgsea on the full 12,000-gene list ranked by signed -log10(p) (padj, using p where padj is undefined); report set name, NES, and padj with a significance threshold of padj < 0.05, and record the direction (up/down).",
+          "Complement with over-representation analysis of the up- and down-regulated gene lists (padj < 0.05; if either list has fewer than ~10 genes, use the top 50 by |shrunk log2FC| within that direction) with Benjamini-Hochberg correction.",
+          "Report the top 10 up- and top 10 down-enriched hallmark pathways with their leading-edge genes.",
+          "If the T1S2 sensitivity run (sample_01 excluded) yields a materially different significant-pathway set, state both and which is primary."
+        ],
+        "description": "Hallmark pathway enrichment of the HFD vs chow ranked gene list using the species-matched MSigDB mouse hallmark sets, with fgsea as the primary test and ORA as complement.",
+        "acceptance_criteria": [
+          "Pathway table (set name, NES or enrichment score, padj, direction, leading-edge genes) for both fgsea and the ORA complement.",
+          "Dot or ridge plot of the top hallmark pathways saved as an artifact.",
+          "Explicit statement of the gene-set collection used (MSigDB mouse hallmark, 2026.1) and the symbol match rate."
+        ]
+      }
+    ],
+    "title": "HFD vs chow mouse liver: DE genes + hallmark enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Unpaired bulk RNA-seq of mouse liver: 6 high-fat diet (HFD) vs 6 chow, single batch, 12,000-gene Salmon gene-level count matrix. The data profile flags sample_01 at ~4x below median library size and does not record whether Salmon length correction was applied, so QC comes first: quantify sample_01's impact (size factors, PCA distance, integer-vs-decimal check) and keep the primary design at all 12 samples (6v6), with the shallow sample handled as a sensitivity exclusion in the DE step rather than dropped unilaterally. DE is DESeq2 (design ~ condition, single batch, apeglm-shrunk LFCs, FDR-controlled) run twice — primary 12-sample and 11-sample sensitivity — so the shallow sample's effect on the gene list is bounded rather than assumed. Pathway enrichment then answers the 'which hallmark pathways' half of the question using the environment's species-matched MSigDB mouse hallmark gene sets (MGI symbols, 2026.1) — not the human or rat collections — on the full ranked list (fgsea) with an over-representation complement for the significant genes. Order matters: the QC verdict drives the DE design, and the DE ranked list drives the enrichment."
+  },
+  "usage": {
+    "inputTokens": 78282,
+    "outputTokens": 13411,
+    "cacheReadInputTokens": 50944,
+    "reasoningTokens": 10759
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_6a7cc48209a7412d9b1d449a",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 98
+    },
+    {
+      "toolUseId": "call_10d88b50cb804076aebfcb5f",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"HFD vs chow mouse liver: DE genes + hallmark enrichment\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-22T12:00:00Z\", \"analytical_narrative\": \"Unpaired bulk RNA-seq of mouse liver: 6 high-fat diet (HFD) vs 6 chow, single batch, 12,000-gene Salmon gene-level count matrix. The data profile flags sample_01 at ~4x below median library size and does not record whether Salmon length correction was applied, so QC comes first: quantify sample_01's impact (size factors, PCA distance, integer-vs-decimal check) and keep the primary design at all 12 samples (6v6), with the shallow sample handled as a sensitivity exclusion in the DE step rather than dropped unilaterally. DE is DESeq2 (design ~ condition, single batch, apeglm-shrunk LFCs, FDR-controlled) run twice — primary 12-sample and 11-sample sensitivity — so the shallow sample's effect on the gene list is bounded rather than assumed. Pathway enrichment then answers the 'which hallmark pathways' half of the question using the environment's species-matched MSigDB mouse hallmark gene sets (MGI symbols, 2026.1) — not the human or rat collections — on the full ranked list (fgsea) with an over-representation complement for the significant genes. Order matters: the QC verdict drives the DE design, and the DE ranked list drives the enrichment.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC and shallow-sample triage (sample_01)\", \"track\": \"1\", \"step_type\": \"quality-control\", \"question\": \"Of the 12 mouse liver libraries, what is the QC state, and specifically how far does sample_01 — library size ~4x below the median — deviate from its own condition group, and do the Salmon counts look like raw integers or length-corrected decimals?\", \"context\": \"Files: /eval-four-models-v2-without-mouse-two-group-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, Salmon gene-level, row names are mouse gene symbols) and /eval-four-models-v2-without-mouse-two-group-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition; HFD vs chow, 6 per group, unpaired, single batch). The data profile explicitly flags sample_01's library size as ~4x below the median and does not record whether Salmon applied effective-length correction. No network access: the two files above are the only inputs.\", \"constraints\": [\"Load the count matrix and the sample table, and verify sample IDs match 1:1 between the two files before any computation.\", \"Check whether count values are integers (raw counts) or non-integer (effective-length-corrected) and record the result explicitly — the profile does not say which was delivered.\", \"Compute per-sample library sizes and DESeq2 median-of-ratios size factors; report sample_01's size factor relative to the median.\", \"PCA on log2-CPM (or DESeq2 VST) colored by condition; compute sample_01's distance to its condition-group centroid and to the overall mean in PC space, and state whether sample_01 separates from its group.\", \"The primary analysis retains all 12 samples (6v6). sample_01 is handled as a sensitivity exclusion in the DE step, not removed here — do not drop it unilaterally.\", \"No downloads; all inputs are the two provided files.\"], \"acceptance_criteria\": [\"QC table (per sample: condition, library size, size factor) and a PC1-PC2 plot colored by condition saved as artifacts.\", \"Explicit written verdict: integer vs non-integer counts, sample_01's depth ratio and PC-space distance, and the retained primary design (all 12 samples plus a sensitivity run).\"], \"caveats\": [\"sample_01's ~4x lower depth produces a small size factor; do not exclude it on depth alone — a shallow sample that still clusters with its group is normally retained, so the PCA check decides.\", \"With only 12 samples PCA is indicative, not a formal outlier test; present it as such.\", \"If counts are non-integer, note it and carry the treatment decision (treat as counts) forward to the DE step rather than silently rounding.\"], \"packages\": [\"DESeq2\", \"ggplot2\", \"dplyr\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Per-sample QC and an explicit triage of the shallow sample_01, producing a documented retain/exclude decision that drives the DE design.\"}, {\"id\": \"T1S2\", \"name\": \"DESeq2 differential expression: HFD vs chow, with and without sample_01\", \"track\": \"1\", \"step_type\": \"analysis\", \"question\": \"Which genes change expression between HFD and chow mouse liver (6v6, unpaired), and how robust is the differentially expressed gene set to excluding the shallow sample_01?\", \"context\": \"Primary object: the Salmon gene-level count matrix (12,000 genes x 12 samples) with the condition design from metadata.csv. T1S1 supplies the QC verdict (size factors, PCA) and the integer-vs-decimal determination on the counts. Single batch, unpaired — no batch term exists to add. n=6 per group is low power; interpret accordingly.\", \"constraints\": [\"Model: DESeq2, design ~ condition, contrast HFD vs chow with HFD as the numerator of log2FC.\", \"Shrink log2FC with apeglm (lfcShrink, type='apeglm') before any ranking or reporting.\", \"Run the primary analysis on all 12 samples, plus a sensitivity analysis with sample_01 excluded (per the T1S1 verdict); report the overlap of the DE gene sets at padj < 0.05 and the maximum/median shift in shrunk log2FC among shared genes.\", \"Significance: padj < 0.05 (FDR) as the primary cutoff; also tabulate padj < 0.1. Do not present raw-p-only genes as findings.\", \"Outputs: full ranked table (gene symbol, baseMean, shrunk log2FC, padj, per-group mean counts) for both runs; volcano plot; heatmap of the top 50 genes (padj < 0.05 by |shrunk log2FC|).\", \"If T1S1 found the counts to be non-integer (length-corrected), record that DESeq2's median-of-ratios normalization was applied anyway and flag it as a caveat in the results.\", \"State the power caveat in the write-up: with 6 samples per group, FDR-controlled p-values at n=12 have optimistic reliability, and individual-gene claims beyond the ranked table are hypotheses.\"], \"acceptance_criteria\": [\"DE table with gene, baseMean, shrunk log2FC, and padj for both the primary (12-sample) and sensitivity (11-sample) runs, plus a written comparison of the two runs.\", \"Volcano plot and top-gene heatmap saved as artifacts.\", \"The shallow-sample sensitivity result is reported, not just the primary run.\"], \"caveats\": [\"Small n per group: expect large but unstable log2FCs on low-count genes; apeglm shrinkage is required for ranking, not optional.\", \"Do not add batch or other covariates — the design is single-batch and unpaired.\", \"sample_01's shallow depth inflates variance for the genes it contributes to; the sensitivity run exists to bound that effect, so both results must be reported even if the primary looks fine.\"], \"packages\": [\"DESeq2\", \"apeglm\", \"ggplot2\", \"pheatmap\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Ranked differentially expressed gene list for HFD vs chow mouse liver with apeglm-shrunk LFCs, plus a leave-out sensitivity comparison for the shallow sample_01.\"}, {\"id\": \"T1S3\", \"name\": \"Hallmark pathway enrichment (MSigDB mouse hallmark) on the DE ranked list\", \"track\": \"1\", \"step_type\": \"enrichment\", \"question\": \"Which hallmark pathways are enriched among the up- and down-regulated HFD genes in mouse liver?\", \"context\": \"Input: the ranked gene list from T1S2 (primary all-12 run; include the sensitivity run if it materially differs). Gene IDs are mouse symbols (Salmon gene names, MGI-style). The environment provisions the MSigDB mouse hallmark gene sets (2026.1 release, species-matched MGI symbols) as the pathway reference — use these; the human hallmark, human GO, human oncogenic, and rat sets are wrong-species for this data and must not be used.\", \"constraints\": [\"Use only the mouse hallmark gene set collection; do not apply human or rat sets to mouse symbols.\", \"Before running, verify symbol matching: count how many of the 12,000 matrix genes (and how many DE genes) are absent from the hallmark universe and report the unmatched fraction; if the DE-list match rate is below ~80%, stop and report the mismatch rather than run on a silently truncated list.\", \"Run fgsea on the full 12,000-gene list ranked by signed -log10(p) (padj, using p where padj is undefined); report set name, NES, and padj with a significance threshold of padj < 0.05, and record the direction (up/down).\", \"Complement with over-representation analysis of the up- and down-regulated gene lists (padj < 0.05; if either list has fewer than ~10 genes, use the top 50 by |shrunk log2FC| within that direction) with Benjamini-Hochberg correction.\", \"Report the top 10 up- and top 10 down-enriched hallmark pathways with their leading-edge genes.\", \"If the T1S2 sensitivity run (sample_01 excluded) yields a materially different significant-pathway set, state both and which is primary.\"], \"acceptance_criteria\": [\"Pathway table (set name, NES or enrichment score, padj, direction, leading-edge genes) for both fgsea and the ORA complement.\", \"Dot or ridge plot of the top hallmark pathways saved as an artifact.\", \"Explicit statement of the gene-set collection used (MSigDB mouse hallmark, 2026.1) and the symbol match rate.\"], \"caveats\": [\"At n=6 per group the significant-gene lists can be small, which weakens ORA; the full-list fgsea is the primary test and ORA is the complement — say so if ORA lists are sparse.\", \"fgsea assumes the ranking is informative across the full list; do not re-rank only the significant genes.\", \"Salmon gene-level rows should be plain symbols; if any row carries a non-symbol suffix, resolve it, count what was dropped, and report the count.\"], \"packages\": [\"fgsea\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\", \"description\": \"Hallmark pathway enrichment of the HFD vs chow ranked gene list using the species-matched MSigDB mouse hallmark sets, with fgsea as the primary test and ORA as complement.\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

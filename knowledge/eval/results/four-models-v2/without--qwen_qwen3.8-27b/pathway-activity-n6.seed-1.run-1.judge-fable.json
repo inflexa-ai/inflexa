@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 7,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The count model (DESeq2 Wald, ~condition, apeglm, median-of-ratios on raw counts) fits the unpaired single-batch design, and QC reports library sizes, size factors and a condition-coloured PCA with sample_01 quantified, though the default exclusion of a merely shallow sample departs from the keep-and-inspect policy. No low-count filter is stated at all (the plan explicitly keeps all 12,000 genes), no reference level or DE alpha is declared, and no versions are given for packages or the PROGENy model. The pathway inference is an ad hoc weighted mean over all PROGENy genes with Wilcoxon on 5-6 samples rather than decoupleR mlm on Wald statistics with the top-500 responsive genes, and the plan then folds membership-based GSEA on Hallmark/KEGG/GO into a 'footprint' concordance verdict, which conflates enrichment of pathway members with footprint activity, exactly the error the reference warns against. The footprint-vs-membership caution is stated, which partially rescues the interpretation."
+}

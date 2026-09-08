@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald with apeglm and an edgeR QL check on ~condition with explicit reference and contrast, BH at 0.05, minimal filter, and in-model normalization all fit a 6 vs 6 unpaired single-batch design. The plan correctly refuses duplicate removal without UMIs, keeps sample_01 through PCA/distance QC with a stated policy, and reports duplication beside library size. It falls short of the reference on explaining the duplication for a total-RNA library: it never computes rRNA, mitochondrial, or intronic fractions per sample, does not use them to flag an atypical library, and does not state whether rRNA/mito genes would be removed from the matrix before normalization. The lfc_threshold_policy is named but no threshold value is stated, and the report omits the rRNA/mito caveat; the intersection-of-methods framing is stated but adds little."
+}

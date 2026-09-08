@@ -1,0 +1,224 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "two-group-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T13:25:48.739Z",
+  "elapsedMs": 131340,
+  "outcome": "plan_submitted",
+  "planId": "pln-f3d4a90a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample QC + matrix type determination",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de-core",
+        "status": "pending",
+        "caveats": [
+          "If values are Salmon 'expected values' they are integers but are NOT raw counts (transcript-length and sampling bias adjusted) — treat them as continuous for the model choice and note this",
+          "A matrix of pure TPMs will show near-1e6 per-sample sums and fractional values",
+          "Small n makes PCA interpretable but a single outlier can dominate the first axis — look at all axes and per-sample stats"
+        ],
+        "context": "Counts file: /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 x 7 CSV; row = gene, 1 gene-name column + 6 sample columns). Metadata: /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows, one row per sample with condition treated/control). The data profile says 'gene-level counts from salmon as delivered' and explicitly does not say whether length correction is applied. This branch decision determines the downstream model: integer counts -> DESeq2; continuous TPM/expected values -> limma-voom.",
+        "maxSteps": 200,
+        "packages": [
+          "R",
+          "limma",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Are the 6 samples consistent (no failed replicate), and is the 12,000 x 6 value matrix in counts.csv integer counts or continuous length-corrected values (TPM/expected values) from Salmon?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Align samples by name between metadata.csv and matrix columns; if names do not match 1:1, stop and report rather than guess",
+          "Do not modify or filter the count matrix in this step",
+          "Flag-only: a suspected bad replicate is reported, not removed"
+        ],
+        "description": "Load counts.csv and metadata.csv. Align metadata samples to matrix columns (report the join result). Per sample: total values, fraction of genes with value 0, genes detected above threshold. Check the value space: fraction of non-integer values (rounded tolerance 1e-6), value magnitudes (max, median of nonzero per-sample maxima — TPMs sum to ~1e6, expected values/counts are scale-free integers). PCA of log2-transformed, per-sample-scaled values to check the treated/control separation and any outlier. Zero-inflated or empty columns flagged as a failed replicate — with n=3 per group, losing one replicate changes the analysis to n=2 vs n=3 and must be stated, not silently dropped. Write: sample_qc.csv (per-sample stats), matrix_type_report.md (decision: integer counts vs continuous, with the evidence), pca_samples.png. Do NOT drop samples in this step — only flag.",
+        "acceptance_criteria": [
+          "matrix_type_report.md states one of {integer counts, continuous length-corrected values} with numeric evidence (non-integer fraction, typical magnitude)",
+          "sample_qc.csv has one row per sample with totals, zero fractions, and detection counts",
+          "PCA shows the two condition groups; any candidate outlier is flagged with its stats",
+          "metadata-to-matrix join is explicit and all 6 samples matched"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de-core",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group: standard errors are estimated with 4 residual degrees of freedom in the linear model view; a single extreme sample drives dispersion/precision — the MA plot and per-sample stats from T1S1 should be re-checked when reviewing results",
+          "DESeq2 on a 6-sample design may warn about dispersion shrinkage; that is expected, note it",
+          "With 12,000 genes and small n, expect a modest significant count; an empty or tiny padj<0.05 list is a plausible true result, report it as such"
+        ],
+        "context": "Model selection follows T1S1's matrix_type_report.md: integer counts -> DESeq2 on raw counts (design ~ condition, DESeq2 size-factor normalization handles library size); continuous Salmon values -> limma-voom on log2(TPM + small offset) with trend=TRUE, noting the method limitation in the report. Condition column comes from metadata.csv; the contrast is treated vs control (unpaired, single batch, no covariates available).",
+        "maxSteps": 200,
+        "packages": [
+          "R",
+          "DESeq2",
+          "limma",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "Which genes are differentially expressed between treated and control liver samples, and what are their log2 fold changes and adjusted p-values?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the condition labels exactly as they appear in metadata.csv in the model formula",
+          "No batch term, no pairing — the design is single batch, unpaired; do not add covariates that do not exist in the metadata",
+          "Keep all genes in the full results table; filtering happens in the model, not by pre-filtering rows"
+        ],
+        "description": "Fit the model indicated by T1S1 and test condition ~ treatment (3 vs 3). DESeq2 path: DESeq(dds, test='Wald'), independent filtering on, results(dds, alpha=0.05) with the full ranked table (gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all 12,000 genes. limma-voom path: voom with design ~ condition, eBayes, topTable all genes. Write: de_results_full.csv (all genes, ranked by p-value), de_results_top.csv (genes with padj < 0.05, and the top 50 by p-value as a secondary list), ma_plot.png (DESeq2 path: MA of log2FC vs mean normalized count; voom path: mean-vs-SD with fitted trend), and a short method note stating which model was run and why. Report headline numbers: how many of 12,000 genes have padj < 0.05 (BH) and how many have p < 0.05 unadjusted.",
+        "acceptance_criteria": [
+          "de_results_full.csv covers all 12,000 genes with log2FC, standard error, p-value, and BH-adjusted p-value",
+          "The report states exactly which model (DESeq2 on counts or limma-voom on Salmon values) was used and cites T1S1's evidence",
+          "MA plot produced and visually sensible (no extreme mean/SD fan-out on the low end after trend/filtration)",
+          "Headline counts: padj<0.05 count and p<0.05 count both stated"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "FDR reliability with n=3 replicates (ashr shrinkage)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "de-core",
+        "status": "pending",
+        "caveats": [
+          "ashr with 12,000 p-values from a 6-sample design is fine, but if the p-value distribution is badly non-null (many strong hits) the shrinkage is mild — report the shrinkage amount",
+          "The power figure is an approximation and depends on the dispersion summary; if T1S2 used voom, use the trended mean variance, not per-gene SDs",
+          "Do not interpret the overlap between BH and ashr lists as a validation — it is a stability measure, state it that way"
+        ],
+        "context": "Directly answers the confidence half of the research question. With n=3 per group and 12,000 tests, the BH FDR estimate from the empirical null is noisy: the p-value distribution near the uniform baseline is estimated from few effective degrees of freedom, and ashr (adaptively shrinkage for high-throughput data) is the established remedy for exactly this situation. ashr is installed in the R environment.",
+        "maxSteps": 200,
+        "packages": [
+          "R",
+          "ashr",
+          "dplyr",
+          "ggplot2"
+        ],
+        "question": "How confident can we be in the DE calls when each group has only 3 replicates, and how does the significant-gene set change under shrunken FDR?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use ashr on the p-values from T1S2 as-is; do not refit the DE model",
+          "Label every number with its method (BH vs ashr) — never present the shrunken FDR as if it were the standard BH FDR",
+          "No multiple-testing correction beyond BH and ashr; do not add ad-hoc threshold games"
+        ],
+        "description": "Take p-values and log2FC (+ standard errors) from de_results_full.csv (T1S2). Fit ashr on the p-values to obtain shrunken p-values and the ashr-estimated local FDR; convert to an ashr-adjusted FDR call at 0.05. Report: (1) number of genes with BH padj < 0.05 vs number with ashr FDR < 0.05, (2) the gene-by-gene agreement — how many of the BH-significant genes survive ashr and vice versa, (3) a table of the final recommended gene list (union/intersection stated explicitly, default: report BH padj<0.05 as primary and ashr<0.05 as the confidence-weighted list), (4) a confidence-interval view for the top 20 genes by |log2FC| among the significant set. Also compute and report the effective statistical power context: with 3 vs 3 and the observed dispersion from T1S2 (DESeq2 dispersion or voom mean SD), the approximate minimum |log2FC| detectable at 80% power (closed-form normal approximation is fine; state it as an approximation). Write: fdr_comparison.csv (gene, log2FC, pvalue, padj_BH, fdr_ashr), reliability_summary.md, ci_top20.png.",
+        "acceptance_criteria": [
+          "reliability_summary.md states both significant-gene counts (BH vs ashr), their overlap, and which list is recommended",
+          "fdr_comparison.csv has one row per gene with both FDR measures",
+          "The approximate detectable-effect-size-at-80%-power figure is reported with its assumptions (n per group, dispersion source)",
+          "The honest caveat is stated: with n=3/group, FDR estimates themselves have wide uncertainty"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway coherence of DE genes (human WikiPathways)",
+        "agent": "enrichment-agent",
+        "track": "functional",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways gene symbols are HGNC; Ensembl/ENTREZ IDs must be converted, and a low conversion rate is itself a finding to report",
+          "Pathway sets here are WikiPathways only — absence of enrichment is not absence of biology; note the reference scope in the report"
+        ],
+        "context": "Reference available in this environment: human WikiPathways GMT (HGNC symbols, one pathway per line, '%'-delimited descriptor). Gene identifiers in counts.csv are 'as delivered' by Salmon — likely Ensembl IDs or symbols; the provisioned UniProt human ID mapping (column: GeneID/Ensembl, positional, gzipped, no header) is the fallback for ID conversion. Organism is Homo sapiens throughout — do not use the mouse/rat pathway sets.",
+        "maxSteps": 200,
+        "packages": [
+          "R",
+          "clusterProfiler",
+          "fgsea",
+          "dplyr"
+        ],
+        "question": "Do the differentially expressed treated-vs-control genes fall into coherent human pathways, or do they look like a diffuse, low-confidence signal?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use only the human WikiPathways set and human ID mappings — the dataset is Homo sapiens",
+          "If the significant list is empty, the ranking-based analysis must be labeled exploratory, not conclusive"
+        ],
+        "description": "Take the DE gene list from T1S3 (primary: BH padj < 0.05; if empty, fall back to the top 100 by p-value and label the analysis 'exploratory ranking-based'). Convert IDs to HGNC symbols if needed (direct if already symbols; otherwise via the UniProt human ID mapping, reporting the mapping rate — if fewer than ~80% of the list maps, say so and interpret with caution). Run over-representation against the human WikiPathways GMT (clusterProfiler or gseapy), and rank-based enrichment (fgsea/gseapy prerank) using the full ranked list from de_results_full.csv as the ranked input. Report: top pathways with FDR, the mapping rate, and a plain statement of whether the signal looks pathway-coherent or diffuse. Write: pathway_results_ora.csv, pathway_results_prerank.csv, pathway_report.md.",
+        "acceptance_criteria": [
+          "Mapping to HGNC symbols is done with the rate reported",
+          "Both over-representation and prerank-based results are reported with FDR (or a clear statement of why one was infeasible)",
+          "pathway_report.md makes an explicit coherence verdict: coherent (named pathways), mixed, or diffuse"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE + FDR reliability (n=3/group)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-09T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 6 human liver bulk-RNA-seq samples (3 treated vs 3 control, unpaired, single batch) with raw gene-level Salmon output at /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns) and a 6-row condition table at /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/metadata/metadata.csv. The profile does not state whether the Salmon values are raw counts, length-scaled counts, or TPM, so step 1 profiles the matrix and decides the fitting model; step 2 runs the DE contrast with the model that matches the data type and reports both nominal FDR and the gene list; step 3 answers the confidence half of the question directly — with n=3 per group, p-value/FDR estimation is unreliable, so ashr-shrunk FDR is added as the more honest significance call, and the agreement between the two is reported; step 4 checks pathway coherence of the DE list against human WikiPathways, which is provisioned in this environment (HGNC symbols; UniProt human ID mapping is available if the matrix carries Ensembl IDs instead). All steps are tiny (12k x 6) and run on 4 CPUs / 8 GB."
+  },
+  "usage": {
+    "inputTokens": 70261,
+    "outputTokens": 8247,
+    "cacheReadInputTokens": 36739,
+    "reasoningTokens": 1592
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_a64947fc3e6549f8a09aff50",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Liver treated vs control DE + FDR reliability (n=3/group)\", \"analytical_narrative\": \"The dataset is 6 human liver bulk-RNA-seq samples (3 treated vs 3 control, unpaired, single batch) with raw gene-level Salmon output at /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns) and a 6-row condition table at /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/metadata/metadata.csv. The profile does not state whether the Salmon values are raw counts, length-scaled counts, or TPM, so step 1 profiles the matrix and decides the fitting model; step 2 runs the DE contrast with the model that matches the data type and reports both nominal FDR and the gene list; step 3 answers the confidence half of the question directly — with n=3 per group, p-value/FDR estimation is unreliable, so ashr-shrunk FDR is added as the more honest significance call, and the agreement between the two is reported; step 4 checks pathway coherence of the DE list against human WikiPathways, which is provisioned in this environment (HGNC symbols; UniProt human ID mapping is available if the matrix carries Ensembl IDs instead). All steps are tiny (12k x 6) and run on 4 CPUs / 8 GB.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-09T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample QC + matrix type determination\", \"track\": \"de-core\", \"step_type\": \"analysis\", \"question\": \"Are the 6 samples consistent (no failed replicate), and is the 12,000 x 6 value matrix in counts.csv integer counts or continuous length-corrected values (TPM/expected values) from Salmon?\", \"context\": \"Counts file: /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 x 7 CSV; row = gene, 1 gene-name column + 6 sample columns). Metadata: /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows, one row per sample with condition treated/control). The data profile says 'gene-level counts from salmon as delivered' and explicitly does not say whether length correction is applied. This branch decision determines the downstream model: integer counts -> DESeq2; continuous TPM/expected values -> limma-voom.\", \"description\": \"Load counts.csv and metadata.csv. Align metadata samples to matrix columns (report the join result). Per sample: total values, fraction of genes with value 0, genes detected above threshold. Check the value space: fraction of non-integer values (rounded tolerance 1e-6), value magnitudes (max, median of nonzero per-sample maxima — TPMs sum to ~1e6, expected values/counts are scale-free integers). PCA of log2-transformed, per-sample-scaled values to check the treated/control separation and any outlier. Zero-inflated or empty columns flagged as a failed replicate — with n=3 per group, losing one replicate changes the analysis to n=2 vs n=3 and must be stated, not silently dropped. Write: sample_qc.csv (per-sample stats), matrix_type_report.md (decision: integer counts vs continuous, with the evidence), pca_samples.png. Do NOT drop samples in this step — only flag.\", \"acceptance_criteria\": [\"matrix_type_report.md states one of {integer counts, continuous length-corrected values} with numeric evidence (non-integer fraction, typical magnitude)\", \"sample_qc.csv has one row per sample with totals, zero fractions, and detection counts\", \"PCA shows the two condition groups; any candidate outlier is flagged with its stats\", \"metadata-to-matrix join is explicit and all 6 samples matched\"], \"constraints\": [\"Align samples by name between metadata.csv and matrix columns; if names do not match 1:1, stop and report rather than guess\", \"Do not modify or filter the count matrix in this step\", \"Flag-only: a suspected bad replicate is reported, not removed\"], \"caveats\": [\"If values are Salmon 'expected values' they are integers but are NOT raw counts (transcript-length and sampling bias adjusted) — treat them as continuous for the model choice and note this\", \"A matrix of pure TPMs will show near-1e6 per-sample sums and fractional values\", \"Small n makes PCA interpretable but a single outlier can dominate the first axis — look at all axes and per-sample stats\"], \"packages\": [\"R\", \"limma\", \"dplyr\", \"ggplot2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Differential expression: treated vs control\", \"track\": \"de-core\", \"step_type\": \"analysis\", \"question\": \"Which genes are differentially expressed between treated and control liver samples, and what are their log2 fold changes and adjusted p-values?\", \"context\": \"Model selection follows T1S1's matrix_type_report.md: integer counts -> DESeq2 on raw counts (design ~ condition, DESeq2 size-factor normalization handles library size); continuous Salmon values -> limma-voom on log2(TPM + small offset) with trend=TRUE, noting the method limitation in the report. Condition column comes from metadata.csv; the contrast is treated vs control (unpaired, single batch, no covariates available).\", \"description\": \"Fit the model indicated by T1S1 and test condition ~ treatment (3 vs 3). DESeq2 path: DESeq(dds, test='Wald'), independent filtering on, results(dds, alpha=0.05) with the full ranked table (gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all 12,000 genes. limma-voom path: voom with design ~ condition, eBayes, topTable all genes. Write: de_results_full.csv (all genes, ranked by p-value), de_results_top.csv (genes with padj < 0.05, and the top 50 by p-value as a secondary list), ma_plot.png (DESeq2 path: MA of log2FC vs mean normalized count; voom path: mean-vs-SD with fitted trend), and a short method note stating which model was run and why. Report headline numbers: how many of 12,000 genes have padj < 0.05 (BH) and how many have p < 0.05 unadjusted.\", \"acceptance_criteria\": [\"de_results_full.csv covers all 12,000 genes with log2FC, standard error, p-value, and BH-adjusted p-value\", \"The report states exactly which model (DESeq2 on counts or limma-voom on Salmon values) was used and cites T1S1's evidence\", \"MA plot produced and visually sensible (no extreme mean/SD fan-out on the low end after trend/filtration)\", \"Headline counts: padj<0.05 count and p<0.05 count both stated\"], \"constraints\": [\"Use the condition labels exactly as they appear in metadata.csv in the model formula\", \"No batch term, no pairing — the design is single batch, unpaired; do not add covariates that do not exist in the metadata\", \"Keep all genes in the full results table; filtering happens in the model, not by pre-filtering rows\"], \"caveats\": [\"n=3 per group: standard errors are estimated with 4 residual degrees of freedom in the linear model view; a single extreme sample drives dispersion/precision — the MA plot and per-sample stats from T1S1 should be re-checked when reviewing results\", \"DESeq2 on a 6-sample design may warn about dispersion shrinkage; that is expected, note it\", \"With 12,000 genes and small n, expect a modest significant count; an empty or tiny padj<0.05 list is a plausible true result, report it as such\"], \"packages\": [\"R\", \"DESeq2\", \"limma\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"FDR reliability with n=3 replicates (ashr shrinkage)\", \"track\": \"de-core\", \"step_type\": \"analysis\", \"question\": \"How confident can we be in the DE calls when each group has only 3 replicates, and how does the significant-gene set change under shrunken FDR?\", \"context\": \"Directly answers the confidence half of the research question. With n=3 per group and 12,000 tests, the BH FDR estimate from the empirical null is noisy: the p-value distribution near the uniform baseline is estimated from few effective degrees of freedom, and ashr (adaptively shrinkage for high-throughput data) is the established remedy for exactly this situation. ashr is installed in the R environment.\", \"description\": \"Take p-values and log2FC (+ standard errors) from de_results_full.csv (T1S2). Fit ashr on the p-values to obtain shrunken p-values and the ashr-estimated local FDR; convert to an ashr-adjusted FDR call at 0.05. Report: (1) number of genes with BH padj < 0.05 vs number with ashr FDR < 0.05, (2) the gene-by-gene agreement — how many of the BH-significant genes survive ashr and vice versa, (3) a table of the final recommended gene list (union/intersection stated explicitly, default: report BH padj<0.05 as primary and ashr<0.05 as the confidence-weighted list), (4) a confidence-interval view for the top 20 genes by |log2FC| among the significant set. Also compute and report the effective statistical power context: with 3 vs 3 and the observed dispersion from T1S2 (DESeq2 dispersion or voom mean SD), the approximate minimum |log2FC| detectable at 80% power (closed-form normal approximation is fine; state it as an approximation). Write: fdr_comparison.csv (gene, log2FC, pvalue, padj_BH, fdr_ashr), reliability_summary.md, ci_top20.png.\", \"acceptance_criteria\": [\"reliability_summary.md states both significant-gene counts (BH vs ashr), their overlap, and which list is recommended\", \"fdr_comparison.csv has one row per gene with both FDR measures\", \"The approximate detectable-effect-size-at-80%-power figure is reported with its assumptions (n per group, dispersion source)\", \"The honest caveat is stated: with n=3/group, FDR estimates themselves have wide uncertainty\"], \"constraints\": [\"Use ashr on the p-values from T1S2 as-is; do not refit the DE model\", \"Label every number with its method (BH vs ashr) — never present the shrunken FDR as if it were the standard BH FDR\", \"No multiple-testing correction beyond BH and ashr; do not add ad-hoc threshold games\"], \"caveats\": [\"ashr with 12,000 p-values from a 6-sample design is fine, but if the p-value distribution is badly non-null (many strong hits) the shrinkage is mild — report the shrinkage amount\", \"The power figure is an approximation and depends on the dispersion summary; if T1S2 used voom, use the trended mean variance, not per-gene SDs\", \"Do not interpret the overlap between BH and ashr lists as a validation — it is a stability measure, state it that way\"], \"packages\": [\"R\", \"ashr\", \"dplyr\", \"ggplot2\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S4\", \"name\": \"Pathway coherence of DE genes (human WikiPathways)\", \"track\": \"functional\", \"step_type\": \"analysis\", \"question\": \"Do the differentially expressed treated-vs-control genes fall into coherent human pathways, or do they look like a diffuse, low-confidence signal?\", \"context\": \"Reference available in this environment: human WikiPathways GMT (HGNC symbols, one pathway per line, '%'-delimited descriptor). Gene identifiers in counts.csv are 'as delivered' by Salmon — likely Ensembl IDs or symbols; the provisioned UniProt human ID mapping (column: GeneID/Ensembl, positional, gzipped, no header) is the fallback for ID conversion. Organism is Homo sapiens throughout — do not use the mouse/rat pathway sets.\", \"description\": \"Take the DE gene list from T1S3 (primary: BH padj < 0.05; if empty, fall back to the top 100 by p-value and label the analysis 'exploratory ranking-based'). Convert IDs to HGNC symbols if needed (direct if already symbols; otherwise via the UniProt human ID mapping, reporting the mapping rate — if fewer than ~80% of the list maps, say so and interpret with caution). Run over-representation against the human WikiPathways GMT (clusterProfiler or gseapy), and rank-based enrichment (fgsea/gseapy prerank) using the full ranked list from de_results_full.csv as the ranked input. Report: top pathways with FDR, the mapping rate, and a plain statement of whether the signal looks pathway-coherent or diffuse. Write: pathway_results_ora.csv, pathway_results_prerank.csv, pathway_report.md.\", \"acceptance_criteria\": [\"Mapping to HGNC symbols is done with the rate reported\", \"Both over-representation and prerank-based results are reported with FDR (or a clear statement of why one was infeasible)\", \"pathway_report.md makes an explicit coherence verdict: coherent (named pathways), mixed, or diffuse\"], \"constraints\": [\"Use only the human WikiPathways set and human ID mappings — the dataset is Homo sapiens\", \"If the significant list is empty, the ranking-based analysis must be labeled exploratory, not conclusive\"], \"caveats\": [\"WikiPathways gene symbols are HGNC; Ensembl/ENTREZ IDs must be converted, and a low conversion rate is itself a finding to report\", \"Pathway sets here are WikiPathways only — absence of enrichment is not absence of biology; note the reference scope in the report\"], \"packages\": [\"R\", \"clusterProfiler\", \"fgsea\", \"dplyr\"], \"depends_on\": [\"T1S2\", \"T1S3\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_aba4b737884c46bfb57cda79",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"analytical_narrative\": \"The dataset is 6 human liver bulk-RNA-seq samples (3 treated vs 3 control, unpaired, single batch) with raw gene-level Salmon output at /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns) and a 6-row condition table at /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/metadata/metadata.csv. The profile does not state whether the Salmon values are raw counts, length-scaled counts, or TPM, so step 1 profiles the matrix and decides the fitting model; step 2 runs the DE contrast with the model that matches the data type and reports both nominal FDR and the gene list; step 3 answers the confidence half of the question directly — with n=3 per group, p-value/FDR estimation is unreliable, so ashr-shrunk FDR is added as the more honest significance call, and the agreement between the two is reported; step 4 checks pathway coherence of the DE list against human WikiPathways, which is provisioned in this environment (HGNC symbols; UniProt human ID mapping is available if the matrix carries Ensembl IDs instead). All steps are tiny (12k x 6) and run on 4 CPUs / 8 GB.\", \"created_at\": \"2026-07-09T12:00:00Z\", \"omicsSubtype\": \"bulk-rna-seq\", \"omicsType\": \"transcriptomics\", \"steps\": [{\"acceptance_criteria\": [\"matrix_type_report.md states one of {integer counts, continuous length-corrected values} with numeric evidence (non-integer fraction, typical magnitude)\", \"sample_qc.csv has one row per sample with totals, zero fractions, and detection counts\", \"PCA shows the two condition groups; any candidate outlier is flagged with its stats\", \"metadata-to-matrix join is explicit and all 6 samples matched\"], \"constraints\": [\"Align samples by name between metadata.csv and matrix columns; if names do not match 1:1, stop and report rather than guess\", \"Do not modify or filter the count matrix in this step\", \"Flag-only: a suspected bad replicate is reported, not removed\"], \"caveats\": [\"If values are Salmon 'expected values' they are integers but are NOT raw counts (transcript-length and sampling bias adjusted) — treat them as continuous for the model choice and note this\", \"A matrix of pure TPMs will show near-1e6 per-sample sums and fractional values\", \"Small n makes PCA interpretable but a single outlier can dominate the first axis — look at all axes and per-sample stats\"], \"context\": \"Counts file: /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 x 7 CSV; row = gene, 1 gene-name column + 6 sample columns). Metadata: /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows, one row per sample with condition treated/control). The data profile says 'gene-level counts from salmon as delivered' and explicitly does not say whether length correction is applied. This branch decision determines the downstream model: integer counts -> DESeq2; continuous TPM/expected values -> limma-voom.\", \"description\": \"Load counts.csv and metadata.csv. Align metadata samples to matrix columns (report the join result). Per sample: total values, fraction of genes with value 0, genes detected above threshold. Check the value space: fraction of non-integer values (rounded tolerance 1e-6), value magnitudes (max, median of nonzero per-sample maxima — TPMs sum to ~1e6, expected values/counts are scale-free integers). PCA of log2-transformed, per-sample-scaled values to check the treated/control separation and any outlier. Zero-inflated or empty columns flagged as a failed replicate — with n=3 per group, losing one replicate changes the analysis to n=2 vs n=3 and must be stated, not silently dropped. Write: sample_qc.csv (per-sample stats), matrix_type_report.md (decision: integer counts vs continuous, with the evidence), pca_samples.png. Do NOT drop samples in this step — only flag.\", \"depends_on\": [], \"id\": \"T1S1\", \"name\": \"Sample QC + matrix type determination\", \"packages\": [\"R\", \"limma\", \"dplyr\", \"ggplot2\"], \"question\": \"Are the 6 samples consistent (no failed replicate), and is the 12,000 x 6 value matrix in counts.csv integer counts or continuous length-corrected values (TPM/expected values) from Salmon?\", \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"step_type\": \"analysis\", \"track\": \"de-core\"}, {\"acceptance_criteria\": [\"de_results_full.csv covers all 12,000 genes with log2FC, standard error, p-value, and BH-adjusted p-value\", \"The report states exactly which model (DESeq2 on counts or limma-voom on Salmon values) was used and cites T1S1's evidence\", \"MA plot produced and visually sensible (no extreme mean/SD fan-out on the low end after trend/filtration)\", \"Headline counts: padj<0.05 count and p<0.05 count both stated\"], \"constraints\": [\"Use the condition labels exactly as they appear in metadata.csv in the model formula\", \"No batch term, no pairing — the design is single batch, unpaired; do not add covariates that do not exist in the metadata\", \"Keep all genes in the full results table; filtering happens in the model, not by pre-filtering rows\"], \"caveats\": [\"n=3 per group: standard errors are estimated with 4 residual degrees of freedom in the linear model view; a single extreme sample drives dispersion/precision — the MA plot and per-sample stats from T1S1 should be re-checked when reviewing results\", \"DESeq2 on a 6-sample design may warn about dispersion shrinkage; that is expected, note it\", \"With 12,000 genes and small n, expect a modest significant count; an empty or tiny padj<0.05 list is a plausible true result, report it as such\"], \"context\": \"Model selection follows T1S1's matrix_type_report.md: integer counts -> DESeq2 on raw counts (design ~ condition, DESeq2 size-factor normalization handles library size); continuous Salmon values -> limma-voom on log2(TPM + small offset) with trend=TRUE, noting the method limitation in the report. Condition column comes from metadata.csv; the contrast is treated vs control (unpaired, single batch, no covariates available).\", \"description\": \"Fit the model indicated by T1S1 and test condition ~ treatment (3 vs 3). DESeq2 path: DESeq(dds, test='Wald'), independent filtering on, results(dds, alpha=0.05) with the full ranked table (gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all 12,000 genes. limma-voom path: voom with design ~ condition, eBayes, topTable all genes. Write: de_results_full.csv (all genes, ranked by p-value), de_results_top.csv (genes with padj < 0.05, and the top 50 by p-value as a secondary list), ma_plot.png (DESeq2 path: MA of log2FC vs mean normalized count; voom path: mean-vs-SD with fitted trend), and a short method note stating which model was run and why. Report headline numbers: how many of 12,000 genes have padj < 0.05 (BH) and how many have p < 0.05 unadjusted.\", \"depends_on\": [\"T1S1\"], \"id\": \"T1S2\", \"name\": \"Differential expression: treated vs control\", \"packages\": [\"R\", \"DESeq2\", \"limma\", \"dplyr\", \"ggplot2\"], \"question\": \"Which genes are differentially expressed between treated and control liver samples, and what are their log2 fold changes and adjusted p-values?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"step_type\": \"analysis\", \"track\": \"de-core\"}, {\"acceptance_criteria\": [\"reliability_summary.md states both significant-gene counts (BH vs ashr), their overlap, and which list is recommended\", \"fdr_comparison.csv has one row per gene with both FDR measures\", \"The approximate detectable-effect-size-at-80%-power figure is reported with its assumptions (n per group, dispersion source)\", \"The honest caveat is stated: with n=3/group, FDR estimates themselves have wide uncertainty\"], \"constraints\": [\"Use ashr on the p-values from T1S2 as-is; do not refit the DE model\", \"Label every number with its method (BH vs ashr) — never present the shrunken FDR as if it were the standard BH FDR\", \"No multiple-testing correction beyond BH and ashr; do not add ad-hoc threshold games\"], \"caveats\": [\"ashr with 12,000 p-values from a 6-sample design is fine, but if the p-value distribution is badly non-null (many strong hits) the shrinkage is mild — report the shrinkage amount\", \"The power figure is an approximation and depends on the dispersion summary; if T1S2 used voom, use the trended mean variance, not per-gene SDs\", \"Do not interpret the overlap between BH and ashr lists as a validation — it is a stability measure, state it that way\"], \"context\": \"Directly answers the confidence half of the research question. With n=3 per group and 12,000 tests, the BH FDR estimate from the empirical null is noisy: the p-value distribution near the uniform baseline is estimated from few effective degrees of freedom, and ashr (adaptively shrinkage for high-throughput data) is the established remedy for exactly this situation. ashr is installed in the R environment.\", \"description\": \"Take p-values and log2FC (+ standard errors) from de_results_full.csv (T1S2). Fit ashr on the p-values to obtain shrunken p-values and the ashr-estimated local FDR; convert to an ashr-adjusted FDR call at 0.05. Report: (1) number of genes with BH padj < 0.05 vs number with ashr FDR < 0.05, (2) the gene-by-gene agreement — how many of the BH-significant genes survive ashr and vice versa, (3) a table of the final recommended gene list (union/intersection stated explicitly, default: report BH padj<0.05 as primary and ashr<0.05 as the confidence-weighted list), (4) a confidence-interval view for the top 20 genes by |log2FC| among the significant set. Also compute and report the effective statistical power context: with 3 vs 3 and the observed dispersion from T1S2 (DESeq2 dispersion or voom mean SD), the approximate minimum |log2FC| detectable at 80% power (closed-form normal approximation is fine; state it as an approximation). Write: fdr_comparison.csv (gene, log2FC, pvalue, padj_BH, fdr_ashr), reliability_summary.md, ci_top20.png.\", \"depends_on\": [\"T1S2\"], \"id\": \"T1S3\", \"name\": \"FDR reliability with n=3 replicates (ashr shrinkage)\", \"packages\": [\"R\", \"ashr\", \"dplyr\", \"ggplot2\"], \"question\": \"How confident can we be in the DE calls when each group has only 3 replicates, and how does the significant-gene set change under shrunken FDR?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"step_type\": \"analysis\", \"track\": \"de-core\"}, {\"acceptance_criteria\": [\"Mapping to HGNC symbols is done with the rate reported\", \"Both over-representation and prerank-based results are reported with FDR (or a clear statement of why one was infeasible)\", \"pathway_report.md makes an explicit coherence verdict: coherent (named pathways), mixed, or diffuse\"], \"constraints\": [\"Use only the human WikiPathways set and human ID mappings — the dataset is Homo sapiens\", \"If the significant list is empty, the ranking-based analysis must be labeled exploratory, not conclusive\"], \"caveats\": [\"WikiPathways gene symbols are HGNC; Ensembl/ENTREZ IDs must be converted, and a low conversion rate is itself a finding to report\", \"Pathway sets here are WikiPathways only — absence of enrichment is not absence of biology; note the reference scope in the report\"], \"context\": \"Reference available in this environment: human WikiPathways GMT (HGNC symbols, one pathway per line, '%'-delimited descriptor). Gene identifiers in counts.csv are 'as delivered' by Salmon — likely Ensembl IDs or symbols; the provisioned UniProt human ID mapping (column: GeneID/Ensembl, positional, gzipped, no header) is the fallback for ID conversion. Organism is Homo sapiens throughout — do not use the mouse/rat pathway sets.\", \"description\": \"Take the DE gene list from T1S3 (primary: BH padj < 0.05; if empty, fall back to the top 100 by p-value and label the analysis 'exploratory ranking-based'). Convert IDs to HGNC symbols if needed (direct if already symbols; otherwise via the UniProt human ID mapping, reporting the mapping rate — if fewer than ~80% of the list maps, say so and interpret with caution). Run over-representation against the human WikiPathways GMT (clusterProfiler or gseapy), and rank-based enrichment (fgsea/gseapy prerank) using the full ranked list from de_results_full.csv as the ranked input. Report: top pathways with FDR, the mapping rate, and a plain statement of whether the signal looks pathway-coherent or diffuse. Write: pathway_results_ora.csv, pathway_results_prerank.csv, pathway_report.md.\", \"depends_on\": [\"T1S2\", \"T1S3\"], \"id\": \"T1S4\", \"name\": \"Pathway coherence of DE genes (human WikiPathways)\", \"packages\": [\"R\", \"clusterProfiler\", \"fgsea\", \"dplyr\"], \"question\": \"Do the differentially expressed treated-vs-control genes fall into coherent human pathways, or do they look like a diffuse, low-confidence signal?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"enrichment-agent\", \"step_type\": \"analysis\", \"track\": \"functional\"}], \"title\": \"Liver treated vs control DE + FDR reliability (n=3/group)\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 38
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

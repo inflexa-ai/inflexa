@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 3,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 6
+  },
+  "rationale": "The QC step is thorough and dataset-specific (1:1 alignment check, per-sample depth statistics quantifying sample_01, condition-colored PCA, signature-gene coverage per method, sample_01 kept with a mandatory sensitivity analysis), and the per-cell-type unpaired permutation/Wilcoxon tests with BH within method and stated effect sizes are appropriate for 6 vs 6. The central methodological error is mandating log2(TPM+1) as input for every method, including EPIC and TIMER, which the reference explicitly forbids for the absolute-fraction methods; only MCPcounter (and rank-based xCell) tolerate a log matrix. The plan also mislabels xCell enrichment scores as 'proportions' that 'sum to 1', treating scores as fractions and inventing a compositional constraint that does not exist, and never states which EPIC reference (tumor vs blood) is used. Reporting lacks package versions and a stacked-bar fraction plot, though caveats on power and reference dependence are partly present; enrichment is correctly omitted."
+}

@@ -1,0 +1,147 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "paired-3groups-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T14:19:40.491Z",
+  "elapsedMs": 238371,
+  "outcome": "plan_submitted",
+  "planId": "pln-accdafcb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Within-subject DE: LRT + 3 contrasts (DESeq2, voom fallback)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "The Salmon counts' length-correction status is unknown; the integer check is the decision criterion — never run the DESeq2 count model on non-integer scaled values.",
+          "With only 6 residual df, per-gene variance estimates are weak and many padj values will be near 1; report the distribution of |shrunken LFC| (quantiles) so readers can judge signal, and avoid interpreting marginal p-values as findings.",
+          "In blood, between-subject variation typically dominates condition effects; PCA should mostly separate subjects. If PCA instead separates strongly by condition, suspect sample mislabelling — flag it, do not silently relabel.",
+          "Single batch: do not add a batch covariate or run any batch-correction method.",
+          "The row ID space is not documented; keep original IDs in all outputs and do no ID mapping in this step (mapping belongs to T1S2)."
+        ],
+        "context": "counts.csv is 12,000 genes x 12 sample columns (plus a gene-ID column); the profile does not say whether the Salmon gene-level counts are length-corrected, and the row ID space (HGNC symbol vs Ensembl) is not documented — keep original IDs in all outputs. metadata.csv maps 12 samples to subject and condition. Single batch, so no batch term.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "ggplot2"
+        ],
+        "question": "In the 4-subject x 3-condition (control, treated_a, treated_b) blood RNA-seq design, which genes change within subject for each treatment vs control, which genes respond to either treatment, and does treated_a differ from treated_b?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Read inputs from the exact paths: /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/counts/counts.csv and /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/metadata/metadata.csv. Join count columns to metadata sample names 1:1; verify exactly 12 samples, 4 subjects, and each subject having exactly one control, one treated_a, and one treated_b sample; stop and report if the design does not match.",
+          "Determine count type before modeling: if every value is a non-negative integer, use the DESeq2 count model with design ~ subject + condition (condition reference 'control'); if any values are non-integer (length-corrected or otherwise scaled Salmon output), normalize between samples on the raw scale, take log2 with a small offset, and run limma-voom on the identical design. State which branch was used and the evidence.",
+          "Fit the full model ~ subject + condition with subject as a fixed effect (4 levels). Do not add a batch term or any other covariate (single batch). Report the residual degrees of freedom (expected 6).",
+          "Run: (a) a likelihood-ratio test, full ~ subject + condition vs reduced ~ subject (df=2), as the per-gene test of 'responds to either treatment'; (b) the three contrasts treated_a - control, treated_b - control, and treated_a - treated_b.",
+          "Shrink log2FC with apeglm in the DESeq2 branch; use standard empirical Bayes moderation in the voom branch.",
+          "Define the 'responds to either' gene set by LRT padj < 0.05 (primary criterion) and by the union of the two treatment-vs-control contrasts at padj < 0.05 (secondary criterion); report the size of each set and their overlap.",
+          "For every gene, compute per-subject within-subject sign consistency for the two treatment-vs-control contrasts: for each subject, the sign of that subject's normalized log2FC (treatment vs its own control); report how many of the 4 subjects agree in sign with the model LFC.",
+          "Produce diagnostics from the matrix only (no raw data): per-sample nonzero-gene counts and total counts, pairwise sample correlation/distance, and PCA of log2-normalized counts colored separately by subject and by condition. Save all tables (CSV) and plots (MA and volcano per contrast, PCA, distance) to the step output directory.",
+          "State explicitly in the summary: the branch used, the residual df, and the power limitation (6 residual df; FDR control is weak; moderate effect sizes may be missed)."
+        ],
+        "description": "Paired within-subject differential expression on 12 samples / 12,000 genes. Branch on count type (integer -> DESeq2; scaled -> limma-voom), design ~ subject + condition with control as reference. Outputs: LRT table (any condition effect), three contrast tables with apeglm-shrunk log2FC, 'responds to either' sets under two criteria, per-subject sign-consistency counts, and PCA / distance / MA / volcano diagnostics.",
+        "acceptance_criteria": [
+          "Design validation passes: 12 samples join 1:1 and 4 subjects x {control, treated_a, treated_b} is complete with no missing or duplicated combinations.",
+          "The model is fitted and residual df are reported (6 for this design); an LRT table and all three contrast tables exist, each carrying log2FC, p-value, padj, and shrunken log2FC.",
+          "Two 'responds to either' sets are defined (LRT padj<0.05 primary; pairwise-union padj<0.05 secondary) with set sizes and overlap reported.",
+          "Per-gene per-subject sign-consistency counts are present for both treatment-vs-control contrasts.",
+          "PCA, sample-distance, MA, and volcano outputs are saved to the step output directory.",
+          "The count-type branch (integer vs scaled) is stated with its evidence, and the n=4-subject FDR/power limitation is stated."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Pathway enrichment of responsive and treatment-differential sets",
+        "agent": "enrichment-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "With n=4 subjects, the input gene sets are themselves low-power; treat pathway hits as hypothesis-generating, not as independent validation.",
+          "ORA on the a-vs-b set is only meaningful if T1S1 produced significant a-vs-b genes; if none (or very few) exist, say so and rely on the fgsea rank-list results for that contrast.",
+          "WikiPathways membership is symbol-based; report how many parsed sets retain at least 5 mapped members, so alias loss is visible."
+        ],
+        "context": "Inputs are the T1S1 CSV outputs (gene sets and three signed shrunken-LFC rank lists, in the original row-ID space). A human WikiPathways gene-set collection (HGNC symbols, 2026.07.10, ~341 KB GMT) is provisioned under /mnt/refs (wikipathways-human). Rat and mouse WikiPathways sets are also present in the reference store and must NOT be used — the dataset is Homo sapiens.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among (a) genes that respond to either treatment within subject, (b) genes where treated_a and treated_b differ, and (c) each treatment vs control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Consume T1S1 outputs: the LRT padj<0.05 'responds to either' set, the pairwise-union padj<0.05 set, the a-vs-b padj<0.05 set, and the three signed shrunken-LFC rank lists (treated_a - control, treated_b - control, treated_a - treated_b) over all 12,000 genes.",
+          "Map row IDs to HGNC symbols with org.Hs.eg.db, handling Ensembl, Entrez, and symbol inputs; report the mapping rate; drop unmapped genes from enrichment (keep them in the tables). Use human gene sets only — never the rat or mouse sets in the reference store.",
+          "Verify the provisioned human WikiPathways GMT is readable (split the first field of each line on '%' to recover the set name); report the number of gene sets parsed. If it is absent at run time, proceed with GO only and state that explicitly.",
+          "Run over-representation analysis on the 'responds to either' set, the pairwise-union set, and the a-vs-b set, for GO BP/CC/MF (clusterProfiler, org.Hs.eg.db) and for WikiPathways via a custom term-to-gene map; report padj, significance threshold 0.05.",
+          "Run fgsea on the human WikiPathways gene sets with each of the three signed shrunken-LFC rank lists over all genes; report NES and padj.",
+          "Save per-set and per-list enrichment tables (CSV) and top-pathway dot/bar plots to the step output directory; state the number of significant (padj<0.05) pathways per analysis."
+        ],
+        "description": "Functional enrichment of the T1S1 output sets using human references only: over-representation of the 'responds to either' set (LRT primary criterion and pairwise-union), the pairwise-union set, and the a-vs-b padj<0.05 set against GO (BP/CC/MF via org.Hs.eg.db) and the provisioned human WikiPathways; plus fgsea on the human WikiPathways with the three signed shrunken-LFC rank lists over all 12,000 genes.",
+        "acceptance_criteria": [
+          "Symbol mapping rate is reported and only human references are used.",
+          "The human WikiPathways set is confirmed present with a reported set count, or its absence is flagged and GO-only enrichment is performed.",
+          "ORA tables exist for all three gene sets (GO and WikiPathways); fgsea tables exist for all three signed rank lists.",
+          "The count of significant (padj<0.05) pathways is reported for each analysis, and plots are saved."
+        ]
+      }
+    ],
+    "title": "Paired blood RNA-seq: within-subject treatment response",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12 human blood bulk RNA-seq samples (4 subjects x 3 conditions: control, treated_a, treated_b; 12,000 genes; Salmon gene-level counts, single batch). Both parts of the question — which genes respond to either treatment within subjects, and whether the two treatments differ — are only estimable with a paired design. T1S1 fits one model, subject (fixed, 4 levels) + condition (3 levels, reference control), leaving 6 residual df. A likelihood-ratio test of condition (2 df) gives one principled per-gene test of 'responds to either treatment'; three pairwise contrasts (treated_a - control, treated_b - control, treated_a - treated_b) with apeglm-shrunk log2FC give direction and magnitude, and the a - b contrast answers the between-treatment question directly. A per-subject sign-consistency check guards against single-subject drivers at n=4. Because the profile does not state whether the Salmon counts are length-corrected, the step branches: all-integer values -> DESeq2 negative binomial; non-integer (scaled) values -> log2 transform + limma-voom on the same design, with an identical output schema. T1S2 then enriches the defined responsive sets against the provisioned human WikiPathways (2026.07.10) and human GO (org.Hs.eg.db), using over-representation on the sets and fgsea on the three signed shrunken-LFC rank lists. No batch correction is applied (single batch)."
+  },
+  "usage": {
+    "inputTokens": 32726,
+    "outputTokens": 14342,
+    "cacheReadInputTokens": 12096,
+    "reasoningTokens": 11476
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_cbd97a7a16224900852a6328",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\n  \"title\": \"Paired blood RNA-seq: within-subject treatment response\",\n  \"analytical_narrative\": \"The data are 12 human blood bulk RNA-seq samples (4 subjects x 3 conditions: control, treated_a, treated_b; 12,000 genes; Salmon gene-level counts, single batch). Both parts of the question — which genes respond to either treatment within subjects, and whether the two treatments differ — are only estimable with a paired design. T1S1 fits one model, subject (fixed, 4 levels) + condition (3 levels, reference control), leaving 6 residual df. A likelihood-ratio test of condition (2 df) gives one principled per-gene test of 'responds to either treatment'; three pairwise contrasts (treated_a - control, treated_b - control, treated_a - treated_b) with apeglm-shrunk log2FC give direction and magnitude, and the a - b contrast answers the between-treatment question directly. A per-subject sign-consistency check guards against single-subject drivers at n=4. Because the profile does not state whether the Salmon counts are length-corrected, the step branches: all-integer values -> DESeq2 negative binomial; non-integer (scaled) values -> log2 transform + limma-voom on the same design, with an identical output schema. T1S2 then enriches the defined responsive sets against the provisioned human WikiPathways (2026.07.10) and human GO (org.Hs.eg.db), using over-representation on the sets and fgsea on the three signed shrunken-LFC rank lists. No batch correction is applied (single batch).\",\n  \"created_at\": \"2026-07-10T00:00:00Z\",\n  \"omicsType\": \"transcriptomics\",\n  \"omicsSubtype\": \"bulk-rna-seq\",\n  \"steps\": [\n    {\n      \"id\": \"T1S1\",\n      \"name\": \"Within-subject DE: LRT + 3 contrasts (DESeq2, voom fallback)\",\n      \"track\": \"1\",\n      \"step_type\": \"analysis\",\n      \"question\": \"In the 4-subject x 3-condition (control, treated_a, treated_b) blood RNA-seq design, which genes change within subject for each treatment vs control, which genes respond to either treatment, and does treated_a differ from treated_b?\",\n      \"description\": \"Paired within-subject differential expression on 12 samples / 12,000 genes. Branch on count type (integer -> DESeq2; scaled -> limma-voom), design ~ subject + condition with control as reference. Outputs: LRT table (any condition effect), three contrast tables with apeglm-shrunk log2FC, 'responds to either' sets under two criteria, per-subject sign-consistency counts, and PCA / distance / MA / volcano diagnostics.\",\n      \"context\": \"counts.csv is 12,000 genes x 12 sample columns (plus a gene-ID column); the profile does not say whether the Salmon gene-level counts are length-corrected, and the row ID space (HGNC symbol vs Ensembl) is not documented — keep original IDs in all outputs. metadata.csv maps 12 samples to subject and condition. Single batch, so no batch term.\",\n      \"agent\": \"bulk-transcriptomics-agent\",\n      \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"ggplot2\"],\n      \"depends_on\": [],\n      \"resources\": { \"cpu\": 2, \"memoryGb\": 4 },\n      \"constraints\": [\n        \"Read inputs from the exact paths: /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/counts/counts.csv and /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/metadata/metadata.csv. Join count columns to metadata sample names 1:1; verify exactly 12 samples, 4 subjects, and each subject having exactly one control, one treated_a, and one treated_b sample; stop and report if the design does not match.\",\n        \"Determine count type before modeling: if every value is a non-negative integer, use the DESeq2 count model with design ~ subject + condition (condition reference 'control'); if any values are non-integer (length-corrected or otherwise scaled Salmon output), normalize between samples on the raw scale, take log2 with a small offset, and run limma-voom on the identical design. State which branch was used and the evidence.\",\n        \"Fit the full model ~ subject + condition with subject as a fixed effect (4 levels). Do not add a batch term or any other covariate (single batch). Report the residual degrees of freedom (expected 6).\",\n        \"Run: (a) a likelihood-ratio test, full ~ subject + condition vs reduced ~ subject (df=2), as the per-gene test of 'responds to either treatment'; (b) the three contrasts treated_a - control, treated_b - control, and treated_a - treated_b.\",\n        \"Shrink log2FC with apeglm in the DESeq2 branch; use standard empirical Bayes moderation in the voom branch.\",\n        \"Define the 'responds to either' gene set by LRT padj < 0.05 (primary criterion) and by the union of the two treatment-vs-control contrasts at padj < 0.05 (secondary criterion); report the size of each set and their overlap.\",\n        \"For every gene, compute per-subject within-subject sign consistency for the two treatment-vs-control contrasts: for each subject, the sign of that subject's normalized log2FC (treatment vs its own control); report how many of the 4 subjects agree in sign with the model LFC.\",\n        \"Produce diagnostics from the matrix only (no raw data): per-sample nonzero-gene counts and total counts, pairwise sample correlation/distance, and PCA of log2-normalized counts colored separately by subject and by condition. Save all tables (CSV) and plots (MA and volcano per contrast, PCA, distance) to the step output directory.\",\n        \"State explicitly in the summary: the branch used, the residual df, and the power limitation (6 residual df; FDR control is weak; moderate effect sizes may be missed).\"\n      ],\n      \"acceptance_criteria\": [\n        \"Design validation passes: 12 samples join 1:1 and 4 subjects x {control, treated_a, treated_b} is complete with no missing or duplicated combinations.\",\n        \"The model is fitted and residual df are reported (6 for this design); an LRT table and all three contrast tables exist, each carrying log2FC, p-value, padj, and shrunken log2FC.\",\n        \"Two 'responds to either' sets are defined (LRT padj<0.05 primary; pairwise-union padj<0.05 secondary) with set sizes and overlap reported.\",\n        \"Per-gene per-subject sign-consistency counts are present for both treatment-vs-control contrasts.\",\n        \"PCA, sample-distance, MA, and volcano outputs are saved to the step output directory.\",\n        \"The count-type branch (integer vs scaled) is stated with its evidence, and the n=4-subject FDR/power limitation is stated.\"\n      ],\n      \"caveats\": [\n        \"The Salmon counts' length-correction status is unknown; the integer check is the decision criterion — never run the DESeq2 count model on non-integer scaled values.\",\n        \"With only 6 residual df, per-gene variance estimates are weak and many padj values will be near 1; report the distribution of |shrunken LFC| (quantiles) so readers can judge signal, and avoid interpreting marginal p-values as findings.\",\n        \"In blood, between-subject variation typically dominates condition effects; PCA should mostly separate subjects. If PCA instead separates strongly by condition, suspect sample mislabelling — flag it, do not silently relabel.\",\n        \"Single batch: do not add a batch covariate or run any batch-correction method.\",\n        \"The row ID space is not documented; keep original IDs in all outputs and do no ID mapping in this step (mapping belongs to T1S2).\"\n      ]\n    },\n    {\n      \"id\": \"T1S2\",\n      \"name\": \"Pathway enrichment of responsive and treatment-differential sets\",\n      \"track\": \"1\",\n      \"step_type\": \"analysis\",\n      \"question\": \"Which biological pathways are enriched among (a) genes that respond to either treatment within subject, (b) genes where treated_a and treated_b differ, and (c) each treatment vs control contrast?\",\n      \"description\": \"Functional enrichment of the T1S1 output sets using human references only: over-representation of the 'responds to either' set (LRT primary criterion and pairwise-union), the pairwise-union set, and the a-vs-b padj<0.05 set against GO (BP/CC/MF via org.Hs.eg.db) and the provisioned human WikiPathways; plus fgsea on the human WikiPathways with the three signed shrunken-LFC rank lists over all 12,000 genes.\",\n      \"context\": \"Inputs are the T1S1 CSV outputs (gene sets and three signed shrunken-LFC rank lists, in the original row-ID space). A human WikiPathways gene-set collection (HGNC symbols, 2026.07.10, ~341 KB GMT) is provisioned under /mnt/refs (wikipathways-human). Rat and mouse WikiPathways sets are also present in the reference store and must NOT be used — the dataset is Homo sapiens.\",\n      \"agent\": \"enrichment-agent\",\n      \"packages\": [\"fgsea\", \"clusterProfiler\", \"org.Hs.eg.db\", \"ggplot2\"],\n      \"depends_on\": [\"T1S1\"],\n      \"resources\": { \"cpu\": 2, \"memoryGb\": 4 },\n      \"constraints\": [\n        \"Consume T1S1 outputs: the LRT padj<0.05 'responds to either' set, the pairwise-union padj<0.05 set, the a-vs-b padj<0.05 set, and the three signed shrunken-LFC rank lists (treated_a - control, treated_b - control, treated_a - treated_b) over all 12,000 genes.\",\n        \"Map row IDs to HGNC symbols with org.Hs.eg.db, handling Ensembl, Entrez, and symbol inputs; report the mapping rate; drop unmapped genes from enrichment (keep them in the tables). Use human gene sets only — never the rat or mouse sets in the reference store.\",\n        \"Verify the provisioned human WikiPathways GMT is readable (split the first field of each line on '%' to recover the set name); report the number of gene sets parsed. If it is absent at run time, proceed with GO only and state that explicitly.\",\n        \"Run over-representation analysis on the 'responds to either' set, the pairwise-union set, and the a-vs-b set, for GO BP/CC/MF (clusterProfiler, org.Hs.eg.db) and for WikiPathways via a custom term-to-gene map; report padj, significance threshold 0.05.\",\n        \"Run fgsea on the human WikiPathways gene sets with each of the three signed shrunken-LFC rank lists over all genes; report NES and padj.\",\n        \"Save per-set and per-list enrichment tables (CSV) and top-pathway dot/bar plots to the step output directory; state the number of significant (padj<0.05) pathways per analysis.\"\n      ],\n      \"acceptance_criteria\": [\n        \"Symbol mapping rate is reported and only human references are used.\",\n        \"The human WikiPathways set is confirmed present with a reported set count, or its absence is flagged and GO-only enrichment is performed.\",\n        \"ORA tables exist for all three gene sets (GO and WikiPathways); fgsea tables exist for all three signed rank lists.\",\n        \"The count of significant (padj<0.05) pathways is reported for each analysis, and plots are saved.\"\n      ],\n      \"caveats\": [\n        \"With n=4 subjects, the input gene sets are themselves low-power; treat pathway hits as hypothesis-generating, not as independent validation.\",\n        \"ORA on the a-vs-b set is only meaningful if T1S1 produced significant a-vs-b genes; if none (or very few) exist, say so and rely on the fgsea rank-list results for that contrast.\",\n        \"WikiPathways membership is symbol-based; report how many parsed sets retain at least 5 mapped members, so alias loss is visible.\"\n      ]\n    }\n  ]\n}"
+      },
+      "outcome": "ok",
+      "durationMs": 97
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

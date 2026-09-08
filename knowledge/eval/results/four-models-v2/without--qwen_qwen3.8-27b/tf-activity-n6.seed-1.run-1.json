@@ -1,0 +1,270 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "tf-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:58:39.693Z",
+  "elapsedMs": 452383,
+  "outcome": "plan_submitted",
+  "planId": "pln-8bd97b01",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, differential expression (treated vs vehicle)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group gives limited power: a small or empty DE list at padj<0.05 is a real outcome to report, not a failure; the exploratory padj<0.1 list and the full ranked list are what downstream steps consume",
+          "Do not mix length-scaled or TPM-style values into DESeq2, and do not silently round fractional counts to integers",
+          "Single batch, unpaired design: no batch term and no pairing are appropriate; do not add them"
+        ],
+        "context": "Input files: /eval-four-models-v2-without-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (gene-level counts from Salmon, 12000 rows x 13 columns: one id column + 12 samples) and /eval-four-models-v2-without-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition). Organism Homo sapiens, tissue kidney, design 6 treated vs 6 control, unpaired, single batch. CRITICAL: the data record does not state whether Salmon applied length correction, so the counts may be fractional length-corrected quasi-counts rather than raw integers.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "edgeR",
+          "ggplot2",
+          "pheatmap",
+          "dplyr",
+          "matrixStats",
+          "EnsDb.Hsapiens.v86",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which genes are differentially expressed in human kidney in aldosterone-treated samples (n=6) versus vehicle controls (n=6, unpaired, single batch), using the Salmon gene-level counts in counts.csv (12000 genes x 12 samples)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Join metadata.csv to counts.csv on sample id; verify a 1:1 match of all 12 samples before modeling; use the two observed condition levels as the design factor (~ condition, intercept-only)",
+          "First check integer-ness of the count matrix: if every entry is an integer, use DESeq2 (DESeqDataSetFromMatrix with design ~ condition, NB GLM, lfcShrink with apeglm) as the primary method. If any entry is fractional, DESeq2 will reject non-integer counts - do NOT round them; instead use limma-voom on log2(counts-per-million after median-ratio or upper-quartile normalization) as the primary method",
+          "Map row ids to HGNC symbols with EnsDb.Hsapiens.v86 (fall back to org.Hs.eg.db); report the id-space detected in counts.csv (Ensembl, Entrez, or symbols) and the mapping rate; keep unmapped rows under their original id",
+          "Report DE counts at both padj<0.05 (primary) and padj<0.1 (exploratory); keep the full ranked list (all genes ranked by significance) as an artifact for T1S3"
+        ],
+        "description": "Produce (a) QC summary (normalization factors, PCA of normalized expression colored by condition, MA plot, volcano, per-sample distribution summary), (b) the full DE table with HGNC symbols where mappable, (c) a log2-normalized expression matrix (HGNC symbol index, 12000 genes x 12 samples) as the artifact for downstream TF-activity inference.",
+        "acceptance_criteria": [
+          "The integer-ness check on all count entries is run and its result (all-integer vs any-fractional) is stated explicitly in the report, together with which DE branch was taken",
+          "All 12 metadata samples match the 12 count columns; condition levels taken verbatim from metadata.csv with exactly 6 per level",
+          "DE table contains, per gene: gene id, HGNC symbol (where mappable via EnsDb.Hsapiens.v86), log2FC (treated vs control), p, padj, and a baseline measure; DE gene counts reported at both padj<0.05 and padj<0.1",
+          "Normalized (log2-scale) expression matrix artifact saved for T1S2, same 12 samples, gene-symbol indexed",
+          "QC figures (PCA by condition, MA, volcano) produced and outlier samples, if any, named"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "TF activity inference (DoRothEA A-C + decoupler, RPMM cross-check) and differential activity",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The DoRothEA A-C network is a confidence-filtered subset of regulatory interactions; absence of a TF from the network means unmeasurable activity, not inactivity - report how many of the DE TF-genes are missing from the network",
+          "TF activity is a linear readout of target gene expression, not a causal claim; the ranking from this step is evidence, to be cross-validated in T1S3",
+          "With 6 vs 6 samples the per-TF activity test has limited power; treat padj<0.1 as exploratory",
+          "Do not use the STRING PPI reference as a substitute for the TF-target regulon - it is not a regulatory network"
+        ],
+        "context": "Primary input: the log2-normalized expression artifact (HGNC symbols x 12 samples) and metadata from T1S1. TF-target reference: the provisioned human DoRothEA regulon network (confidence-graded TF-target table, columns tf, confidence A-E, target, mor +1/-1) in the reference store (regulatory-networks, human) - filter to confidence A-C before use, as recommended for activity inference. Cross-check reference: if the installed dorothea R package also provides ARACNe/CPSS networks offline, those may be used for the RPMM cross-check instead; if neither is consumable by RPMM, skip the cross-check and say so. This is the core step of the research question: activity inference distinguishes TFs that are active in the response from TFs that are merely regulated.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "anndata",
+          "pandas",
+          "numpy",
+          "dorothea",
+          "RPMM",
+          "EnsDb.Hsapiens.v86",
+          "GenomicRanges",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which transcription factors show differentially inferred activity between the aldosterone-treated (n=6) and vehicle-control (n=6) human kidney samples, using the provisioned human DoRothEA regulon network and the T1S1 normalized expression, and how does that activity contrast with the TF genes' own expression?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Load the human DoRothEA regulon from the provisioned reference store (not from the network); filter to confidence levels A and C... i.e. A-C (keep A, B, C); report TF count and target-gene count retained",
+          "Primary method: decoupler (Python) PRSS network propagation: build the network table (source/target/weight, weight signed from mor) from the A-C regulon, run decoupler.run on the 12-sample expression (wrapped as AnnData), extract per-sample PRSS scores. Each bulk sample is an independent profile; do not pool samples inside the propagation",
+          "Cross-check: RPMM (R) on the same A-C regulon converted to a per-TF target GRangesList, on the same log2 expression. Verify the API with ?rpmm before running; if RPMM rejects the converted network, try the dorothea-package ARACNe+CPSS if loadable offline; if neither works, skip the cross-check and report decoupler-only results with the reason",
+          "Differential activity: per TF, compare activity across the 6 treated vs 6 control samples with a Welch t-test (or linear model ~ condition), BH-FDR correction across TFs; report delta (treated minus control) and padj",
+          "Attach the TF gene's own DE status (log2FC, padj) from the T1S1 DE table for every TF in the activity table",
+          "Save per-TF target gene lists (A-C, intersected with the 12000 measured genes) for T1S3"
+        ],
+        "description": "Infer per-sample transcription-factor activity from the T1S1 log2 expression using the human DoRothEA regulon (A-C confidence) with decoupler PRSS as the primary method and RPMM as a cross-check; test differential TF activity between 6 treated and 6 control samples; attach each TF's own expression-level DE result; export per-TF target gene lists.",
+        "acceptance_criteria": [
+          "A TF activity matrix (TFs x 12 samples) from decoupler PRSS using the DoRothEA human A-C regulon is produced, with the number of TFs and target genes used reported",
+          "A differential activity table per TF: activity in treated vs control, delta activity, p, BH padj; significant TFs listed at padj<0.05 and padj<0.1",
+          "For every differentially active TF, the expression-level log2FC and padj of its own gene (from the T1S1 DE table) is attached",
+          "If the RPMM cross-check was run, agreement/disagreement with decoupler on the significant TF set is reported (overlap count, top-TF concordance); if it could not be run, the reason is stated",
+          "Per-TF DoRothEA target gene lists (A-C, restricted to measured genes) are saved as an artifact for T1S3"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Target-gene enrichment, pathway context, integrated driver-TF ranking",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "ORA on TF target sets is suggestive, not causal: a TF's targets may be co-regulated by other factors",
+          "WikiPathways and Hallmark membership is curated, not exhaustive; a missing pathway is not evidence of absence",
+          "With n=6 per group, present the final list as candidate drivers requiring follow-up (e.g., perturbation), not as proven causes",
+          "GO sets (if used) are hierarchical - collapse redundant hits before counting"
+        ],
+        "context": "Inputs: T1S1 DE table and full ranked gene list (HGNC symbols); T1S2 differential activity table and per-TF DoRothEA A-C target lists. Pathway references in the reference store: human MSigDB Hallmark (50 sets, HGNC symbols GMT) and human WikiPathways (HGNC symbols GMT). The research question is which TFs drive the treated-vs-control response; this step supplies the regulatory cross-validation (are the targets of a differentially active TF overrepresented among DE genes?) and the pathway context of the overall response.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2",
+          "dplyr",
+          "ggrepel"
+        ],
+        "question": "Which TFs best explain the transcriptional response to aldosterone - combining differential activity (T1S2), the DE status of the TF gene itself (T1S1), enrichment of its target genes among DE genes, and Hallmark/WikiPathways context of the overall response?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "For each TF with differential-activity padj<0.1: hypergeometric ORA of its A-C target set (intersected with measured genes) against DE-up and DE-down gene sets (padj<0.1 from T1S1); report p and overlap counts",
+          "Where target-set sizes permit (roughly >=15 measured members), also run fgsea on the T1S1 ranked list for each such TF's target set; report NES and padj; skip and note for too-small sets",
+          "Enrich the DE gene list against human MSigDB Hallmark and human WikiPathways (ORA first; fgsea on the ranked list as a complement); report the top significant sets by FDR at 0.05, or state that none reach 0.05 and show the best exploratory hits at 0.1",
+          "Build the integrated driver-TF table joining T1S2 activity evidence with T1S1 TF-gene DE and this step's target enrichment; rank candidates by the conjunction of significant activity and target enrichment, tie-broken by TF-gene DE consistency",
+          "Flag explicitly any TF whose activity direction conflicts with the expression direction of its own gene, and any top candidate whose support rests on only one evidence layer"
+        ],
+        "description": "Cross-validate differentially active TFs by enriching their DoRothEA A-C target sets among DE up- and down-regulated genes (ORA and ranked fgsea), enrich the overall DE response against human MSigDB Hallmark and human WikiPathways for pathway context, and produce the final ranked table of candidate driver TFs with direction of effect and per-TF evidence levels.",
+        "acceptance_criteria": [
+          "For every TF with differential activity padj<0.1, target-set ORA p-values against DE-up and DE-down (padj<0.1) are reported",
+          "fgsea ranked enrichment (NES, padj) for the same TF target sets against the full T1S1 ranked list is reported where set sizes allow",
+          "Pathway enrichment of the DE gene list (padj<0.05, with padj<0.1 as exploratory fallback) is reported for human MSigDB Hallmark and human WikiPathways, top sets by FDR",
+          "The final integrated table contains one row per candidate driver TF: delta activity, activity padj, TF gene log2FC and DE status, target ORA (up/down) p, fgsea NES, direction in treated, consistency note",
+          "A short ranked list (top ~10) of candidate driver TFs is stated, with direction of effect and explicit caveats on which evidence levels each TF meets"
+        ]
+      }
+    ],
+    "title": "Aldosterone kidney response: DE + TF drivers",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-25T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are single-batch human kidney bulk RNA-seq: aldosterone treatment vs vehicle, 6 vs 6 unpaired, raw Salmon gene-level counts (12000 genes x 12 samples) in counts.csv plus a 12 x 2 sample/condition table in metadata.csv. The record does not state whether the Salmon counts were length-corrected, so the first step resolves that empirically (integer vs fractional) and branches: integer counts go to a DESeq2 negative-binomial model with apeglm log2FC shrinkage; fractional (length-corrected) counts go to limma-voom, since DESeq2 rejects non-integer counts. It outputs a QC'd DE table and a log2-normalized expression artifact. The research question (which transcription factors drive the treated-vs-control response) is answered in two layers: (1) TF activity inference, because a TF can be a driver without being differentially expressed itself; the provisioned human DoRothEA regulon network (confidence A-C) drives decoupler network propagation per sample as the primary method, with RPMM on the same regulon as a cross-check where its API accepts it; differential activity is tested at 6 vs 6 per TF with BH FDR, and the TF gene's own DE status from step 1 is attached. (2) Regulatory cross-validation and context: for each differentially active TF, its DoRothEA target set is tested for enrichment among DE up- and down-regulated genes (ORA plus fgsea on the ranked list), and the full DE list is enriched against human MSigDB Hallmark and WikiPathways to place the response in pathway context. The final integrated table ranks candidate driver TFs on differential activity, target-gene enrichment, and TF-gene DE consistency, with direction of effect in the treated group."
+  },
+  "usage": {
+    "inputTokens": 375568,
+    "outputTokens": 20168,
+    "cacheReadInputTokens": 272830,
+    "reasoningTokens": 14792
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_1bb3d4da963f4804b7846a0f",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 101
+    },
+    {
+      "toolUseId": "call_6767b8a0e45c4f78a9f89363",
+      "name": "list_available_refs",
+      "input": {
+        "limit": 50,
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    },
+    {
+      "toolUseId": "call_2208cc2e281745f98a721c39",
+      "name": "search_semantic_scholar",
+      "input": {
+        "limit": 8,
+        "query": "RPMM transcription factor activity inference dorothea robust linear model RNA-seq"
+      },
+      "outcome": "ok",
+      "durationMs": 9005
+    },
+    {
+      "toolUseId": "call_5f674adbd2344e4f9bcac511",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RPMM transcription factor activity dorothea",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 404
+    },
+    {
+      "toolUseId": "call_a3ae431200a240ee89b467c2",
+      "name": "search_github_repos",
+      "input": {
+        "limit": 5,
+        "query": "RPMM dorothea transcription factor activity"
+      },
+      "outcome": "ok",
+      "durationMs": 419
+    },
+    {
+      "toolUseId": "call_8c887708db164ba4a53537b8",
+      "name": "search_arxiv",
+      "input": {
+        "limit": 5,
+        "query": "RPMM transcription factor activity inference dorothea"
+      },
+      "outcome": "ok",
+      "durationMs": 17348
+    },
+    {
+      "toolUseId": "call_742d27c87f5247e7b5e52f00",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Aldosterone kidney response: DE + TF drivers\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-25T00:00:00Z\", \"analytical_narrative\": \"The data are single-batch human kidney bulk RNA-seq: aldosterone treatment vs vehicle, 6 vs 6 unpaired, raw Salmon gene-level counts (12000 genes x 12 samples) in counts.csv plus a 12 x 2 sample/condition table in metadata.csv. The record does not state whether the Salmon counts were length-corrected, so the first step resolves that empirically (integer vs fractional) and branches: integer counts go to a DESeq2 negative-binomial model with apeglm log2FC shrinkage; fractional (length-corrected) counts go to limma-voom, since DESeq2 rejects non-integer counts. It outputs a QC'd DE table and a log2-normalized expression artifact. The research question — which transcription factors drive the treated-vs-control response — is then answered in two layers: (1) TF activity inference, because a TF can be a driver without being differentially expressed itself; the provisioned human DoRothEA regulon network (confidence A-C) drives decoupler network propagation per sample as the primary method, with RPMM on the same regulon as a cross-check where its API accepts it; differential activity is tested at 6 vs 6 per TF with BH FDR, and the TF gene's own DE status from step 1 is attached. (2) Regulatory cross-validation and context: for each differentially active TF, its DoRothEA target set is tested for enrichment among DE up- and down-regulated genes (ORA + fgsea on the ranked list), and the full DE list is enriched against human MSigDB Hallmark and WikiPathways to place the response in pathway context. The final integrated table ranks candidate driver TFs on differential activity, target-gene enrichment, and TF-gene DE consistency, with direction of effect in the treated group.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"QC, normalization, differential expression (treated vs vehicle)\", \"track\": \"T1\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which genes are differentially expressed in human kidney in aldosterone-treated samples (n=6) versus vehicle controls (n=6, unpaired, single batch), using the Salmon gene-level counts in counts.csv (12000 genes x 12 samples)?\", \"context\": \"Input files: /eval-four-models-v2-without-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (gene-level counts from Salmon, 12000 rows x 13 columns: one id column + 12 samples) and /eval-four-models-v2-without-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition). Organism Homo sapiens, tissue kidney, design 6 treated vs 6 control, unpaired, single batch. CRITICAL: the data record does not state whether Salmon applied length correction, so the counts may be fractional length-corrected quasi-counts rather than raw integers.\", \"description\": \"Produce (a) QC summary (normalization factors, PCA of normalized expression colored by condition, MA plot, volcano, per-sample distribution summary), (b) the full DE table with HGNC symbols where mappable, (c) a log2-normalized expression matrix (HGNC symbol index, 12000 genes x 12 samples) as the artifact for downstream TF-activity inference.\", \"acceptance_criteria\": [\"The integer-ness check on all 144,000 count entries is run and its result (all-integer vs any-fractional) is stated explicitly in the report, together with which DE branch was taken\", \"All 12 metadata samples match the 12 count columns; condition levels taken verbatim from metadata.csv with exactly 6 per level\", \"DE table contains, per gene: gene id, HGNC symbol (where mappable via EnsDb.Hsapiens.v86), log2FC (treated vs control), p, padj, and a baseline measure; DE gene counts reported at both padj<0.05 and padj<0.1\", \"Normalized (log2-scale) expression matrix artifact saved for T1S2, same 12 samples, gene-symbol indexed\", \"QC figures (PCA by condition, MA, volcano) produced and outlier samples, if any, named\"], \"constraints\": [\"Join metadata.csv to counts.csv on sample id; verify a 1:1 match of all 12 samples before modeling; use the two observed condition levels as the design factor (~ condition, intercept-only)\", \"First check integer-ness of the count matrix: if every entry is an integer, use DESeq2 (DESeqDataSetFromMatrix with design ~ condition, NB GLM, lfcShrink with apeglm) as the primary method. If any entry is fractional, DESeq2 will reject non-integer counts — do NOT round them; instead use limma-voom on log2(counts-per-million after median-ratio/upper-quartile normalization) as the primary method\", \"Map row ids to HGNC symbols with EnsDb.Hsapiens.v86 (fall back to org.Hs.eg.db); report the id-space detected in counts.csv (Ensembl, Entrez, or symbols) and the mapping rate; keep unmapped rows under their original id\", \"Report DE counts at both padj<0.05 (primary) and padj<0.1 (exploratory); keep the full ranked list (all genes, ranked by significance) as an artifact for T1S3\"], \"caveats\": [\"n=6 per group gives limited power: a small or empty DE list at padj<0.05 is a real outcome to report, not a failure; the exploratory padj<0.1 list and the full ranked list are what downstream steps consume\", \"Do not mix length-scaled/TPM-style values into DESeq2, and do not silently round fractional counts to integers\", \"Single batch, unpaired design: no batch term and no pairing are appropriate; do not add them\"], \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"edgeR\", \"ggplot2\", \"pheatmap\", \"dplyr\", \"matrixStats\", \"EnsDb.Hsapiens.v86\", \"org.Hs.eg.db\"], \"depends_on\": [], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}}]"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_c8afe6160a8b4ef9b973a5c0",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"analytical_narrative\": \"The data are single-batch human kidney bulk RNA-seq: aldosterone treatment vs vehicle, 6 vs 6 unpaired, raw Salmon gene-level counts (12000 genes x 12 samples) in counts.csv plus a 12 x 2 sample/condition table in metadata.csv. The record does not state whether the Salmon counts were length-corrected, so the first step resolves that empirically (integer vs fractional) and branches: integer counts go to a DESeq2 negative-binomial model with apeglm log2FC shrinkage; fractional (length-corrected) counts go to limma-voom, since DESeq2 rejects non-integer counts. It outputs a QC'd DE table and a log2-normalized expression artifact. The research question (which transcription factors drive the treated-vs-control response) is answered in two layers: (1) TF activity inference, because a TF can be a driver without being differentially expressed itself; the provisioned human DoRothEA regulon network (confidence A-C) drives decoupler network propagation per sample as the primary method, with RPMM on the same regulon as a cross-check where its API accepts it; differential activity is tested at 6 vs 6 per TF with BH FDR, and the TF gene's own DE status from step 1 is attached. (2) Regulatory cross-validation and context: for each differentially active TF, its DoRothEA target set is tested for enrichment among DE up- and down-regulated genes (ORA plus fgsea on the ranked list), and the full DE list is enriched against human MSigDB Hallmark and WikiPathways to place the response in pathway context. The final integrated table ranks candidate driver TFs on differential activity, target-gene enrichment, and TF-gene DE consistency, with direction of effect in the treated group.\", \"created_at\": \"2026-07-25T00:00:00Z\", \"omicsSubtype\": \"bulk-rna-seq\", \"omicsType\": \"transcriptomics\", \"steps\": [{\"acceptance_criteria\": [\"The integer-ness check on all count entries is run and its result (all-integer vs any-fractional) is stated explicitly in the report, together with which DE branch was taken\", \"All 12 metadata samples match the 12 count columns; condition levels taken verbatim from metadata.csv with exactly 6 per level\", \"DE table contains, per gene: gene id, HGNC symbol (where mappable via EnsDb.Hsapiens.v86), log2FC (treated vs control), p, padj, and a baseline measure; DE gene counts reported at both padj<0.05 and padj<0.1\", \"Normalized (log2-scale) expression matrix artifact saved for T1S2, same 12 samples, gene-symbol indexed\", \"QC figures (PCA by condition, MA, volcano) produced and outlier samples, if any, named\"], \"agent\": \"bulk-transcriptomics-agent\", \"context\": \"Input files: /eval-four-models-v2-without-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (gene-level counts from Salmon, 12000 rows x 13 columns: one id column + 12 samples) and /eval-four-models-v2-without-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample, condition). Organism Homo sapiens, tissue kidney, design 6 treated vs 6 control, unpaired, single batch. CRITICAL: the data record does not state whether Salmon applied length correction, so the counts may be fractional length-corrected quasi-counts rather than raw integers.\", \"constraints\": [\"Join metadata.csv to counts.csv on sample id; verify a 1:1 match of all 12 samples before modeling; use the two observed condition levels as the design factor (~ condition, intercept-only)\", \"First check integer-ness of the count matrix: if every entry is an integer, use DESeq2 (DESeqDataSetFromMatrix with design ~ condition, NB GLM, lfcShrink with apeglm) as the primary method. If any entry is fractional, DESeq2 will reject non-integer counts - do NOT round them; instead use limma-voom on log2(counts-per-million after median-ratio or upper-quartile normalization) as the primary method\", \"Map row ids to HGNC symbols with EnsDb.Hsapiens.v86 (fall back to org.Hs.eg.db); report the id-space detected in counts.csv (Ensembl, Entrez, or symbols) and the mapping rate; keep unmapped rows under their original id\", \"Report DE counts at both padj<0.05 (primary) and padj<0.1 (exploratory); keep the full ranked list (all genes ranked by significance) as an artifact for T1S3\"], \"caveats\": [\"n=6 per group gives limited power: a small or empty DE list at padj<0.05 is a real outcome to report, not a failure; the exploratory padj<0.1 list and the full ranked list are what downstream steps consume\", \"Do not mix length-scaled or TPM-style values into DESeq2, and do not silently round fractional counts to integers\", \"Single batch, unpaired design: no batch term and no pairing are appropriate; do not add them\"], \"depends_on\": [], \"description\": \"Produce (a) QC summary (normalization factors, PCA of normalized expression colored by condition, MA plot, volcano, per-sample distribution summary), (b) the full DE table with HGNC symbols where mappable, (c) a log2-normalized expression matrix (HGNC symbol index, 12000 genes x 12 samples) as the artifact for downstream TF-activity inference.\", \"id\": \"T1S1\", \"name\": \"QC, normalization, differential expression (treated vs vehicle)\", \"packages\": [\"DESeq2\", \"apeglm\", \"limma\", \"edgeR\", \"ggplot2\", \"pheatmap\", \"dplyr\", \"matrixStats\", \"EnsDb.Hsapiens.v86\", \"org.Hs.eg.db\"], \"question\": \"Which genes are differentially expressed in human kidney in aldosterone-treated samples (n=6) versus vehicle controls (n=6, unpaired, single batch), using the Salmon gene-level counts in counts.csv (12000 genes x 12 samples)?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"step_type\": \"analysis\", \"track\": \"T1\"}, {\"acceptance_criteria\": [\"A TF activity matrix (TFs x 12 samples) from decoupler PRSS using the DoRothEA human A-C regulon is produced, with the number of TFs and target genes used reported\", \"A differential activity table per TF: activity in treated vs control, delta activity, p, BH padj; significant TFs listed at padj<0.05 and padj<0.1\", \"For every differentially active TF, the expression-level log2FC and padj of its own gene (from the T1S1 DE table) is attached\", \"If the RPMM cross-check was run, agreement/disagreement with decoupler on the significant TF set is reported (overlap count, top-TF concordance); if it could not be run, the reason is stated\", \"Per-TF DoRothEA target gene lists (A-C, restricted to measured genes) are saved as an artifact for T1S3\"], \"agent\": \"network-agent\", \"context\": \"Primary input: the log2-normalized expression artifact (HGNC symbols x 12 samples) and metadata from T1S1. TF-target reference: the provisioned human DoRothEA regulon network (confidence-graded TF-target table, columns tf, confidence A-E, target, mor +1/-1) in the reference store (regulatory-networks, human) - filter to confidence A-C before use, as recommended for activity inference. Cross-check reference: if the installed dorothea R package also provides ARACNe/CPSS networks offline, those may be used for the RPMM cross-check instead; if neither is consumable by RPMM, skip the cross-check and say so. This is the core step of the research question: activity inference distinguishes TFs that are active in the response from TFs that are merely regulated.\", \"constraints\": [\"Load the human DoRothEA regulon from the provisioned reference store (not from the network); filter to confidence levels A and C... i.e. A-C (keep A, B, C); report TF count and target-gene count retained\", \"Primary method: decoupler (Python) PRSS network propagation: build the network table (source/target/weight, weight signed from mor) from the A-C regulon, run decoupler.run on the 12-sample expression (wrapped as AnnData), extract per-sample PRSS scores. Each bulk sample is an independent profile; do not pool samples inside the propagation\", \"Cross-check: RPMM (R) on the same A-C regulon converted to a per-TF target GRangesList, on the same log2 expression. Verify the API with ?rpmm before running; if RPMM rejects the converted network, try the dorothea-package ARACNe+CPSS if loadable offline; if neither works, skip the cross-check and report decoupler-only results with the reason\", \"Differential activity: per TF, compare activity across the 6 treated vs 6 control samples with a Welch t-test (or linear model ~ condition), BH-FDR correction across TFs; report delta (treated minus control) and padj\", \"Attach the TF gene's own DE status (log2FC, padj) from the T1S1 DE table for every TF in the activity table\", \"Save per-TF target gene lists (A-C, intersected with the 12000 measured genes) for T1S3\"], \"caveats\": [\"The DoRothEA A-C network is a confidence-filtered subset of regulatory interactions; absence of a TF from the network means unmeasurable activity, not inactivity - report how many of the DE TF-genes are missing from the network\", \"TF activity is a linear readout of target gene expression, not a causal claim; the ranking from this step is evidence, to be cross-validated in T1S3\", \"With 6 vs 6 samples the per-TF activity test has limited power; treat padj<0.1 as exploratory\", \"Do not use the STRING PPI reference as a substitute for the TF-target regulon - it is not a regulatory network\"], \"depends_on\": [\"T1S1\"], \"description\": \"Infer per-sample transcription-factor activity from the T1S1 log2 expression using the human DoRothEA regulon (A-C confidence) with decoupler PRSS as the primary method and RPMM as a cross-check; test differential TF activity between 6 treated and 6 control samples; attach each TF's own expression-level DE result; export per-TF target gene lists.\", \"id\": \"T1S2\", \"name\": \"TF activity inference (DoRothEA A-C + decoupler, RPMM cross-check) and differential activity\", \"packages\": [\"decoupler\", \"anndata\", \"pandas\", \"numpy\", \"dorothea\", \"RPMM\", \"EnsDb.Hsapiens.v86\", \"GenomicRanges\", \"ggplot2\", \"dplyr\"], \"question\": \"Which transcription factors show differentially inferred activity between the aldosterone-treated (n=6) and vehicle-control (n=6) human kidney samples, using the provisioned human DoRothEA regulon network and the T1S1 normalized expression, and how does that activity contrast with the TF genes' own expression?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"step_type\": \"analysis\", \"track\": \"T1\"}, {\"acceptance_criteria\": [\"For every TF with differential activity padj<0.1, target-set ORA p-values against DE-up and DE-down (padj<0.1) are reported\", \"fgsea ranked enrichment (NES, padj) for the same TF target sets against the full T1S1 ranked list is reported where set sizes allow\", \"Pathway enrichment of the DE gene list (padj<0.05, with padj<0.1 as exploratory fallback) is reported for human MSigDB Hallmark and human WikiPathways, top sets by FDR\", \"The final integrated table contains one row per candidate driver TF: delta activity, activity padj, TF gene log2FC and DE status, target ORA (up/down) p, fgsea NES, direction in treated, consistency note\", \"A short ranked list (top ~10) of candidate driver TFs is stated, with direction of effect and explicit caveats on which evidence levels each TF meets\"], \"agent\": \"enrichment-agent\", \"context\": \"Inputs: T1S1 DE table and full ranked gene list (HGNC symbols); T1S2 differential activity table and per-TF DoRothEA A-C target lists. Pathway references in the reference store: human MSigDB Hallmark (50 sets, HGNC symbols GMT) and human WikiPathways (HGNC symbols GMT). The research question is which TFs drive the treated-vs-control response; this step supplies the regulatory cross-validation (are the targets of a differentially active TF overrepresented among DE genes?) and the pathway context of the overall response.\", \"constraints\": [\"For each TF with differential-activity padj<0.1: hypergeometric ORA of its A-C target set (intersected with measured genes) against DE-up and DE-down gene sets (padj<0.1 from T1S1); report p and overlap counts\", \"Where target-set sizes permit (roughly >=15 measured members), also run fgsea on the T1S1 ranked list for each such TF's target set; report NES and padj; skip and note for too-small sets\", \"Enrich the DE gene list against human MSigDB Hallmark and human WikiPathways (ORA first; fgsea on the ranked list as a complement); report the top significant sets by FDR at 0.05, or state that none reach 0.05 and show the best exploratory hits at 0.1\", \"Build the integrated driver-TF table joining T1S2 activity evidence with T1S1 TF-gene DE and this step's target enrichment; rank candidates by the conjunction of significant activity and target enrichment, tie-broken by TF-gene DE consistency\", \"Flag explicitly any TF whose activity direction conflicts with the expression direction of its own gene, and any top candidate whose support rests on only one evidence layer\"], \"caveats\": [\"ORA on TF target sets is suggestive, not causal: a TF's targets may be co-regulated by other factors\", \"WikiPathways and Hallmark membership is curated, not exhaustive; a missing pathway is not evidence of absence\", \"With n=6 per group, present the final list as candidate drivers requiring follow-up (e.g., perturbation), not as proven causes\", \"GO sets (if used) are hierarchical - collapse redundant hits before counting\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"description\": \"Cross-validate differentially active TFs by enriching their DoRothEA A-C target sets among DE up- and down-regulated genes (ORA and ranked fgsea), enrich the overall DE response against human MSigDB Hallmark and human WikiPathways for pathway context, and produce the final ranked table of candidate driver TFs with direction of effect and per-TF evidence levels.\", \"id\": \"T1S3\", \"name\": \"Target-gene enrichment, pathway context, integrated driver-TF ranking\", \"packages\": [\"fgsea\", \"clusterProfiler\", \"ggplot2\", \"dplyr\", \"ggrepel\"], \"question\": \"Which TFs best explain the transcriptional response to aldosterone - combining differential activity (T1S2), the DE status of the TF gene itself (T1S1), enrichment of its target genes among DE genes, and Hallmark/WikiPathways context of the overall response?\", \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"step_type\": \"analysis\", \"track\": \"T1\"}], \"title\": \"Aldosterone kidney response: DE + TF drivers\"}"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 6,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The DE core is sound: PyDESeq2 with ~condition, vehicle as reference, Wald test, BH, shrinkage with the prior recorded, a minimal CPM filter, and a real QC with an outlier policy. The TF inference departs from the reference in several ways: the regulator input is the shrunken log2FC rather than the Wald statistic, the decoupler methods named ('PLAGEM', 'Umax', 'decoupler.dr') do not exist so the estimator is undefined, no minimum regulon size is stated, the 'differential-regulation' step is an over-representation of targets among top DE genes, and loading DoRothEA through rpy2 pulls an R runtime into a Python-only constraint. Pathway enrichment was not asked for; it is added with GSEA ranked on shrunken fold change and an ORA whose universe is never stated. The report plan names CollecTRI 2.0, coverage statistics, thresholds, and the correlative caveat, but omits package versions and the regulon-size rule."
+}

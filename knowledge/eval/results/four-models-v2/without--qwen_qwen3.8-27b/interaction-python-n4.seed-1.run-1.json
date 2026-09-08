@@ -1,0 +1,238 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "qwen/qwen3.8-27b",
+  "task": "interaction-python-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T15:21:50.600Z",
+  "elapsedMs": 280156,
+  "outcome": "plan_submitted",
+  "planId": "pln-0c91e4bc",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Design verification, QC, and ID-space check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "factorial-de",
+        "status": "pending",
+        "caveats": [
+          "If a count-matrix column name has no exact match in metadata (or vice versa), stop and report the mismatch; do not silently drop or fuzzy-remap samples.",
+          "With only 4 replicates per cell, PCA will be noisy; report what it shows without over-interpreting.",
+          "If the counts header row has no clear gene-column name, detect it as the only non-sample column and state the assumption."
+        ],
+        "context": "Counts are gene-level Salmon output 'as delivered'; the profiling record does not state whether length correction was applied, so the matrix must be treated as raw counts (no further length division). Metadata columns: genotype (WT, KO), treatment (vehicle, drug), condition (combined label). Data are human (Homo sapiens), heart tissue.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "matplotlib"
+        ],
+        "question": "Are all 16 samples present with exactly 4 replicates per cell of the 2x2 (WT_x_vehicle, WT_x_drug, KO_x_vehicle, KO_x_drug), what is the gene ID space of the count matrix, and does PCA of normalized expression show the expected factor structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Write all scripts in Python (pandas, numpy, scipy, scikit-learn, matplotlib); do not use R, rpy2, or reticulate.",
+          "Join count-matrix columns to metadata rows by exact sample name; never join by row position.",
+          "Treat the matrix as raw counts; do not divide by gene length or by transcript-level length correction.",
+          "Use genotype and treatment as the design factors; verify the 'condition' column is consistent with their 4 combinations but do not use it as the design factor.",
+          "Report the gene ID space explicitly (at least 10 example row names and a classification: symbol / Ensembl / Entrez / other)."
+        ],
+        "description": "Load /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/counts/counts.csv (12000 genes x 16 samples) and /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows x 4 cols: sample, genotype, treatment, condition). Validate the factorial design, compute per-sample QC metrics, run PCA on log-normalized (size-factor / total-count corrected) counts, and report the gene identifier space (symbol vs Ensembl vs Entrez vs other) with examples, because downstream pathway enrichment depends on it.",
+        "acceptance_criteria": [
+          "Per-sample QC table (total counts, fraction zero-count genes, genotype, treatment) confirming exactly 4 samples in each of the 4 cells of the 2x2.",
+          "PCA plot (PC1 vs PC2) of log-normalized counts colored separately by genotype and by treatment, saved as a file in the step output directory.",
+          "Short text report stating the ID space classification, which factor (genotype or treatment) dominates PC1/PC2, and any discrepancy between the 'condition' column and genotype/treatment."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Full factorial NB-GLM DE: interaction + main effects",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "factorial-de",
+        "status": "pending",
+        "caveats": [
+          "If pydeseq2's results() interface does not expose a single-coefficient extraction by name under this patsy version, fall back to computing the contrast directly from the fitted per-gene coefficients and their covariance matrix (Wald test = (beta_inter)^2 / var(beta_inter)), and state which route was used.",
+          "lfc_shrink may not support an interaction contrast; if it fails on that contrast, report raw interaction LFCs and say so — do not drop the interaction result.",
+          "4 replicates per cell gives limited power for per-gene dispersion and for the interaction; a non-significant interaction is not proof of absence — always report effect sizes, not only p-values.",
+          "If pydeseq2 fails outright on the three-term design, fall back to a Gaussian GLM (statsmodels GLM, log link, offset = log size factors, size factors by median-of-ratios computed in the script) on variance-stabilized (asinh) counts, label the fallback clearly in the output, and keep the same contrasts."
+        ],
+        "context": "pydeseq2 0.5.4 is installed and must be used for the GLM. The design has no batch or nuisance covariate — metadata carries only genotype, treatment, condition; do not invent covariates. The counts' length-correction status is unknown; the NB-GLM size factors absorb per-sample scale, and this caveat must be restated in the output. Gene ID space and sample integrity were established in T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "Under the full model ~ genotype + treatment + genotype:treatment, which genes show a significant genotype x treatment interaction (BH FDR), and what are the drug effects (log2FC) within WT and within KO?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only; use pydeseq2 for the model fits — do not call R or rpy2.",
+          "Design formula exactly '~ genotype + treatment + genotype:treatment' with reference levels WT and vehicle (set via pandas Categorical ordering) so main effects are interpretable as effects within the reference group.",
+          "Identify the interaction coefficient by its actual column name from the fitted model matrix (patsy-style naming, e.g. C(genotype)[T.KO]:C(treatment)[T.drug]); inspect the model matrix columns and match programmatically — do not hard-code a name that may differ across patsy versions.",
+          "Apply Benjamini-Hochberg FDR to all contrast tests; report FDR for every gene, not only significant ones.",
+          "Shrink main-effect log2FCs for reporting (pydeseq2 lfc_shrink); keep the raw Wald statistic for the interaction.",
+          "Report the number of genes with interaction FDR <= 0.05; if zero, report the minimum interaction FDR and the top 20 genes by |Wald statistic|.",
+          "Report the number of genes filtered out by pydeseq2 before fitting."
+        ],
+        "description": "Fit the full 2x2 factorial negative-binomial GLM with pydeseq2 (design '~ genotype + treatment + genotype:treatment', reference levels WT and vehicle) on the verified 12,000 x 16 count matrix. Extract the per-gene interaction contrast (Wald test, BH FDR) and the four main-effect contrasts (treatment within WT, treatment within KO, genotype within vehicle, genotype within drug) with LFC shrinkage for reporting. Produce the interaction volcano and the canonical crossing-lines plot (mean normalized expression per cell) for the top interaction genes. This step answers the research question directly.",
+        "acceptance_criteria": [
+          "Per-gene result tables saved as CSV: (a) interaction (log2FC, Wald stat, pvalue, FDR), (b) treatment within WT, (c) treatment within KO, (d) genotype within vehicle, (e) genotype within drug.",
+          "Interaction volcano plot and crossing-lines plot (mean size-factor-normalized expression per cell for the top 5-10 interaction genes by |Wald stat|) saved as image files.",
+          "A short methods note in the output stating: the exact design formula, reference levels, interaction coefficient name used, gene-filtering count, and the length-correction caveat."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "LRT confirmation of the interaction (full vs additive model)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "factorial-de",
+        "status": "pending",
+        "caveats": [
+          "The LRT is only valid when both nested models are fitted on identical genes with identical normalization; mismatched gene sets silently produce garbage statistics — assert equality programmatically.",
+          "If some genes fail the additive fit but passed the full fit (or vice versa), exclude them and report counts per side.",
+          "If no gene passes FDR <= 0.05 by either method, that is a valid result — the verdict should say so explicitly and cite the minimum FDRs and the largest interaction effect sizes."
+        ],
+        "context": "Requires the T1S2 artifacts: the full-model fit with its per-gene final log-likelihood column (named 'L' in pydeseq2 results) and the interaction result table. If T1S2 used the statsmodels fallback route, this step must use the same fallback machinery (deviance LRT on Gaussian GLMs) and label the route.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Does a per-gene likelihood-ratio test of the full model (~ genotype + treatment + genotype:treatment) against the additive model (~ genotype + treatment) confirm the interaction gene set obtained from the Wald test, and how well do the two methods agree?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only; pydeseq2 for the additive-model fit; scipy.stats.chi2.surv for p-values.",
+          "LRT statistic = 2 * (L_full - L_additive) per gene, chi-square with 1 degree of freedom (the full model exceeds the additive model by exactly the one interaction term).",
+          "Restrict to genes successfully fitted in both models with finite log-likelihoods; report the count dropped and exclude them from FDR.",
+          "Both models must be fitted on exactly the same genes with the same size factors; if T1S2's artifacts cannot be reused, re-fit both models in this step with identical settings and say so.",
+          "Reconciliation must include: size of each FDR<=0.05 set, their intersection and union, Jaccard of top-100 by statistic, and Spearman correlation of the two p-value columns."
+        ],
+        "description": "Fit the additive model ~ genotype + treatment with pydeseq2 on the identical gene set and size factors used for the full model. Take the per-gene final log-likelihood L from each fit, compute LRT = 2 * (L_full - L_additive) per gene (chi-square, df = 1, testing the single interaction term), apply BH FDR, and reconcile the LRT-based interaction set against the T1S2 Wald-based set (overlap of FDR <= 0.05 sets, top-100 overlap, rank correlation of p-values). Output a combined interaction verdict.",
+        "acceptance_criteria": [
+          "Per-gene LRT table (statistic, pvalue, FDR) saved as CSV.",
+          "Reconciliation report (text + saved CSV) comparing the LRT interaction set with the T1S2 Wald interaction set, including the metrics listed in constraints.",
+          "A final 'combined interaction verdict' section: the union set, the intersection set, concordance percentage, and a one-paragraph plain-language answer to 'does the drug act differently in KO than WT' grounded in both tests."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway context: interaction genes and WT vs KO drug-response signatures",
+        "agent": "enrichment-agent",
+        "track": "pathway-context",
+        "status": "pending",
+        "caveats": [
+          "With few significant interaction genes, ORA p-values are dominated by set size; treat the preranked GSEA NES as the primary evidence and say so in the report.",
+          "WikiPathways gene symbols occasionally miss mapping against the count ID space; report the fraction of each top pathway's members that survived mapping.",
+          "Do not interpret pathway enrichment as mechanism validation; frame it as functional context for the interaction genes."
+        ],
+        "context": "Data are human (Homo sapiens) heart. The human WikiPathways GMT (2026.07.10, HGNC symbols) is provisioned under /mnt/refs — the only human pathway set available; the mouse and rat WikiPathways sets in the same store must NOT be used. gseapy 1.3.1 is installed. If T1S1 determined the counts are not gene symbols (e.g. Ensembl or Entrez), map to official symbols first using the UniProt human ID-mapping reference (also under /mnt/refs; note its column layout has no header and is positional: Entrez in col 3, RefSeq in col 4, Ensembl in col 19, and gene symbols recoverable from the UniProt entry name column); report the mapping rate and proceed only on mapped genes.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which human pathways are enriched among the interaction genes (drug behaves differently in KO vs WT), and how do the top drug-response gene sets in WT and in KO compare?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Python only; use gseapy (prerank and enrich) with pandas/numpy — do not use R clusterProfiler.",
+          "Use only the Homo sapiens pathway set; assert the organism before running and fail loudly on any species mismatch.",
+          "Prerank input: ALL tested genes (the full analyzed gene set from the DE steps), ranked by signed interaction log2FC.",
+          "For over-representation, background = all tested genes, and use permutation-based p-values (>= 1000 permutations) since the significant set may be small.",
+          "If the FDR <= 0.05 interaction set is empty, skip the interaction ORA, state that explicitly, and base the GSEA interpretation on the preranked list alone.",
+          "Report mapping rate if an ID conversion was performed; do not silently drop unmapped genes without counting them."
+        ],
+        "description": "Take the combined interaction gene ranking from T1S3 (fallback: T1S2 interaction table) and run (a) preranked GSEA ranking all tested genes by signed interaction log2FC (positive = drug response larger/more positive in KO than WT) against the human WikiPathways GMT, and (b) over-representation analysis of the significant interaction set against the background of all tested genes, if the set is non-empty. As secondary context, run over-representation on the top drug-response genes (drug vs vehicle, FDR <= 0.05) within WT and within KO separately and report their overlap, to characterize HOW the two genotypes respond differently.",
+        "acceptance_criteria": [
+          "Preranked GSEA results table (pathway, NES, nominal p, FDR) saved as CSV, top 20 pathways summarized in the report.",
+          "Interaction ORA results (if run) with set size, background size, p-value, FDR.",
+          "WT-vs-KO drug-response comparison: the two gene sets (top drug-response genes per genotype), their overlap count, and a Venn figure or table.",
+          "An explicit statement if no pathway reaches significance in either analysis — absence is a valid result, not a failure."
+        ]
+      }
+    ],
+    "title": "2x2 factorial KO x drug interaction DE, human heart",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "Input is a 2x2 factorial bulk RNA-seq of human heart: genotype (WT, KO) x treatment (vehicle, drug), 4 biological replicates per cell (16 samples), 12,000 Salmon gene-level counts of unknown length-correction status, treated as raw counts. The research question is exactly the genotype x treatment interaction: does the drug act differently in the knockout than in the wild type? Step T1S1 verifies the 2x2x4 design, per-sample QC, gene ID space, and the normalized expression structure. Step T1S2 fits the full factorial negative-binomial GLM in Python (pydeseq2, per the user constraint of Python-only scripts) with reference levels WT/vehicle, extracts the interaction contrast plus the four main-effect contrasts with BH FDR — this is the primary answer, including the canonical 'crossing lines' figure. Step T1S3 confirms the interaction gene set independently with a per-gene likelihood-ratio test of the full model against the additive model (2 * (L_full - L_additive), chi2 df=1) and reconciles the two methods. Step T2S1 maps the interaction genes to human WikiPathways (preranked GSEA + over-representation) and contrasts the top drug-response signatures in WT vs KO to characterize HOW the responses differ. All steps run in Python; no R is used anywhere."
+  },
+  "usage": {
+    "inputTokens": 77368,
+    "outputTokens": 15674,
+    "cacheReadInputTokens": 44800,
+    "reasoningTokens": 11869
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_fc36665fe7154e14a534d7ec",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "design formula with interaction term, results contrast by coefficient name, per-gene log-likelihood L column for likelihood ratio test"
+      },
+      "outcome": "error",
+      "durationMs": 1602
+    },
+    {
+      "toolUseId": "call_c4ae0176123e40fe829130d2",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"2x2 factorial KO x drug interaction DE, human heart\", \"analytical_narrative\": \"Input is a 2x2 factorial bulk RNA-seq of human heart: genotype (WT, KO) x treatment (vehicle, drug), 4 biological replicates per cell (16 samples), 12,000 Salmon gene-level counts of unknown length-correction status, treated as raw counts. The research question is exactly the genotype x treatment interaction: does the drug act differently in the knockout than in the wild type? Step T1S1 verifies the 2x2x4 design, per-sample QC, gene ID space, and the normalized expression structure. Step T1S2 fits the full factorial negative-binomial GLM in Python (pydeseq2, per the user constraint of Python-only scripts) with reference levels WT/vehicle, extracts the interaction contrast plus the four main-effect contrasts with BH FDR — this is the primary answer, including the canonical 'crossing lines' figure. Step T1S3 confirms the interaction gene set independently with a per-gene likelihood-ratio test of the full model against the additive model (2 * (L_full - L_additive), chi2 df=1) and reconciles the two methods. Step T2S1 maps the interaction genes to human WikiPathways (preranked GSEA + over-representation) and contrasts the top drug-response signatures in WT vs KO to characterize HOW the responses differ. All steps run in Python; no R is used anywhere.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-07-10T00:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Design verification, QC, and ID-space check\", \"track\": \"factorial-de\", \"step_type\": \"analysis\", \"question\": \"Are all 16 samples present with exactly 4 replicates per cell of the 2x2 (WT_x_vehicle, WT_x_drug, KO_x_vehicle, KO_x_drug), what is the gene ID space of the count matrix, and does PCA of normalized expression show the expected factor structure?\", \"description\": \"Load /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/counts/counts.csv (12000 genes x 16 samples) and /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows x 4 cols: sample, genotype, treatment, condition). Validate the factorial design, compute per-sample QC metrics, run PCA on log-normalized (size-factor / total-count corrected) counts, and report the gene identifier space (symbol vs Ensembl vs Entrez vs other) with examples, because downstream pathway enrichment depends on it.\", \"context\": \"Counts are gene-level Salmon output 'as delivered'; the profiling record does not state whether length correction was applied, so the matrix must be treated as raw counts (no further length division). Metadata columns: genotype (WT, KO), treatment (vehicle, drug), condition (combined label). Data are human (Homo sapiens), heart tissue.\", \"constraints\": [\"Write all scripts in Python (pandas, numpy, scipy, scikit-learn, matplotlib); do not use R, rpy2, or reticulate.\", \"Join count-matrix columns to metadata rows by exact sample name; never join by row position.\", \"Treat the matrix as raw counts; do not divide by gene length or by transcript-level length correction.\", \"Use genotype and treatment as the design factors; verify the 'condition' column is consistent with their 4 combinations but do not use it as the design factor.\", \"Report the gene ID space explicitly (at least 10 example row names and a classification: symbol / Ensembl / Entrez / other).\"], \"acceptance_criteria\": [\"Per-sample QC table (total counts, fraction zero-count genes, genotype, treatment) confirming exactly 4 samples in each of the 4 cells of the 2x2.\", \"PCA plot (PC1 vs PC2) of log-normalized counts colored separately by genotype and by treatment, saved as a file in the step output directory.\", \"Short text report stating the ID space classification, which factor (genotype or treatment) dominates PC1/PC2, and any discrepancy between the 'condition' column and genotype/treatment.\"], \"caveats\": [\"If a count-matrix column name has no exact match in metadata (or vice versa), stop and report the mismatch; do not silently drop or fuzzy-remap samples.\", \"With only 4 replicates per cell, PCA will be noisy; report what it shows without over-interpreting.\", \"If the counts header row has no clear gene-column name, detect it as the only non-sample column and state the assumption.\"], \"packages\": [\"pandas\", \"numpy\", \"scipy\", \"scikit-learn\", \"matplotlib\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S2\", \"name\": \"Full factorial NB-GLM DE: interaction + main effects\", \"track\": \"factorial-de\", \"step_type\": \"analysis\", \"question\": \"Under the full model ~ genotype + treatment + genotype:treatment, which genes show a significant genotype x treatment interaction (BH FDR), and what are the drug effects (log2FC) within WT and within KO?\", \"description\": \"Fit the full 2x2 factorial negative-binomial GLM with pydeseq2 (design '~ genotype + treatment + genotype:treatment', reference levels WT and vehicle) on the verified 12,000 x 16 count matrix. Extract the per-gene interaction contrast (Wald test, BH FDR) and the four main-effect contrasts (treatment within WT, treatment within KO, genotype within vehicle, genotype within drug) with LFC shrinkage for reporting. Produce the interaction volcano and the canonical crossing-lines plot (mean normalized expression per cell) for the top interaction genes. This step answers the research question directly.\", \"context\": \"pydeseq2 0.5.4 is installed and must be used for the GLM. The design has no batch or nuisance covariate — metadata carries only genotype, treatment, condition; do not invent covariates. The counts' length-correction status is unknown; the NB-GLM size factors absorb per-sample scale, and this caveat must be restated in the output. Gene ID space and sample integrity were established in T1S1.\", \"constraints\": [\"Python only; use pydeseq2 for the model fits — do not call R or rpy2.\", \"Design formula exactly '~ genotype + treatment + genotype:treatment' with reference levels WT and vehicle (set via pandas Categorical ordering) so main effects are interpretable as effects within the reference group.\", \"Identify the interaction coefficient by its actual column name from the fitted model matrix (patsy-style naming, e.g. C(genotype)[T.KO]:C(treatment)[T.drug]); inspect the model matrix columns and match programmatically — do not hard-code a name that may differ across patsy versions.\", \"Apply Benjamini-Hochberg FDR to all contrast tests; report FDR for every gene, not only significant ones.\", \"Shrink main-effect log2FCs for reporting (pydeseq2 lfc_shrink); keep the raw Wald statistic for the interaction.\", \"Report the number of genes with interaction FDR <= 0.05; if zero, report the minimum interaction FDR and the top 20 genes by |Wald statistic|.\", \"Report the number of genes filtered out by pydeseq2 before fitting.\"], \"acceptance_criteria\": [\"Per-gene result tables saved as CSV: (a) interaction (log2FC, Wald stat, pvalue, FDR), (b) treatment within WT, (c) treatment within KO, (d) genotype within vehicle, (e) genotype within drug.\", \"Interaction volcano plot and crossing-lines plot (mean size-factor-normalized expression per cell for the top 5-10 interaction genes by |Wald stat|) saved as image files.\", \"A short methods note in the output stating: the exact design formula, reference levels, interaction coefficient name used, gene-filtering count, and the length-correction caveat.\"], \"caveats\": [\"If pydeseq2's results() interface does not expose a single-coefficient extraction by name under this patsy version, fall back to computing the contrast directly from the fitted per-gene coefficients and their covariance matrix (Wald test = (beta_inter)^2 / var(beta_inter)), and state which route was used.\", \"lfc_shrink may not support an interaction contrast; if it fails on that contrast, report raw interaction LFCs and say so — do not drop the interaction result.\", \"4 replicates per cell gives limited power for per-gene dispersion and for the interaction; a non-significant interaction is not proof of absence — always report effect sizes, not only p-values.\", \"If pydeseq2 fails outright on the three-term design, fall back to a Gaussian GLM (statsmodels GLM, log link, offset = log size factors, size factors by median-of-ratios computed in the script) on variance-stabilized (asinh) counts, label the fallback clearly in the output, and keep the same contrasts.\"], \"packages\": [\"pydeseq2\", \"pandas\", \"numpy\", \"scipy\", \"matplotlib\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T1S3\", \"name\": \"LRT confirmation of the interaction (full vs additive model)\", \"track\": \"factorial-de\", \"step_type\": \"analysis\", \"question\": \"Does a per-gene likelihood-ratio test of the full model (~ genotype + treatment + genotype:treatment) against the additive model (~ genotype + treatment) confirm the interaction gene set obtained from the Wald test, and how well do the two methods agree?\", \"description\": \"Fit the additive model ~ genotype + treatment with pydeseq2 on the identical gene set and size factors used for the full model. Take the per-gene final log-likelihood L from each fit, compute LRT = 2 * (L_full - L_additive) per gene (chi-square, df = 1, testing the single interaction term), apply BH FDR, and reconcile the LRT-based interaction set against the T1S2 Wald-based set (overlap of FDR <= 0.05 sets, top-100 overlap, rank correlation of p-values). Output a combined interaction verdict.\", \"context\": \"Requires the T1S2 artifacts: the full-model fit with its per-gene final log-likelihood column (named 'L' in pydeseq2 results) and the interaction result table. If T1S2 used the statsmodels fallback route, this step must use the same fallback machinery (deviance LRT on Gaussian GLMs) and label the route.\", \"constraints\": [\"Python only; pydeseq2 for the additive-model fit; scipy.stats.chi2.surv for p-values.\", \"LRT statistic = 2 * (L_full - L_additive) per gene, chi-square with 1 degree of freedom (the full model exceeds the additive model by exactly the one interaction term).\", \"Restrict to genes successfully fitted in both models with finite log-likelihoods; report the count dropped and exclude them from FDR.\", \"Both models must be fitted on exactly the same genes with the same size factors; if T1S2's artifacts cannot be reused, re-fit both models in this step with identical settings and say so.\", \"Reconciliation must include: size of each FDR<=0.05 set, their intersection and union, Jaccard of top-100 by statistic, and Spearman correlation of the two p-value columns.\"], \"acceptance_criteria\": [\"Per-gene LRT table (statistic, pvalue, FDR) saved as CSV.\", \"Reconciliation report (text + saved CSV) comparing the LRT interaction set with the T1S2 Wald interaction set, including the metrics listed in constraints.\", \"A final 'combined interaction verdict' section: the union set, the intersection set, concordance percentage, and a one-paragraph plain-language answer to 'does the drug act differently in KO than WT' grounded in both tests.\"], \"caveats\": [\"The LRT is only valid when both nested models are fitted on identical genes with identical normalization; mismatched gene sets silently produce garbage statistics — assert equality programmatically.\", \"If some genes fail the additive fit but passed the full fit (or vice versa), exclude them and report counts per side.\", \"If no gene passes FDR <= 0.05 by either method, that is a valid result — the verdict should say so explicitly and cite the minimum FDRs and the largest interaction effect sizes.\"], \"packages\": [\"pydeseq2\", \"pandas\", \"numpy\", \"scipy\"], \"depends_on\": [\"T1S1\", \"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\"}, {\"id\": \"T2S1\", \"name\": \"Pathway context: interaction genes and WT vs KO drug-response signatures\", \"track\": \"pathway-context\", \"step_type\": \"analysis\", \"question\": \"Which human pathways are enriched among the interaction genes (drug behaves differently in KO vs WT), and how do the top drug-response gene sets in WT and in KO compare?\", \"description\": \"Take the combined interaction gene ranking from T1S3 (fallback: T1S2 interaction table) and run (a) preranked GSEA ranking all tested genes by signed interaction log2FC (positive = drug response larger/more positive in KO than WT) against the human WikiPathways GMT, and (b) over-representation analysis of the significant interaction set against the background of all tested genes, if the set is non-empty. As secondary context, run over-representation on the top drug-response genes (drug vs vehicle, FDR <= 0.05) within WT and within KO separately and report their overlap, to characterize HOW the two genotypes respond differently.\", \"context\": \"Data are human (Homo sapiens) heart. The human WikiPathways GMT (2026.07.10, HGNC symbols) is provisioned under /mnt/refs — the only human pathway set available; the mouse and rat WikiPathways sets in the same store must NOT be used. gseapy 1.3.1 is installed. If T1S1 determined the counts are not gene symbols (e.g. Ensembl or Entrez), map to official symbols first using the UniProt human ID-mapping reference (also under /mnt/refs; note its column layout has no header and is positional: Entrez in col 3, RefSeq in col 4, Ensembl in col 19, and gene symbols recoverable from the UniProt entry name column); report the mapping rate and proceed only on mapped genes.\", \"constraints\": [\"Python only; use gseapy (prerank and enrich) with pandas/numpy — do not use R clusterProfiler.\", \"Use only the Homo sapiens pathway set; assert the organism before running and fail loudly on any species mismatch.\", \"Prerank input: ALL tested genes (the full analyzed gene set from the DE steps), ranked by signed interaction log2FC.\", \"For over-representation, background = all tested genes, and use permutation-based p-values (>= 1000 permutations) since the significant set may be small.\", \"If the FDR <= 0.05 interaction set is empty, skip the interaction ORA, state that explicitly, and base the GSEA interpretation on the preranked list alone.\", \"Report mapping rate if an ID conversion was performed; do not silently drop unmapped genes without counting them.\"], \"acceptance_criteria\": [\"Preranked GSEA results table (pathway, NES, nominal p, FDR) saved as CSV, top 20 pathways summarized in the report.\", \"Interaction ORA results (if run) with set size, background size, p-value, FDR.\", \"WT-vs-KO drug-response comparison: the two gene sets (top drug-response genes per genotype), their overlap count, and a Venn figure or table.\", \"An explicit statement if no pathway reaches significance in either analysis — absence is a valid result, not a failure.\"], \"caveats\": [\"With few significant interaction genes, ORA p-values are dominated by set size; treat the preranked GSEA NES as the primary evidence and say so in the report.\", \"WikiPathways gene symbols occasionally miss mapping against the count ID space; report the fraction of each top pathway's members that survived mapping.\", \"Do not interpret pathway enrichment as mechanism validation; frame it as functional context for the interaction genes.\"], \"packages\": [\"gseapy\", \"pandas\", \"numpy\", \"matplotlib\"], \"depends_on\": [\"T1S3\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"enrichment-agent\"}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}
