@@ -5,7 +5,9 @@
  *
  * The OTLP endpoint is a loopback HTTP server that answers 200 to every
  * request, so the flush at reset completes at once instead of retrying a
- * network error.
+ * network error. The server keeps each `/v1/metrics` body, which the metric
+ * exporter sends as OTLP JSON, so a test can read the resource that the
+ * datapoints actually carry off the process.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
@@ -21,16 +23,25 @@ import {
     initOtel,
     metricExportIntervalMs,
     metricsExportDisabled,
+    shutdownOtel,
 } from "./otel.js";
 import { untracedWorkflow } from "./otel-spans.js";
 
 let collector: Server;
 let endpoint: string;
+let metricBodies: string[] = [];
 
 beforeAll(async () => {
-    collector = createServer((_req, res) => {
-        res.writeHead(200);
-        res.end();
+    collector = createServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        req.on("end", () => {
+            // The body is read before the answer, so a captured export is
+            // complete by the time the exporter's promise settles.
+            if (req.url === "/v1/metrics") metricBodies.push(Buffer.concat(chunks).toString("utf8"));
+            res.writeHead(200);
+            res.end();
+        });
     });
     await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
     endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}`;
@@ -51,6 +62,7 @@ const ENV_KEYS = [
 let saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>;
 
 beforeEach(() => {
+    metricBodies = [];
     saved = {};
     for (const key of ENV_KEYS) {
         saved[key] = process.env[key];
@@ -73,6 +85,23 @@ function registeredResourceAttributes(): Record<string, unknown> {
     const resource = (span as unknown as ReadableSpan).resource;
     span.end();
     return resource.attributes;
+}
+
+/** OTLP JSON key/value list, flattened to the attribute record it encodes. */
+interface OtlpKeyValue {
+    readonly key: string;
+    readonly value: { readonly stringValue?: string };
+}
+
+/** The resource attributes on the metrics the exporter posted to the collector. */
+function exportedMetricResourceAttributes(): Record<string, unknown> {
+    expect(metricBodies.length).toBeGreaterThan(0);
+    const payload = JSON.parse(metricBodies[0]!) as {
+        resourceMetrics: readonly { resource: { attributes: readonly OtlpKeyValue[] } }[];
+    };
+    const attributes: Record<string, unknown> = {};
+    for (const entry of payload.resourceMetrics[0]!.resource.attributes) attributes[entry.key] = entry.value.stringValue;
+    return attributes;
 }
 
 describe("metricExportIntervalMs", () => {
@@ -149,6 +178,18 @@ describe("initOtel", () => {
         initOtel();
         expect(registeredResourceAttributes()).toMatchObject({ "service.name": "cortex" });
         expect(registeredResourceAttributes()).not.toHaveProperty("service.version");
+    });
+
+    it("exports a metric under the resource that a span carries", async () => {
+        process.env.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint;
+        process.env.OTEL_RESOURCE_ATTRIBUTES = "deployment.environment.name=staging";
+        initOtel({ serviceName: "cortex-test", serviceVersion: "1.2.3" });
+
+        metrics.getMeter("otel-test").createCounter("otel.test.resource_probe").add(1);
+        const spanAttributes = registeredResourceAttributes();
+        await shutdownOtel();
+
+        expect(exportedMetricResourceAttributes()).toEqual(spanAttributes);
     });
 
     it("installs the span policy: an untraced workflow root is not recorded, every other root is", () => {
