@@ -24,8 +24,9 @@ package obey it. The review of PR #518 found this.
 - The doc comments of `apiFetch` and `isUnexpectedApiError` state the new
   rule: a 4xx is expected, unless it is a retryable status that outlived the
   retries.
-- Four tests in `api-utils.test.ts` pin the spent 429, the recovered 429, the
-  capped `Retry-After` wait, and a `Retry-After` date in the past.
+- Five tests in `api-utils.test.ts` pin the spent 429, the recovered 429, the
+  capped `Retry-After` wait, a `Retry-After` date in the past, and a negative
+  `Retry-After` count that falls to the backoff.
 
 ## Capabilities
 
@@ -50,7 +51,7 @@ where it is and gets the new clauses.
 
 - `harness/src/tools/lib/api-utils.ts`: `ApiFetchOptions`, `runFetch`, and
   two doc comments. This is the one production file.
-- `harness/src/tools/lib/api-utils.test.ts`: three tests.
+- `harness/src/tools/lib/api-utils.test.ts`: five tests.
 - Eleven `isUnexpectedApiError` call sites change behavior with no code change:
   `alphafold-client.ts`, `bgee-client.ts`, `impc-client.ts`,
   `monarch-client.ts`, `chembl-client.ts`, and `iuphar-client.ts`. A spent 429

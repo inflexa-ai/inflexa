@@ -20,6 +20,19 @@ export interface ApiFetchOptions {
     body?: string;
     maxRetries?: number;
     retryDelayMs?: number;
+    /**
+     * Ceiling on any single retry wait, the value a server asks for through
+     * `Retry-After` included. The default is finite because this wait is not
+     * cancelable and these calls run inside a DBOS step, thus an unbounded
+     * `Retry-After: 3600` would park that step for an hour.
+     */
+    maxRetryDelayMs?: number;
+    /**
+     * Seam for the wait between two attempts. A test binds a function that
+     * records the wait and returns at once, thus it asserts the computed delay
+     * without real time.
+     */
+    sleep?: (ms: number) => Promise<void>;
     timeoutMs?: number;
     parseAs?: "json" | "text";
 }
@@ -41,6 +54,14 @@ const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
  * `err` carries the structured failure; a non-ok HTTP status is reported as
  * `http_status` so callers can branch on a concrete code (a 404 is usually an
  * expected "not found" → a data variant; see `isUnexpectedApiError`).
+ *
+ * A retryable status that outlives the retries is the exception: it resolves to
+ * `exhausted`, whose `lastError` is `HTTP <status>`. A throttled or a restarting
+ * upstream is not the answer "the resource is not there", thus it must not reach
+ * a caller as a 4xx that `isUnexpectedApiError` reads as an expected absence.
+ *
+ * Between two attempts the wait obeys `Retry-After` when the response carries it,
+ * and every wait stays at or below `maxRetryDelayMs`.
  */
 export function apiFetch<T = unknown>(url: string, options: ApiFetchOptions = {}): ResultAsync<T, ApiError> {
     return new ResultAsync(runFetch<T>(url, options));
@@ -86,8 +107,40 @@ function summarizeZodIssues(error: z.ZodError): string {
     return remaining > 0 ? `${issues.join("; ")} (+${remaining} more)` : issues.join("; ");
 }
 
+/**
+ * The wait that a server asks for through `Retry-After`, in milliseconds.
+ *
+ * The header carries a count of seconds or an HTTP date, and a date that already
+ * passed clamps to zero. Any other value — a negative count, text that is neither
+ * form — counts as absent, thus the backoff governs. The literature HTTP layer
+ * parses the same header (`literature/sources/http.ts`), and the two copies stay
+ * separate because that module carries its own schedule, signal, and result type.
+ */
+function retryAfterMilliseconds(res: Response): number | undefined {
+    const value = res.headers.get("retry-after")?.trim();
+    if (!value) return undefined;
+    const seconds = Number(value);
+    // A numeric value settles the header, and a negative count is absent rather
+    // than a date. `Date.parse` is lenient enough to read "-5" as a calendar date
+    // in the past, which would clamp to a wait of zero and retry at once against
+    // an upstream that is already throttling.
+    if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : undefined;
+    const date = Date.parse(value);
+    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
 async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Result<T, ApiError>> {
-    const { method = "GET", headers = {}, body, maxRetries = 3, retryDelayMs = 1000, timeoutMs = 90_000, parseAs = "json" } = options;
+    const {
+        method = "GET",
+        headers = {},
+        body,
+        maxRetries = 3,
+        retryDelayMs = 1000,
+        maxRetryDelayMs = 30_000,
+        sleep: wait = sleep,
+        timeoutMs = 90_000,
+        parseAs = "json",
+    } = options;
 
     let lastError = "";
 
@@ -101,9 +154,17 @@ async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Resul
             });
 
             if (RETRYABLE_STATUSES.has(res.status) && attempt < maxRetries) {
-                await sleep(retryDelayMs * 2 ** attempt);
                 lastError = `HTTP ${res.status}`;
+                await wait(Math.min(maxRetryDelayMs, retryAfterMilliseconds(res) ?? retryDelayMs * 2 ** attempt));
                 continue;
+            }
+
+            // The branch above consumed every attempt that still has a retry, thus a
+            // retryable status here has spent them all. The status comes from this
+            // response and not from `lastError`, because an earlier attempt that failed
+            // with a connection error would otherwise name that instead of the throttle.
+            if (RETRYABLE_STATUSES.has(res.status)) {
+                return err({ type: "exhausted", attempts: attempt + 1, lastError: `HTTP ${res.status}` });
             }
 
             if (!res.ok) {
@@ -119,7 +180,7 @@ async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Resul
             }
             lastError = e instanceof Error ? e.message : String(e);
             if (attempt < maxRetries) {
-                await sleep(retryDelayMs * 2 ** attempt);
+                await wait(Math.min(maxRetryDelayMs, retryDelayMs * 2 ** attempt));
                 continue;
             }
         }
@@ -151,6 +212,10 @@ export function describeApiError(e: ApiError): string {
  * timeout, retry exhaustion, a transport failure, or a schema mismatch
  * (`invalid_response`) — is unexpected and the caller should surface it by
  * throwing (or returning `err`).
+ *
+ * A retryable status that outlived the retries never arrives as `http_status`.
+ * `apiFetch` gives it as `exhausted`, thus a spent 429 reads as unexpected here
+ * and no call site turns a throttle into an absence.
  */
 export function isUnexpectedApiError(e: ApiError): boolean {
     return !(e.type === "http_status" && e.status >= 400 && e.status < 500);

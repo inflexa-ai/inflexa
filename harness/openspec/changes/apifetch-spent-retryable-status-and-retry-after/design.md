@@ -69,10 +69,12 @@ it for a 429 today.
 `retryAfterMilliseconds(res)` reads `Retry-After` as seconds first, then as an
 HTTP date relative to now, clamped at zero. A date in the past gives a wait
 of zero. A value that is not a number and not a date, or a negative number,
-counts as absent, and the backoff governs. It is the twelve lines of
-`http.ts:45-52`, copied. An import from the literature layer is rejected.
-That module has its own schedule, signal, and result type. A dependency
-between the two layers is worse than twelve lines.
+counts as absent, and the backoff governs. It is the eight lines of
+`http.ts:45-52`, with one difference. A numeric value settles the header, thus
+a negative count gives the backoff and not the lenient date parse of `-5`. An
+import from the literature layer is rejected, because that module has its own
+schedule, signal, and result type. A dependency between the two layers is
+worse than eight lines.
 
 ### D3. One finite cap on every wait
 

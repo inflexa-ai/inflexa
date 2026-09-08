@@ -97,6 +97,116 @@ describe("apiFetchValidated", () => {
         expect(res.isOk()).toBe(true);
         expect(res._unsafeUnwrap()).toEqual([{ id: 7, name: "BRCA1" }]);
     });
+
+    it("reports a 429 that outlives the retries as an unexpected exhausted error", async () => {
+        let attempts = 0;
+        stubFetch(() => {
+            attempts += 1;
+            return new Response("slow down", { status: 429 });
+        });
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, { retryDelayMs: 0 });
+
+        expect(attempts).toBe(4);
+        expect(res.isErr()).toBe(true);
+        if (res.isErr()) {
+            expect(res.error.type).toBe("exhausted");
+            // A throttled upstream is not an absence. Each call site that classifies
+            // with this predicate surfaces the throttle instead of reporting empty.
+            expect(isUnexpectedApiError(res.error)).toBe(true);
+            expect(describeApiError(res.error)).toBe("Failed after 4 attempts: HTTP 429");
+        }
+
+        attempts = 0;
+        const single = (await apiFetchValidated("https://example.test/x", ListSchema, { retryDelayMs: 0, maxRetries: 0 }))._unsafeUnwrapErr();
+
+        expect(attempts).toBe(1);
+        expect(single).toEqual({ type: "exhausted", attempts: 1, lastError: "HTTP 429" });
+    });
+
+    it("retries a 429 and returns the payload of the next attempt", async () => {
+        let attempts = 0;
+        stubFetch(() => {
+            attempts += 1;
+            if (attempts === 1) return new Response("slow down", { status: 429 });
+            return json([{ id: 7, name: "BRCA1" }]);
+        });
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, { retryDelayMs: 0 });
+
+        expect(attempts).toBe(2);
+        expect(res.isOk()).toBe(true);
+        expect(res._unsafeUnwrap()).toEqual([{ id: 7, name: "BRCA1" }]);
+    });
+
+    it("waits the Retry-After value of the response, under the cap", async () => {
+        const waits: number[] = [];
+        let attempts = 0;
+        stubFetch(() => {
+            attempts += 1;
+            if (attempts === 1) return new Response("slow down", { status: 429, headers: { "retry-after": "2" } });
+            return json([{ id: 7, name: "BRCA1" }]);
+        });
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, {
+            retryDelayMs: 0,
+            maxRetryDelayMs: 50,
+            sleep: async (ms: number): Promise<void> => {
+                waits.push(ms);
+            },
+        });
+
+        // The server asks for 2 seconds, and the cap is what keeps that ask from
+        // parking the caller for the whole of it.
+        expect(waits).toEqual([50]);
+        expect(res.isOk()).toBe(true);
+        expect(res._unsafeUnwrap()).toEqual([{ id: 7, name: "BRCA1" }]);
+    });
+
+    it("waits no time for a Retry-After date that already passed", async () => {
+        const waits: number[] = [];
+        let attempts = 0;
+        stubFetch(() => {
+            attempts += 1;
+            if (attempts === 1) {
+                return new Response("slow down", { status: 429, headers: { "retry-after": new Date(Date.now() - 60_000).toUTCString() } });
+            }
+            return json([{ id: 7, name: "BRCA1" }]);
+        });
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, {
+            retryDelayMs: 0,
+            sleep: async (ms: number): Promise<void> => {
+                waits.push(ms);
+            },
+        });
+
+        expect(waits).toEqual([0]);
+        expect(res.isOk()).toBe(true);
+    });
+
+    it("falls back to the backoff for a Retry-After that names no delay", async () => {
+        const waits: number[] = [];
+        let attempts = 0;
+        stubFetch(() => {
+            attempts += 1;
+            if (attempts === 1) return new Response("slow down", { status: 429, headers: { "retry-after": "-5" } });
+            return json([{ id: 7, name: "BRCA1" }]);
+        });
+
+        const res = await apiFetchValidated("https://example.test/x", ListSchema, {
+            retryDelayMs: 100,
+            sleep: async (ms: number): Promise<void> => {
+                waits.push(ms);
+            },
+        });
+
+        // `Date.parse` reads "-5" as a calendar date in the past, so a negative
+        // count must stop at the numeric branch. Otherwise a malformed header
+        // shortens the wait to nothing and the retry hammers a throttled upstream.
+        expect(waits).toEqual([100]);
+        expect(res.isOk()).toBe(true);
+    });
 });
 
 describe("parseWireNumber", () => {
