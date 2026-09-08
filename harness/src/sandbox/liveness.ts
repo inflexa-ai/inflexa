@@ -73,11 +73,14 @@ export async function probeLiveness(isAlive: (ref: SandboxRef) => Promise<Sandbo
     return liveness.alive ? { kind: "alive" } : { kind: "dead", oomKilled: liveness.oomKilled };
 }
 
+/** The closed set of reasons a synthetic failure carries. */
+export type SyntheticFailureReason = "sandbox-oom-killed" | "sandbox-dead";
+
 /**
  * An OOM-killed machine gets a distinguishable reason so the step failure
  * reads "exceeded its memory limit", not a mystery death.
  */
-export function syntheticFailureReason(liveness: Pick<SandboxLiveness, "oomKilled">): "sandbox-oom-killed" | "sandbox-dead" {
+export function syntheticFailureReason(liveness: Pick<SandboxLiveness, "oomKilled">): SyntheticFailureReason {
     return liveness.oomKilled ? "sandbox-oom-killed" : "sandbox-dead";
 }
 

@@ -5,7 +5,7 @@
  * registers the provider, so the instruments must bind at record time.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 
@@ -17,6 +17,7 @@ import {
     recordArtifactReconcileDropped,
     recordLineageInputDropped,
     recordRunCompleted,
+    recordSandboxExec,
     recordStepCompleted,
     stepOutcomeOf,
 } from "./metrics.js";
@@ -106,6 +107,29 @@ describe("run and step outcome metrics", () => {
             // A ledger with no start gives no duration; a skipped step gives no outcome.
             expect(elapsedSinceIso(null)).toBeUndefined();
             expect(stepOutcomeOf("skipped")).toBeUndefined();
+        } finally {
+            await capture.dispose();
+        }
+    });
+});
+
+describe("sandbox exec metrics", () => {
+    test("a replayed exec adds one count and one duration sample, under the outcome label alone", async () => {
+        await provider.shutdown();
+        const capture = captureMetrics();
+        try {
+            recordSandboxExec({ execId: "wf-1:step-a:3", outcome: "nonzero", durationMs: 4_000 });
+            // The workflow body re-runs the await loop on recovery and reaches
+            // the record site again with the same exec id.
+            recordSandboxExec({ execId: "wf-1:step-a:3", outcome: "nonzero", durationMs: 4_000 });
+            // A synthetic failure carries no runtime, thus it counts without timing.
+            recordSandboxExec({ execId: "wf-1:step-a:4", outcome: "synthetic-oom", durationMs: null });
+
+            expect(await capture.sums("cortex.sandbox.execs")).toEqual([
+                [{ outcome: "nonzero" }, 1],
+                [{ outcome: "synthetic-oom" }, 1],
+            ]);
+            expect(await capture.histograms("cortex.sandbox.exec.duration")).toEqual([[{ outcome: "nonzero" }, { count: 1, sum: 4_000 }]]);
         } finally {
             await capture.dispose();
         }

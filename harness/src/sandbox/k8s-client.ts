@@ -21,6 +21,7 @@ import {
     KubeConfig,
     type V1Job,
     type V1ObjectMeta,
+    type V1Pod,
     type V1PodSpec,
     type V1Toleration,
     type V1Volume,
@@ -59,6 +60,13 @@ const REFS_VOLUME_NAME = "refs";
 const SANDBOX_SERVER_PORT = 8765;
 const POD_READY_TIMEOUT_MS = 5 * 60_000;
 const POD_POLL_INTERVAL_MS = 1_000;
+/**
+ * How long a pod can take to reach Running before the wait is worth a warning.
+ * A sandbox pod on a warm agent node starts in seconds; a minute means the
+ * scheduler is waiting for something — a node to come up, a quota, a volume —
+ * and the run pays that minute before any command executes.
+ */
+const POD_READY_SLOW_MS = 60_000;
 
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
 const MANAGED_BY_VALUE = "cortex";
@@ -436,9 +444,32 @@ interface PodStatusSnapshot {
     phase?: string;
     podIP?: string;
     podName?: string;
+    /** Why the pod is not there yet — `Unschedulable`, `ContainersNotReady`, and the rest. */
+    reason?: string;
 }
 
-function waitForPodReady(coreApi: CoreV1Api, namespace: string, sandboxId: string): ResultAsync<{ podIP: string; podName: string }, SandboxError> {
+/**
+ * The reason of the first condition the pod does not meet. `PodScheduled` and
+ * `Ready` both carry one, and it names what the wait is actually on.
+ */
+function pendingConditionReason(pod: V1Pod | undefined): string | undefined {
+    const unmet = pod?.status?.conditions?.find((condition) => condition.status !== "True" && (condition.reason ?? "") !== "");
+    return unmet?.reason;
+}
+
+/** Clock and sleep seams, so a test can drive the slow-pod warning without waiting a minute. */
+export interface WaitForPodReadyDeps {
+    readonly logger?: Logger;
+    readonly now?: () => number;
+    readonly sleep?: (ms: number) => Promise<void>;
+}
+
+export function waitForPodReady(
+    coreApi: CoreV1Api,
+    namespace: string,
+    sandboxId: string,
+    deps: WaitForPodReadyDeps = {},
+): ResultAsync<{ podIP: string; podName: string }, SandboxError> {
     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
         type: "container_create_failed",
         op: "k8s.waitForPodReady",
@@ -446,11 +477,16 @@ function waitForPodReady(coreApi: CoreV1Api, namespace: string, sandboxId: strin
         status,
         cause,
     });
+    const now = deps.now ?? (() => Date.now());
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const logger = (deps.logger ?? createNoopLogger()).named("k8s-client");
     return new ResultAsync(
         (async () => {
-            const deadline = Date.now() + POD_READY_TIMEOUT_MS;
+            const startedAt = now();
+            const deadline = startedAt + POD_READY_TIMEOUT_MS;
+            let warnedSlow = false;
             let lastSnapshot: PodStatusSnapshot = {};
-            while (Date.now() < deadline) {
+            while (now() < deadline) {
                 const listed = await trySandbox(
                     () =>
                         coreApi.listNamespacedPod({
@@ -465,6 +501,7 @@ function waitForPodReady(coreApi: CoreV1Api, namespace: string, sandboxId: strin
                     phase: pod?.status?.phase,
                     podIP: pod?.status?.podIP,
                     podName: pod?.metadata?.name,
+                    reason: pendingConditionReason(pod),
                 };
                 if (pod && pod.status?.phase === "Running" && typeof pod.status.podIP === "string" && pod.metadata?.name) {
                     return ok({ podIP: pod.status.podIP, podName: pod.metadata.name });
@@ -472,7 +509,21 @@ function waitForPodReady(coreApi: CoreV1Api, namespace: string, sandboxId: strin
                 if (pod?.status?.phase === "Failed") {
                     return err(createFailed(undefined, new Error(`K8sSandbox ${sandboxId}: pod phase=Failed before becoming ready`)));
                 }
-                await new Promise((r) => setTimeout(r, POD_POLL_INTERVAL_MS));
+                // One warning for one wait: the pod is still pending a minute in, and
+                // the condition reason says what it waits on. The timeout error
+                // below reports the five-minute give-up.
+                const waitedMs = now() - startedAt;
+                if (!warnedSlow && waitedMs >= POD_READY_SLOW_MS) {
+                    warnedSlow = true;
+                    logger.warn("sandbox pod is slow to reach Running", {
+                        sandboxId,
+                        namespace,
+                        waitedMs,
+                        phase: lastSnapshot.phase ?? null,
+                        conditionReason: lastSnapshot.reason ?? null,
+                    });
+                }
+                await sleep(POD_POLL_INTERVAL_MS);
             }
             return err(
                 createFailed(
@@ -672,7 +723,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     // finishes) — the Job controller retries pod creation forever. Delete
                     // the Job on any startup failure so a failed create can't leak a
                     // zombie that floods k8s events indefinitely.
-                    const ready = await waitForPodReady(coreApi, config.namespace, sandboxId);
+                    const ready = await waitForPodReady(coreApi, config.namespace, sandboxId, { ...(config.logger ? { logger: config.logger } : {}) });
                     if (ready.isOk()) {
                         const ref: SandboxRef = {
                             sandboxId,

@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-node";
 
-import { createK8sSandboxOps, sanitizeLabelValue } from "./k8s-client.js";
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import { createK8sSandboxOps, sanitizeLabelValue, waitForPodReady } from "./k8s-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 import type { FarmSource } from "./types.js";
 
@@ -1254,5 +1255,57 @@ describe("k8s createSandbox — the farm mounts", () => {
         };
         await expect(attempt()).rejects.toThrow(/PVC-relative/);
         expect(stub.createdJobs).toHaveLength(0);
+    });
+});
+
+describe("k8s waitForPodReady — the slow pod", () => {
+    /** A pod list that answers with `pod` every time, and a clock the sleep advances. */
+    function pendingPod(pod: Partial<V1Pod>) {
+        let clock = 0;
+        const coreApi = {
+            listNamespacedPod: async () => ({ items: [pod as V1Pod] }),
+        } as unknown as CoreV1Api;
+        return {
+            coreApi,
+            now: () => clock,
+            sleep: async (ms: number) => {
+                clock += ms;
+            },
+        };
+    }
+
+    test("warns once past a minute, naming the condition the pod waits on", async () => {
+        const clockedApi = pendingPod({
+            status: { phase: "Pending", conditions: [{ type: "PodScheduled", status: "False", reason: "Unschedulable", lastTransitionTime: new Date() }] },
+            metadata: { name: "sbx-slow" },
+        });
+        const logger = createCapturingLogger();
+
+        const result = await waitForPodReady(clockedApi.coreApi, "sandbox", "sbx-slow", {
+            logger,
+            now: clockedApi.now,
+            sleep: clockedApi.sleep,
+        });
+
+        expect(result.isErr()).toBe(true);
+        const warnings = logger.records.filter((r) => r.level === "warn");
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.msg).toBe("[k8s-client] sandbox pod is slow to reach Running");
+        expect(warnings[0]!.fields).toMatchObject({ sandboxId: "sbx-slow", phase: "Pending", conditionReason: "Unschedulable" });
+        expect(warnings[0]!.fields.waitedMs as number).toBeGreaterThanOrEqual(60_000);
+    });
+
+    test("says nothing about a pod that comes up inside the minute", async () => {
+        const clockedApi = pendingPod({ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-fast" } });
+        const logger = createCapturingLogger();
+
+        const result = await waitForPodReady(clockedApi.coreApi, "sandbox", "sbx-fast", {
+            logger,
+            now: clockedApi.now,
+            sleep: clockedApi.sleep,
+        });
+
+        expect(result._unsafeUnwrap()).toEqual({ podIP: "10.0.0.9", podName: "sbx-fast" });
+        expect(logger.records).toEqual([]);
     });
 });

@@ -19,6 +19,7 @@ import type { V1Toleration } from "@kubernetes/client-node";
 import type { Pool } from "pg";
 
 import type { Logger } from "../lib/logger.js";
+import { recordSandboxExec } from "../lib/metrics.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
@@ -28,6 +29,7 @@ import { capExecStreams, EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-
 import { awaitExec, type AwaitExecOptions } from "./await-exec.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
+import { noteExecOutcome, sandboxExecOutcomeOf, summarizeExec } from "./exec-outcome.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { sandboxWriteTail } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
@@ -366,11 +368,22 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         // tool results, workflow return values, durable step outputs — is bounded
         // by construction, including against a sandbox image that predates the
         // retention budget and still returns whole streams.
-        awaitExec: async (ref, execId, emit, deadline) =>
-            capExecStreams(
+        //
+        // The same seam is where an exec becomes observable. It sees every exec
+        // of every caller — the step agent, the data profile, the derivations —
+        // and it sees the outcome the caller then folds into a tool result, so
+        // one record here counts what a consumer would each have to count for
+        // itself. `recordSandboxExec` is idempotent over the exec id, because a
+        // replayed body reaches this line again.
+        awaitExec: async (ref, execId, emit, deadline) => {
+            const result = capExecStreams(
                 await awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
                 config.execStreamByteCap ?? EXEC_STREAM_BYTE_CAP,
-            ),
+            );
+            recordSandboxExec({ execId, outcome: sandboxExecOutcomeOf(result), durationMs: result.durationMs });
+            noteExecOutcome(ref.sandboxId, summarizeExec(result));
+            return result;
+        },
         isAlive,
         isAliveById: async (sandboxId) => unwrapOrThrow((await ops.isAliveById(sandboxId)).mapErr(failing)),
         teardown,

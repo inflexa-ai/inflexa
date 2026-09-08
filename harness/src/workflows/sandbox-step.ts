@@ -43,6 +43,7 @@ import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
+import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
@@ -567,8 +568,15 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         // The scrub below is deliberate and load-bearing, which makes this record
         // the ONLY account of why the step died — the thrown error carries just the
         // generic phrase, so nothing downstream can reconstruct the cause.
+        // `durationMs`, the iteration cap, and the last exec of the sandbox are
+        // what separate a step that died in the model from one that died in the
+        // machine. `lastExec` holds no stream text (see `exec-outcome.ts`).
+        const lastExec = lastExecOutcome(sandbox.sandboxId);
         logger.error("step failure", {
             errorClass,
+            durationMs,
+            hitMaxSteps,
+            ...(lastExec ? { lastExec } : {}),
             ...logger.errorFields(err),
         });
         const safe = userFacingStepFailure(errorClass);
@@ -646,7 +654,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     let transcript: LoopMessage[];
     let finishReason: string;
-    let hitMaxSteps: boolean;
+    // `false` until the loop reports otherwise: a loop that throws never reached its cap.
+    let hitMaxSteps = false;
     let stepUsage: TokenUsageRollup | undefined;
     try {
         const agentResult = await runAgent(agent, initial, session, {
