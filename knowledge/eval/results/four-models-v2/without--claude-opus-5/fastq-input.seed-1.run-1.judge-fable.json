@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the reference outcome: it recognized that raw paired-end FASTQs with no count matrix, no quantifier, and no usable transcriptome index cannot be tested, and it stopped with a specific, well-framed question offering the two correct routes (provision counts, or provision Salmon/kallisto plus a named GENCODE v50 index) rather than inventing a matrix. It correctly omits enrichment, which is not warranted at this stage. However, no downstream plan was submitted, so the conditional analysis the reference expects once counts arrive (DESeq2/edgeR, sample QC, minimal filter, in-model normalization, explicit ~condition contrast with reference level, BH at 0.05 with LFC shrinkage, low-power caveat) is not stated beyond a bare mention of DESeq2, and those criteria score near zero on what is written."
+}

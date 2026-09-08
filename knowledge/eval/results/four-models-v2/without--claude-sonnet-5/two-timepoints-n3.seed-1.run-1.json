@@ -1,0 +1,262 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "two-timepoints-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:59:49.005Z",
+  "elapsedMs": 38109,
+  "outcome": "plan_submitted",
+  "planId": "pln-5335bab6",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC, and filter count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon counts may be non-integer (fractional assignment) — round or use appropriate DESeq2 import handling if needed",
+          "Verify metadata column names exactly (condition, time, time_hours) before building the design formula"
+        ],
+        "context": "Input files are counts.csv (12000 genes x 13 columns incl. gene id) and metadata.csv (12 samples x condition, time, time_hours). Single batch, 3 reps per condition x time cell.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the salmon gene-level counts (12000 genes x 12 samples) and metadata (condition, time, time_hours) consistent, and which genes pass a minimum-expression filter for differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not assume gene IDs are already HGNC symbols — check the counts.csv row identifier format before any downstream annotation step",
+          "Keep raw integer counts intact for DESeq2 (do not pre-normalize here)"
+        ],
+        "acceptance_criteria": [
+          "Counts matrix (12000 x 12) and metadata (12 x 4) load without row/column mismatch; sample IDs align between the two files",
+          "Low-count genes filtered (e.g. sum across samples < 10, or edgeR filterByExpr-style rule) with the number of genes retained reported",
+          "Library size / total count per sample reported to flag any outlier sample before modeling"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Fit interaction model: condition x time on treatment response",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per cell (12 samples total), power to detect a moderate interaction effect is limited — report this explicitly rather than treating a non-significant interaction as proof of 'no difference'",
+          "If dispersion estimates are unstable due to small sample size, note this in the output rather than silently forcing significance calls"
+        ],
+        "context": "2x2 design: 2 conditions x 2 time points (t0,t1), n=3 per cell, 12 samples total, single batch. Using pydeseq2 (available in sandbox) to fit the full interaction model on raw Salmon counts.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Does the effect of condition (treatment) on gene expression differ between time point t0 and t1, i.e. is the condition:time interaction term significant, and how do the simple treatment effects at t0 and t1 compare?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw (filtered, unnormalized) counts as pydeseq2 input; let DESeq2's internal normalization (median-of-ratios) handle library size",
+          "Explicitly test the interaction coefficient, not just two separate condition contrasts at each time — the research question is about interaction, and pairwise contrasts without the interaction term risk overclaiming a time-dependent effect that is not statistically supported"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 model fit with design ~condition+time+condition:time on filtered raw counts from T1S1",
+          "Interaction term (condition:time) results table produced with log2FoldChange, p-value, and BH-adjusted p-value per gene",
+          "Simple treatment-effect contrasts extracted separately for t0 and t1 (e.g. via contrast vectors or model re-leveling) so effect sizes at each time point can be compared directly",
+          "Number of genes with significant interaction (padj < 0.05) reported, plus counts of genes significant for treatment at t0 only, t1 only, or both",
+          "Diagnostic plots (PCA of normalized counts, dispersion estimates) produced to confirm model fit is reasonable given the single batch, 3-replicate design"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment on interaction-significant genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment on a small, underpowered interaction gene set can produce unstable or non-reproducible pathway calls — treat any hits as hypothesis-generating, not confirmatory",
+          "WikiPathways gene sets are curated and biased toward well-studied pathways; absence of enrichment does not mean absence of biological effect"
+        ],
+        "context": "Reference data available: WikiPathways human gene sets (GMT, HGNC symbols) at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, and a human UniProt ID mapping table for identifier conversion if the count matrix uses Ensembl or UniProt IDs instead of symbols.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which biological pathways are enriched among genes whose treatment effect differs significantly between t0 and t1 (interaction-significant genes), versus genes with a consistent treatment effect across both time points?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Confirm gene identifier space in counts.csv before choosing whether ID mapping is needed — do not assume symbols match WikiPathways HGNC gene symbols without checking a sample of IDs"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (e.g. hypergeometric/Fisher or GSEA-style) run separately on (a) the interaction-significant gene set from T1S2 and (b) genes significant for treatment at both time points (consistent effect), using the human WikiPathways gene sets found in the reference store",
+          "Report which pathways are specific to the time-dependent (interaction) gene set versus the time-independent set",
+          "If gene identifiers in counts.csv are not HGNC symbols, map them via the human UniProt ID mapping reference before running enrichment, and report the fraction of genes successfully mapped",
+          "If the interaction gene set is empty or too small for meaningful enrichment (a real possibility given the small-sample power caveat), report that explicitly rather than lowering the threshold post hoc to force a result"
+        ]
+      }
+    ],
+    "title": "Time x treatment interaction DE in bulk RNA-seq",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (condition x time: t0/t1, 3 replicates per cell, 12 samples, single batch, raw Salmon gene counts, 12000 genes). The research question - does the treatment effect differ between time points - is a statistical interaction question, best answered with a single DESeq2 model containing condition, time, and their interaction term, rather than two separate pairwise contrasts. Plan: (1) load counts+metadata, QC and filter low-count genes; (2) fit a DESeq2 model with ~condition+time+condition:time and extract the interaction coefficient, plus the simple treatment effects within each time point for interpretability; (3) run pathway enrichment on the interaction-significant genes using the human WikiPathways gene sets available in the reference store; (4) summarize whether the treatment effect is time-dependent, with effect sizes and FDR-corrected significance at each stage, and flag the small n (3/group) that limits power to detect small interaction effects."
+  },
+  "usage": {
+    "inputTokens": 43670,
+    "outputTokens": 2528,
+    "cacheCreationInputTokens": 34109,
+    "cacheReadInputTokens": 9549,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01M3qJRk5Y5NrtyV3xnPcXSZ",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Time x treatment interaction DE in bulk RNA-seq",
+          "analytical_narrative": "The dataset is a 2x2 factorial bulk RNA-seq design (condition x time: t0/t1, 3 replicates per cell, 12 samples, single batch, raw Salmon gene counts, 12000 genes). The research question - does the treatment effect differ between time points - is a statistical interaction question, best answered with a single DESeq2 model containing condition, time, and their interaction term, rather than two separate pairwise contrasts. Plan: (1) load counts+metadata, QC and filter low-count genes; (2) fit a DESeq2 model with ~condition+time+condition:time and extract the interaction coefficient, plus the simple treatment effects within each time point for interpretability; (3) run pathway enrichment on the interaction-significant genes using the human WikiPathways gene sets available in the reference store; (4) summarize whether the treatment effect is time-dependent, with effect sizes and FDR-corrected significance at each stage, and flag the small n (3/group) that limits power to detect small interaction effects.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC, and filter count matrix",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Are the salmon gene-level counts (12000 genes x 12 samples) and metadata (condition, time, time_hours) consistent, and which genes pass a minimum-expression filter for differential testing?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 x 12) and metadata (12 x 4) load without row/column mismatch; sample IDs align between the two files",
+                "Low-count genes filtered (e.g. sum across samples < 10, or edgeR filterByExpr-style rule) with the number of genes retained reported",
+                "Library size / total count per sample reported to flag any outlier sample before modeling"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files are counts.csv (12000 genes x 13 columns incl. gene id) and metadata.csv (12 samples x condition, time, time_hours). Single batch, 3 reps per condition x time cell.",
+              "constraints": [
+                "Do not assume gene IDs are already HGNC symbols — check the counts.csv row identifier format before any downstream annotation step",
+                "Keep raw integer counts intact for DESeq2 (do not pre-normalize here)"
+              ],
+              "caveats": [
+                "Salmon counts may be non-integer (fractional assignment) — round or use appropriate DESeq2 import handling if needed",
+                "Verify metadata column names exactly (condition, time, time_hours) before building the design formula"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Fit interaction model: condition x time on treatment response",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does the effect of condition (treatment) on gene expression differ between time point t0 and t1, i.e. is the condition:time interaction term significant, and how do the simple treatment effects at t0 and t1 compare?",
+              "acceptance_criteria": [
+                "DESeq2 model fit with design ~condition+time+condition:time on filtered raw counts from T1S1",
+                "Interaction term (condition:time) results table produced with log2FoldChange, p-value, and BH-adjusted p-value per gene",
+                "Simple treatment-effect contrasts extracted separately for t0 and t1 (e.g. via contrast vectors or model re-leveling) so effect sizes at each time point can be compared directly",
+                "Number of genes with significant interaction (padj < 0.05) reported, plus counts of genes significant for treatment at t0 only, t1 only, or both",
+                "Diagnostic plots (PCA of normalized counts, dispersion estimates) produced to confirm model fit is reasonable given the single batch, 3-replicate design"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "2x2 design: 2 conditions x 2 time points (t0,t1), n=3 per cell, 12 samples total, single batch. Using pydeseq2 (available in sandbox) to fit the full interaction model on raw Salmon counts.",
+              "constraints": [
+                "Use raw (filtered, unnormalized) counts as pydeseq2 input; let DESeq2's internal normalization (median-of-ratios) handle library size",
+                "Explicitly test the interaction coefficient, not just two separate condition contrasts at each time — the research question is about interaction, and pairwise contrasts without the interaction term risk overclaiming a time-dependent effect that is not statistically supported"
+              ],
+              "caveats": [
+                "With n=3 per cell (12 samples total), power to detect a moderate interaction effect is limited — report this explicitly rather than treating a non-significant interaction as proof of 'no difference'",
+                "If dispersion estimates are unstable due to small sample size, note this in the output rather than silently forcing significance calls"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment on interaction-significant genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes whose treatment effect differs significantly between t0 and t1 (interaction-significant genes), versus genes with a consistent treatment effect across both time points?",
+              "acceptance_criteria": [
+                "Enrichment (e.g. hypergeometric/Fisher or GSEA-style) run separately on (a) the interaction-significant gene set from T1S2 and (b) genes significant for treatment at both time points (consistent effect), using the human WikiPathways gene sets found in the reference store",
+                "Report which pathways are specific to the time-dependent (interaction) gene set versus the time-independent set",
+                "If gene identifiers in counts.csv are not HGNC symbols, map them via the human UniProt ID mapping reference before running enrichment, and report the fraction of genes successfully mapped",
+                "If the interaction gene set is empty or too small for meaningful enrichment (a real possibility given the small-sample power caveat), report that explicitly rather than lowering the threshold post hoc to force a result"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Reference data available: WikiPathways human gene sets (GMT, HGNC symbols) at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, and a human UniProt ID mapping table for identifier conversion if the count matrix uses Ensembl or UniProt IDs instead of symbols.",
+              "constraints": [
+                "Confirm gene identifier space in counts.csv before choosing whether ID mapping is needed — do not assume symbols match WikiPathways HGNC gene symbols without checking a sample of IDs"
+              ],
+              "caveats": [
+                "Enrichment on a small, underpowered interaction gene set can produce unstable or non-reproducible pathway calls — treat any hits as hypothesis-generating, not confirmatory",
+                "WikiPathways gene sets are curated and biased toward well-studied pathways; absence of enrichment does not mean absence of biological effect"
+              ]
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 53
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

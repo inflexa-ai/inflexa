@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan delivers the per-sample answer the reference asks for: ssGSEA/GSVA on a VST matrix with singscore as an independent rank-based cross-check, then limma with ~condition (control reference), eBayes and BH across the 50 sets, with mean differences and CIs reported and a scaled, condition-annotated heatmap. QC is thorough and the sample_01 policy is correct (retain, quantify, test exclusion as sensitivity), and the CPM-in-6-samples filter is explicitly justified against the shallow library. The gene-level DESeq2 + fgsea route is properly framed as a concordance check rather than the signature answer, with ranking metric and shrinkage named. Weaknesses: the MSigDB Hallmark version is never stated, no eBayes trend option is mentioned for the score matrix, no explicit alpha is given for the score-level test, and package versions are not requested in the report."
+}

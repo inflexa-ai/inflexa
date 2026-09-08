@@ -1,0 +1,93 @@
+representative_pathway,member_pathway,is_representative
+Cytokine Signaling in Immune system,Cytokine Signaling in Immune system,TRUE
+Aerobic respiration and respiratory electron transport,Aerobic respiration and respiratory electron transport,TRUE
+Cytokine Signaling in Immune system,Signaling by Interleukins,FALSE
+Aerobic respiration and respiratory electron transport,Respiratory electron transport,FALSE
+Mitochondrial protein degradation,Mitochondrial protein degradation,TRUE
+Aerobic respiration and respiratory electron transport,Complex I biogenesis,FALSE
+Interleukin-1 family signaling,Interleukin-1 family signaling,TRUE
+Toll Like Receptor 3 (TLR3) Cascade,Toll Like Receptor 3 (TLR3) Cascade,TRUE
+Cytokine Signaling in Immune system,Interferon Signaling,FALSE
+Toll Like Receptor 3 (TLR3) Cascade,MyD88-independent TLR4 cascade,FALSE
+Toll Like Receptor 3 (TLR3) Cascade,TRIF (TICAM1)-mediated TLR4 signaling,FALSE
+Toll Like Receptor 3 (TLR3) Cascade,Toll-like Receptor Cascades,FALSE
+Toll Like Receptor 3 (TLR3) Cascade,Toll Like Receptor 4 (TLR4) Cascade,FALSE
+Interleukin-1 family signaling,TAK1-dependent IKK and NF-kappa-B activation,FALSE
+Interleukin-1 family signaling,MyD88 dependent cascade initiated on endosome,FALSE
+Mitochondrial protein import,Mitochondrial protein import,TRUE
+Toll Like Receptor 3 (TLR3) Cascade,Toll Like Receptor 7/8 (TLR7/8) Cascade,FALSE
+Interleukin-1 family signaling,MyD88 cascade initiated on plasma membrane,FALSE
+Interleukin-1 family signaling,Toll Like Receptor 10 (TLR10) Cascade,FALSE
+Interleukin-1 family signaling,Toll Like Receptor 5 (TLR5) Cascade,FALSE
+Cytokine Signaling in Immune system,Interleukin-1 signaling,FALSE
+Interleukin-1 family signaling,Toll Like Receptor 9 (TLR9) Cascade,FALSE
+Interleukin-1 family signaling,TRAF6 mediated induction of NFkB and MAP kinases upon TLR7/8 or 9 activation,FALSE
+Cytokine Signaling in Immune system,MyD88:MAL(TIRAP) cascade initiated on plasma membrane,FALSE
+Cytokine Signaling in Immune system,Toll Like Receptor 2 (TLR2) Cascade,FALSE
+Cytokine Signaling in Immune system,Toll Like Receptor TLR1:TLR2 Cascade,FALSE
+Cytokine Signaling in Immune system,Toll Like Receptor TLR6:TLR2 Cascade,FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways","Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",TRUE
+Post-translational protein modification,Post-translational protein modification,TRUE
+Innate Immune System,Innate Immune System,TRUE
+Cytokine Signaling in Immune system,Interleukin-4 and Interleukin-13 signaling,FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",Cell recruitment (pro-inflammatory response),FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",Purinergic signaling in leishmaniasis infection,FALSE
+Regulation of PD-L1(CD274) expression,Regulation of T cell activation by CD28 family,FALSE
+Regulation of PD-L1(CD274) expression,Regulation of PD-L1(CD274) expression,TRUE
+Interleukin-1 family signaling,DDX58/IFIH1-mediated induction of interferon-alpha/beta,FALSE
+Cytokine Signaling in Immune system,MAP kinase activation,FALSE
+Pyroptosis,Pyroptosis,TRUE
+Regulation of PD-L1(CD274) expression,Co-inhibition by PD-1,FALSE
+Cytokine Signaling in Immune system,Interferon gamma signaling,FALSE
+Activation of STAT3 by cadherin engagement,Activation of STAT3 by cadherin engagement,TRUE
+Senescence-Associated Secretory Phenotype (SASP),Senescence-Associated Secretory Phenotype (SASP),TRUE
+Regulation of PD-L1(CD274) expression,KEAP1-NFE2L2 pathway,FALSE
+Cytokine Signaling in Immune system,Cellular response to chemical stress,FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",Ovarian tumor domain proteases,FALSE
+PIP3 activates AKT signaling,PIP3 activates AKT signaling,TRUE
+Cytokine Signaling in Immune system,Interferon alpha/beta signaling,FALSE
+Post-translational protein modification,Adaptive Immune System,FALSE
+Cytokine Signaling in Immune system,Interleukin-17 signaling,FALSE
+Cytokine Signaling in Immune system,Regulation of PD-L1(CD274) transcription,FALSE
+PIP3 activates AKT signaling,Intracellular signaling by second messengers,FALSE
+Interleukin-1 family signaling,TRAF6 mediated NF-kB activation,FALSE
+Toll Like Receptor 3 (TLR3) Cascade,Death Receptor Signaling,FALSE
+Cytokine Signaling in Immune system,SARS-CoV Infections,FALSE
+Aerobic respiration and respiratory electron transport,Citric acid cycle (TCA cycle),FALSE
+Aerobic respiration and respiratory electron transport,Cristae formation,FALSE
+Cytokine Signaling in Immune system,Infectious disease,FALSE
+Cytokine Signaling in Immune system,TCR signaling,FALSE
+Cytokine Signaling in Immune system,Adherens junctions interactions,FALSE
+Regulation of T cell activation by CD28 family,Nuclear events mediated by NFE2L2,FALSE
+Cytokine Signaling in Immune system,Cell junction organization,FALSE
+Cytokine Signaling in Immune system,Downstream TCR signaling,FALSE
+Cytokine Signaling in Immune system,Interleukin-10 signaling,FALSE
+ER-Phagosome pathway,ER-Phagosome pathway,TRUE
+Cytokine Signaling in Immune system,Antimicrobial mechanism of IFN-stimulated genes,FALSE
+Activation of STAT3 by cadherin engagement,Cell-cell junction organization,FALSE
+Toll Like Receptor 3 (TLR3) Cascade,NOD1/2 Signaling Pathway,FALSE
+Cytokine Signaling in Immune system,SUMO E3 ligases SUMOylate target proteins,FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",Leishmania infection,FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",Parasitic Infection Pathways,FALSE
+Post-translational protein modification,SUMOylation,FALSE
+Cytokine Signaling in Immune system,Cellular responses to stimuli,FALSE
+Post-translational protein modification,Gene expression (Transcription),FALSE
+Transcriptional regulation by the AP-2 (TFAP2) family of transcription factors,Transcriptional regulation by the AP-2 (TFAP2) family of transcription factors,TRUE
+ER-Phagosome pathway,Antigen processing-Cross presentation,FALSE
+Cytokine Signaling in Immune system,Cell-Cell communication,FALSE
+Post-translational protein modification,Developmental Biology,FALSE
+Cytokine Signaling in Immune system,Deubiquitination,FALSE
+Post-translational protein modification,Generic Transcription Pathway,FALSE
+Diseases of signal transduction by growth factor receptors and second messengers,NOTCH1 Intracellular Domain Regulates Transcription,FALSE
+Post-translational protein modification,Neddylation,FALSE
+"Nucleotide-binding domain, leucine rich repeat containing receptor (NLR) signaling pathways",Cytosolic sensors of pathogen-associated DNA,FALSE
+Post-translational protein modification,RNA Polymerase II Transcription,FALSE
+Interleukin-1 family signaling,Regulated Necrosis,FALSE
+Cytokine Signaling in Immune system,CLEC7A (Dectin-1) signaling,FALSE
+Diseases of signal transduction by growth factor receptors and second messengers,Diseases of signal transduction by growth factor receptors and second messengers,TRUE
+PIP3 activates AKT signaling,NGF-stimulated transcription,FALSE
+Senescence-Associated Secretory Phenotype (SASP),Signaling by ALK fusions and activated point mutants,FALSE
+Senescence-Associated Secretory Phenotype (SASP),Signaling by ALK in cancer,FALSE
+Cytokine Signaling in Immune system,Cross-presentation of soluble exogenous antigens (endosomes),FALSE
+Cytokine Signaling in Immune system,Fc epsilon receptor (FCERI) signaling,FALSE
+Interleukin-1 family signaling,"Turbulent (oscillatory, disturbed) flow shear stress activates signaling by PIEZO1 and integrins in endothelial cells",FALSE

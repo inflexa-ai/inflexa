@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 5
+  },
+  "rationale": "The plan acknowledges that n=6 is far below what WGCNA needs and that scale-free fit may be unattainable, yet it still builds the network, detects modules, and answers which modules track treatment—exactly what the reference says is wrong; it neither stops the network step nor substitutes a prior network (STRING or curated pathways) projected onto the DE genes. QC is reasonable (library sizes, PCA, clustering, no silent sample drops) and the low-count filter and in-model DESeq2 size factors are stated. The design formula is given but reference level and contrast are not made explicit; BH at 0.05 is stated but apeglm shrinkage is not committed to. WikiPathways enrichment names a versioned collection but lacks an explicit universe and size window, and it annotates modules that the design cannot support. The report lists versions, thresholds, and caveats but ultimately presents exploratory modules as the answer rather than stating the sample size a network requires and withholding modules."
+}

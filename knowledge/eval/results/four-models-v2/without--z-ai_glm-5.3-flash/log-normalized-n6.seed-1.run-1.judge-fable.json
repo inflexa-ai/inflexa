@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly rejects count models and fits limma on the delivered log2(TPM+1) values with an explicit ~condition design, control as reference, and a justified absence of batch or covariate terms, but it leaves trend=TRUE conditional rather than committed and never performs the reference's value-range sanity check (non-negative, max ~10-16, no hidden counts or double log). QC is adequate (PCA/MDS by condition, correlation heatmap, explicit outlier policy), yet the low-expression filter is only 'optional' and Step 2 then tests all 12,000 genes, so no filter is actually applied. No re-normalization is proposed, which is right, though the plan never states that explicitly. BH at 0.05 is stated, but fold-change thresholds are applied post hoc rather than via treat(), and no shrinkage is discussed; enrichment is reasonably specified (camera on full matrix, signed moderated t ranking, versioned WikiPathways GMT, 10-500 size window, overlap check)."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the RSEM expected-count state, states that the length offset is lost without the genes.results files, keeps the expected counts (edgeR native, DESeq2 with a recorded rounding warning), never substitutes TPM/FPKM, and fits DESeq2 Wald with apeglm plus an edgeR QL check on a 6v6 unpaired single-batch design. It does not ask for the missing per-sample genes.results files to restore the tximport length offset, which the reference expects, and the 'intersection as high-confidence set' framing is a debatable robustness convention. QC is thorough with an explicit keep-inspect-report policy for sample_01 and a sensitivity rerun; the filter is minimal and tied to group size; normalization is inside each model. The contrast direction and reference level are explicit, though the design formula itself is not written out; BH at 0.05 with independent filtering and apeglm are fully specified, enrichment is correctly omitted, and the report lists method, versions, thresholds, n_tested/n_DE, and the RSEM-specific caveats."
+}

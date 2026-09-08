@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the essentials: a species-matched tool (mMCPcounter 1.1.0, bundled murine markers) on log2 CPM, an explicit refusal of EPIC/quanTIseq/human MCP-counter, marker-coverage verification with a labeled descriptive fallback, and a per-population exact Wilcoxon with BH and effect sizes. QC is thorough and design-specific, with sample_01 kept, inspected on PCA/distances, and carried into a sensitivity rerun. The filter (>=10 counts in >=6 samples) is justified by group size, and normalization is appropriate for a non-count-model workflow, though deriving CPM from size-factor-normalized counts is a slightly redundant hybrid. Weaknesses are minor: no stated alpha for the BH threshold, and the caution that scores are never comparable across populations is only implied rather than stated outright."
+}

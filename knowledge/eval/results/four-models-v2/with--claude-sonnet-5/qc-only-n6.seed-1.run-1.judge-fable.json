@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly answers the QC-only question: library sizes with sample_01's fold-deviation, a blind vst PCA on the top 500 variable genes colored by condition, a Euclidean distance heatmap with clustering, and an explicit keep/flag/exclude verdict that must follow inspection rather than precede it, with no test, p-values, or fold changes. It omits any low-count gene filter before the transform, and size-factor normalization is only implied via vst rather than stated. The verdict rests on PCA and distance position but does not mention sample_01's detected gene count or count distribution as the reference does, and the report lacks package versions and a recommendation for the design of the later test."
+}

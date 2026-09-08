@@ -1,0 +1,147 @@
+{
+  "schema": "inflexa.decision_record/0.1",
+  "template": {
+    "id": "tpl-qc-eda",
+    "version": "1.0.0",
+    "label": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+    "method": {
+      "id": "M-0006",
+      "label": "Sample structure QC: vst(blind), PCA, sample distances, library sizes"
+    }
+  },
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "rendered_at": "2026-09-07T16:56:48.066Z",
+  "slots": [
+    {
+      "name": "counts_path",
+      "value": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        22
+      ]
+    },
+    {
+      "name": "metadata_path",
+      "value": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/data/inputs/local/metadata.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        23
+      ]
+    },
+    {
+      "name": "sample_id_column",
+      "value": "sample",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        24
+      ]
+    },
+    {
+      "name": "condition_column",
+      "value": "condition",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        25
+      ]
+    },
+    {
+      "name": "n_top_genes_pca",
+      "value": 500,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        30
+      ]
+    },
+    {
+      "name": "low_depth_ratio",
+      "value": 4,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        31
+      ]
+    },
+    {
+      "name": "output_prefix",
+      "value": "qc",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        32
+      ]
+    }
+  ],
+  "environment": {
+    "match": "exact",
+    "pins": [
+      {
+        "name": "DESeq2",
+        "track": "bioconductor",
+        "version": "1.52.0",
+        "farm": "1.52.0",
+        "status": "exact"
+      },
+      {
+        "name": "ggplot2",
+        "track": "cran",
+        "version": "4.0.3",
+        "farm": "4.0.3",
+        "status": "exact"
+      },
+      {
+        "name": "pheatmap",
+        "track": "cran",
+        "version": "1.0.13",
+        "farm": "1.0.13",
+        "status": "exact"
+      },
+      {
+        "name": "jsonlite",
+        "track": "cran",
+        "version": "2.0.0",
+        "farm": "2.0.0",
+        "status": "exact"
+      }
+    ]
+  },
+  "syntax": {
+    "status": "ok"
+  },
+  "citations": [
+    {
+      "doi": "10.1186/s13059-014-0550-8",
+      "title": "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2",
+      "year": 2014,
+      "direction": "supports"
+    },
+    {
+      "title": "Analyzing RNA-seq data with DESeq2 (the DESeq2 vignette)",
+      "year": 2026,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1186/s13059-016-0881-8",
+      "title": "A survey of best practices for RNA-seq data analysis",
+      "year": 2016,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.12688/f1000research.7035.1",
+      "title": "RNA-Seq workflow: gene-level exploratory analysis and differential expression",
+      "year": 2015,
+      "direction": "supports"
+    }
+  ],
+  "unvetted_edits": [],
+  "script_path": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/runs/ccf89a64-e0e3-459a-bf3a-a1a6ceade281/T1S1/scripts/tpl-qc-eda.R",
+  "bound_slots": [],
+  "settings_overrides": []
+}

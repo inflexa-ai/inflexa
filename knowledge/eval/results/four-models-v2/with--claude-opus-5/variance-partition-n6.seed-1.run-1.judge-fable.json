@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: a variancePartition fit on voom log-CPM with precision weights using ~ (1|condition) + (1|sex) + age, explicitly framed as descriptive and preceded by a condition x sex table and per-group age summary, then DESeq2 Wald on raw counts with ~ sex + age_c + condition, control as reference, apeglm on the coefficient, BH at 0.05 with independent filtering, and edgeR QL as a check. Normalization stays inside the models, thresholds are passed into results() rather than applied post hoc, and the missing Salmon length offset is flagged honestly. Small deductions: the plan does not say that a covariate with a near-zero fraction in the partition could be dropped from the test design, and the pre-filter differs slightly between the DESeq2 step (>=10 in >=6) and the edgeR/voom steps (filterByExpr) without noting the discrepancy; the QC step flags outliers but gives no explicit policy for a shallow library beyond plotting sizes. Enrichment is correctly omitted and the report specification is complete."
+}

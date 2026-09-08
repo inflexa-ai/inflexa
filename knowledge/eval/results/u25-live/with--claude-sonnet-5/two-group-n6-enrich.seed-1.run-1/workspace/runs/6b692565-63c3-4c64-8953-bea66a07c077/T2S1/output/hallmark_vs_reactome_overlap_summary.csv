@@ -1,0 +1,7 @@
+metric,value
+hallmark_n_significant_pathways,15
+reactome_n_significant_pathways,92
+hallmark_n_leading_edge_genes_union,447
+reactome_n_leading_edge_genes_union,471
+shared_leading_edge_genes,276
+jaccard_leading_edge_gene_overlap,0.429906542056075

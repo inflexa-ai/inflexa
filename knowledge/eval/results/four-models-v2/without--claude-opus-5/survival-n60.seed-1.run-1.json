@@ -1,0 +1,425 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "survival-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:50:14.219Z",
+  "elapsedMs": 83324,
+  "outcome": "plan_submitted",
+  "planId": "pln-73dfd318",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalize counts and score the 20-gene signature",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv has 121 columns for 120 samples — the extra column is the gene identifier; do not treat it as a sample",
+          "A signature symbol absent from the 12,000-gene matrix may be an alias; attempt symbol alias resolution before declaring it missing, and report both counts",
+          "A signature with substantially fewer than 20 matched genes weakens every downstream claim and must be stated up front"
+        ],
+        "context": "Inputs: /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 121 columns — a gene identifier column plus 120 sample columns, raw gene-level counts from Salmon, the record does not state whether a length correction was applied), /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows: sample id, condition case/control, follow-up time, event indicator), /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/signature/signature_genes.csv (20 rows, single column 'gene', HGNC symbols, unweighted). The score produced here is the exposure variable for the survival models in T1S2 and T1S3, so it must be computed without ever looking at time or event.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "rpy2"
+        ],
+        "question": "What is the per-sample score of the 20-gene signature from signature_genes.csv across the 120 tumour-biopsy samples, and how many of the 20 symbols are recoverable in the 12,000-gene Salmon count matrix?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not use time, event, or any outcome-derived quantity in gene filtering, normalization, or score construction",
+          "Do not dichotomize the score in this step — pass the continuous score forward",
+          "Retain all matched signature genes through expression filtering even if lowly expressed, and report their per-gene detection rates",
+          "Treat the Salmon counts as raw counts; do not assume TPM. State which normalization was applied and why it is robust to the unknown length correction"
+        ],
+        "description": "Load the three input files, align sample identifiers between counts columns and metadata rows (report any mismatch rather than silently dropping), filter to genes with non-trivial expression (e.g. counts >= 10 in at least 10 samples) for the normalization baseline while retaining all 20 signature genes that are present, apply library-size normalization (CPM/TMM via edgeR or DESeq2 median-of-ratios) and log/variance-stabilizing transform, then compute a per-sample signature score. Primary score: rank-based single-sample enrichment (singscore) over the matched signature genes, which is scale-free and robust to the unknown length correction of the delivered counts. Sensitivity score: mean of per-gene z-scored log-expression across the matched signature genes; also compute a GSVA/ssGSEA score. Report the Spearman correlation among the score definitions. Write a per-sample table (sample, condition, time, event, score_singscore, score_zmean, score_gsva) plus the normalized log-expression matrix restricted to the matched signature genes.",
+        "acceptance_criteria": [
+          "A per-sample score table with exactly 120 rows, one per metadata sample, containing sample id, condition, time, event and at least two independently defined signature scores",
+          "The number of the 20 signature symbols matched in the count matrix is reported explicitly, with the unmatched symbols listed by name",
+          "Sample identifier alignment between counts.csv columns and metadata.csv rows is verified and any mismatch is reported, not silently dropped",
+          "Normalization method and transform are stated, and the score is confirmed to have been computed without using time or event in any way",
+          "Pairwise Spearman correlations between the score definitions are reported; if any pair correlates below 0.7 this is flagged as a definitional instability affecting downstream interpretation"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Cox model: signature score and time-to-event adjusted for case/control",
+        "agent": "statistical-modeling-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "A 120-sample cohort supports one or two covariates in a Cox model at most; the interaction model is near the limit of what the data can identify",
+          "Case/control status may itself be strongly associated with the score, in which case the adjusted score effect is estimated from limited residual variation — check and report the score-condition association (T2S1 quantifies it)",
+          "Ties in follow-up time and administrative censoring patterns should be inspected; Efron tie handling is the default and should be stated"
+        ],
+        "context": "Uses the per-sample score table from T1S1 (120 samples: score, condition case/control, follow-up time, event indicator). This is the step that answers the research question. The cohort is 60 cases and 60 controls, single batch, unpaired; the number of observed events — not the 120 samples — determines how many covariates the model can support.",
+        "maxSteps": 200,
+        "packages": [
+          "lifelines",
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib"
+        ],
+        "question": "Does the continuous 20-gene signature score associate with time to event after adjusting for case versus control status, and does that association differ between cases and controls?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "The continuous score is the primary exposure; dichotomization is secondary only",
+          "Do not fit more covariates than the event count supports — if events-per-parameter falls below 10, say so and interpret the model as underpowered rather than dropping the caveat",
+          "Report absolute effect sizes and confidence intervals, never a p-value alone",
+          "If the event count is very low or follow-up is heavily censored, state that the analysis cannot support a firm conclusion instead of reporting a borderline result as positive"
+        ],
+        "description": "Fit Cox proportional-hazards models on (time, event). Report first the descriptive basis: number of events overall and within each of case and control, median follow-up, and events-per-parameter for each model fitted. Models: (M0) condition only; (M1) score only; (M2) score + condition — the primary model answering the question; (M3) score + condition + score:condition interaction. For each, report the hazard ratio per one standard deviation of score with 95% CI, Wald and likelihood-ratio p-values, and the concordance index. Compare M2 to M0 by likelihood-ratio test to quantify the increment the score adds over condition alone. Check proportional hazards for every covariate via scaled Schoenfeld residuals and report the global and per-covariate tests; if PH is violated for the score, refit with a time-interaction or report a restricted-time analysis rather than presenting a single HR as if it were constant. Repeat the primary model with each alternative score definition from T1S1 as a robustness check and report whether the conclusion is stable. Secondary and clearly marked as exploratory: Kaplan-Meier curves by score tertile within each condition stratum, and if a data-driven cutpoint is computed at all, report its p-value as optimistic and uncorrected for the cutpoint search.",
+        "acceptance_criteria": [
+          "Event counts overall and by condition are reported, together with events-per-parameter for each fitted model",
+          "The primary adjusted model (score + condition) reports HR per SD of score with 95% CI and both Wald and likelihood-ratio p-values",
+          "A likelihood-ratio comparison of score+condition versus condition alone is reported",
+          "Proportional-hazards diagnostics (scaled Schoenfeld, global and per-covariate) are reported and any violation is handled explicitly rather than ignored",
+          "The score x condition interaction test is reported with its p-value and interpreted as an underpowered subgroup question, not as an established effect modification",
+          "The primary conclusion is restated for each alternative score definition, with agreement or disagreement stated plainly",
+          "Any dichotomized or cutpoint-based analysis is labelled exploratory with its p-value flagged as optimistic"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Cross-validated discrimination and permutation null for the score",
+        "agent": "statistical-modeling-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "With 120 samples and a modest event count, CV concordance estimates carry wide intervals; report the interval and resist reading a small increment as real",
+          "Uno's C requires a censoring model and can be unstable in small cohorts — report Harrell's alongside it and note any divergence"
+        ],
+        "context": "Uses the per-sample score table from T1S1 and the fitted models from T1S2. The score was defined externally (a fixed 20-gene list, unweighted) rather than selected on this cohort, so the score itself carries no in-cohort selection bias — but the model coefficients and any cutpoint do, and the in-sample concordance from T1S2 is therefore optimistic. This step measures what the score is worth out of sample.",
+        "maxSteps": 200,
+        "packages": [
+          "lifelines",
+          "scikit-survival",
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib"
+        ],
+        "question": "Does adding the 20-gene signature score to case/control status improve out-of-sample discrimination of time to event, and is the observed score effect larger than expected under a null with shuffled outcomes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "validation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "All model fitting, including any standardization of the score, must happen inside the training folds",
+          "Do not report cross-validated performance as external validation — it is internal validation of a fixed, externally defined signature in one cohort",
+          "Fix and report the random seed for the CV splits and the permutations"
+        ],
+        "description": "Estimate out-of-sample discrimination with repeated (e.g. 5-fold x 20 repeats) cross-validation: fit Cox models on training folds and evaluate Harrell's and Uno's concordance on held-out folds, for the condition-only model and for the score+condition model, reporting the paired difference in concordance with a confidence interval across repeats. Compute time-dependent ROC/AUC at two or three clinically sensible landmark times chosen from the follow-up distribution (state how they were chosen, and choose them from the time distribution alone, not from the score). Construct a permutation null by shuffling the (time, event) pairs across samples while holding score and condition fixed, refitting the adjusted model at least 1,000 times, and report the empirical p-value of the observed score coefficient against that null. If any cutpoint was used in T1S2, repeat the cutpoint search inside each permutation to give the corrected significance of the dichotomized analysis.",
+        "acceptance_criteria": [
+          "Cross-validated concordance is reported for both condition-only and score+condition, with the paired difference and its dispersion across CV repeats",
+          "Time-dependent AUC is reported at explicitly justified landmark times drawn from the follow-up distribution",
+          "A permutation-based empirical p-value for the score coefficient in the adjusted model is reported, based on at least 1,000 permutations",
+          "The gap between in-sample concordance (T1S2) and cross-validated concordance is stated explicitly as the optimism of the fit",
+          "If the cross-validated concordance increment over condition alone is near zero or its interval spans zero, this is reported as the headline of the step regardless of the T1S2 p-value"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Signature composition, case/control confounding, and pathway context",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "A 20-gene list is far too small for a well-powered over-representation test; the annotation is a reading aid",
+          "Differential expression here confirms what the signature tracks; it does not establish that the signature is prognostic — that is T1S2 and T1S3"
+        ],
+        "context": "Uses the normalized expression matrix and score table from T1S1 plus metadata.csv. This is interpretive context for the survival result, not the answer to the research question. It matters because if the score is nearly collinear with condition, the adjusted score effect in T1S2 is estimated from little residual variation and must be interpreted accordingly.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "gseapy",
+          "matplotlib"
+        ],
+        "question": "How does the 20-gene signature score relate to case versus control status itself, are the 20 genes differentially expressed between the 60 cases and 60 controls, and what biology do they represent?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the same normalization and the same gene-symbol matching as T1S1 so the two steps describe the same signature",
+          "Do not use time or event anywhere in this step",
+          "Use human gene sets only — the cohort is Homo sapiens; do not substitute a mouse or rat collection"
+        ],
+        "description": "Quantify the association between the signature score and condition: score distributions by case vs control with effect size (standardized mean difference, Wilcoxon and t-test p-values), the point-biserial/Spearman correlation, and the variance inflation implied when both enter a model. Run differential expression of the 20 signature genes between the 60 cases and 60 controls on the normalized counts (DESeq2 or limma-voom on the full matrix, then report the 20 signature genes with log2 fold change, adjusted p-value and their rank among all 12,000 genes) so the reader knows whether the signature is chiefly a case/control discriminator. Finally, characterize the 20 genes functionally: overlap against human hallmark gene sets and human GO biological-process sets — reference data needed is human pathway gene sets in gene-symbol space, resolved from what the environment holds. With only 20 genes, report overlap counts and hypergeometric p-values as descriptive annotation, not as an enrichment claim; if no human pathway gene sets are available at run time, report that and deliver the differential-expression and confounding results, which do not depend on them.",
+        "acceptance_criteria": [
+          "Score-by-condition comparison reported with an effect size and confidence interval, not a p-value alone",
+          "The 20 signature genes are reported with log2 fold change (case vs control), adjusted p-value and their rank among all tested genes",
+          "A plain statement of whether the signature score is largely redundant with case/control status, with the quantitative basis for that statement",
+          "Functional annotation of the 20 genes against human hallmark and GO BP sets is reported as descriptive overlap, explicitly not framed as a powered enrichment result; absence of the pathway resource is reported without failing the step"
+        ]
+      }
+    ],
+    "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is a survival-association question, not a differential-expression question: does a per-sample score of the supplied 20-gene signature predict time to event once case-vs-control status is in the model? The inputs support it directly — counts.csv (12,000 genes x 121 columns, i.e. a gene-id column plus 120 samples), metadata.csv (120 rows: sample, condition, time, event), signature_genes.csv (20 unweighted HGNC symbols). Single batch, unpaired, 60 cases vs 60 controls.\n\nTrack 1 builds the exposure variable and then tests it. T1S1 normalizes the raw Salmon gene-level counts (library-size normalization plus variance stabilization) and computes one signature score per sample. Because the signature is unweighted, the score must be a rank/enrichment-style summary that is robust to the unknown length correction of the delivered counts — singscore on within-sample ranks is the primary definition, with a z-scored mean-log-CPM as a sensitivity definition, and the two are compared. Score computation must be blind to time and event: no cutpoint, no gene filtering informed by outcome. It must also report how many of the 20 symbols are actually present in the 12,000-gene matrix, since a signature that is only half-matched changes the interpretation of everything downstream.\n\nT1S2 is the answer step: Cox proportional-hazards regression of (time, event) on the continuous signature score with condition (case vs control) as a covariate, plus the score-only and condition-only models for comparison, PH assumption checks, and a score x condition interaction test to ask whether the association differs between cases and controls. Continuous-score modelling is primary; any dichotomization is secondary and its p-value explicitly flagged as optimistic because the cutpoint is chosen on the same data. With 120 samples the event count caps the number of covariates the model can carry, so the step must report events and events-per-parameter and refuse to over-parameterize.\n\nT1S3 quantifies discrimination and adds honesty: cross-validated (repeated 5-fold) concordance for the score+condition model versus condition alone, time-dependent AUC, and a permutation null for the score coefficient. This distinguishes a real prognostic increment from a coefficient that merely fits.\n\nTrack 2 (T2S1) is context, not the answer: it asks what the 20 genes are doing biologically and whether the signature score is confounded by the case/control axis itself — correlation of score with condition, differential expression of the 20 genes between cases and controls, and hallmark/GO overlap of the signature. It runs in parallel and does not gate the survival result.\n\nNo external cohort is fetched; the sandbox has no network and the question is about this cohort. Reference data needed is only the human hallmark/GO gene sets for T2S1, which are present; T1S1-T1S3 need no reference data at all, so the survival answer survives even if the pathway resource is missing."
+  },
+  "usage": {
+    "inputTokens": 93152,
+    "outputTokens": 6098,
+    "cacheCreationInputTokens": 74166,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01UJLD1bstffRR1ueENddwDJ",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "lifelines",
+          "scikit-survival",
+          "survival",
+          "survminer",
+          "GSVA",
+          "singscore",
+          "UCell",
+          "DESeq2",
+          "edgeR",
+          "timeROC",
+          "pydeseq2",
+          "rnanorm"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 7
+    },
+    {
+      "toolUseId": "toolu_01KgEXgjBW52jkeJUTMszYPh",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01SeeJAP99cJHEr6FpH4swuU",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+          "analytical_narrative": "The question is a survival-association question, not a differential-expression question: does a per-sample score of the supplied 20-gene signature predict time to event once case-vs-control status is in the model? The inputs support it directly — counts.csv (12,000 genes x 121 columns, i.e. a gene-id column plus 120 samples), metadata.csv (120 rows: sample, condition, time, event), signature_genes.csv (20 unweighted HGNC symbols). Single batch, unpaired, 60 cases vs 60 controls.\n\nTrack 1 builds the exposure variable and then tests it. T1S1 normalizes the raw Salmon gene-level counts (library-size normalization plus variance stabilization) and computes one signature score per sample. Because the signature is unweighted, the score must be a rank/enrichment-style summary that is robust to the unknown length correction of the delivered counts — singscore on within-sample ranks is the primary definition, with a z-scored mean-log-CPM as a sensitivity definition, and the two are compared. Score computation must be blind to time and event: no cutpoint, no gene filtering informed by outcome. It must also report how many of the 20 symbols are actually present in the 12,000-gene matrix, since a signature that is only half-matched changes the interpretation of everything downstream.\n\nT1S2 is the answer step: Cox proportional-hazards regression of (time, event) on the continuous signature score with condition (case vs control) as a covariate, plus the score-only and condition-only models for comparison, PH assumption checks, and a score x condition interaction test to ask whether the association differs between cases and controls. Continuous-score modelling is primary; any dichotomization is secondary and its p-value explicitly flagged as optimistic because the cutpoint is chosen on the same data. With 120 samples the event count caps the number of covariates the model can carry, so the step must report events and events-per-parameter and refuse to over-parameterize.\n\nT1S3 quantifies discrimination and adds honesty: cross-validated (repeated 5-fold) concordance for the score+condition model versus condition alone, time-dependent AUC, and a permutation null for the score coefficient. This distinguishes a real prognostic increment from a coefficient that merely fits.\n\nTrack 2 (T2S1) is context, not the answer: it asks what the 20 genes are doing biologically and whether the signature score is confounded by the case/control axis itself — correlation of score with condition, differential expression of the 20 genes between cases and controls, and hallmark/GO overlap of the signature. It runs in parallel and does not gate the survival result.\n\nNo external cohort is fetched; the sandbox has no network and the question is about this cohort. Reference data needed is only the human hallmark/GO gene sets for T2S1, which are present; T1S1-T1S3 need no reference data at all, so the survival answer survives even if the pathway resource is missing.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalize counts and score the 20-gene signature",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "What is the per-sample score of the 20-gene signature from signature_genes.csv across the 120 tumour-biopsy samples, and how many of the 20 symbols are recoverable in the 12,000-gene Salmon count matrix?",
+              "context": "Inputs: /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 121 columns — a gene identifier column plus 120 sample columns, raw gene-level counts from Salmon, the record does not state whether a length correction was applied), /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows: sample id, condition case/control, follow-up time, event indicator), /eval-four-models-v2-without-survival-n60-s1-1/data/inputs/signature/signature_genes.csv (20 rows, single column 'gene', HGNC symbols, unweighted). The score produced here is the exposure variable for the survival models in T1S2 and T1S3, so it must be computed without ever looking at time or event.",
+              "description": "Load the three input files, align sample identifiers between counts columns and metadata rows (report any mismatch rather than silently dropping), filter to genes with non-trivial expression (e.g. counts >= 10 in at least 10 samples) for the normalization baseline while retaining all 20 signature genes that are present, apply library-size normalization (CPM/TMM via edgeR or DESeq2 median-of-ratios) and log/variance-stabilizing transform, then compute a per-sample signature score. Primary score: rank-based single-sample enrichment (singscore) over the matched signature genes, which is scale-free and robust to the unknown length correction of the delivered counts. Sensitivity score: mean of per-gene z-scored log-expression across the matched signature genes; also compute a GSVA/ssGSEA score. Report the Spearman correlation among the score definitions. Write a per-sample table (sample, condition, time, event, score_singscore, score_zmean, score_gsva) plus the normalized log-expression matrix restricted to the matched signature genes.",
+              "acceptance_criteria": [
+                "A per-sample score table with exactly 120 rows, one per metadata sample, containing sample id, condition, time, event and at least two independently defined signature scores",
+                "The number of the 20 signature symbols matched in the count matrix is reported explicitly, with the unmatched symbols listed by name",
+                "Sample identifier alignment between counts.csv columns and metadata.csv rows is verified and any mismatch is reported, not silently dropped",
+                "Normalization method and transform are stated, and the score is confirmed to have been computed without using time or event in any way",
+                "Pairwise Spearman correlations between the score definitions are reported; if any pair correlates below 0.7 this is flagged as a definitional instability affecting downstream interpretation"
+              ],
+              "constraints": [
+                "Do not use time, event, or any outcome-derived quantity in gene filtering, normalization, or score construction",
+                "Do not dichotomize the score in this step — pass the continuous score forward",
+                "Retain all matched signature genes through expression filtering even if lowly expressed, and report their per-gene detection rates",
+                "Treat the Salmon counts as raw counts; do not assume TPM. State which normalization was applied and why it is robust to the unknown length correction"
+              ],
+              "caveats": [
+                "counts.csv has 121 columns for 120 samples — the extra column is the gene identifier; do not treat it as a sample",
+                "A signature symbol absent from the 12,000-gene matrix may be an alias; attempt symbol alias resolution before declaring it missing, and report both counts",
+                "A signature with substantially fewer than 20 matched genes weakens every downstream claim and must be stated up front"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "rpy2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Cox model: signature score and time-to-event adjusted for case/control",
+              "track": "1",
+              "step_type": "analysis",
+              "question": "Does the continuous 20-gene signature score associate with time to event after adjusting for case versus control status, and does that association differ between cases and controls?",
+              "context": "Uses the per-sample score table from T1S1 (120 samples: score, condition case/control, follow-up time, event indicator). This is the step that answers the research question. The cohort is 60 cases and 60 controls, single batch, unpaired; the number of observed events — not the 120 samples — determines how many covariates the model can support.",
+              "description": "Fit Cox proportional-hazards models on (time, event). Report first the descriptive basis: number of events overall and within each of case and control, median follow-up, and events-per-parameter for each model fitted. Models: (M0) condition only; (M1) score only; (M2) score + condition — the primary model answering the question; (M3) score + condition + score:condition interaction. For each, report the hazard ratio per one standard deviation of score with 95% CI, Wald and likelihood-ratio p-values, and the concordance index. Compare M2 to M0 by likelihood-ratio test to quantify the increment the score adds over condition alone. Check proportional hazards for every covariate via scaled Schoenfeld residuals and report the global and per-covariate tests; if PH is violated for the score, refit with a time-interaction or report a restricted-time analysis rather than presenting a single HR as if it were constant. Repeat the primary model with each alternative score definition from T1S1 as a robustness check and report whether the conclusion is stable. Secondary and clearly marked as exploratory: Kaplan-Meier curves by score tertile within each condition stratum, and if a data-driven cutpoint is computed at all, report its p-value as optimistic and uncorrected for the cutpoint search.",
+              "acceptance_criteria": [
+                "Event counts overall and by condition are reported, together with events-per-parameter for each fitted model",
+                "The primary adjusted model (score + condition) reports HR per SD of score with 95% CI and both Wald and likelihood-ratio p-values",
+                "A likelihood-ratio comparison of score+condition versus condition alone is reported",
+                "Proportional-hazards diagnostics (scaled Schoenfeld, global and per-covariate) are reported and any violation is handled explicitly rather than ignored",
+                "The score x condition interaction test is reported with its p-value and interpreted as an underpowered subgroup question, not as an established effect modification",
+                "The primary conclusion is restated for each alternative score definition, with agreement or disagreement stated plainly",
+                "Any dichotomized or cutpoint-based analysis is labelled exploratory with its p-value flagged as optimistic"
+              ],
+              "constraints": [
+                "The continuous score is the primary exposure; dichotomization is secondary only",
+                "Do not fit more covariates than the event count supports — if events-per-parameter falls below 10, say so and interpret the model as underpowered rather than dropping the caveat",
+                "Report absolute effect sizes and confidence intervals, never a p-value alone",
+                "If the event count is very low or follow-up is heavily censored, state that the analysis cannot support a firm conclusion instead of reporting a borderline result as positive"
+              ],
+              "caveats": [
+                "A 120-sample cohort supports one or two covariates in a Cox model at most; the interaction model is near the limit of what the data can identify",
+                "Case/control status may itself be strongly associated with the score, in which case the adjusted score effect is estimated from limited residual variation — check and report the score-condition association (T2S1 quantifies it)",
+                "Ties in follow-up time and administrative censoring patterns should be inspected; Efron tie handling is the default and should be stated"
+              ],
+              "packages": [
+                "lifelines",
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Cross-validated discrimination and permutation null for the score",
+              "track": "1",
+              "step_type": "validation",
+              "question": "Does adding the 20-gene signature score to case/control status improve out-of-sample discrimination of time to event, and is the observed score effect larger than expected under a null with shuffled outcomes?",
+              "context": "Uses the per-sample score table from T1S1 and the fitted models from T1S2. The score was defined externally (a fixed 20-gene list, unweighted) rather than selected on this cohort, so the score itself carries no in-cohort selection bias — but the model coefficients and any cutpoint do, and the in-sample concordance from T1S2 is therefore optimistic. This step measures what the score is worth out of sample.",
+              "description": "Estimate out-of-sample discrimination with repeated (e.g. 5-fold x 20 repeats) cross-validation: fit Cox models on training folds and evaluate Harrell's and Uno's concordance on held-out folds, for the condition-only model and for the score+condition model, reporting the paired difference in concordance with a confidence interval across repeats. Compute time-dependent ROC/AUC at two or three clinically sensible landmark times chosen from the follow-up distribution (state how they were chosen, and choose them from the time distribution alone, not from the score). Construct a permutation null by shuffling the (time, event) pairs across samples while holding score and condition fixed, refitting the adjusted model at least 1,000 times, and report the empirical p-value of the observed score coefficient against that null. If any cutpoint was used in T1S2, repeat the cutpoint search inside each permutation to give the corrected significance of the dichotomized analysis.",
+              "acceptance_criteria": [
+                "Cross-validated concordance is reported for both condition-only and score+condition, with the paired difference and its dispersion across CV repeats",
+                "Time-dependent AUC is reported at explicitly justified landmark times drawn from the follow-up distribution",
+                "A permutation-based empirical p-value for the score coefficient in the adjusted model is reported, based on at least 1,000 permutations",
+                "The gap between in-sample concordance (T1S2) and cross-validated concordance is stated explicitly as the optimism of the fit",
+                "If the cross-validated concordance increment over condition alone is near zero or its interval spans zero, this is reported as the headline of the step regardless of the T1S2 p-value"
+              ],
+              "constraints": [
+                "All model fitting, including any standardization of the score, must happen inside the training folds",
+                "Do not report cross-validated performance as external validation — it is internal validation of a fixed, externally defined signature in one cohort",
+                "Fix and report the random seed for the CV splits and the permutations"
+              ],
+              "caveats": [
+                "With 120 samples and a modest event count, CV concordance estimates carry wide intervals; report the interval and resist reading a small increment as real",
+                "Uno's C requires a censoring model and can be unstable in small cohorts — report Harrell's alongside it and note any divergence"
+              ],
+              "packages": [
+                "lifelines",
+                "scikit-survival",
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Signature composition, case/control confounding, and pathway context",
+              "track": "2",
+              "step_type": "analysis",
+              "question": "How does the 20-gene signature score relate to case versus control status itself, are the 20 genes differentially expressed between the 60 cases and 60 controls, and what biology do they represent?",
+              "context": "Uses the normalized expression matrix and score table from T1S1 plus metadata.csv. This is interpretive context for the survival result, not the answer to the research question. It matters because if the score is nearly collinear with condition, the adjusted score effect in T1S2 is estimated from little residual variation and must be interpreted accordingly.",
+              "description": "Quantify the association between the signature score and condition: score distributions by case vs control with effect size (standardized mean difference, Wilcoxon and t-test p-values), the point-biserial/Spearman correlation, and the variance inflation implied when both enter a model. Run differential expression of the 20 signature genes between the 60 cases and 60 controls on the normalized counts (DESeq2 or limma-voom on the full matrix, then report the 20 signature genes with log2 fold change, adjusted p-value and their rank among all 12,000 genes) so the reader knows whether the signature is chiefly a case/control discriminator. Finally, characterize the 20 genes functionally: overlap against human hallmark gene sets and human GO biological-process sets — reference data needed is human pathway gene sets in gene-symbol space, resolved from what the environment holds. With only 20 genes, report overlap counts and hypergeometric p-values as descriptive annotation, not as an enrichment claim; if no human pathway gene sets are available at run time, report that and deliver the differential-expression and confounding results, which do not depend on them.",
+              "acceptance_criteria": [
+                "Score-by-condition comparison reported with an effect size and confidence interval, not a p-value alone",
+                "The 20 signature genes are reported with log2 fold change (case vs control), adjusted p-value and their rank among all tested genes",
+                "A plain statement of whether the signature score is largely redundant with case/control status, with the quantitative basis for that statement",
+                "Functional annotation of the 20 genes against human hallmark and GO BP sets is reported as descriptive overlap, explicitly not framed as a powered enrichment result; absence of the pathway resource is reported without failing the step"
+              ],
+              "constraints": [
+                "Use the same normalization and the same gene-symbol matching as T1S1 so the two steps describe the same signature",
+                "Do not use time or event anywhere in this step",
+                "Use human gene sets only — the cohort is Homo sapiens; do not substitute a mouse or rat collection"
+              ],
+              "caveats": [
+                "A 20-gene list is far too small for a well-powered over-representation test; the annotation is a reading aid",
+                "Differential expression here confirms what the signature tracks; it does not establish that the signature is prognostic — that is T1S2 and T1S3"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "gseapy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 53
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,748 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "rsem-counts-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:11:29.528Z",
+  "elapsedMs": 173622,
+  "outcome": "plan_submitted",
+  "planId": "pln-eb7c4394",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts/metadata, QC profile, and flag shallow sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "What do the RSEM expected-count matrix (12000 genes x 12 samples) and metadata (12 samples, condition treated/control) look like after loading, and does sample_01's library size (~4x below median) show library-size-driven distortion (rank correlation with other samples, PCA outlier position, fraction of zero/low-count genes) consistent with a shallow/degraded sample versus a true biological low-responder?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and joined on sample ID with the treated/control label from metadata.csv confirmed for all 12 samples",
+          "Per-sample library size, gene detection rate, and count distribution are reported, with sample_01 quantified relative to the other 11",
+          "A sample-level PCA or hierarchical clustering on variance-stabilized/log-normalized counts is produced and sample_01's position relative to its condition group is reported",
+          "Report states explicitly whether sample_01 appears as a technical outlier (isolated on PCA, disproportionate low-count gene fraction) versus a plausible biological data point, without deciding exclusion at this step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control, primary run (all 12 samples)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "data.table"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control colon samples using DESeq2 on the RSEM expected counts (rounded to integers, as no effective-length matrix was delivered to enable length-scaled tximport import)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "RSEM expected counts are rounded to nearest integer before DESeqDataSetFromMatrix, and this rounding step (a compromise forced by the missing genes.results/effective-length files) is stated in the output",
+          "Design is ~condition with condition releveled so control is the reference level, unpaired two-group contrast, single batch (no batch term needed per design)",
+          "Standard DESeq2 filtering (rows with all-zero or near-zero counts removed pre-test), size-factor normalization via median-of-ratios, and Wald test are applied",
+          "apeglm (or ashr as fallback if apeglm errors on this design) is used for log2FoldChange shrinkage; the shrinkage method actually used is reported",
+          "Full results table (gene, baseMean, log2FoldChange, shrunken LFC, p-value, padj) is output for all tested genes, with genes at padj < 0.05 counted and listed separately",
+          "Independent filtering summary and dispersion plot are reported for diagnostic purposes"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity re-run excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "data.table"
+        ],
+        "question": "Does the treated-vs-control DE result change materially when the shallow-library sample_01 is excluded (11 samples, arms unbalanced by one sample) — which genes lose or gain significance, and how correlated are the two log2FoldChange vectors?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Same DESeq2 pipeline (rounding, filtering, size factors, Wald test, apeglm/ashr shrinkage) is rerun on the 11-sample matrix with sample_01 removed",
+          "Genes significant (padj < 0.05) in the full-cohort run (T1S2) but not in the sample_01-excluded run, and vice versa, are tabulated explicitly",
+          "Pearson/Spearman correlation of log2FoldChange between the two runs is reported across genes tested in both",
+          "Report states plainly whether the primary conclusion (which genes differ) is robust to sample_01's inclusion or is materially sample_01-dependent, without picking one run as 'the' answer unless the evidence clearly supports it"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment on the DE gene list(s)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "data.table"
+        ],
+        "question": "Which WikiPathways, MSigDB Hallmark, and MSigDB GO Biological Process gene sets are enriched among genes differentially expressed between treated and control colon samples (using the primary 12-sample DESeq2 result, and separately noting any change using the sample_01-excluded result if T1S3 showed material divergence)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (over-representation test on padj<0.05 genes, or fgsea preranked on the full signed statistic/log2FoldChange list) is run against the human WikiPathways GMT, the human MSigDB Hallmark GMT, and the human MSigDB GO Biological Process GMT available in the reference store",
+          "Gene symbols in the DESeq2 results are matched to gene set member symbols; any mismatch/coverage rate is reported (e.g., fraction of tested genes found in each gene set collection)",
+          "Significant pathways (BH-adjusted p < 0.05 or the enrichment tool's default threshold) are reported per collection with directionality (which arm the pathway is enriched toward) stated",
+          "If T1S3 showed the DE list is sensitive to sample_01, enrichment is flagged as inheriting that instability rather than presented as independently robust"
+        ]
+      }
+    ],
+    "title": "Colon RSEM DE: 6 treated vs 6 control with QC gate",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The delivered matrix is RSEM gene-level expected counts (non-integer, 12000 genes x 12 samples) with no per-sample genes.results and thus no effective-length column, so tximport-style length-scaled correction cannot be reconstructed from what was delivered — the counts must be treated as gene-level counts and rounded for a count-based negative-binomial model, and this compromise is stated explicitly rather than concealed. Sample sample_01 has a library size about 4x below the median, which at n=6 per arm is a real risk of a single-sample-driven result; the plan does not exclude it a priori but runs the pipeline with and without it and reports whether findings depend on it, and profiles it independently for degradation/technical failure signatures before any exclusion decision. Design is unpaired, single batch, 6 vs 6 — a standard two-group DESeq2 contrast, gene-level, with independent filtering, apeglm shrinkage for effect sizes, and BH FDR. Downstream, DE results feed WikiPathways and MSigDB-hallmark/GO enrichment (both staged for human) using the organism-matched gene sets already confirmed present, giving pathway-level context for the treated-vs-control genes without inventing mechanism beyond what the enrichment supports."
+  },
+  "usage": {
+    "inputTokens": 3473784,
+    "outputTokens": 6469,
+    "cacheCreationInputTokens": 191663,
+    "cacheReadInputTokens": 3281617,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Wa9Czv38xhYHaX2YtWdeDv",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length human"
+      },
+      "outcome": "ok",
+      "durationMs": 37
+    },
+    {
+      "toolUseId": "toolu_011LUcsMf5b6VJ22EsaErwMe",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "DESeq2",
+          "edgeR",
+          "apeglm",
+          "ashr",
+          "biomaRt",
+          "EnsDb.Hsapiens.v86"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_018Kvrczzj27QEbcGmzLtCyT",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01RZDuovSqnos33EdUxURv1y",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01Jfe7bU1ebZYP7tdMTCsmki",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01AtWygD17TnXD1VZWNcS6sf",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_019VztReRnGDVFvgNUgKaGTR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01RLSgFyLaQPzMEjRDMSWieq",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode human annotation gtf"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01Jx43RvzR5se28nyMXdkGFk",
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01KDk9rCPSh2LjLP4VoYWrZZ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "genome-annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_011pLZ3tMCRWoyH5gvviv1Re",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01EPYYm2rH6Fum4bzx9seX1V",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_015QVtjp2GU8mz2zMftt1Tyx",
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01Rv68egTK1ivRYSCm5HBSmV",
+      "name": "list_available_refs",
+      "input": {
+        "query": "EnsDb"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_014Vx9JtrWp6NiHTmXLb9K6E",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM expected counts DESeq2 gene length offset differential expression without effective length",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 464
+    },
+    {
+      "toolUseId": "toolu_01WuAdfzaGzZo8AS5neQ5xJG",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSEM gene length correction DESeq2 tximport average transcript length",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 484
+    },
+    {
+      "toolUseId": "toolu_01B41fji6H638G2vHMAP3gtu",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport DESeq2 RNA-seq differential expression workflow",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 525
+    },
+    {
+      "toolUseId": "toolu_011taahDq7ajJLxaNv1zavm3",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "tximport DESeq2 RNA-seq differential expression length correction transcript",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9417
+    },
+    {
+      "toolUseId": "toolu_018NGDRVFHEcYZ3DCgxShPx6",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression analysis RNA-seq read count transcript length bias",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 932
+    },
+    {
+      "toolUseId": "toolu_018r2SK3zc2pktCAnAHdW3qH",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 moderated estimation fold change dispersion RNA-seq",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 661
+    },
+    {
+      "toolUseId": "toolu_01UGqobMN2VvpWWjwY1jXnBC",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm heavy-tailed shrinkage estimator sequence count data",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 652
+    },
+    {
+      "toolUseId": "toolu_01Jtws4PMRNcfZ5yVtehLuy8",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control outlier library size sample removal differential expression",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 333
+    },
+    {
+      "toolUseId": "toolu_011i3mHpWhpR4W5LmE7aKCLq",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281",
+          "30395178"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 685
+    },
+    {
+      "toolUseId": "toolu_01JHxp74EcJMq9s1vCb1Q6Uo",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RSEM expected counts DESeq2 without effective length gene length correction alternative",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9348
+    },
+    {
+      "toolUseId": "toolu_01LiodU1uNGDJdkX6rWxCuju",
+      "name": "search_arxiv",
+      "input": {
+        "query": "RSEM expected counts gene length differential expression bias without effective length",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1395
+    },
+    {
+      "toolUseId": "toolu_01QdYZee15XzLPkLBFzgu1mT",
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 RSEM gene results tximport counts matrix without length",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 343
+    },
+    {
+      "toolUseId": "toolu_013vuvpK8cAeMvj45FYkMh1q",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/deseq2/deseq2",
+        "query": "DESeqDataSetFromMatrix with non-integer counts round expected counts RSEM"
+      },
+      "outcome": "ok",
+      "durationMs": 323
+    },
+    {
+      "toolUseId": "toolu_01GzG1sPG7tdq9ZTcWsUUgTH",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "DESeqDataSetFromMatrix rounding non-integer counts, outlier sample handling, apeglm shrinkage"
+      },
+      "outcome": "ok",
+      "durationMs": 430
+    },
+    {
+      "toolUseId": "toolu_01K7SXseZd5qmWzxxVKFi9if",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeqDataSetFromMatrix rounding non-integer counts RSEM expected counts, apeglm lfcShrink, outlier detection cook's distance"
+      },
+      "outcome": "ok",
+      "durationMs": 1055
+    },
+    {
+      "toolUseId": "toolu_01QkDGkgX9bTJacZvDUMPzJa",
+      "name": "list_available_refs",
+      "input": {
+        "query": "EnsDb Hsapiens transcript length"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01E8ZqupFihbFCTem4qrp6Gu",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GenomicFeatures",
+          "rtracklayer",
+          "immunedeconv",
+          "quantiseqr",
+          "MCPcounter",
+          "xCell",
+          "ConsensusTME"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01XS3C99fVNXnw9zdbUfpM33",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "enrichplot",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01JbgwBbpu3qQ6Zo7QHkf346",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EDASeq",
+          "cqn",
+          "sva",
+          "limma",
+          "PCAtools"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_012opsro4hfmtMaaKPJzFsKm",
+      "name": "list_available_packages",
+      "input": {
+        "query": "PCA",
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01BTYfoXoPMiYdSJHkpnrAjm",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01KBrQpQdPcW7iY9R9bxinV1",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSVA",
+          "singscore",
+          "decoupleR"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01TK5c6P8SaLAfjhuTVVhZpU",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_016xwnffnAuAdKK6ibMSjRdC",
+      "name": "list_available_packages",
+      "input": {
+        "query": "decoupler",
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01ATLxZA4FTvoaVcPd18D7Ev",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mMCPcounter",
+          "EPIC",
+          "ComICS",
+          "immunedeconv"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01H3XWR9oazP74RMkgrE4XBn",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "data.table",
+          "readr",
+          "tidyverse",
+          "R.utils"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01PdD8sgzUBct2FhoZn7UkFN",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsubread",
+          "GenomicFeatures",
+          "EnsDb.Hsapiens.v86",
+          "AnnotationHub"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01K2M9qLWVYUm1z5LFBMTq1g",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Hsapiens.v86"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01Lncpb82CSkBq7iGvvQiPta",
+      "name": "request_clarification",
+      "input": {
+        "question": "placeholder"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01N3BVTnTsMQADGSF6LbWYmb",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Colon RSEM DE: 6 treated vs 6 control with QC gate",
+          "analytical_narrative": "The delivered matrix is RSEM gene-level expected counts (non-integer, 12000 genes x 12 samples) with no per-sample genes.results and thus no effective-length column, so tximport-style length-scaled correction cannot be reconstructed from what was delivered — the counts must be treated as gene-level counts and rounded for a count-based negative-binomial model, and this compromise is stated explicitly rather than concealed. Sample sample_01 has a library size about 4x below the median, which at n=6 per arm is a real risk of a single-sample-driven result; the plan does not exclude it a priori but runs the pipeline with and without it and reports whether findings depend on it, and profiles it independently for degradation/technical failure signatures before any exclusion decision. Design is unpaired, single batch, 6 vs 6 — a standard two-group DESeq2 contrast, gene-level, with independent filtering, apeglm shrinkage for effect sizes, and BH FDR. Downstream, DE results feed WikiPathways and MSigDB-hallmark/GO enrichment (both staged for human) using the organism-matched gene sets already confirmed present, giving pathway-level context for the treated-vs-control genes without inventing mechanism beyond what the enrichment supports.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts/metadata, QC profile, and flag shallow sample",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What do the RSEM expected-count matrix (12000 genes x 12 samples) and metadata (12 samples, condition treated/control) look like after loading, and does sample_01's library size (~4x below median) show library-size-driven distortion (rank correlation with other samples, PCA outlier position, fraction of zero/low-count genes) consistent with a shallow/degraded sample versus a true biological low-responder?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and joined on sample ID with the treated/control label from metadata.csv confirmed for all 12 samples",
+                "Per-sample library size, gene detection rate, and count distribution are reported, with sample_01 quantified relative to the other 11",
+                "A sample-level PCA or hierarchical clustering on variance-stabilized/log-normalized counts is produced and sample_01's position relative to its condition group is reported",
+                "Report states explicitly whether sample_01 appears as a technical outlier (isolated on PCA, disproportionate low-count gene fraction) versus a plausible biological data point, without deciding exclusion at this step"
+              ],
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control, primary run (all 12 samples)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control colon samples using DESeq2 on the RSEM expected counts (rounded to integers, as no effective-length matrix was delivered to enable length-scaled tximport import)?",
+              "acceptance_criteria": [
+                "RSEM expected counts are rounded to nearest integer before DESeqDataSetFromMatrix, and this rounding step (a compromise forced by the missing genes.results/effective-length files) is stated in the output",
+                "Design is ~condition with condition releveled so control is the reference level, unpaired two-group contrast, single batch (no batch term needed per design)",
+                "Standard DESeq2 filtering (rows with all-zero or near-zero counts removed pre-test), size-factor normalization via median-of-ratios, and Wald test are applied",
+                "apeglm (or ashr as fallback if apeglm errors on this design) is used for log2FoldChange shrinkage; the shrinkage method actually used is reported",
+                "Full results table (gene, baseMean, log2FoldChange, shrunken LFC, p-value, padj) is output for all tested genes, with genes at padj < 0.05 counted and listed separately",
+                "Independent filtering summary and dispersion plot are reported for diagnostic purposes"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity re-run excluding sample_01",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Does the treated-vs-control DE result change materially when the shallow-library sample_01 is excluded (11 samples, arms unbalanced by one sample) — which genes lose or gain significance, and how correlated are the two log2FoldChange vectors?",
+              "acceptance_criteria": [
+                "Same DESeq2 pipeline (rounding, filtering, size factors, Wald test, apeglm/ashr shrinkage) is rerun on the 11-sample matrix with sample_01 removed",
+                "Genes significant (padj < 0.05) in the full-cohort run (T1S2) but not in the sample_01-excluded run, and vice versa, are tabulated explicitly",
+                "Pearson/Spearman correlation of log2FoldChange between the two runs is reported across genes tested in both",
+                "Report states plainly whether the primary conclusion (which genes differ) is robust to sample_01's inclusion or is materially sample_01-dependent, without picking one run as 'the' answer unless the evidence clearly supports it"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment on the DE gene list(s)",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways, MSigDB Hallmark, and MSigDB GO Biological Process gene sets are enriched among genes differentially expressed between treated and control colon samples (using the primary 12-sample DESeq2 result, and separately noting any change using the sample_01-excluded result if T1S3 showed material divergence)?",
+              "acceptance_criteria": [
+                "Enrichment (over-representation test on padj<0.05 genes, or fgsea preranked on the full signed statistic/log2FoldChange list) is run against the human WikiPathways GMT, the human MSigDB Hallmark GMT, and the human MSigDB GO Biological Process GMT available in the reference store",
+                "Gene symbols in the DESeq2 results are matched to gene set member symbols; any mismatch/coverage rate is reported (e.g., fraction of tested genes found in each gene set collection)",
+                "Significant pathways (BH-adjusted p < 0.05 or the enrichment tool's default threshold) are reported per collection with directionality (which arm the pathway is enriched toward) stated",
+                "If T1S3 showed the DE list is sensitive to sample_01, enrichment is flagged as inheriting that instability rather than presented as independently robust"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 54
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "n_genes_in_filtered_matrix": 9782,
+  "n_genes_with_padj_reported": 9402,
+  "padj_threshold": 0.05,
+  "n_de_genes": 875,
+  "n_de_up": 513,
+  "n_de_down": 362,
+  "ranking_column": "log2_fold_change_shrunken_apeglm",
+  "ranking_order": "descending",
+  "top5_up_by_shrunken_lfc": [
+    "IL15RA",
+    "GENE06568",
+    "GENE07358",
+    "GENE00040",
+    "GENE07059"
+  ],
+  "top5_down_by_shrunken_lfc": [
+    "UQCRC2",
+    "GENE05017",
+    "PRDX1",
+    "GENE00133",
+    "GENE05373"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The core is right: one DESeqDataSet with ~condition on all twelve samples, an LRT against ~1 for the omnibus question, and two Wald contrasts against control from the same fit with apeglm/ashr shrinkage and BH per table. QC is named (PCA, sample distances, size factors, dispersion) but without coloring by condition or any outlier/shallow-sample policy. The reference level is not explicitly set, and the |log2FC| > 1 cutoff is applied post hoc to shrunken estimates rather than as an lfcThreshold in the test. Enrichment was not asked for and, as written, lacks an explicit ORA universe and size window despite naming a versioned collection; package versions and counts of significant genes per contrast are not required in the report."
+}

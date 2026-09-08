@@ -1,0 +1,235 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:03:44.470Z",
+  "elapsedMs": 26618,
+  "outcome": "plan_submitted",
+  "planId": "pln-902f2d76",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Prepare ranked gene list from DE results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Given the DESeq2 treated (psoriasis lesional) vs control de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change SE/stat/pvalue/padj etc.), how should genes be ranked for pre-ranked GSEA against hallmark gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "data_preparation",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Produces a two-column ranked list (gene symbol, rank metric) covering all genes in de_results.csv that have non-missing log2FoldChange and p-value",
+          "Rank metric is a signed statistic (e.g., -log10(pvalue) * sign(log2FoldChange), or the DESeq2 Wald stat if present) documented in the output",
+          "Duplicate gene symbols are resolved deterministically (e.g., keep the entry with the largest |stat|) and the resolution rule is reported",
+          "Reports how many genes were dropped due to missing values or duplicate collapsing",
+          "Notes the sample_01 low-library-size caveat as inherited from the upstream DE call, not addressed by this step"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pre-ranked GSEA against MSigDB Hallmark gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which of the 50 MSigDB human hallmark gene sets are significantly enriched (up or down) in the psoriasis lesional vs control ranked gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the locally staged MSigDB human hallmark GMT (50 HALLMARK_* gene sets, HGNC symbols) as the gene set collection — confirm the file is present before running; if absent, halt and report rather than substituting another collection",
+          "Runs fgsea (or gseapy prerank as fallback) on the ranked list from T1S1 with a fixed random seed and a stated number of permutations",
+          "Reports for every hallmark pathway tested: NES, nominal p-value, BH-adjusted p-value (padj), and leading-edge gene count",
+          "Flags pathways at padj < 0.05 as significant and separately reports direction (NES > 0 = up in lesional, NES < 0 = up in control)",
+          "Output table sorted by padj is saved for downstream summarization"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Summarize and visualize significant hallmark pathways",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Among the hallmark pathways tested, which are significantly up- or down-regulated in psoriasis lesional skin vs control, and what is their effect size and leading-edge gene overlap?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Produces a ranked table of hallmark pathways (NES, padj, direction) restricted to padj < 0.05, plus the full 50-pathway table for reference",
+          "Produces a bar or dot plot of NES for significant pathways, colored by direction (up in lesional vs up in control)",
+          "Lists the top leading-edge genes for the top 5 most significant pathways in each direction",
+          "Explicitly states that this is a gene-set-level readout of an already-computed DE contrast and does not re-derive differential expression",
+          "If fewer than 3 pathways reach padj < 0.05, reports the top pathways by nominal p-value with an explicit statement that formal significance was limited, rather than implying strong pathway-level signal"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control: hallmark pathway GSEA",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "DE (DESeq2, treated=lesional vs control, 12 samples, 12000 genes) is already computed in de_results.csv. The research question is purely about which hallmark pathways differ, so no re-analysis of counts is needed. The plan (1) QCs and prepares the DE results table into a ranked gene list, flagging the low-library-size sample sample_01 as a caveat carried forward rather than re-run, (2) performs pre-ranked GSEA against the MSigDB human hallmark gene sets (50 sets, HGNC symbols, staged locally) using fgsea, and (3) summarizes and visualizes the enriched hallmark pathways with directionality (up in lesional vs control) and significance. All steps run on the existing DE table; the raw counts file is not reused since the DE contrast is already delivered."
+  },
+  "usage": {
+    "inputTokens": 140349,
+    "outputTokens": 1946,
+    "cacheCreationInputTokens": 77430,
+    "cacheReadInputTokens": 62883,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01TrhuDJgGRmv4VmsRnFJDun",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01BrxdCaaPHHPTNqsagHyWZK",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "gseapy",
+          "clusterProfiler",
+          "decoupleR"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01RprFjP6GBuuxnqwrTprfSL",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control: hallmark pathway GSEA",
+          "analytical_narrative": "DE (DESeq2, treated=lesional vs control, 12 samples, 12000 genes) is already computed in de_results.csv. The research question is purely about which hallmark pathways differ, so no re-analysis of counts is needed. The plan (1) QCs and prepares the DE results table into a ranked gene list, flagging the low-library-size sample sample_01 as a caveat carried forward rather than re-run, (2) performs pre-ranked GSEA against the MSigDB human hallmark gene sets (50 sets, HGNC symbols, staged locally) using fgsea, and (3) summarizes and visualizes the enriched hallmark pathways with directionality (up in lesional vs control) and significance. All steps run on the existing DE table; the raw counts file is not reused since the DE contrast is already delivered.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Prepare ranked gene list from DE results",
+              "track": "T1",
+              "step_type": "data_preparation",
+              "question": "Given the DESeq2 treated (psoriasis lesional) vs control de_results.csv (12000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change SE/stat/pvalue/padj etc.), how should genes be ranked for pre-ranked GSEA against hallmark gene sets?",
+              "acceptance_criteria": [
+                "Produces a two-column ranked list (gene symbol, rank metric) covering all genes in de_results.csv that have non-missing log2FoldChange and p-value",
+                "Rank metric is a signed statistic (e.g., -log10(pvalue) * sign(log2FoldChange), or the DESeq2 Wald stat if present) documented in the output",
+                "Duplicate gene symbols are resolved deterministically (e.g., keep the entry with the largest |stat|) and the resolution rule is reported",
+                "Reports how many genes were dropped due to missing values or duplicate collapsing",
+                "Notes the sample_01 low-library-size caveat as inherited from the upstream DE call, not addressed by this step"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pre-ranked GSEA against MSigDB Hallmark gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB human hallmark gene sets are significantly enriched (up or down) in the psoriasis lesional vs control ranked gene list?",
+              "acceptance_criteria": [
+                "Uses the locally staged MSigDB human hallmark GMT (50 HALLMARK_* gene sets, HGNC symbols) as the gene set collection — confirm the file is present before running; if absent, halt and report rather than substituting another collection",
+                "Runs fgsea (or gseapy prerank as fallback) on the ranked list from T1S1 with a fixed random seed and a stated number of permutations",
+                "Reports for every hallmark pathway tested: NES, nominal p-value, BH-adjusted p-value (padj), and leading-edge gene count",
+                "Flags pathways at padj < 0.05 as significant and separately reports direction (NES > 0 = up in lesional, NES < 0 = up in control)",
+                "Output table sorted by padj is saved for downstream summarization"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Summarize and visualize significant hallmark pathways",
+              "track": "T2",
+              "step_type": "reporting",
+              "question": "Among the hallmark pathways tested, which are significantly up- or down-regulated in psoriasis lesional skin vs control, and what is their effect size and leading-edge gene overlap?",
+              "acceptance_criteria": [
+                "Produces a ranked table of hallmark pathways (NES, padj, direction) restricted to padj < 0.05, plus the full 50-pathway table for reference",
+                "Produces a bar or dot plot of NES for significant pathways, colored by direction (up in lesional vs up in control)",
+                "Lists the top leading-edge genes for the top 5 most significant pathways in each direction",
+                "Explicitly states that this is a gene-set-level readout of an already-computed DE contrast and does not re-derive differential expression",
+                "If fewer than 3 pathways reach padj < 0.05, reports the top pathways by nominal p-value with an explicit statement that formal significance was limited, rather than implying strong pathway-level signal"
+              ],
+              "packages": [
+                "pandas",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

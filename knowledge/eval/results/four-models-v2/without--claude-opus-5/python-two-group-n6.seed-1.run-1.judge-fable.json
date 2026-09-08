@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: PyDESeq2 Wald with ~condition and control as reference, BH at 0.05, shrinkage with a stated fallback, and a Python-only stack. QC is thorough (library sizes, detection, size factors, PCA, correlation heatmap) with an explicit, evidence-based keep/drop policy for sample_01 plus a sensitivity refit rather than a silent drop. The filter (>=10 counts in >=6 samples) is justified by group size and reported, normalization stays inside the model, and GSEA runs gseapy prerank on the full Wald-ranked list with the Hallmark version, seed, and permutations named. Minor deductions: the post hoc |log2FC|>1 filter on the significant table, and a min set size of 10 rather than 15."
+}

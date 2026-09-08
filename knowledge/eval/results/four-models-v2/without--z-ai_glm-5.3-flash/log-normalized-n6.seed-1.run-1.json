@@ -1,0 +1,285 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:47:24.618Z",
+  "elapsedMs": 102608,
+  "outcome": "plan_submitted",
+  "planId": "pln-114c2cf4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and sample alignment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma==3.68.5",
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13",
+          "data.table==1.18.4"
+        ],
+        "question": "Do the 12 samples in log_expr.csv and metadata.csv align, and do treated vs control samples form coherent, outlier-free groups on a PCA/MDS of the log2(TPM+1) values?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load log_expr.csv (12,000 rows; first column holds gene identifiers, verify and use as row names) and metadata.csv (12 samples x 2 columns). Confirm which of the 13 expression columns are actual samples and drop any identifier/index column. Match expression columns to metadata sample IDs, confirm the condition column encodes exactly 'treated' and 'control' (6 each), and reorder columns to metadata row order. QC: PCA/MDS of the 12 samples colored by condition, inter-sample Pearson correlation heatmap, per-gene mean/variance summary, detection of low-expression genes (e.g., log2(TPM+1) < 1 in all samples) for optional filtering, and an outlier check. Report any sample-label mismatch or outlier sample explicitly; do not drop samples without flagging.",
+        "acceptance_criteria": [
+          "PCA or MDS plot colored by condition produced; sample correlation heatmap produced",
+          "Any sample failing correlation/outlier criteria reported explicitly rather than silently removed",
+          "Output: a clean expression matrix (genes x 12 samples) plus sample QC plots written to the step's output directory"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma==3.68.5"
+        ],
+        "question": "Which genes differ between the 6 treated and 6 control muscle samples, and by how much (log2 fold change, moderated t-test, BH-adjusted FDR)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Fit a limma linear model on the log2(TPM+1) matrix with design ~ condition (control as reference), apply empirical-Bayes moderation (eBayes) and treat-vs-control contrast. With n=6 per group and unpaired design there are no covariates to include; single batch so no batch term. Report logFC, moderated t, raw p, BH-adjusted FDR for all 12,000 genes; use robust eBayes and, if the mean-variance trend warrants it, trend=TRUE (voom is not applicable — no counts). Report counts of significant genes at FDR<0.05 and |logFC| thresholds (1.0 and 0.58 = 1.5x), and note that at 6 vs 6 only large effects are detectable.",
+        "acceptance_criteria": [
+          "Full DE results table written (all 12,000 genes) with logFC, t, P.Value, adj.P.Val, CI bounds",
+          "Counts of significant genes at FDR < 0.05 (up/down) reported",
+          "Gene identifiers in output remain exactly as delivered in log_expr.csv (no silent remapping)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Result visualization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "ggplot2==4.0.3",
+          "ggrepel==0.9.8",
+          "pheatmap==1.0.13",
+          "EnhancedVolcano==1.30.0"
+        ],
+        "question": "How do the treated-vs-control differences distribute across magnitude, significance, and expression level, and do the top DE genes separate the two groups?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "From the T1S2 results table produce: a volcano plot (logFC vs -log10 FDR, labeling top genes by ggrepel), an MA-style plot (mean log2 expression vs logFC), and a heatmap of the top 30-50 DE genes (by FDR) across the 12 samples annotated by condition (pheatmap/ComplexHeatmap). Also write a ranked gene list ( moderated t statistic, signed) sorted for use as input to competitive gene-set testing in T1S4.",
+        "acceptance_criteria": [
+          "Volcano plot with significant genes highlighted; top-N heatmap with condition annotation; ranked-statistics file for downstream gene-set testing",
+          "Plots written to output directory; ranked list restricted to genes present in the expression matrix"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway-level summary",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "limma==3.68.5",
+          "fgsea==1.38.0",
+          "GSEABase==1.74.0",
+          "data.table==1.18.4"
+        ],
+        "question": "Which biological pathways are shifted between treated and control samples, giving the gene-level differences a biological reading?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "description": "Run competitive pathway testing on the moderated-t-ranked gene list against the WikiPathways human pathway gene sets (HGNC gene symbols; the staged GMT under /mnt/refs/managed/wikipathways-human/2026.07.10/, splitting the '%'-delimited first field for readable set names). Use limma::camera (or fgsea) with the full matrix and condition design for inter-gene-correlation-aware testing, plus GSEA-style preranked testing as a cross-check. Report per-pathway direction (enriched in treated vs control), size, and FDR; restrict to pathways with >= 10 and <= 500 genes present in the matrix. If gene-symbol overlap between the matrix and the GMT is poor (< 50% of pathways with >= 10 genes), report the overlap honestly and interpret results as indicative only.",
+        "acceptance_criteria": [
+          "Enrichment results table: pathway, size, direction (enriched in treated vs control), FDR",
+          "Only pathways with >= 10 and <= 500 genes overlapping the expression matrix retained",
+          "If the GMT contains near-zero overlap with the 12,000 genes, report the overlap count explicitly and mark enrichment inconclusive rather than proceeding"
+        ]
+      }
+    ],
+    "title": "Treated vs control DE in log2(TPM+1) muscle RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a 12,000-gene x 13-column log2(TPM+1) matrix with a 12-sample metadata table (6 treated vs 6 control, unpaired, single batch). Because the facility delivered normalized log-scale values and no raw counts, count-based models (DESeq2/edgeR) are inappropriate; limma's linear-model framework on the log2 values is the standard, statistically correct approach for this data type. The plan: (1) align expression columns to metadata rows, verify the two extra expression columns are non-sample (e.g., an index column), and run sample-level QC (PCA, sample correlations, outlier check); (2) fit limma moderated t-tests for treated vs control across all 12,000 genes, with BH FDR and effect sizes; (3) visualize results (volcano, MA, top-gene heatmap); (4) test whether differential-expression signals converge on biological pathways using the WikiPathways human GMT via competitive gene-set testing (camera/fgsea), reporting the treatment-affected biology rather than only a gene list. With 6 vs 6 the study is powered only for large effects, so the plan reports effect sizes and confidence intervals alongside p-values and flags modest FDR-level results as supportive, not definitive."
+  },
+  "usage": {
+    "inputTokens": 62705,
+    "outputTokens": 2119,
+    "cacheReadInputTokens": 31232,
+    "reasoningTokens": 288
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_9e556a189c0c421ba16efd70",
+      "name": "submit_plan",
+      "input": {
+        "plan": "created_at</arg_key><arg_value>2026-07-10T00:00:00Z"
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "call_0a162526ef9b461d8e96cbd5",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is a 12,000-gene x 13-column log2(TPM+1) matrix with a 12-sample metadata table (6 treated vs 6 control, unpaired, single batch). Because the facility delivered normalized log-scale values and no raw counts, count-based models (DESeq2/edgeR) are inappropriate; limma's linear-model framework on the log2 values is the standard, statistically correct approach for this data type. The plan: (1) align expression columns to metadata rows, verify the two extra expression columns are non-sample (e.g., an index column), and run sample-level QC (PCA, sample correlations, outlier check); (2) fit limma moderated t-tests for treated vs control across all 12,000 genes, with BH FDR and effect sizes; (3) visualize results (volcano, MA, top-gene heatmap); (4) test whether differential-expression signals converge on biological pathways using the WikiPathways human GMT via competitive gene-set testing (camera/fgsea), reporting the treatment-affected biology rather than only a gene list. With 6 vs 6 the study is powered only for large effects, so the plan reports effect sizes and confidence intervals alongside p-values and flags modest FDR-level results as supportive, not definitive.",
+          "created_at": "2026-07-10T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "PCA or MDS plot colored by condition produced; sample correlation heatmap produced",
+                "Any sample failing correlation/outlier criteria reported explicitly rather than silently removed",
+                "Output: a clean expression matrix (genes x 12 samples) plus sample QC plots written to the step's output directory"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [],
+              "description": "Load log_expr.csv (12,000 rows; first column holds gene identifiers, verify and use as row names) and metadata.csv (12 samples x 2 columns). Confirm which of the 13 expression columns are actual samples and drop any identifier/index column. Match expression columns to metadata sample IDs, confirm the condition column encodes exactly 'treated' and 'control' (6 each), and reorder columns to metadata row order. QC: PCA/MDS of the 12 samples colored by condition, inter-sample Pearson correlation heatmap, per-gene mean/variance summary, detection of low-expression genes (e.g., log2(TPM+1) < 1 in all samples) for optional filtering, and an outlier check. Report any sample-label mismatch or outlier sample explicitly; do not drop samples without flagging.",
+              "id": "T1S1",
+              "name": "QC and sample alignment",
+              "packages": [
+                "limma==3.68.5",
+                "ggplot2==4.0.3",
+                "pheatmap==1.0.13",
+                "data.table==1.18.4"
+              ],
+              "question": "Do the 12 samples in log_expr.csv and metadata.csv align, and do treated vs control samples form coherent, outlier-free groups on a PCA/MDS of the log2(TPM+1) values?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Full DE results table written (all 12,000 genes) with logFC, t, P.Value, adj.P.Val, CI bounds",
+                "Counts of significant genes at FDR < 0.05 (up/down) reported",
+                "Gene identifiers in output remain exactly as delivered in log_expr.csv (no silent remapping)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit a limma linear model on the log2(TPM+1) matrix with design ~ condition (control as reference), apply empirical-Bayes moderation (eBayes) and treat-vs-control contrast. With n=6 per group and unpaired design there are no covariates to include; single batch so no batch term. Report logFC, moderated t, raw p, BH-adjusted FDR for all 12,000 genes; use robust eBayes and, if the mean-variance trend warrants it, trend=TRUE (voom is not applicable — no counts). Report counts of significant genes at FDR<0.05 and |logFC| thresholds (1.0 and 0.58 = 1.5x), and note that at 6 vs 6 only large effects are detectable.",
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control",
+              "packages": [
+                "limma==3.68.5"
+              ],
+              "question": "Which genes differ between the 6 treated and 6 control muscle samples, and by how much (log2 fold change, moderated t-test, BH-adjusted FDR)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Volcano plot with significant genes highlighted; top-N heatmap with condition annotation; ranked-statistics file for downstream gene-set testing",
+                "Plots written to output directory; ranked list restricted to genes present in the expression matrix"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "From the T1S2 results table produce: a volcano plot (logFC vs -log10 FDR, labeling top genes by ggrepel), an MA-style plot (mean log2 expression vs logFC), and a heatmap of the top 30-50 DE genes (by FDR) across the 12 samples annotated by condition (pheatmap/ComplexHeatmap). Also write a ranked gene list ( moderated t statistic, signed) sorted for use as input to competitive gene-set testing in T1S4.",
+              "id": "T1S3",
+              "name": "Result visualization",
+              "packages": [
+                "ggplot2==4.0.3",
+                "ggrepel==0.9.8",
+                "pheatmap==1.0.13",
+                "EnhancedVolcano==1.30.0"
+              ],
+              "question": "How do the treated-vs-control differences distribute across magnitude, significance, and expression level, and do the top DE genes separate the two groups?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Enrichment results table: pathway, size, direction (enriched in treated vs control), FDR",
+                "Only pathways with >= 10 and <= 500 genes overlapping the expression matrix retained",
+                "If the GMT contains near-zero overlap with the 12,000 genes, report the overlap count explicitly and mark enrichment inconclusive rather than proceeding"
+              ],
+              "agent": "enrichment-agent",
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "description": "Run competitive pathway testing on the moderated-t-ranked gene list against the WikiPathways human pathway gene sets (HGNC gene symbols; the staged GMT under /mnt/refs/managed/wikipathways-human/2026.07.10/, splitting the '%'-delimited first field for readable set names). Use limma::camera (or fgsea) with the full matrix and condition design for inter-gene-correlation-aware testing, plus GSEA-style preranked testing as a cross-check. Report per-pathway direction (enriched in treated vs control), size, and FDR; restrict to pathways with >= 10 and <= 500 genes present in the matrix. If gene-symbol overlap between the matrix and the GMT is poor (< 50% of pathways with >= 10 genes), report the overlap honestly and interpret results as indicative only.",
+              "id": "T1S4",
+              "name": "Pathway-level summary",
+              "packages": [
+                "limma==3.68.5",
+                "fgsea==1.38.0",
+                "GSEABase==1.74.0",
+                "data.table==1.18.4"
+              ],
+              "question": "Which biological pathways are shifted between treated and control samples, giving the gene-level differences a biological reading?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Treated vs control DE in log2(TPM+1) muscle RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

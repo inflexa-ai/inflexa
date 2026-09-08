@@ -1,0 +1,239 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "qc-only-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:57:59.453Z",
+  "elapsedMs": 78504,
+  "outcome": "plan_submitted",
+  "planId": "pln-66261163",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library-size and depth QC metrics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12 samples a single shallow library shifts the median only slightly; state the median before and after size-factor computation if they differ",
+          "pydeseq2 median-of-ratios size factors can be unstable for a 4x-shallow library if many genes are near zero; if size-factor estimation errors or warns, fall back to simple total-count scaling and record which was used"
+        ],
+        "context": "Bulk RNA-seq QC on Salmon gene-level counts, 12,000 x 12 samples, 6 treated (AD lesional) vs 6 control skin, unpaired, single batch. Profile caveat: sample_01 library size ~4x below median. Salmon gene-level counts have unknown length-correction status; length correction is irrelevant for library-size and detection QC as computed here.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "How large and how variable are the 12 libraries in counts.csv (sample_01 vs the other 11), how many genes are detectable per sample, and do median-of-ratios size factors normalize the shallow library?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use the sample IDs in metadata.csv as the authoritative sample list; match them to counts.csv column names and report any mismatch loudly",
+          "Compute CPM from raw counts within this step; do not use TPM or assume length correction",
+          "Do not drop or reassign any sample in this step"
+        ],
+        "description": "Load /eval-four-models-v2-without-qc-only-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns; first column holds gene identifiers — verify the column names against the sample IDs in metadata.csv, 12 rows x 2 columns with a condition column whose values are the treated/lesional vs control labels) and compute, per sample: raw total counts, log10 library size, median-of-ratios size factors (pydeseq2), CPM-normalized totals, and gene-detection counts at CPM > 1 and CPM > 5. Summarize depth and detection by condition. Produce a per-sample QC table (CSV) and a barplot of library sizes (raw and size-factor-adjusted) highlighting sample_01, reporting its exact depth ratio to the median. Sanity-check whether any gene filtering (e.g. drop genes with near-zero counts across all samples) changes the picture; report filtered dimensions. No sample is excluded here.",
+        "acceptance_criteria": [
+          "QC table written with one row per sample: raw total counts, log10 library size, median-of-ratios size factor, CPM>1 and CPM>5 gene-detection counts, condition label",
+          "sample_01 depth ratio to cohort median reported as an exact number (expected ~0.25x per profile caveat, verify against the file)",
+          "Per-condition depth and detection summaries reported (n=6 treated vs n=6 control)",
+          "Library-size barplot (raw and normalized) with sample_01 visually flagged saved as a figure",
+          "Gene-filtering sensitivity check reported (dimensions before/after removing all-zero and ultra-low-count genes)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "PCA, sample distances, and sample_01 verdict",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per arm, PCA separation by condition may be weak even when DE signal is real; do not interpret absent separation as absence of differential expression",
+          "A 4x-shallow library inflates its Euclidean distance to all others mechanically; the correlation-based distance and the sensitivity analysis exist to separate depth effects from expression-profile divergence",
+          "Salmon gene-level counts with unknown length-correction status are adequate for PCA/clustering QC but this caveat must be restated if these plots are later used to justify DE choices"
+        ],
+        "context": "Same 12-sample AD skin dataset (6 vs 6, unpaired, single batch). PCA and distance metrics must run on within-sample-comparable values: log2-CPM, or VST if pydeseq2 provides it on 12 samples. The profile warns sample_01 is ~4x below median depth; T1S1 establishes the exact numbers this step builds on.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "scipy",
+          "matplotlib",
+          "seaborn",
+          "pydeseq2"
+        ],
+        "question": "Do the 12 AD skin samples separate by condition (treated vs control) on PCA and cluster coherently by sample-to-sample distance, and is sample_01 a shallow-but-conforming sample or a structural outlier whose removal changes the picture?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "PCA and distances use the top most-variable transformed genes; state how many genes were used and the transform applied",
+          "Report whether sample_01's condition is treated or control explicitly in the verdict — depth alone is not an outlier criterion without it",
+          "Do not exclude sample_01 or any sample from the primary analysis; removal appears only in the labeled sensitivity analysis"
+        ],
+        "description": "Using the QC output of T1S1, transform the filtered counts to log2-CPM (and DESeq2-style VST via pydeseq2 if it runs cleanly on these 12 samples; otherwise log2-CPM alone, recording the choice), take the top ~500-2000 most variable genes, and compute: (a) PCA — PC1/PC2 loadings, per-sample scores colored by condition with sample_01 highlighted, and variance explained; (b) sample-to-sample Euclidean distance matrix on the transformed values with a heatmap and hierarchical-clustering dendrogram (correlation distance reported as a secondary metric); (c) a quantitative sample_01 assessment — depth ratio (from T1S1), detection-rate deficit vs its condition peers, transformed-profile correlation to every other sample, distance to the treated-group and control-group centroids, and its contribution/position on PC1-PC2 — plus a check that the shallow depth does not simply reflect a condition imbalance (state sample_01's condition); (d) sensitivity: recompute PCA and the distance heatmap with sample_01 removed and report whether condition separation and clustering conclusions change. Finish with a written verdict: whether sample_01 is flagged as an outlier (shallow-only, or shallow-and-divergent), whether any other sample looks anomalous, and what this implies for the upcoming treated-vs-control comparison — with the exclusion decision left to the user.",
+        "acceptance_criteria": [
+          "PCA figure (PC1 vs PC2, colored by treated vs control, sample_01 annotated) with variance-explained percentages saved, computed on the top variable genes of log2-CPM or VST values (choice recorded)",
+          "Sample-to-sample Euclidean distance heatmap plus hierarchical-clustering dendrogram saved; correlation-distance matrix reported",
+          "Sample_01 quantitative profile: depth ratio, detection deficit, nearest-neighbor correlations, distances to both condition centroids, and PC1/PC2 score vs condition centroid positions",
+          "Sensitivity PCA and distance heatmap without sample_01 produced, with an explicit statement of whether condition separation and sample clustering change",
+          "Written verdict text delivered: flag/no-flag for sample_01 (shallow-only vs shallow-and-divergent), any secondary outliers, and implication for the treated-vs-control DE comparison; no sample is actually excluded in this run"
+        ]
+      }
+    ],
+    "title": "AD skin RNA-seq: QC, PCA, distances, shallow-sample verdict",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is a pre-test QC readout of the 12-sample atopic-dermatitis skin dataset (6 treated/lesional vs 6 control, unpaired, single batch, 12,000 gene-level Salmon counts). No differential testing is done. Step 1 quantifies library depth and gene-detection behavior per sample, establishing how far sample_01 falls below the cohort (profile flags it at ~4x below median library size) and whether median-of-ratios size factors correct it. Step 2 transforms counts for visualization (log2-CPM, with DESeq2-style VST if available), then produces the PCA, the sample-to-sample distance heatmap and clustering, and a quantitative outlier assessment of sample_01 — depth ratio, detection-rate deficit, distance to condition-group centroids, PCA leverage — plus a sensitivity PCA with sample_01 removed. The output is descriptive QC evidence and an explicit verdict; exclusion of any sample remains a user decision taken before DE testing."
+  },
+  "usage": {
+    "inputTokens": 63658,
+    "outputTokens": 4023,
+    "cacheReadInputTokens": 40576,
+    "reasoningTokens": 2035
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_b4700e8bb15048dfbfaabd41",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "pydeseq2",
+        "query": "variance stabilizing transform vst and size factor estimation for PCA and sample distance QC"
+      },
+      "outcome": "error",
+      "durationMs": 1538
+    },
+    {
+      "toolUseId": "call_d0a085499d4b4e3aa1df72c2",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD skin RNA-seq: QC, PCA, distances, shallow-sample verdict",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-07-14T00:00:00Z",
+          "analytical_narrative": "The question is a pre-test QC readout of the 12-sample atopic-dermatitis skin dataset (6 treated/lesional vs 6 control, unpaired, single batch, 12,000 gene-level Salmon counts). No differential testing is done. Step 1 quantifies library depth and gene-detection behavior per sample, establishing how far sample_01 falls below the cohort (profile flags it at ~4x below median library size) and whether median-of-ratios size factors correct it. Step 2 transforms counts for visualization (log2-CPM, with DESeq2-style VST if available), then produces the PCA, the sample-to-sample distance heatmap and clustering, and a quantitative outlier assessment of sample_01 — depth ratio, detection-rate deficit, distance to condition-group centroids, PCA leverage — plus a sensitivity PCA with sample_01 removed. The output is descriptive QC evidence and an explicit verdict; exclusion of any sample remains a user decision taken before DE testing.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library-size and depth QC metrics",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How large and how variable are the 12 libraries in counts.csv (sample_01 vs the other 11), how many genes are detectable per sample, and do median-of-ratios size factors normalize the shallow library?",
+              "description": "Load /eval-four-models-v2-without-qc-only-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns; first column holds gene identifiers — verify the column names against the sample IDs in metadata.csv, 12 rows x 2 columns with a condition column whose values are the treated/lesional vs control labels) and compute, per sample: raw total counts, log10 library size, median-of-ratios size factors (pydeseq2), CPM-normalized totals, and gene-detection counts at CPM > 1 and CPM > 5. Summarize depth and detection by condition. Produce a per-sample QC table (CSV) and a barplot of library sizes (raw and size-factor-adjusted) highlighting sample_01, reporting its exact depth ratio to the median. Sanity-check whether any gene filtering (e.g. drop genes with near-zero counts across all samples) changes the picture; report filtered dimensions. No sample is excluded here.",
+              "acceptance_criteria": [
+                "QC table written with one row per sample: raw total counts, log10 library size, median-of-ratios size factor, CPM>1 and CPM>5 gene-detection counts, condition label",
+                "sample_01 depth ratio to cohort median reported as an exact number (expected ~0.25x per profile caveat, verify against the file)",
+                "Per-condition depth and detection summaries reported (n=6 treated vs n=6 control)",
+                "Library-size barplot (raw and normalized) with sample_01 visually flagged saved as a figure",
+                "Gene-filtering sensitivity check reported (dimensions before/after removing all-zero and ultra-low-count genes)"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Bulk RNA-seq QC on Salmon gene-level counts, 12,000 x 12 samples, 6 treated (AD lesional) vs 6 control skin, unpaired, single batch. Profile caveat: sample_01 library size ~4x below median. Salmon gene-level counts have unknown length-correction status; length correction is irrelevant for library-size and detection QC as computed here.",
+              "constraints": [
+                "Use the sample IDs in metadata.csv as the authoritative sample list; match them to counts.csv column names and report any mismatch loudly",
+                "Compute CPM from raw counts within this step; do not use TPM or assume length correction",
+                "Do not drop or reassign any sample in this step"
+              ],
+              "caveats": [
+                "With 12 samples a single shallow library shifts the median only slightly; state the median before and after size-factor computation if they differ",
+                "pydeseq2 median-of-ratios size factors can be unstable for a 4x-shallow library if many genes are near zero; if size-factor estimation errors or warns, fall back to simple total-count scaling and record which was used"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "PCA, sample distances, and sample_01 verdict",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the 12 AD skin samples separate by condition (treated vs control) on PCA and cluster coherently by sample-to-sample distance, and is sample_01 a shallow-but-conforming sample or a structural outlier whose removal changes the picture?",
+              "description": "Using the QC output of T1S1, transform the filtered counts to log2-CPM (and DESeq2-style VST via pydeseq2 if it runs cleanly on these 12 samples; otherwise log2-CPM alone, recording the choice), take the top ~500-2000 most variable genes, and compute: (a) PCA — PC1/PC2 loadings, per-sample scores colored by condition with sample_01 highlighted, and variance explained; (b) sample-to-sample Euclidean distance matrix on the transformed values with a heatmap and hierarchical-clustering dendrogram (correlation distance reported as a secondary metric); (c) a quantitative sample_01 assessment — depth ratio (from T1S1), detection-rate deficit vs its condition peers, transformed-profile correlation to every other sample, distance to the treated-group and control-group centroids, and its contribution/position on PC1-PC2 — plus a check that the shallow depth does not simply reflect a condition imbalance (state sample_01's condition); (d) sensitivity: recompute PCA and the distance heatmap with sample_01 removed and report whether condition separation and clustering conclusions change. Finish with a written verdict: whether sample_01 is flagged as an outlier (shallow-only, or shallow-and-divergent), whether any other sample looks anomalous, and what this implies for the upcoming treated-vs-control comparison — with the exclusion decision left to the user.",
+              "acceptance_criteria": [
+                "PCA figure (PC1 vs PC2, colored by treated vs control, sample_01 annotated) with variance-explained percentages saved, computed on the top variable genes of log2-CPM or VST values (choice recorded)",
+                "Sample-to-sample Euclidean distance heatmap plus hierarchical-clustering dendrogram saved; correlation-distance matrix reported",
+                "Sample_01 quantitative profile: depth ratio, detection deficit, nearest-neighbor correlations, distances to both condition centroids, and PC1/PC2 score vs condition centroid positions",
+                "Sensitivity PCA and distance heatmap without sample_01 produced, with an explicit statement of whether condition separation and sample clustering change",
+                "Written verdict text delivered: flag/no-flag for sample_01 (shallow-only vs shallow-and-divergent), any secondary outliers, and implication for the treated-vs-control DE comparison; no sample is actually excluded in this run"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "scipy",
+                "matplotlib",
+                "seaborn",
+                "pydeseq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 12-sample AD skin dataset (6 vs 6, unpaired, single batch). PCA and distance metrics must run on within-sample-comparable values: log2-CPM, or VST if pydeseq2 provides it on 12 samples. The profile warns sample_01 is ~4x below median depth; T1S1 establishes the exact numbers this step builds on.",
+              "constraints": [
+                "PCA and distances use the top most-variable transformed genes; state how many genes were used and the transform applied",
+                "Report whether sample_01's condition is treated or control explicitly in the verdict — depth alone is not an outlier criterion without it",
+                "Do not exclude sample_01 or any sample from the primary analysis; removal appears only in the labeled sensitivity analysis"
+              ],
+              "caveats": [
+                "With n=6 per arm, PCA separation by condition may be weak even when DE signal is real; do not interpret absent separation as absence of differential expression",
+                "A 4x-shallow library inflates its Euclidean distance to all others mechanically; the correlation-based distance and the sensitivity analysis exist to separate depth effects from expression-profile divergence",
+                "Salmon gene-level counts with unknown length-correction status are adequate for PCA/clustering QC but this caveat must be restated if these plots are later used to justify DE choices"
+              ]
+            }
+          ],
+          "id": "plan-ad-skin-qc-pca-distances"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 58
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the 2x2 factorial, keeps time as a two-level factor rather than using time_hours, fits ~ condition + time + condition:time with explicit reference levels, and makes the Wald test on the interaction coefficient the primary result with ashr-shrunken simple effects at each time point, matching the reference exactly. QC (blind vst, PCA, distances, library sizes, flag-not-drop policy), the justified 10-counts-in-3-samples filter, in-model median-of-ratios normalization, BH at 0.05 with independent filtering and thresholds tested in the model are all stated explicitly. Enrichment is correctly omitted, and the report specifies method, versions, design, thresholds, n_tested, n_DE, NA causes, and design caveats (low interaction power, lost length offset). Minor deductions only for the odd self-imposed prohibition on an edgeR QL robustness check and a small path typo in Step 2; the QC does not mention batch coloring, though a single batch makes that moot."
+}

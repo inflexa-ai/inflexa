@@ -1,0 +1,609 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:36:57.531Z",
+  "elapsedMs": 159899,
+  "outcome": "plan_submitted",
+  "planId": "pln-41ccea6b",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, gene ID harmonization, and DESeq2-style differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene counts as delivered may or may not already be length-corrected; do not apply an additional length correction pass since the profile does not confirm which is the case",
+          "n=6 vs 6 is adequately powered for a clear treatment effect like aldosterone but not for subtle changes — do not overstate significance of borderline padj genes",
+          "If gene IDs are versioned Ensembl IDs (e.g. ENSG00000141510.15), strip the version suffix before mapping"
+        ],
+        "context": "Input is /data/inputs/counts/counts.csv (12000 x 13, raw Salmon gene counts) and /data/inputs/metadata/metadata.csv (12 x 2, condition column) for a kidney aldosterone-vs-vehicle bulk RNA-seq experiment, 6 vs 6, unpaired, single batch. If gene IDs in counts.csv are Ensembl gene IDs rather than symbols, use the NCBI human gene-identifiers reference (/mnt/refs/managed/ncbi-gene-human, GeneID/Symbol/dbXrefs with Ensembl cross-refs) or the GENCODE v50 human GTF (gene_id/gene_name in column 9) to map to HGNC symbols, since the downstream TF-regulon network is symbol-keyed.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which genes are significantly differentially expressed between the 6 aldosterone-treated and 6 vehicle-control kidney samples in the raw Salmon gene-count matrix (counts.csv, 12000 genes x 12 samples)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and sample order/labels are verified to match between counts.csv (13 cols incl. gene id) and metadata.csv (12 rows, condition column)",
+          "Gene identifiers are inspected and, if Ensembl IDs, mapped to HGNC gene symbols using the NCBI human gene-identifiers reference or the human GTF, with the mapping success rate reported explicitly",
+          "PyDESeq2 is run with condition (aldosterone vs vehicle) as the single factor, low-count genes filtered before fitting, and outputs include base mean, log2FoldChange (shrunk via apeglm-equivalent or PyDESeq2 LFC shrinkage if available), stat, pvalue, and padj for every gene",
+          "A full results table (gene symbol, log2FC, stat, pvalue, padj) is saved, plus counts of genes at padj<0.05",
+          "PCA or sample-sample correlation plot is produced to confirm no gross outlier/batch structure contradicts the stated single-batch unpaired design"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF activity inference from the DE contrast via CollecTRI regulons",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TF mRNA level does not equal TF activity; the ulm regulon score is a proxy for activity inferred from downstream target expression, not a direct activity measurement",
+          "CollecTRI's ChIP/curation-derived edges are not kidney- or aldosterone-pathway-specific, so a TF call reflects general regulon coherence in this contrast, not confirmed tissue-specific action",
+          "If gene-symbol coverage against CollecTRI targets is low after T1S1's ID mapping, report the coverage number rather than silently proceeding with a small effective network"
+        ],
+        "context": "Uses the DESeq2-style DE results table (gene symbol, stat, log2FC, padj) produced in T1S1 as input to decoupler's ulm method against the literature-curated, signed human CollecTRI TF-target regulon network available at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv (columns source=TF symbol, target=gene symbol, weight=+1/-1). This network is confirmed present for Homo sapiens and directly answers 'which TFs drive the response' — regulon-based TF activity from a single differential contrast is the accepted approach (Muller-Dott et al. 2023, Nucleic Acids Research; Badia-i-Mompel et al. 2022 Bioinformatics Advances) versus counting DE status of TF genes themselves, which conflates TF mRNA abundance with TF protein activity.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which transcription factors' regulon activity is most increased and most decreased in aldosterone-treated versus control kidney samples, based on the DE statistics from T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "The CollecTRI human TF-target regulon network is loaded and formatted as source/target/weight for decoupler",
+          "decoupler's univariate linear model (run_ulm, or the current decoupler>=2.x API equivalent) is run on the single-contrast DE statistic (the DESeq2 Wald 'stat' column) as the input vector, joined by gene symbol, producing one activity score and p-value per TF with a minimum regulon size filter (e.g. >=5 targets) applied",
+          "Full ranked TF table (TF, activity score, p-value, regulon size, direction) is saved",
+          "The top 6 TFs with the highest positive activity score (aldosterone-activated) and the top 6 with the most negative activity score (aldosterone-repressed) are reported by name with their scores, p-values, and the leading regulon target genes contributing to each score",
+          "Coverage is reported: how many of the 12000 profiled genes matched a CollecTRI target, and how many TFs had a regulon passing the minimum-size filter",
+          "Known aldosterone/MR pathway genes (e.g. SGK1, TSC22D3, NR3C2, FKBP5) are flagged in the DE table for qualitative cross-check against the top TF calls, explicitly labeled as a plausibility check, not independent validation"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney: DE + TF activity (top 6/6)",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq gene-level counts from Salmon (12000 genes x 12 samples, GTEx/GENCODE-style Ensembl or symbol IDs to be confirmed at read-in), 6 aldosterone-treated vs 6 vehicle-control kidney samples, unpaired, single batch. To identify which transcription factors drive the treated-vs-control transcriptional response, the standard and most defensible approach is: (1) run a raw-count differential expression contrast with a count-based negative-binomial model (PyDESeq2, appropriate for this exact unpaired 6-vs-6 raw-Salmon-count design) to get a signed, moderated per-gene statistic (Wald stat / shrunk log2FC) for every gene; (2) feed that gene-level signed statistic into a TF-activity inference method (decoupler's univariate linear model, ulm) against a literature-curated, signed TF-target regulon network (CollecTRI, confirmed present for human, 9606) — this converts noisy single-gene fold-changes into a per-TF activity score with a much larger effective sample size per TF (its regulon) and a normalized enrichment score/p-value, which is the accepted way to name 'driver' TFs from a two-group RNA-seq contrast rather than eyeballing DE TF genes directly; (3) rank TFs by the ulm activity score (or consensus score) and report the top 6 TFs with increased activity in aldosterone and the top 6 with decreased activity, with their activity scores, p-values, and the leading-edge regulon genes driving each call; (4) sanity-check the top TF hits against genes and pathways already known in the aldosterone/mineralocorticoid-receptor kidney literature (e.g., Sgk1, Tsc22d3/Gilz, Nr3c2 pathway members reported in Poulsen et al. 2018 Physiol Genomics and Kellner et al. 2003 Kidney Int) as a qualitative plausibility check, not a formal validation. Steps stay in Python per the user's constraint (pydeseq2 + decoupler), with DESeq2/R available only as a documented alternative not used here. Gene ID harmonization step is included because the counts file's ID space (Ensembl vs symbol) was not confirmed in the profile and CollecTRI networks and the ulm regulon match require gene symbols."
+  },
+  "usage": {
+    "inputTokens": 2239596,
+    "outputTokens": 6800,
+    "cacheCreationInputTokens": 134438,
+    "cacheReadInputTokens": 2104738,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01UCEpD2Bp8LmdZfgytyxWdY",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon dorothea TF network human"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "toolu_01BJiebY5usWzmGdH2mtL3HG",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "decoupleR",
+          "pydeseq2",
+          "gseapy",
+          "blitzgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01K899EYwcSLQRrwhQz5YVN6",
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01CQWVqhDwpQVsHJKYK7pJ1E",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01GQxfJeL72gxmcwSkwXEiCy",
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_016x681tA6YmzjBv2r15Hoeq",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "run ulm or mlm TF activity inference from bulk RNA-seq contrast t-statistics with CollecTRI network"
+      },
+      "outcome": "error",
+      "durationMs": 1627
+    },
+    {
+      "toolUseId": "toolu_016oTx5YkoGX8k2jU8BZ92WU",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "TF activity inference ulm contrast"
+      },
+      "outcome": "error",
+      "durationMs": 1659
+    },
+    {
+      "toolUseId": "toolu_01GAhZgJ2PfDA3EYh67WxURS",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "decoupler transcription factor activity inference CollecTRI univariate linear model contrast",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8934
+    },
+    {
+      "toolUseId": "toolu_01TJjQwpMQsspCPcAeJMeAYK",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupleR transcription factor activity inference benchmark",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 224
+    },
+    {
+      "toolUseId": "toolu_01TkxLQJrqQEk6w2bX2Vxg2h",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "CollecTRI transcription factor regulons benchmark",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 434
+    },
+    {
+      "toolUseId": "toolu_011Z5DP8jQuQ8outcpsBKmio",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "transcription factor activity inference RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 846
+    },
+    {
+      "toolUseId": "toolu_019e6KhBKHAkSsNYTy7181rU",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "CollecTRI comprehensive resource transcription factor gene regulatory interactions Muller-Dott",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 757
+    },
+    {
+      "toolUseId": "toolu_012jQkAEaoXZgZ2925pUrBbz",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "37843125"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 732
+    },
+    {
+      "toolUseId": "toolu_01UW8GAEWND9HpwD3YmNYnzP",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human ensembl gene id symbol gtf annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    },
+    {
+      "toolUseId": "toolu_0118G2BGgHRZjNQyiMJXib2Y",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene length gtf gencode annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01166SdCyrzVz7EaJKwRSQWX",
+      "name": "list_available_refs",
+      "input": {
+        "query": "ensembl"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01AZEhYYj4rmf9jyFXFLjbhf",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb gene sets human"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01ScRRdQTGxPc8rpHWqPQhu9",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01LMQR8L5XfvowuPpWynXgMK",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01QuyYFtPZ7JqmFauSsTFQuK",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-regulatory-targets-human"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_011FWuhbmnmZmCz2d7ctwfe9",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/msigdb-regulatory-targets-human/2026.1"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01HsB8bma46rrRhV7MAKBdaP",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/progeny-human"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01SQmjq89ACkYQX76m3mbr5J",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "aldosterone kidney transcriptome mineralocorticoid receptor transcription factor",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1134
+    },
+    {
+      "toolUseId": "toolu_01LtqePqbnmPaoyNmdSaQHZL",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "29521601"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 6
+      },
+      "outcome": "ok",
+      "durationMs": 701
+    },
+    {
+      "toolUseId": "toolu_01UhsmFooPGQJkctNQNB1T8a",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "decoupler ulm consensus transcription factor activity bulk RNA-seq contrast",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8871
+    },
+    {
+      "toolUseId": "toolu_012kazgQNnwdyxcQwqFKkT6D",
+      "name": "search_github_repos",
+      "input": {
+        "query": "decoupler-py run_ulm bulk transcription factor activity",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 387
+    },
+    {
+      "toolUseId": "toolu_01TotjFStwcMqLqKrdFJ7d7H",
+      "name": "search_github_repos",
+      "input": {
+        "query": "saezlab decoupler-py",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 284
+    },
+    {
+      "toolUseId": "toolu_01LQrTnjUkiSh5xiYhT16LtM",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "decoupler",
+          "rpy2",
+          "networkx",
+          "python-igraph",
+          "adjustText"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01JRAGiXg5jxRfgUPmfgs9c5",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "scipy",
+          "matplotlib",
+          "seaborn",
+          "pandas"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01Up7XGyzYV1WvdHW386JChH",
+      "name": "list_available_packages",
+      "input": {
+        "query": "deseq"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01E5HxsGncXbYn8qFPfyyJRA",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "run_ulm function signature mat net source target weight"
+      },
+      "outcome": "error",
+      "durationMs": 1549
+    },
+    {
+      "toolUseId": "toolu_01K9Gn3Tetc4i2RrW95iyG8f",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "decoupler consensus method transcription factor activities gene expression Badia-i-Mompel",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8878
+    },
+    {
+      "toolUseId": "toolu_01Qqus57jjrUS315FNsJbM4U",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupler computational tool inferring biological activities omics data Badia-i-Mompel",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 462
+    },
+    {
+      "toolUseId": "toolu_01LYSYyCpLuDGzrYSD58P4MS",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupleR omics footprint methods R Bioconductor package",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 442
+    },
+    {
+      "toolUseId": "toolu_01NRpEFDmuBWJjEjxRxCoT2B",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupleR unifying framework transcription factor pathway activity inference",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 226
+    },
+    {
+      "toolUseId": "toolu_01Ab2TFzhhWabMjgmhMTL2m3",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Badia-i-Mompel decoupleR",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 829
+    },
+    {
+      "toolUseId": "toolu_01Lc63AbBERkA6KfsKeft7Ep",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "36699385"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      },
+      "outcome": "ok",
+      "durationMs": 697
+    },
+    {
+      "toolUseId": "toolu_0176WVxTRcVFdZFLoHFYHwMd",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Muller-Dott CollecTRI decoupler ulm univariate linear model consensus",
+        "maxResults": 3
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01NYWr4wy85RPiyZsPaUD4w4",
+      "name": "search_arxiv",
+      "input": {
+        "query": "transcription factor activity inference linear model perturbation benchmark decoupler",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 993
+    },
+    {
+      "toolUseId": "toolu_01Asu3H9nncXiZmkQ3wgvtWY",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney: DE + TF activity (top 6/6)",
+          "analytical_narrative": "The dataset is bulk RNA-seq gene-level counts from Salmon (12000 genes x 12 samples, GTEx/GENCODE-style Ensembl or symbol IDs to be confirmed at read-in), 6 aldosterone-treated vs 6 vehicle-control kidney samples, unpaired, single batch. To identify which transcription factors drive the treated-vs-control transcriptional response, the standard and most defensible approach is: (1) run a raw-count differential expression contrast with a count-based negative-binomial model (PyDESeq2, appropriate for this exact unpaired 6-vs-6 raw-Salmon-count design) to get a signed, moderated per-gene statistic (Wald stat / shrunk log2FC) for every gene; (2) feed that gene-level signed statistic into a TF-activity inference method (decoupler's univariate linear model, ulm) against a literature-curated, signed TF-target regulon network (CollecTRI, confirmed present for human, 9606) — this converts noisy single-gene fold-changes into a per-TF activity score with a much larger effective sample size per TF (its regulon) and a normalized enrichment score/p-value, which is the accepted way to name 'driver' TFs from a two-group RNA-seq contrast rather than eyeballing DE TF genes directly; (3) rank TFs by the ulm activity score (or consensus score) and report the top 6 TFs with increased activity in aldosterone and the top 6 with decreased activity, with their activity scores, p-values, and the leading-edge regulon genes driving each call; (4) sanity-check the top TF hits against genes and pathways already known in the aldosterone/mineralocorticoid-receptor kidney literature (e.g., Sgk1, Tsc22d3/Gilz, Nr3c2 pathway members reported in Poulsen et al. 2018 Physiol Genomics and Kellner et al. 2003 Kidney Int) as a qualitative plausibility check, not a formal validation. Steps stay in Python per the user's constraint (pydeseq2 + decoupler), with DESeq2/R available only as a documented alternative not used here. Gene ID harmonization step is included because the counts file's ID space (Ensembl vs symbol) was not confirmed in the profile and CollecTRI networks and the ulm regulon match require gene symbols.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, gene ID harmonization, and DESeq2-style differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are significantly differentially expressed between the 6 aldosterone-treated and 6 vehicle-control kidney samples in the raw Salmon gene-count matrix (counts.csv, 12000 genes x 12 samples)?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and sample order/labels are verified to match between counts.csv (13 cols incl. gene id) and metadata.csv (12 rows, condition column)",
+                "Gene identifiers are inspected and, if Ensembl IDs, mapped to HGNC gene symbols using the NCBI human gene-identifiers reference or the human GTF, with the mapping success rate reported explicitly",
+                "PyDESeq2 is run with condition (aldosterone vs vehicle) as the single factor, low-count genes filtered before fitting, and outputs include base mean, log2FoldChange (shrunk via apeglm-equivalent or PyDESeq2 LFC shrinkage if available), stat, pvalue, and padj for every gene",
+                "A full results table (gene symbol, log2FC, stat, pvalue, padj) is saved, plus counts of genes at padj<0.05",
+                "PCA or sample-sample correlation plot is produced to confirm no gross outlier/batch structure contradicts the stated single-batch unpaired design"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /data/inputs/counts/counts.csv (12000 x 13, raw Salmon gene counts) and /data/inputs/metadata/metadata.csv (12 x 2, condition column) for a kidney aldosterone-vs-vehicle bulk RNA-seq experiment, 6 vs 6, unpaired, single batch. If gene IDs in counts.csv are Ensembl gene IDs rather than symbols, use the NCBI human gene-identifiers reference (/mnt/refs/managed/ncbi-gene-human, GeneID/Symbol/dbXrefs with Ensembl cross-refs) or the GENCODE v50 human GTF (gene_id/gene_name in column 9) to map to HGNC symbols, since the downstream TF-regulon network is symbol-keyed.",
+              "caveats": [
+                "Salmon gene counts as delivered may or may not already be length-corrected; do not apply an additional length correction pass since the profile does not confirm which is the case",
+                "n=6 vs 6 is adequately powered for a clear treatment effect like aldosterone but not for subtle changes — do not overstate significance of borderline padj genes",
+                "If gene IDs are versioned Ensembl IDs (e.g. ENSG00000141510.15), strip the version suffix before mapping"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity inference from the DE contrast via CollecTRI regulons",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which transcription factors' regulon activity is most increased and most decreased in aldosterone-treated versus control kidney samples, based on the DE statistics from T1S1?",
+              "acceptance_criteria": [
+                "The CollecTRI human TF-target regulon network is loaded and formatted as source/target/weight for decoupler",
+                "decoupler's univariate linear model (run_ulm, or the current decoupler>=2.x API equivalent) is run on the single-contrast DE statistic (the DESeq2 Wald 'stat' column) as the input vector, joined by gene symbol, producing one activity score and p-value per TF with a minimum regulon size filter (e.g. >=5 targets) applied",
+                "Full ranked TF table (TF, activity score, p-value, regulon size, direction) is saved",
+                "The top 6 TFs with the highest positive activity score (aldosterone-activated) and the top 6 with the most negative activity score (aldosterone-repressed) are reported by name with their scores, p-values, and the leading regulon target genes contributing to each score",
+                "Coverage is reported: how many of the 12000 profiled genes matched a CollecTRI target, and how many TFs had a regulon passing the minimum-size filter",
+                "Known aldosterone/MR pathway genes (e.g. SGK1, TSC22D3, NR3C2, FKBP5) are flagged in the DE table for qualitative cross-check against the top TF calls, explicitly labeled as a plausibility check, not independent validation"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "Uses the DESeq2-style DE results table (gene symbol, stat, log2FC, padj) produced in T1S1 as input to decoupler's ulm method against the literature-curated, signed human CollecTRI TF-target regulon network available at /mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv (columns source=TF symbol, target=gene symbol, weight=+1/-1). This network is confirmed present for Homo sapiens and directly answers 'which TFs drive the response' — regulon-based TF activity from a single differential contrast is the accepted approach (Muller-Dott et al. 2023, Nucleic Acids Research; Badia-i-Mompel et al. 2022 Bioinformatics Advances) versus counting DE status of TF genes themselves, which conflates TF mRNA abundance with TF protein activity.",
+              "caveats": [
+                "TF mRNA level does not equal TF activity; the ulm regulon score is a proxy for activity inferred from downstream target expression, not a direct activity measurement",
+                "CollecTRI's ChIP/curation-derived edges are not kidney- or aldosterone-pathway-specific, so a TF call reflects general regulon coherence in this contrast, not confirmed tissue-specific action",
+                "If gene-symbol coverage against CollecTRI targets is low after T1S1's ID mapping, report the coverage number rather than silently proceeding with a small effective network"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 53
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

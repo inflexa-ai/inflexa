@@ -1,0 +1,1864 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "star-counts-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T18:48:01.440Z",
+  "elapsedMs": 93441,
+  "outcome": "plan_submitted",
+  "planId": "pln-741010d1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Counts file: /eval-four-models-v2-with-star-counts-n3-s1-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw integer STAR+featureCounts counts). Metadata: /eval-four-models-v2-with-star-counts-n3-s1-1/data/inputs/metadata/metadata.csv (6 samples x condition: 3 treated, 3 control). Single batch, unpaired design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 3 treated and 3 control liver samples separate by condition on a blind variance-stabilized PCA, and is there an outlier sample or unexpected batch structure before modeling?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC on every count dataset per R-0033@40bf: blind vst, PCA on top variable genes, sample distance heatmap.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind (blind=TRUE, independent of the design formula)"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the 12000x6 raw count matrix",
+          "PCA on top 500 most-variable genes with samples colored by condition",
+          "Sample-to-sample Euclidean distance heatmap produced",
+          "Library size per sample reported",
+          "Any outlier sample or condition/library-size confound flagged in text"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test with apeglm shrinkage: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "STAR+featureCounts counts carry no quantifier-side GC/length bias correction; the conventional correction tools (cqn, EDASeq) are not present in this environment. Draw the log-count-ratio-vs-GC-content diagnostic across sample pairs and report whether a trend is present; do not attempt an in-step correction.",
+          "With 3 replicates per group, both the DESeq2 Wald test and any comparable count model have low power and reliably detect only a minority of true effects, mostly with large fold changes. A gene absent from the significant list is not evidence it is unchanged. Do not loosen alpha to compensate.",
+          "DESeq2 flags a per-gene count outlier (Cook's distance) and sets its p-value/padj to NA when the affected condition cell has fewer than 7 replicates (true here, n=3); report these NAs separately from the independent-filtering NAs."
+        ],
+        "context": "Same 12000x6 raw STAR/featureCounts count matrix and 6-sample metadata as T1S1. 3 treated vs 3 control, unpaired, single batch (no batch term in the model). With n=3 per group, power to detect small effects is low; this is a design property, not a modeling error, and must be stated rather than compensated for by loosening the alpha threshold.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 profiled genes are differentially expressed between drug-treated (n=3) and control (n=3) liver samples, with the effect size, its uncertainty, and BH-adjusted significance?",
+        "grounding": {
+          "claims": [
+            "R-0029@22ca",
+            "R-0002@087b",
+            "R-0147@aebe",
+            "R-0026@9ab1",
+            "R-0162@ed74",
+            "R-0036@9786",
+            "R-0064@92ec",
+            "R-0001@9a17",
+            "R-0039@968d",
+            "R-0017@8a47",
+            "R-0009@310d",
+            "R-0166@bbcd",
+            "R-0083@12de",
+            "R-0010@6072",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca / R-0001@9a17, checked and accepted by execute_knowledge_check.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter_policy",
+              "step": "filter_low_counts",
+              "value": "minimal_then_independent",
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "raw_integer_counts_no_length_correction",
+              "source": "vignette:DESeq2/1.52.0#count-matrix-input"
+            },
+            {
+              "name": "test",
+              "step": "differential_expression",
+              "value": "Wald",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "count_outlier_policy",
+              "step": "differential_expression",
+              "value": "flag_and_report_na",
+              "source": "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+            },
+            {
+              "name": "power_caution",
+              "step": "differential_expression",
+              "value": true,
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "lfc_shrink",
+              "step": "shrink_lfc",
+              "value": "apeglm",
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "independent_filtering",
+              "step": "multiple_testing",
+              "value": true,
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-two-group@1.1.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_policy = minimal_then_independent",
+          "min_count = 10, min_samples = smallest_group_size (3)",
+          "size_factors = median_of_ratios (computed inside DESeq2, no pre-normalization)",
+          "reference_level = control, set explicitly (do not rely on alphabetical default)",
+          "contrast_form = condition, treated (numerator), control (denominator)",
+          "test = Wald",
+          "count_outlier_policy = flag_and_report_na",
+          "lfc_shrink = apeglm",
+          "independent_filtering = true, alpha = 0.05, adjustment = BH",
+          "filter_results_by = adjusted_pvalue (padj < 0.05); never filter by unadjusted p-value or by fold change alone"
+        ],
+        "acceptance_criteria": [
+          "Genes pre-filtered to >=10 counts in >=3 samples (smallest group size) before the model",
+          "DESeq2 design ~condition with condition releveled so 'control' is the explicit reference level",
+          "Wald test run on raw integer counts with DESeq2 median-of-ratios size factors (no external normalization applied before the model, no tximport/length correction)",
+          "Contrast named explicitly as condition: treated vs control",
+          "apeglm shrinkage applied to report a shrunken log2FoldChange alongside the unshrunken log2FoldChange and lfcSE",
+          "Independent filtering left on; results() called with alpha=0.05; BH-adjusted p-values (padj) reported",
+          "p-value histogram inspected and its shape reported before trusting the adjustment",
+          "Count-outlier NA flags (Cook's distance, n<7 per cell) reported separately from independent-filtering NAs",
+          "MA plot and per-gene dispersion plot produced as fit diagnostics",
+          "Full results table (gene, baseMean, log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj) exported for all tested genes, ranked by shrunken log2FoldChange"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "fgsea preranked GSEA: Hallmark, Reactome, WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than ~50 genes reach padj<0.05 in T1S2 (plausible given n=3/group), do not additionally run an over-representation test on that short list — the ranked (preranked fgsea) result on the full list is the primary and sufficient method here.",
+          "Reactome and WikiPathways gene sets partially overlap with Hallmark; do not merge collections into one significance table — a pathway represented in two collections is one finding tested twice, report each collection's results separately."
+        ],
+        "context": "Input is the ranked DESeq2 Wald-statistic gene list from T1S2 (all tested genes after the minimal pre-filter, human liver treated-vs-control contrast). Reference gene sets available in the environment: MSigDB human hallmark GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt), Reactome pathways GMT + species index (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt and ReactomePathways.txt), and WikiPathways human GMT (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt). org.Hs.eg.db (v3.23.1) is available for symbol-to-Entrez mapping if needed for a collection keyed on Entrez.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "org.Hs.eg.db",
+          "data.table"
+        ],
+        "question": "Which biological pathways or gene sets are coordinately shifted between treated and control liver samples, using the full ranked gene list from the DESeq2 Wald statistic?",
+        "grounding": {
+          "claims": [
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0097@a38e",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0108@409f",
+            "R-0045@be9e",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0e8a"
+          ],
+          "reason": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark per R-0098@d01b, disputed ranking-metric side chosen as the Wald statistic per R-0108@409f, Reactome and WikiPathways added as further collections per R-0165@e456 (both confirmed present in the reference store).",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "rank_metric",
+              "step": "enrichment",
+              "value": "stat",
+              "source": "doi:10.1101/060012"
+            },
+            {
+              "name": "gene_set_collection",
+              "step": "enrichment",
+              "value": "msigdb_hallmark_human",
+              "source": "doi:10.1016/j.cels.2015.12.004"
+            },
+            {
+              "name": "second_collection",
+              "step": "enrichment",
+              "value": "reactome_c2_cp",
+              "source": "doi:10.1093/nar/gkz1031"
+            },
+            {
+              "name": "further_collections",
+              "step": "enrichment",
+              "value": [
+                "reactome_gmt",
+                "wikipathways"
+              ],
+              "source": "doi:10.1093/nar/gkz1031"
+            },
+            {
+              "name": "min_size",
+              "step": "enrichment",
+              "value": 15,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "max_size",
+              "step": "enrichment",
+              "value": 500,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "collapse_redundant",
+              "step": "enrichment",
+              "value": true,
+              "source": "doi:10.1101/060012"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-fgsea-preranked@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "rank_metric = stat (DESeq2 Wald statistic)",
+          "gene_set_collection = msigdb_hallmark_human (primary)",
+          "second_collection = reactome (filtered to Homo sapiens via ReactomePathways.txt)",
+          "further_collections = wikipathways_human",
+          "min_size = 15, max_size = 500",
+          "collapse_redundant = true",
+          "adjustment = BH per collection",
+          "collection_release_statement: state MSigDB 2026.1, Reactome 'current' snapshot, WikiPathways 2026.07.10 explicitly"
+        ],
+        "acceptance_criteria": [
+          "Gene symbols mapped to Entrez via org.Hs.eg.db; unmapped share reported",
+          "Full tested gene list ranked by the DESeq2 Wald statistic (stat column), not by unshrunken log2FC or by a signed p-value with ties",
+          "fgsea run against MSigDB Hallmark (primary pass) using the local human hallmark GMT (h.all.v2026.1.Hs.symbols.gmt)",
+          "fgsea run separately (not merged) against Reactome (ReactomePathways.gmt, human subset via ReactomePathways.txt) and WikiPathways human (wikipathways_Homo_sapiens.gmt) as secondary collections, each with its release/version reported",
+          "Gene sets restricted to 15-500 members among tested genes",
+          "BH adjustment applied within each collection separately",
+          "Redundant significant sets collapsed to representatives; full table kept as supplement",
+          "Leading-edge genes reported for each significant set"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Integrated DE + enrichment report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consolidates the DESeq2/apeglm differential expression output (T1S2) and the fgsea Hallmark/Reactome/WikiPathways enrichment output (T2S1) for the 3-treated-vs-3-control human liver drug-treatment comparison into one report.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the consolidated, reproducible summary of the treated-vs-control differential expression result and its pathway-level interpretation, with the design's power limitation stated explicitly?",
+        "grounding": {
+          "claims": [
+            "R-0085@bb37",
+            "R-0087@3dcc",
+            "R-0094@6849",
+            "R-0042@54e1",
+            "R-0041@059a",
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "No rule covers the report step_type as a whole; the settings above are copied from the recommend answer's report-step grounding, which is otherwise ungrounded per the tool's own output.",
+          "status": "ungrounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE",
+          "rank_genes_by = shrunken_log2FoldChange",
+          "fit_diagnostics = ma_plot, dispersion_plot",
+          "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info"
+        ],
+        "acceptance_criteria": [
+          "Reports method, package versions (DESeq2 1.52.0, apeglm 1.34.0, fgsea 1.38.0), design formula, contrast, alpha, n tested genes, n DE genes (padj<0.05)",
+          "MA plot and dispersion plot included with explanation",
+          "p-value histogram shape and its interpretation included",
+          "States expected power at n=3/group: only a minority of true effects detected, biased toward large fold changes; absence from the DE list is not evidence of no change",
+          "Gene table includes unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj, ranked by shrunken log2FoldChange",
+          "Enrichment section states database name+version per collection, ranking metric, universe, size window, and notes that ranked-GSEA results are method-dependent (not treated as proven findings)",
+          "Leading-edge genes listed per significant gene set",
+          "Full reproducibility record: session info, package versions, gene-set collection versions/releases, any random seed used"
+        ]
+      }
+    ],
+    "title": "Liver treated vs control DE + pathway enrichment",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "Bulk RNA-seq, human liver, drug treatment vs control, 3 vs 3, single batch, raw STAR/featureCounts integer gene-level counts (12000 genes x 6 samples; no length correction needed or applied). Flow: (1) sample-structure QC on a blind VST to catch outliers/batch structure before any modeling; (2) minimal count pre-filter; (3) DESeq2 Wald test with an explicit reference level (control) and apeglm shrinkage of the treated-vs-control log2 fold change, BH-adjusted with DESeq2's independent filtering at alpha=0.05; (4) preranked fgsea on the Wald statistic against MSigDB Hallmark (primary) and Reactome + WikiPathways (secondary, available in the reference store) with a 15-500 gene-set size window and redundancy collapse; (5) a report that states the DESeq2/apeglm/fgsea diagnostics, the reproducibility record, and — critically — the expected power limitation of an n=3-per-group design (R-0017/R-0094/R-0162): a gene absent from the significant list is not evidence of no effect, and only large fold changes are reliably detectable at this replicate count. No batch correction is applied (single batch, none declared). No GC/length bias correction tool (cqn/EDASeq) is available in this environment for featureCounts data; a GC/length bias diagnostic plot is reported as a caveat rather than corrected."
+  },
+  "usage": {
+    "inputTokens": 748393,
+    "outputTokens": 10335,
+    "cacheCreationInputTokens": 149794,
+    "cacheReadInputTokens": 598491,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01DHt46tXw2ZHW7ctdfBmJ2K",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "import_state": "integer_counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "toolu_019d4Je5rFKtf9hAQyfoiTsS",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01XWsiKKoP5pnByzTnNpqRbG",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01KEYh6D53cLq2osPRE7HwKx",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_01HZnjStD57w3w7gLJXhyEhk",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db human gene identifier annotation entrez"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_01X9kXjD643Cap8LFyy67RZP",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "edgeR"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01668qoynqNpt38w9GNXN4DX",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "import_state": "integer_counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter then independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic, Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with diagnostics and reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01PF1gSmYKETPgYwE3uQTqEd",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "import_state": "integer_counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic, Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with diagnostics and reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_01AZLEecgo2SopBGzeqw9d8g",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "import_state": "integer_counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01MjXqoeQVwK2evrmhDEKSWu",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver treated vs control DE + pathway enrichment",
+          "analytical_narrative": "Bulk RNA-seq, human liver, drug treatment vs control, 3 vs 3, single batch, raw STAR/featureCounts integer gene-level counts (12000 genes x 6 samples; no length correction needed or applied). Flow: (1) sample-structure QC on a blind VST to catch outliers/batch structure before any modeling; (2) minimal count pre-filter; (3) DESeq2 Wald test with an explicit reference level (control) and apeglm shrinkage of the treated-vs-control log2 fold change, BH-adjusted with DESeq2's independent filtering at alpha=0.05; (4) preranked fgsea on the Wald statistic against MSigDB Hallmark (primary) and Reactome + WikiPathways (secondary, available in the reference store) with a 15-500 gene-set size window and redundancy collapse; (5) a report that states the DESeq2/apeglm/fgsea diagnostics, the reproducibility record, and — critically — the expected power limitation of an n=3-per-group design (R-0017/R-0094/R-0162): a gene absent from the significant list is not evidence of no effect, and only large fold changes are reliably detectable at this replicate count. No batch correction is applied (single batch, none declared). No GC/length bias correction tool (cqn/EDASeq) is available in this environment for featureCounts data; a GC/length bias diagnostic plot is reported as a caveat rather than corrected.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 3 treated and 3 control liver samples separate by condition on a blind variance-stabilized PCA, and is there an outlier sample or unexpected batch structure before modeling?",
+              "acceptance_criteria": [
+                "Blind VST computed on the 12000x6 raw count matrix",
+                "PCA on top 500 most-variable genes with samples colored by condition",
+                "Sample-to-sample Euclidean distance heatmap produced",
+                "Library size per sample reported",
+                "Any outlier sample or condition/library-size confound flagged in text"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts file: /eval-four-models-v2-with-star-counts-n3-s1-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw integer STAR+featureCounts counts). Metadata: /eval-four-models-v2-with-star-counts-n3-s1-1/data/inputs/metadata/metadata.csv (6 samples x condition: 3 treated, 3 control). Single batch, unpaired design.",
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind (blind=TRUE, independent of the design formula)"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC on every count dataset per R-0033@40bf: blind vst, PCA on top variable genes, sample distance heatmap.",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  }
+                ],
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test with apeglm shrinkage: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 profiled genes are differentially expressed between drug-treated (n=3) and control (n=3) liver samples, with the effect size, its uncertainty, and BH-adjusted significance?",
+              "acceptance_criteria": [
+                "Genes pre-filtered to >=10 counts in >=3 samples (smallest group size) before the model",
+                "DESeq2 design ~condition with condition releveled so 'control' is the explicit reference level",
+                "Wald test run on raw integer counts with DESeq2 median-of-ratios size factors (no external normalization applied before the model, no tximport/length correction)",
+                "Contrast named explicitly as condition: treated vs control",
+                "apeglm shrinkage applied to report a shrunken log2FoldChange alongside the unshrunken log2FoldChange and lfcSE",
+                "Independent filtering left on; results() called with alpha=0.05; BH-adjusted p-values (padj) reported",
+                "p-value histogram inspected and its shape reported before trusting the adjustment",
+                "Count-outlier NA flags (Cook's distance, n<7 per cell) reported separately from independent-filtering NAs",
+                "MA plot and per-gene dispersion plot produced as fit diagnostics",
+                "Full results table (gene, baseMean, log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj) exported for all tested genes, ranked by shrunken log2FoldChange"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same 12000x6 raw STAR/featureCounts count matrix and 6-sample metadata as T1S1. 3 treated vs 3 control, unpaired, single batch (no batch term in the model). With n=3 per group, power to detect small effects is low; this is a design property, not a modeling error, and must be stated rather than compensated for by loosening the alpha threshold.",
+              "constraints": [
+                "filter_policy = minimal_then_independent",
+                "min_count = 10, min_samples = smallest_group_size (3)",
+                "size_factors = median_of_ratios (computed inside DESeq2, no pre-normalization)",
+                "reference_level = control, set explicitly (do not rely on alphabetical default)",
+                "contrast_form = condition, treated (numerator), control (denominator)",
+                "test = Wald",
+                "count_outlier_policy = flag_and_report_na",
+                "lfc_shrink = apeglm",
+                "independent_filtering = true, alpha = 0.05, adjustment = BH",
+                "filter_results_by = adjusted_pvalue (padj < 0.05); never filter by unadjusted p-value or by fold change alone"
+              ],
+              "caveats": [
+                "STAR+featureCounts counts carry no quantifier-side GC/length bias correction; the conventional correction tools (cqn, EDASeq) are not present in this environment. Draw the log-count-ratio-vs-GC-content diagnostic across sample pairs and report whether a trend is present; do not attempt an in-step correction.",
+                "With 3 replicates per group, both the DESeq2 Wald test and any comparable count model have low power and reliably detect only a minority of true effects, mostly with large fold changes. A gene absent from the significant list is not evidence it is unchanged. Do not loosen alpha to compensate.",
+                "DESeq2 flags a per-gene count outlier (Cook's distance) and sets its p-value/padj to NA when the affected condition cell has fewer than 7 replicates (true here, n=3); report these NAs separately from the independent-filtering NAs."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0029@22ca",
+                  "R-0002@087b",
+                  "R-0147@aebe",
+                  "R-0026@9ab1",
+                  "R-0162@ed74",
+                  "R-0036@9786",
+                  "R-0064@92ec",
+                  "R-0001@9a17",
+                  "R-0039@968d",
+                  "R-0017@8a47",
+                  "R-0009@310d",
+                  "R-0166@bbcd",
+                  "R-0083@12de",
+                  "R-0010@6072",
+                  "R-0037@e6d8",
+                  "R-0043@4f55"
+                ],
+                "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca / R-0001@9a17, checked and accepted by execute_knowledge_check.",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "filter_policy",
+                    "value": "minimal_then_independent",
+                    "source": "doi:10.1073/pnas.0914005107"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_count",
+                    "value": 10,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "vignette:DESeq2/1.52.0#pre-filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "size_factors",
+                    "value": "median_of_ratios_named_in_the_plan",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "reference_level",
+                    "value": "explicit",
+                    "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "contrast_form",
+                    "value": "factor_numerator_denominator",
+                    "source": "vignette:DESeq2/1.52.0#contrasts"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "import",
+                    "value": "raw_integer_counts_no_length_correction",
+                    "source": "vignette:DESeq2/1.52.0#count-matrix-input"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "test",
+                    "value": "Wald",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "count_outlier_policy",
+                    "value": "flag_and_report_na",
+                    "source": "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "power_caution",
+                    "value": true,
+                    "source": "doi:10.1261/rna.053959.115"
+                  },
+                  {
+                    "step": "shrink_lfc",
+                    "name": "lfc_shrink",
+                    "value": "apeglm",
+                    "source": "doi:10.1093/bioinformatics/bty895"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "independent_filtering",
+                    "value": true,
+                    "source": "doi:10.1073/pnas.0914005107"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "alpha",
+                    "value": 0.05,
+                    "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "adjustment",
+                    "value": "BH",
+                    "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "filter_results_by",
+                    "value": "adjusted_pvalue",
+                    "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+                  }
+                ],
+                "template": "tpl-deseq2-two-group@1.1.0"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "fgsea preranked GSEA: Hallmark, Reactome, WikiPathways",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways or gene sets are coordinately shifted between treated and control liver samples, using the full ranked gene list from the DESeq2 Wald statistic?",
+              "acceptance_criteria": [
+                "Gene symbols mapped to Entrez via org.Hs.eg.db; unmapped share reported",
+                "Full tested gene list ranked by the DESeq2 Wald statistic (stat column), not by unshrunken log2FC or by a signed p-value with ties",
+                "fgsea run against MSigDB Hallmark (primary pass) using the local human hallmark GMT (h.all.v2026.1.Hs.symbols.gmt)",
+                "fgsea run separately (not merged) against Reactome (ReactomePathways.gmt, human subset via ReactomePathways.txt) and WikiPathways human (wikipathways_Homo_sapiens.gmt) as secondary collections, each with its release/version reported",
+                "Gene sets restricted to 15-500 members among tested genes",
+                "BH adjustment applied within each collection separately",
+                "Redundant significant sets collapsed to representatives; full table kept as supplement",
+                "Leading-edge genes reported for each significant set"
+              ],
+              "packages": [
+                "fgsea",
+                "org.Hs.eg.db",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the ranked DESeq2 Wald-statistic gene list from T1S2 (all tested genes after the minimal pre-filter, human liver treated-vs-control contrast). Reference gene sets available in the environment: MSigDB human hallmark GMT (/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt), Reactome pathways GMT + species index (/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt and ReactomePathways.txt), and WikiPathways human GMT (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt). org.Hs.eg.db (v3.23.1) is available for symbol-to-Entrez mapping if needed for a collection keyed on Entrez.",
+              "constraints": [
+                "rank_metric = stat (DESeq2 Wald statistic)",
+                "gene_set_collection = msigdb_hallmark_human (primary)",
+                "second_collection = reactome (filtered to Homo sapiens via ReactomePathways.txt)",
+                "further_collections = wikipathways_human",
+                "min_size = 15, max_size = 500",
+                "collapse_redundant = true",
+                "adjustment = BH per collection",
+                "collection_release_statement: state MSigDB 2026.1, Reactome 'current' snapshot, WikiPathways 2026.07.10 explicitly"
+              ],
+              "caveats": [
+                "If fewer than ~50 genes reach padj<0.05 in T1S2 (plausible given n=3/group), do not additionally run an over-representation test on that short list — the ranked (preranked fgsea) result on the full list is the primary and sufficient method here.",
+                "Reactome and WikiPathways gene sets partially overlap with Hallmark; do not merge collections into one significance table — a pathway represented in two collections is one finding tested twice, report each collection's results separately."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0097@a38e",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0108@409f",
+                  "R-0045@be9e",
+                  "R-0046@a0ac",
+                  "R-0054@801e",
+                  "R-0047@fd9d",
+                  "R-0052@620a",
+                  "R-0099@0e8a"
+                ],
+                "reason": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark per R-0098@d01b, disputed ranking-metric side chosen as the Wald statistic per R-0108@409f, Reactome and WikiPathways added as further collections per R-0165@e456 (both confirmed present in the reference store).",
+                "settings": [
+                  {
+                    "step": "enrichment",
+                    "name": "rank_metric",
+                    "value": "stat",
+                    "source": "doi:10.1101/060012"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "gene_set_collection",
+                    "value": "msigdb_hallmark_human",
+                    "source": "doi:10.1016/j.cels.2015.12.004"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "second_collection",
+                    "value": "reactome_c2_cp",
+                    "source": "doi:10.1093/nar/gkz1031"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "further_collections",
+                    "value": [
+                      "reactome_gmt",
+                      "wikipathways"
+                    ],
+                    "source": "doi:10.1093/nar/gkz1031"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "min_size",
+                    "value": 15,
+                    "source": "doi:10.1073/pnas.0506580102"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "max_size",
+                    "value": 500,
+                    "source": "doi:10.1073/pnas.0506580102"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "collapse_redundant",
+                    "value": true,
+                    "source": "doi:10.1101/060012"
+                  }
+                ],
+                "template": "tpl-fgsea-preranked@1.0.0"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Integrated DE + enrichment report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of the treated-vs-control differential expression result and its pathway-level interpretation, with the design's power limitation stated explicitly?",
+              "acceptance_criteria": [
+                "Reports method, package versions (DESeq2 1.52.0, apeglm 1.34.0, fgsea 1.38.0), design formula, contrast, alpha, n tested genes, n DE genes (padj<0.05)",
+                "MA plot and dispersion plot included with explanation",
+                "p-value histogram shape and its interpretation included",
+                "States expected power at n=3/group: only a minority of true effects detected, biased toward large fold changes; absence from the DE list is not evidence of no change",
+                "Gene table includes unshrunken log2FoldChange, shrunken log2FoldChange, lfcSE, stat, pvalue, padj, ranked by shrunken log2FoldChange",
+                "Enrichment section states database name+version per collection, ranking metric, universe, size window, and notes that ranked-GSEA results are method-dependent (not treated as proven findings)",
+                "Leading-edge genes listed per significant gene set",
+                "Full reproducibility record: session info, package versions, gene-set collection versions/releases, any random seed used"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates the DESeq2/apeglm differential expression output (T1S2) and the fgsea Hallmark/Reactome/WikiPathways enrichment output (T2S1) for the 3-treated-vs-3-control human liver drug-treatment comparison into one report.",
+              "constraints": [
+                "effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE",
+                "rank_genes_by = shrunken_log2FoldChange",
+                "fit_diagnostics = ma_plot, dispersion_plot",
+                "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0085@bb37",
+                  "R-0087@3dcc",
+                  "R-0094@6849",
+                  "R-0042@54e1",
+                  "R-0041@059a",
+                  "R-0051@01ca",
+                  "R-0055@107a",
+                  "R-0105@c4a8",
+                  "R-0086@becf"
+                ],
+                "reason": "No rule covers the report step_type as a whole; the settings above are copied from the recommend answer's report-step grounding, which is otherwise ungrounded per the tool's own output."
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0029@22ca",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0147@aebe",
+              "R-0026@9ab1"
+            ],
+            "flags": [
+              {
+                "rule": "R-0147@aebe",
+                "severity": "warn",
+                "message": "With counts from an aligner and a counter, no bias model runs at the quantification, thus a sample-specific effect of the GC content and of the gene length can remain in the counts, and such an effect adds a difference between samples that the between-sample normalization does not remove. Draw the diagnostic: for each pair of samples, or for each sample against the median sample, plot the log ratio of the counts against the GC content of the genes and against the gene length, and report a trend. For a 3' tag library, the count does not depend on the gene length, thus plot the GC content only. Conditional quantile normalization (cqn) and the GC-content normalization of EDASeq are the tools of record for the correction, and both are absent from this pool. If the diagnostic shows a trend, state it in the plan and ask for cqn, or for a new quantification with a bias-aware quantifier such as Salmon with its GC bias model. If the diagnostic shows no trend, state the check and continue."
+              }
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0162@ed74",
+              "R-0036@9786",
+              "R-0064@92ec"
+            ],
+            "flags": [
+              {
+                "rule": "R-0162@ed74",
+                "severity": "warn",
+                "message": "With two or three replicates per group, the design step states the expected power of the test before the model. The tools of record for a power and sample size calculation, RNASeqPower and PROPER, are not in the pool here. Compute the power from the closed form of the sample size in terms of the depth, the biological coefficient of variation, the fold change, and the significance level, or take the dispersion from a pilot or a public dataset of the same tissue, and state the fold change that the design can find with 80 percent power. State that a larger replicate count raises the power more than a deeper sequencing does. The statement is a caution on the plan and not a reason to loosen the threshold."
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0001"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0001@9a17",
+              "R-0039@968d",
+              "R-0017@8a47"
+            ],
+            "flags": [
+              {
+                "rule": "R-0017@8a47",
+                "severity": "warn",
+                "message": "If the smallest group holds three replicates, the test has low power. Both count models find only a small share of the true differentially expressed genes, most of them with a large fold change. Interpret the result with caution, and state the power limit in the report. Keep alpha at its default value, and do not change the threshold to compensate for the small design. A gene that is not in the list is not shown to be unchanged."
+              }
+            ]
+          },
+          {
+            "step": "shrink_lfc",
+            "method": {
+              "id": "M-0013"
+            },
+            "rules": [
+              "R-0009@310d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0166@bbcd",
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0010"
+            },
+            "template": "tpl-fgsea-preranked@1.0.0",
+            "rules": [
+              "R-0098@d01b",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0054@801e",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0099@0e8a"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0085@bb37",
+              "R-0087@3dcc",
+              "R-0094@6849",
+              "R-0042@54e1",
+              "R-0041@059a",
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0085@bb37"
+          },
+          {
+            "id": "R-0087@3dcc"
+          },
+          {
+            "id": "R-0094@6849"
+          },
+          {
+            "id": "R-0042@54e1"
+          },
+          {
+            "id": "R-0001@9a17"
+          },
+          {
+            "id": "R-0029@22ca"
+          },
+          {
+            "id": "R-0039@968d"
+          },
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0162@ed74"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0009@310d"
+          },
+          {
+            "id": "R-0017@8a47"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0064@92ec"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0166@bbcd"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0147@aebe"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0054@801e"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0099@0e8a"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 65214,
+      "elapsedMs": 13
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "minimal pre-filter then independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic, Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with diagnostics and reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0033@40bf",
+            "message": "DESeq2 Wald test with apeglm log fold change shrinkage is not a permitted method for qc_sample_structure in this situation.",
+            "permitted": [
+              "Sample structure QC: vst(blind), PCA, sample distances, library sizes"
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0029@22ca",
+            "message": "Benjamini-Hochberg false discovery rate with independent filtering is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 818,
+      "elapsedMs": 8
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 design ~condition, explicit reference level",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "BH adjustment with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked on Wald statistic, Hallmark then Reactome and WikiPathways",
+            "package": "fgsea",
+            "parameters": [
+              {
+                "name": "rank_metric",
+                "value": "stat"
+              },
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "DE + enrichment report with diagnostics and reproducibility record",
+            "package": "DESeq2"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0033@40bf",
+            "message": "DESeq2 Wald test with apeglm log fold change shrinkage is not a permitted method for qc_sample_structure in this situation.",
+            "permitted": [
+              "Sample structure QC: vst(blind), PCA, sample distances, library sizes"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 477,
+      "elapsedMs": 5
+    },
+    {
+      "seq": 4,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 8
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

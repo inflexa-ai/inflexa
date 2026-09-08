@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly: ~ subject + condition as the full model with an LRT against ~ subject for the any-condition test, then the three pairwise Wald contrasts with control explicitly releveled as reference, ashr shrinkage (correctly justified over apeglm for the non-reference contrast), and BH at a stated alpha within each contrast with independent filtering on. QC is blind VST PCA and distance heatmap coloured by both subject and condition with a flag-only outlier policy and library-size check; the filter (>=10 counts in >=4 samples) is minimal and tied to the smallest group; normalization is median-of-ratios inside DESeq2 with no pre-scaling. Enrichment was not requested but is done properly (fgsea on the Wald stat over the full tested list, named human collections with release, 15-500 window, seed, universe stated). The report specifies method, versions, design, thresholds, tested/significant counts, overlap between treatment responses, and the n=4 and per-contrast-FDR caveats; the only minor quibbles are the slightly over-elaborate length-offset caveat and that QC outlier handling is descriptive rather than a stated exclusion rule."
+}

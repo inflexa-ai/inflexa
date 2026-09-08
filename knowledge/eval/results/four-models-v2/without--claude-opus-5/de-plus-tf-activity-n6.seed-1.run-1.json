@@ -1,0 +1,346 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "de-plus-tf-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:58:09.597Z",
+  "elapsedMs": 73883,
+  "outcome": "plan_submitted",
+  "planId": "pln-3f8a7fb9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group gives limited power for small effects; absence of significant genes is a real possible outcome and must be reported as such rather than rescued by relaxing thresholds.",
+          "If the Salmon counts carry a length correction, DESeq2's dispersion assumptions are mildly violated — flag it, do not hide it.",
+          "12,000 genes is a subset of the transcriptome; the matrix may already be pre-filtered, which affects how independent filtering behaves."
+        ],
+        "context": "Single-batch, unpaired, 6 vs 6 design with no other covariates in the metadata, so ~condition is the only defensible design. The data profile states the counts are gene-level Salmon output as delivered and does NOT record whether a length/abundance correction was applied.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which of the 12,000 genes are differentially expressed between the 6 aldosterone-treated and the 6 vehicle-control human kidney samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 with design ~condition and the vehicle/control level explicitly set as the reference; state in the output which level names were found in metadata.csv and which was used as reference.",
+          "Check whether the count matrix is integer-valued. If it is not, round to integers before DESeq2 and state prominently in the output that non-integer values were found and rounded, and that the matrix may be length-corrected Salmon output rather than raw counts.",
+          "Pre-filter to genes with a minimal count across samples (e.g. rowSums(counts) >= 10) and report how many genes were removed; do not filter more aggressively than that.",
+          "Multiple testing correction: Benjamini-Hochberg, significance at padj < 0.05.",
+          "Use apeglm for LFC shrinkage of the treated-vs-control coefficient; keep both the unshrunken stat/pvalue and the shrunken log2FoldChange in the results table.",
+          "Write the results table for ALL genes DESeq2 tested (including padj = NA rows, flagged), not only significant ones, as a CSV keyed by the original gene identifier.",
+          "Do not drop or impute samples; all 12 must enter the model unless a sample is structurally broken (all-zero column), in which case report it and stop rather than silently continuing."
+        ],
+        "description": "Load /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns) and /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify sample IDs match between the two files and align column order to the metadata. Run DESeq2 with design ~condition, releveling so the vehicle/control group is the reference and the reported log2FoldChange is treated-over-control. Apply the default independent filtering, use apeglm shrinkage for the treated-vs-control coefficient, and write a full per-gene results table (baseMean, log2FoldChange raw and shrunken, lfcSE, stat, pvalue, padj) for ALL tested genes in the same row order as the input — downstream TF inference needs the complete statistic vector, not just the significant subset. Also emit VST-transformed values, a PCA of the 12 samples coloured by condition, sample-sample distance heatmap, library-size summary, and a volcano plot. Report counts of genes at padj<0.05 split by direction.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv are confirmed to match 1:1 and the group sizes are reported as 6 vs 6.",
+          "A per-gene results CSV exists covering every gene DESeq2 tested, with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and the gene identifier.",
+          "Number of genes with padj<0.05, split into up- and down-regulated in treated relative to control, is reported.",
+          "PCA and sample-distance plots are produced and the degree of separation between the two conditions is described in words, including if the groups do not separate.",
+          "The integer/non-integer status of the input counts is explicitly reported."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "TF activity from DE statistics",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TF activity is inferred from target-gene behaviour, not measured; a high score is a hypothesis about regulator state, not evidence of TF protein abundance or binding.",
+          "With only 12,000 genes many regulons will be partially covered, biasing scores toward well-covered TFs — the target count column is the guard against over-reading a 5-target TF.",
+          "CollecTRI and DoRothEA share literature sources, so agreement between them is weaker evidence of robustness than two fully independent priors would be."
+        ],
+        "context": "Depends on T1S1's complete results table. Aldosterone acts through the mineralocorticoid receptor (NR3C2) in kidney; NR3C2 and downstream effectors such as SGK1 and the ENaC subunits are the prior expectation, useful as a sanity anchor but not to be presented as a confirmed finding independent of the data.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "rpy2"
+        ],
+        "question": "Which transcription factors show altered activity in aldosterone-treated versus vehicle-control kidney samples, inferred from the DESeq2 gene-level statistics?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Score on the FULL gene statistic vector from T1S1 (all tested genes, the Wald stat column), not on a thresholded significant-gene list.",
+          "Use a signed, curated TF-target regulon for Homo sapiens; resolve the reference at run time and abort with a clear message if no human regulon resource is present rather than substituting a mouse/rat network or an unsigned ChIP-derived set.",
+          "Run decoupler ULM as the primary method; require a minimum of 5 targets present in the data per regulon after intersection and report how many TFs were dropped for insufficient coverage.",
+          "Correct TF p-values with Benjamini-Hochberg and report adjusted values alongside raw ones.",
+          "Run the same inference against the second available human regulon (DoRothEA confidence A-C) and report the overlap and rank correlation with the CollecTRI result; do not merge the two networks into one.",
+          "Report the gene-identifier mapping rate onto the regulon symbol space; if under 50% of genes map, state that the TF results are unreliable and say so in the headline of the output.",
+          "Report the number of targets contributing to each reported TF score in the output table."
+        ],
+        "description": "Infer TF activity from the full per-gene Wald statistic vector produced by T1S1 using decoupler's univariate linear model (ULM) against a curated, signed human TF-target regulon network. The environment currently holds a human CollecTRI regulon table (source/target/weight, +1 activating / -1 repressing) and a human DoRothEA regulon with confidence levels A-E — resolve them at run time rather than assuming a path. Use CollecTRI as the primary prior and DoRothEA restricted to confidence levels A-C as an independent sensitivity check; report the rank correlation of TF activity scores between the two and treat TFs significant under both as the confident set. Before scoring, reconcile the gene identifiers in the DESeq2 table to HGNC symbols (the regulon identifier space) and report the fraction of the 12,000 genes that map and the fraction of regulon targets covered. Output a TF activity table (TF, score, p-value, BH-adjusted p-value, number of targets used, regulon source), a barplot of the top activated and top repressed TFs, and for the top TFs a target-level plot showing the direction of their targets' log2 fold changes.",
+        "acceptance_criteria": [
+          "A TF activity table exists with per-TF score, p-value, BH-adjusted p-value, target count and regulon source, for both CollecTRI and DoRothEA A-C runs.",
+          "The gene-symbol mapping rate and the number of TFs retained after the minimum-target filter are explicitly reported.",
+          "Top activated and top repressed TFs are visualised, and the concordance between the two regulon sources is quantified.",
+          "Whether NR3C2 (mineralocorticoid receptor) is present in the regulon, testable, and what its score was, is stated explicitly — including if it was untestable due to insufficient target coverage."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway context for DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12,000 genes in the matrix, pathway coverage is incomplete and set sizes after intersection may drop below the useful range — report intersected sizes, not nominal ones.",
+          "Over-representation and GSEA on the same data are not independent evidence; agreement between them is a consistency check only.",
+          "Pathway names are curated labels, not mechanisms; do not upgrade an enriched set into a causal claim about aldosterone action."
+        ],
+        "context": "Interpretive layer over T1S1 and T1S2. The research question is already answered by those two steps; this step adds biological framing. Aldosterone/mineralocorticoid signalling, sodium transport and inflammatory/fibrotic programmes in kidney are the expected axes to look for, but the pathway result should be read from the data.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which biological pathways are enriched among the genes changing between aldosterone-treated and vehicle-control kidney samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the full set of genes tested by DESeq2 as the background universe for over-representation, not the whole genome or the whole GMT gene space.",
+          "Use a human pathway gene set collection matching the organism (Homo sapiens); do not substitute the mouse or rat WikiPathways files present in the environment.",
+          "Restrict to gene sets with between 10 and 500 genes after intersecting with the tested universe, and report set sizes in the output.",
+          "Report BH-adjusted p-values; if no pathway reaches adjusted significance, report the top nominal results clearly labelled as non-significant rather than presenting them as findings.",
+          "If the human pathway resource cannot be resolved at run time, report that clearly and skip the step — do not fabricate enrichment results or fall back to a hard-coded gene set list."
+        ],
+        "description": "Place the T1S1 differential expression result in pathway context using the human pathway gene sets available in the environment (a human WikiPathways GMT is present; resolve it at run time and split the '%'-delimited first field to recover readable set names). Run two complementary tests: over-representation of the padj<0.05 gene set (up and down separately, and combined) against the full set of genes tested as the background universe, and a rank-based gene set enrichment on the complete gene list ranked by the DESeq2 Wald statistic. Report BH-adjusted enrichment results with set sizes and leading-edge/overlap genes. Cross-reference the top pathways against the TF activity result from T1S2 where a TF and a pathway share member genes.",
+        "acceptance_criteria": [
+          "Over-representation and rank-based enrichment tables both exist with set name, set size, overlap/leading-edge genes, raw and BH-adjusted p-values.",
+          "The background universe used is stated and equals the genes tested in T1S1.",
+          "Whether any pathway reaches padj<0.05 is stated plainly, including the null outcome.",
+          "Overlap between enriched pathway members and the top TFs' target sets from T1S2 is described."
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney DE + TF activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment on human kidney: gene-level Salmon counts (12,000 genes x 12 samples, counts.csv) with a 12-row metadata table giving one condition label per sample, 6 aldosterone-treated vs 6 vehicle controls, unpaired. The research question has two parts, so the plan has two dependent stages plus one interpretation stage.\n\nT1S1 does the differential expression directly on the raw counts with DESeq2 (~design ~condition, vehicle as reference). n=6 per group in a single batch is a clean two-group negative-binomial problem; no covariates exist in the metadata to model, so anything beyond ~condition would be invented. The profile explicitly flags that it is not recorded whether the Salmon gene-level counts carry a length/abundance correction, so the step must inspect whether values are integers and round non-integers rather than silently failing DESeq2's integer check — and it must report which case it found, because a length-scaled TPM matrix passed as counts changes the dispersion fit. Independent filtering plus apeglm LFC shrinkage give a ranked, shrunken effect list; the 12,000-gene matrix means multiple testing is modest and BH at 0.05 is appropriate.\n\nT1S2 answers the second half of the question. TF activity is inferred from the DE statistics, not re-derived from raw expression: decoupler's univariate linear model (ULM) run on the per-gene Wald t-statistic (the whole shrunken/unshrunken statistic vector, not the significant subset — thresholding before ULM destroys the null) against a curated signed human TF-target regulon. The environment holds CollecTRI human (source/target/weight CSV) and DoRothEA human (confidence A-E); CollecTRI is the primary prior with DoRothEA A-C as a sensitivity check, and agreement between the two is the honest measure of robustness for a 12-sample study. Gene identifiers in the counts must be reconciled to HGNC symbols before the regulon join — the step reports the overlap fraction, and a low overlap invalidates the TF result rather than merely weakening it. A 12,000-gene matrix is a subset of the transcriptome, so regulons will be partially covered; minimum regulon size after intersection is enforced (>=5 targets) and reported.\n\nT1S3 places the DE genes in pathway context with the human WikiPathways gene sets held in the environment, over-representation on the significant set plus a rank-based test on the full statistic vector. This step is interpretive: if the pathway resource is unavailable at run time it should report that and the run still answers the question, since T1S1 and T1S2 carry the two things actually asked. Mineralocorticoid-receptor biology (NR3C2/SGK1/SCNN1 axis) is a prior expectation to check against, not a result to assume; the plan states it as a sanity anchor only."
+  },
+  "usage": {
+    "inputTokens": 92777,
+    "outputTokens": 5227,
+    "cacheCreationInputTokens": 73791,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01EHUDSr95Kq7k9CywUSYwRE",
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_01NuAMo23yxCC7eu47HMocGg",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01DtwbUgUzAnbwtmXTKkspiu",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney DE + TF activity",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment on human kidney: gene-level Salmon counts (12,000 genes x 12 samples, counts.csv) with a 12-row metadata table giving one condition label per sample, 6 aldosterone-treated vs 6 vehicle controls, unpaired. The research question has two parts, so the plan has two dependent stages plus one interpretation stage.\n\nT1S1 does the differential expression directly on the raw counts with DESeq2 (~design ~condition, vehicle as reference). n=6 per group in a single batch is a clean two-group negative-binomial problem; no covariates exist in the metadata to model, so anything beyond ~condition would be invented. The profile explicitly flags that it is not recorded whether the Salmon gene-level counts carry a length/abundance correction, so the step must inspect whether values are integers and round non-integers rather than silently failing DESeq2's integer check — and it must report which case it found, because a length-scaled TPM matrix passed as counts changes the dispersion fit. Independent filtering plus apeglm LFC shrinkage give a ranked, shrunken effect list; the 12,000-gene matrix means multiple testing is modest and BH at 0.05 is appropriate.\n\nT1S2 answers the second half of the question. TF activity is inferred from the DE statistics, not re-derived from raw expression: decoupler's univariate linear model (ULM) run on the per-gene Wald t-statistic (the whole shrunken/unshrunken statistic vector, not the significant subset — thresholding before ULM destroys the null) against a curated signed human TF-target regulon. The environment holds CollecTRI human (source/target/weight CSV) and DoRothEA human (confidence A-E); CollecTRI is the primary prior with DoRothEA A-C as a sensitivity check, and agreement between the two is the honest measure of robustness for a 12-sample study. Gene identifiers in the counts must be reconciled to HGNC symbols before the regulon join — the step reports the overlap fraction, and a low overlap invalidates the TF result rather than merely weakening it. A 12,000-gene matrix is a subset of the transcriptome, so regulons will be partially covered; minimum regulon size after intersection is enforced (>=5 targets) and reported.\n\nT1S3 places the DE genes in pathway context with the human WikiPathways gene sets held in the environment, over-representation on the significant set plus a rank-based test on the full statistic vector. This step is interpretive: if the pathway resource is unavailable at run time it should report that and the run still answers the question, since T1S1 and T1S2 carry the two things actually asked. Mineralocorticoid-receptor biology (NR3C2/SGK1/SCNN1 axis) is a prior expectation to check against, not a result to assume; the plan states it as a sanity anchor only.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes are differentially expressed between the 6 aldosterone-treated and the 6 vehicle-control human kidney samples?",
+              "description": "Load /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 sample columns) and /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify sample IDs match between the two files and align column order to the metadata. Run DESeq2 with design ~condition, releveling so the vehicle/control group is the reference and the reported log2FoldChange is treated-over-control. Apply the default independent filtering, use apeglm shrinkage for the treated-vs-control coefficient, and write a full per-gene results table (baseMean, log2FoldChange raw and shrunken, lfcSE, stat, pvalue, padj) for ALL tested genes in the same row order as the input — downstream TF inference needs the complete statistic vector, not just the significant subset. Also emit VST-transformed values, a PCA of the 12 samples coloured by condition, sample-sample distance heatmap, library-size summary, and a volcano plot. Report counts of genes at padj<0.05 split by direction.",
+              "context": "Single-batch, unpaired, 6 vs 6 design with no other covariates in the metadata, so ~condition is the only defensible design. The data profile states the counts are gene-level Salmon output as delivered and does NOT record whether a length/abundance correction was applied.",
+              "constraints": [
+                "Use DESeq2 with design ~condition and the vehicle/control level explicitly set as the reference; state in the output which level names were found in metadata.csv and which was used as reference.",
+                "Check whether the count matrix is integer-valued. If it is not, round to integers before DESeq2 and state prominently in the output that non-integer values were found and rounded, and that the matrix may be length-corrected Salmon output rather than raw counts.",
+                "Pre-filter to genes with a minimal count across samples (e.g. rowSums(counts) >= 10) and report how many genes were removed; do not filter more aggressively than that.",
+                "Multiple testing correction: Benjamini-Hochberg, significance at padj < 0.05.",
+                "Use apeglm for LFC shrinkage of the treated-vs-control coefficient; keep both the unshrunken stat/pvalue and the shrunken log2FoldChange in the results table.",
+                "Write the results table for ALL genes DESeq2 tested (including padj = NA rows, flagged), not only significant ones, as a CSV keyed by the original gene identifier.",
+                "Do not drop or impute samples; all 12 must enter the model unless a sample is structurally broken (all-zero column), in which case report it and stop rather than silently continuing."
+              ],
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv are confirmed to match 1:1 and the group sizes are reported as 6 vs 6.",
+                "A per-gene results CSV exists covering every gene DESeq2 tested, with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj and the gene identifier.",
+                "Number of genes with padj<0.05, split into up- and down-regulated in treated relative to control, is reported.",
+                "PCA and sample-distance plots are produced and the degree of separation between the two conditions is described in words, including if the groups do not separate.",
+                "The integer/non-integer status of the input counts is explicitly reported."
+              ],
+              "caveats": [
+                "n=6 per group gives limited power for small effects; absence of significant genes is a real possible outcome and must be reported as such rather than rescued by relaxing thresholds.",
+                "If the Salmon counts carry a length correction, DESeq2's dispersion assumptions are mildly violated — flag it, do not hide it.",
+                "12,000 genes is a subset of the transcriptome; the matrix may already be pre-filtered, which affects how independent filtering behaves."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "TF activity from DE statistics",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which transcription factors show altered activity in aldosterone-treated versus vehicle-control kidney samples, inferred from the DESeq2 gene-level statistics?",
+              "description": "Infer TF activity from the full per-gene Wald statistic vector produced by T1S1 using decoupler's univariate linear model (ULM) against a curated, signed human TF-target regulon network. The environment currently holds a human CollecTRI regulon table (source/target/weight, +1 activating / -1 repressing) and a human DoRothEA regulon with confidence levels A-E — resolve them at run time rather than assuming a path. Use CollecTRI as the primary prior and DoRothEA restricted to confidence levels A-C as an independent sensitivity check; report the rank correlation of TF activity scores between the two and treat TFs significant under both as the confident set. Before scoring, reconcile the gene identifiers in the DESeq2 table to HGNC symbols (the regulon identifier space) and report the fraction of the 12,000 genes that map and the fraction of regulon targets covered. Output a TF activity table (TF, score, p-value, BH-adjusted p-value, number of targets used, regulon source), a barplot of the top activated and top repressed TFs, and for the top TFs a target-level plot showing the direction of their targets' log2 fold changes.",
+              "context": "Depends on T1S1's complete results table. Aldosterone acts through the mineralocorticoid receptor (NR3C2) in kidney; NR3C2 and downstream effectors such as SGK1 and the ENaC subunits are the prior expectation, useful as a sanity anchor but not to be presented as a confirmed finding independent of the data.",
+              "constraints": [
+                "Score on the FULL gene statistic vector from T1S1 (all tested genes, the Wald stat column), not on a thresholded significant-gene list.",
+                "Use a signed, curated TF-target regulon for Homo sapiens; resolve the reference at run time and abort with a clear message if no human regulon resource is present rather than substituting a mouse/rat network or an unsigned ChIP-derived set.",
+                "Run decoupler ULM as the primary method; require a minimum of 5 targets present in the data per regulon after intersection and report how many TFs were dropped for insufficient coverage.",
+                "Correct TF p-values with Benjamini-Hochberg and report adjusted values alongside raw ones.",
+                "Run the same inference against the second available human regulon (DoRothEA confidence A-C) and report the overlap and rank correlation with the CollecTRI result; do not merge the two networks into one.",
+                "Report the gene-identifier mapping rate onto the regulon symbol space; if under 50% of genes map, state that the TF results are unreliable and say so in the headline of the output.",
+                "Report the number of targets contributing to each reported TF score in the output table."
+              ],
+              "acceptance_criteria": [
+                "A TF activity table exists with per-TF score, p-value, BH-adjusted p-value, target count and regulon source, for both CollecTRI and DoRothEA A-C runs.",
+                "The gene-symbol mapping rate and the number of TFs retained after the minimum-target filter are explicitly reported.",
+                "Top activated and top repressed TFs are visualised, and the concordance between the two regulon sources is quantified.",
+                "Whether NR3C2 (mineralocorticoid receptor) is present in the regulon, testable, and what its score was, is stated explicitly — including if it was untestable due to insufficient target coverage."
+              ],
+              "caveats": [
+                "TF activity is inferred from target-gene behaviour, not measured; a high score is a hypothesis about regulator state, not evidence of TF protein abundance or binding.",
+                "With only 12,000 genes many regulons will be partially covered, biasing scores toward well-covered TFs — the target count column is the guard against over-reading a 5-target TF.",
+                "CollecTRI and DoRothEA share literature sources, so agreement between them is weaker evidence of robustness than two fully independent priors would be."
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway context for DE genes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which biological pathways are enriched among the genes changing between aldosterone-treated and vehicle-control kidney samples?",
+              "description": "Place the T1S1 differential expression result in pathway context using the human pathway gene sets available in the environment (a human WikiPathways GMT is present; resolve it at run time and split the '%'-delimited first field to recover readable set names). Run two complementary tests: over-representation of the padj<0.05 gene set (up and down separately, and combined) against the full set of genes tested as the background universe, and a rank-based gene set enrichment on the complete gene list ranked by the DESeq2 Wald statistic. Report BH-adjusted enrichment results with set sizes and leading-edge/overlap genes. Cross-reference the top pathways against the TF activity result from T1S2 where a TF and a pathway share member genes.",
+              "context": "Interpretive layer over T1S1 and T1S2. The research question is already answered by those two steps; this step adds biological framing. Aldosterone/mineralocorticoid signalling, sodium transport and inflammatory/fibrotic programmes in kidney are the expected axes to look for, but the pathway result should be read from the data.",
+              "constraints": [
+                "Use the full set of genes tested by DESeq2 as the background universe for over-representation, not the whole genome or the whole GMT gene space.",
+                "Use a human pathway gene set collection matching the organism (Homo sapiens); do not substitute the mouse or rat WikiPathways files present in the environment.",
+                "Restrict to gene sets with between 10 and 500 genes after intersecting with the tested universe, and report set sizes in the output.",
+                "Report BH-adjusted p-values; if no pathway reaches adjusted significance, report the top nominal results clearly labelled as non-significant rather than presenting them as findings.",
+                "If the human pathway resource cannot be resolved at run time, report that clearly and skip the step — do not fabricate enrichment results or fall back to a hard-coded gene set list."
+              ],
+              "acceptance_criteria": [
+                "Over-representation and rank-based enrichment tables both exist with set name, set size, overlap/leading-edge genes, raw and BH-adjusted p-values.",
+                "The background universe used is stated and equals the genes tested in T1S1.",
+                "Whether any pathway reaches padj<0.05 is stated plainly, including the null outcome.",
+                "Overlap between enriched pathway members and the top TFs' target sets from T1S2 is described."
+              ],
+              "caveats": [
+                "With 12,000 genes in the matrix, pathway coverage is incomplete and set sizes after intersection may drop below the useful range — report intersected sizes, not nominal ones.",
+                "Over-representation and GSEA on the same data are not independent evidence; agreement between them is a consistency check only.",
+                "Pathway names are curated labels, not mechanisms; do not upgrade an enriched set into a causal claim about aldosterone action."
+              ],
+              "packages": [
+                "decoupler",
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

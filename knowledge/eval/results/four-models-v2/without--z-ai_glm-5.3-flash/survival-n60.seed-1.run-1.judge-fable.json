@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 4,
+    "low_count_filter": 2,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core design: a Cox model with a standardized continuous score plus condition, a Schoenfeld PH check with a time-varying remedy, event-count flags for thin strata, and tertile Kaplan-Meier curves demoted to supportive display after the model; the interaction model is a reasonable addition. Normalization is explicit (median-of-ratios size factors plus VST, with a rank-based secondary score), signature-gene overlap is reported with named missing genes, and event coding and sample joins are asserted. It falls short on QC (only size-factor summaries; no PCA or sample-distance check with an outlier policy), never mentions a low-count filter before VST, and omits the up-front event/censoring count and median follow-up that the reference uses to frame power. Package versions are not requested in the report."
+}

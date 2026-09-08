@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "PyDESeq2 Wald test on raw Salmon counts with a ~condition design and median-of-ratios size factors fits the unpaired 6v6 single-batch design, and the sample_01 policy (keep in primary, drop-one sensitivity, exclude only if PCA shows a condition-defying outlier) is explicit and well reasoned; QC covers library sizes and PCA but omits a sample distance heatmap. The low-count filter (>=10 in >=6 samples) is standard and tied to group size, and BH at 0.05 with shrunken LFC is stated, though the |log2FC|>=1 cut is applied post hoc rather than tested, and the reference level is never set explicitly. Enrichment names the Hallmark collection and version and uses prerank on the DE-derived ranking, but the ranking metric is left as an either/or, no set-size window or seed is given for prerank, and the ORA universe is not defined. Reporting captures thresholds, retained and significant gene counts and sensitivity concordance, but does not commit to recording package versions."
+}

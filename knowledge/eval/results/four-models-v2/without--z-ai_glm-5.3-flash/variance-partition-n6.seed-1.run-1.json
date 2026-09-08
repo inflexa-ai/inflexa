@@ -1,0 +1,428 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "variance-partition-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T07:02:42.898Z",
+  "elapsedMs": 270526,
+  "outcome": "plan_submitted",
+  "planId": "pln-7b93f28a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Import counts, align metadata, QC and filter",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Are the 12 adipose samples comparable in library composition, and is there a clean filtered/normalized expression matrix and aligned design table (condition treated vs control, sex F/M, age in years) to model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load /eval-four-models-v2-without-variance-partition-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns; one column is the gene identifier, 12 are samples) and metadata.csv (12 x 4: condition, sex, age). Align sample IDs between files, compute library sizes and per-sample summary metrics, apply a standard low-expression filter (e.g. CPM > 1 in at least 6 samples), normalize (TMM via edgeR and/or DESeq2 median-of-ratios size factors), and run a PCA on log2-CPM / variance-stabilized values colored by condition, sex, and age to confirm the expected 6-vs-6 grouping and detect any outlier sample or hidden structure before modeling. Save the filtered count matrix, the normalized/transformed matrix, and the aligned design table for downstream steps.",
+        "acceptance_criteria": [
+          "All 12 samples present in both the filtered count matrix and the design table, IDs matched; the extra column in counts.csv identified as the gene identifier and used as row names",
+          "A filtered gene-by-sample count matrix with a pre-specified low-expression filter (e.g. CPM > 1 in at least 6 samples) and its keep-set size reported",
+          "Normalization applied (TMM/edgeR and DESeq2 size factors) and PCA on transformed values produced, confirming no batch structure and no outlier sample before modeling",
+          "Filtered matrix and sample annotation saved as artifacts for T1S2 and T1S3"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Variance partitioning: condition vs sex vs age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "variancePartition",
+          "limma",
+          "edgeR",
+          "ggplot2"
+        ],
+        "question": "What fraction of gene-expression variance across the 12 samples is explained by condition (treated vs control), by sex (F/M), and by age (years), respectively?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Using the filtered expression matrix from T1S1, fit a linear mixed-model variance partition (variancePartition::fitExtractVarPartModel on log2-CPM or variance-stabilized expression) with formula ~ condition + sex + age. Extract per-gene variance fractions for condition, sex, and age plus residual, summarize the mean and distribution of the fraction explained by each variable, and produce a summary plot. With only 12 samples and 3 predictors these fractions are noisy per gene, so report the dataset-level means with an explicit caveat on their uncertainty. This step quantifies, before any DE testing, how much of the adipose expression variance the treatment, the sex, and the age each account for.",
+        "acceptance_criteria": [
+          "Per-gene and dataset-wide variance fractions reported for condition, sex, and age plus residual, from a model ~ condition + sex + age on the filtered/transformed matrix",
+          "Mean variance-explained per variable (and spread across genes) reported, with an explicit statement of the uncertainty imposed by n=12 and 3 predictors",
+          "A variance-fraction summary plot (e.g. box/dot plot per variable) and a gene-level table produced",
+          "The ranking of condition vs sex vs age variance contribution is stated clearly as the direct answer to the question"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between treated and control adipose samples after adjusting for sex and age?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "description": "Fit a DESeq2 model with design ~ sex + age + condition on the filtered counts (sex and age pre-specified as adjustment covariates based on the design; their variance contributions from T1S2 are reported alongside, not used to drop terms). Apply LFC shrinkage (apeglm), call differential expression at FDR < 0.05 (BH), and report both a stringent set (e.g. FDR < 0.05 and |log2FC| > 1) and the full ranked table. Produce a volcano plot and a top-genes table. Run an edgeR quasi-likelihood F-test on the same contrast as a sensitivity check and report the agreement between the two methods, which matters at n=6 vs 6 where single-method calls are fragile. Report whether sex and age effects observed in T1S2 translate into DE genes of their own (secondary contrasts), without letting them change the primary treated-vs-control contrast.",
+        "acceptance_criteria": [
+          "A DE results table (gene, log2FC, shrunk log2FC, SE, Wald p-value, BH-adjusted FDR, base mean) saved for all tested genes",
+          "The primary result reported as a counted set of DE genes (e.g. FDR < 0.05 with |log2FC| > 1) plus the full table, with a volcano plot and a top-genes table",
+          "A sensitivity check against edgeR quasi-likelihood DE reported, with overlap between the two methods quantified (e.g. up-set or simple agreement counts)",
+          "Any genes differing by sex or age noted where they coincide with treatment effects, so covariate effects found in T1S2 are not silently absorbed into the treatment contrast"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "data.table"
+        ],
+        "question": "Which biological pathways are enriched among the genes up- and down-regulated by treatment in adipose tissue?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "description": "Take the treated-vs-control DE results (sign-shrunk log2FC statistic from T1S3), map gene identifiers to HGNC symbols using the installed human annotation resources (org.Hs.eg.db / EnsDb offline mapping; report mapping coverage), and run preranked GSEA (fgsea) against the WikiPathways human gene sets staged at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC symbols; split the '%'-delimited first field for set names). Report the top up- and down-regulated pathways with FDR adjustment. This annotates the DE gene list found in T1S3; if identifier mapping coverage or the reference set is unusable, report the gap and skip rather than fail.",
+        "acceptance_criteria": [
+          "Gene-to-HGNC-symbol mapping applied with the mapping coverage rate reported for the DE gene list",
+          "fgsea run against the WikiPathways human gene sets on the ranked statistic; ranked up- and down-regulated pathway tables (padj < 0.05) produced",
+          "If mapping coverage is poor or the GMT is absent, the step reports the gap and the annotation is skipped without failing the run",
+          "Top enriched pathways interpreted against the DE direction (treated up vs down)"
+        ]
+      }
+    ],
+    "title": "Variance partitioning then treated-vs-control DE in adipose RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12 human adipose bulk RNA-seq samples (6 treated vs 6 control, unpaired, single batch, Salmon gene-level counts, 12,000 genes) with sex (F/M) and age (years) recorded per sample. The question has two ordered parts, so the plan mirrors that order. First, before any testing, a variance partition (variancePartition, in the R track) on the filtered, normalized expression matrix quantifies how much of the across-sample variance condition, sex, and age each explain — this directly answers part one and warns whether the covariates are strong enough to matter in the DE model. Second, differential expression of treated vs control is run with sex and age as pre-specified adjustment covariates (DESeq2 with apeglm shrinkage, edgeR quasi-likelihood as a sensitivity check, since n=6 vs 6 makes single-method calls fragile). A final optional enrichment step maps the DE genes to HGNC symbols and runs preranked fgsea against the staged WikiPathways human gene sets to annotate what the differing genes do; it is framed so its loss costs an annotation, not the run. Because the input is Salmon output without a recorded length-correction step, normalization uses standard TMM/DESeq2 size-factor scaling on the gene-level count matrix, which is the defensible default for gene-level Salmon counts."
+  },
+  "usage": {
+    "inputTokens": 66541,
+    "outputTokens": 6278,
+    "cacheReadInputTokens": 35072,
+    "reasoningTokens": 2313
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_cadb7b3fbb934dd9a72f104a",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-14T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 12 samples present in both the filtered count matrix and the design table, IDs matched; the extra column in counts.csv identified as the gene identifier and used as row names",
+                "A filtered gene-by-sample count matrix with a pre-specified low-expression filter (e.g. CPM > 1 in at least 6 samples) and its keep-set size reported",
+                "Normalization applied (TMM/edgeR and DESeq2 size factors) and PCA on transformed values produced, confirming no batch structure and no outlier sample before modeling",
+                "Filtered matrix and sample annotation saved as artifacts for T1S2 and T1S3"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [],
+              "description": "Load /eval-four-models-v2-without-variance-partition-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns; one column is the gene identifier, 12 are samples) and metadata.csv (12 x 4: condition, sex, age). Align sample IDs between files, compute library sizes and per-sample summary metrics, apply a standard low-expression filter (e.g. CPM > 1 in at least 6 samples), normalize (TMM via edgeR and/or DESeq2 median-of-ratios size factors), and run a PCA on log2-CPM / variance-stabilized values colored by condition, sex, and age to confirm the expected 6-vs-6 grouping and detect any outlier sample or hidden structure before modeling. Save the filtered count matrix, the normalized/transformed matrix, and the aligned design table for downstream steps.",
+              "id": "T1S1",
+              "name": "Import counts, align metadata, QC and filter",
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Are the 12 adipose samples comparable in library composition, and is there a clean filtered/normalized expression matrix and aligned design table (condition treated vs control, sex F/M, age in years) to model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Per-gene and dataset-wide variance fractions reported for condition, sex, and age plus residual, from a model ~ condition + sex + age on the filtered/transformed matrix",
+                "Mean variance-explained per variable (and spread across genes) reported, with an explicit statement of the uncertainty imposed by n=12 and 3 predictors",
+                "A variance-fraction summary plot (e.g. box/dot plot per variable) and a gene-level table produced",
+                "The ranking of condition vs sex vs age variance contribution is stated clearly as the direct answer to the question"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Using the filtered expression matrix from T1S1, fit a linear mixed-model variance partition (variancePartition::fitExtractVarPartModel on log2-CPM or variance-stabilized expression) with formula ~ condition + sex + age. Extract per-gene variance fractions for condition, sex, and age plus residual, summarize the mean and distribution of the fraction explained by each variable, and produce a summary plot. With only 12 samples and 3 predictors these fractions are noisy per gene, so report the dataset-level means with an explicit caveat on their uncertainty. This step quantifies, before any DE testing, how much of the adipose expression variance the treatment, the sex, and the age each account for.",
+              "id": "T1S2",
+              "name": "Variance partitioning: condition vs sex vs age",
+              "packages": [
+                "variancePartition",
+                "limma",
+                "edgeR",
+                "ggplot2"
+              ],
+              "question": "What fraction of gene-expression variance across the 12 samples is explained by condition (treated vs control), by sex (F/M), and by age (years), respectively?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "A DE results table (gene, log2FC, shrunk log2FC, SE, Wald p-value, BH-adjusted FDR, base mean) saved for all tested genes",
+                "The primary result reported as a counted set of DE genes (e.g. FDR < 0.05 with |log2FC| > 1) plus the full table, with a volcano plot and a top-genes table",
+                "A sensitivity check against edgeR quasi-likelihood DE reported, with overlap between the two methods quantified (e.g. up-set or simple agreement counts)",
+                "Any genes differing by sex or age noted where they coincide with treatment effects, so covariate effects found in T1S2 are not silently absorbed into the treatment contrast"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Fit a DESeq2 model with design ~ sex + age + condition on the filtered counts (sex and age pre-specified as adjustment covariates based on the design; their variance contributions from T1S2 are reported alongside, not used to drop terms). Apply LFC shrinkage (apeglm), call differential expression at FDR < 0.05 (BH), and report both a stringent set (e.g. FDR < 0.05 and |log2FC| > 1) and the full ranked table. Produce a volcano plot and a top-genes table. Run an edgeR quasi-likelihood F-test on the same contrast as a sensitivity check and report the agreement between the two methods, which matters at n=6 vs 6 where single-method calls are fragile. Report whether sex and age effects observed in T1S2 translate into DE genes of their own (secondary contrasts), without letting them change the primary treated-vs-control contrast.",
+              "id": "T1S3",
+              "name": "Differential expression: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "question": "Which genes differ between treated and control adipose samples after adjusting for sex and age?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Gene-to-HGNC-symbol mapping applied with the mapping coverage rate reported for the DE gene list",
+                "fgsea run against the WikiPathways human gene sets on the ranked statistic; ranked up- and down-regulated pathway tables (padj < 0.05) produced",
+                "If mapping coverage is poor or the GMT is absent, the step reports the gap and the annotation is skipped without failing the run",
+                "Top enriched pathways interpreted against the DE direction (treated up vs down)"
+              ],
+              "agent": "enrichment-agent",
+              "depends_on": [
+                "T1S3"
+              ],
+              "description": "Take the treated-vs-control DE results (sign-shrunk log2FC statistic from T1S3), map gene identifiers to HGNC symbols using the installed human annotation resources (org.Hs.eg.db / EnsDb offline mapping; report mapping coverage), and run preranked GSEA (fgsea) against the WikiPathways human gene sets staged at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC symbols; split the '%'-delimited first field for set names). Report the top up- and down-regulated pathways with FDR adjustment. This annotates the DE gene list found in T1S3; if identifier mapping coverage or the reference set is unusable, report the gap and skip rather than fail.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the DE genes",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "data.table"
+              ],
+              "question": "Which biological pathways are enriched among the genes up- and down-regulated by treatment in adipose tissue?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Variance partitioning then treated-vs-control DE in adipose RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_18c9ccf58ba24f01b7703199",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The data are 12 human adipose bulk RNA-seq samples (6 treated vs 6 control, unpaired, single batch, Salmon gene-level counts, 12,000 genes) with sex (F/M) and age (years) recorded per sample. The question has two ordered parts, so the plan mirrors that order. First, before any testing, a variance partition (variancePartition, in the R track) on the filtered, normalized expression matrix quantifies how much of the across-sample variance condition, sex, and age each explain — this directly answers part one and warns whether the covariates are strong enough to matter in the DE model. Second, differential expression of treated vs control is run with sex and age as pre-specified adjustment covariates (DESeq2 with apeglm shrinkage, edgeR quasi-likelihood as a sensitivity check, since n=6 vs 6 makes single-method calls fragile). A final optional enrichment step maps the DE genes to HGNC symbols and runs preranked fgsea against the staged WikiPathways human gene sets to annotate what the differing genes do; it is framed so its loss costs an annotation, not the run. Because the input is Salmon output without a recorded length-correction step, normalization uses standard TMM/DESeq2 size-factor scaling on the gene-level count matrix, which is the defensible default for gene-level Salmon counts.",
+          "created_at": "2026-07-14T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 12 samples present in both the filtered count matrix and the design table, IDs matched; the extra column in counts.csv identified as the gene identifier and used as row names",
+                "A filtered gene-by-sample count matrix with a pre-specified low-expression filter (e.g. CPM > 1 in at least 6 samples) and its keep-set size reported",
+                "Normalization applied (TMM/edgeR and DESeq2 size factors) and PCA on transformed values produced, confirming no batch structure and no outlier sample before modeling",
+                "Filtered matrix and sample annotation saved as artifacts for T1S2 and T1S3"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [],
+              "description": "Load /eval-four-models-v2-without-variance-partition-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns; one column is the gene identifier, 12 are samples) and metadata.csv (12 x 4: condition, sex, age). Align sample IDs between files, compute library sizes and per-sample summary metrics, apply a standard low-expression filter (e.g. CPM > 1 in at least 6 samples), normalize (TMM via edgeR and/or DESeq2 median-of-ratios size factors), and run a PCA on log2-CPM / variance-stabilized values colored by condition, sex, and age to confirm the expected 6-vs-6 grouping and detect any outlier sample or hidden structure before modeling. Save the filtered count matrix, the normalized/transformed matrix, and the aligned design table for downstream steps.",
+              "id": "T1S1",
+              "name": "Import counts, align metadata, QC and filter",
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Are the 12 adipose samples comparable in library composition, and is there a clean filtered/normalized expression matrix and aligned design table (condition treated vs control, sex F/M, age in years) to model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Per-gene and dataset-wide variance fractions reported for condition, sex, and age plus residual, from a model ~ condition + sex + age on the filtered/transformed matrix",
+                "Mean variance-explained per variable (and spread across genes) reported, with an explicit statement of the uncertainty imposed by n=12 and 3 predictors",
+                "A variance-fraction summary plot (e.g. box/dot plot per variable) and a gene-level table produced",
+                "The ranking of condition vs sex vs age variance contribution is stated clearly as the direct answer to the question"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Using the filtered expression matrix from T1S1, fit a linear mixed-model variance partition (variancePartition::fitExtractVarPartModel on log2-CPM or variance-stabilized expression) with formula ~ condition + sex + age. Extract per-gene variance fractions for condition, sex, and age plus residual, summarize the mean and distribution of the fraction explained by each variable, and produce a summary plot. With only 12 samples and 3 predictors these fractions are noisy per gene, so report the dataset-level means with an explicit caveat on their uncertainty. This step quantifies, before any DE testing, how much of the adipose expression variance the treatment, the sex, and the age each account for.",
+              "id": "T1S2",
+              "name": "Variance partitioning: condition vs sex vs age",
+              "packages": [
+                "variancePartition",
+                "limma",
+                "edgeR",
+                "ggplot2"
+              ],
+              "question": "What fraction of gene-expression variance across the 12 samples is explained by condition (treated vs control), by sex (F/M), and by age (years), respectively?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "A DE results table (gene, log2FC, shrunk log2FC, SE, Wald p-value, BH-adjusted FDR, base mean) saved for all tested genes",
+                "The primary result reported as a counted set of DE genes (e.g. FDR < 0.05 with |log2FC| > 1) plus the full table, with a volcano plot and a top-genes table",
+                "A sensitivity check against edgeR quasi-likelihood DE reported, with overlap between the two methods quantified (e.g. up-set or simple agreement counts)",
+                "Any genes differing by sex or age noted where they coincide with treatment effects, so covariate effects found in T1S2 are not silently absorbed into the treatment contrast"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Fit a DESeq2 model with design ~ sex + age + condition on the filtered counts (sex and age pre-specified as adjustment covariates based on the design; their variance contributions from T1S2 are reported alongside, not used to drop terms). Apply LFC shrinkage (apeglm), call differential expression at FDR < 0.05 (BH), and report both a stringent set (e.g. FDR < 0.05 and |log2FC| > 1) and the full ranked table. Produce a volcano plot and a top-genes table. Run an edgeR quasi-likelihood F-test on the same contrast as a sensitivity check and report the agreement between the two methods, which matters at n=6 vs 6 where single-method calls are fragile. Report whether sex and age effects observed in T1S2 translate into DE genes of their own (secondary contrasts), without letting them change the primary treated-vs-control contrast.",
+              "id": "T1S3",
+              "name": "Differential expression: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "question": "Which genes differ between treated and control adipose samples after adjusting for sex and age?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Gene-to-HGNC-symbol mapping applied with the mapping coverage rate reported for the DE gene list",
+                "fgsea run against the WikiPathways human gene sets on the ranked statistic; ranked up- and down-regulated pathway tables (padj < 0.05) produced",
+                "If mapping coverage is poor or the GMT is absent, the step reports the gap and the annotation is skipped without failing the run",
+                "Top enriched pathways interpreted against the DE direction (treated up vs down)"
+              ],
+              "agent": "enrichment-agent",
+              "depends_on": [
+                "T1S3"
+              ],
+              "description": "Take the treated-vs-control DE results (sign-shrunk log2FC statistic from T1S3), map gene identifiers to HGNC symbols using the installed human annotation resources (org.Hs.eg.db / EnsDb offline mapping; report mapping coverage), and run preranked GSEA (fgsea) against the WikiPathways human gene sets staged at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC symbols; split the '%'-delimited first field for set names). Report the top up- and down-regulated pathways with FDR adjustment. This annotates the DE gene list found in T1S3; if identifier mapping coverage or the reference set is unusable, report the gap and skip rather than fail.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the DE genes",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "data.table"
+              ],
+              "question": "Which biological pathways are enriched among the genes up- and down-regulated by treatment in adipose tissue?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Variance partitioning then treated-vs-control DE in adipose RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 36
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,374 @@
+{
+  "steps": [
+    {
+      "id": "T1S1",
+      "name": "Sample structure QC and low-depth sample inspection",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "A sample with a library size several times below the median is a judgment call for removal, not a default: keep it through QC, report it, and only exclude it later with an explicit justification (e.g. it is also a PCA outlier or has failed QC on other grounds)."
+      ],
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2"
+      ],
+      "question": "Do the 12 samples (6 control, 6 treated) separate by condition on PCA/sample-distance structure, and how does the flagged shallow sample behave relative to its group?",
+      "grounding": {
+        "claims": [
+          "R-0033@40bf",
+          "R-0008@440d"
+        ],
+        "reason": "Sample structure QC per R-0033@40bf; low-depth sample handling per R-0008@440d",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "n_top_genes",
+            "step": "qc_sample_structure",
+            "value": 500,
+            "source": "doi:10.12688/f1000research.7035.1"
+          },
+          {
+            "name": "transform",
+            "step": "qc_sample_structure",
+            "value": "vst_blind",
+            "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+          },
+          {
+            "name": "low_depth_policy",
+            "step": "qc_sample_structure",
+            "value": "keep_inspect_report",
+            "source": "doi:10.1186/s13059-016-0881-8"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-qc-eda@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "qc_sample_structure",
+      "depends_on": [],
+      "constraints": [
+        "n_top_genes = 500",
+        "transform = vst_blind",
+        "low_depth_policy = keep_inspect_report — do not delete the shallow sample without a stated reason from this QC"
+      ],
+      "description": "Load the 12,000-gene x 12-sample raw count matrix and the sample condition sheet (control/treated, 6 each). Apply DESeq2's variance-stabilizing transform blind to the design, compute PCA on the top 500 most-variable genes, draw a Euclidean sample-distance heatmap, and tabulate library size (total counts) and detected-gene count per sample, colored by condition. Identify and explicitly report which sample is the shallow one, its library size relative to the median, and whether it is an outlier on PCA/heatmap. Do NOT remove it here — only inspect and report; removal (if ever) is a decision for the DE step with a stated reason.",
+      "acceptance_criteria": [
+        "PCA plot and sample-distance heatmap produced for all 12 samples, colored by condition",
+        "Library size and detected-gene table produced for all 12 samples",
+        "The shallow sample is explicitly identified with its library size relative to the cohort median and its PCA/heatmap behavior described",
+        "No sample is dropped at this step"
+      ]
+    },
+    {
+      "id": "T1S2",
+      "name": "DESeq2 differential expression: treated vs control",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "The gene-length reference table is available but counts come from an unknown quantifier/pipeline (no stated GC/length bias correction at quantification). Since counts are integers with no confirmed 3'-tag or full-length protocol stated, run the diagnostic of log count-ratio vs GC/length across samples if time permits and note any trend; cqn/EDASeq are not available in this environment to correct it, so a detected trend should be reported as a caveat rather than corrected.",
+        "The low-depth sample is down-weighted by its DESeq2 size factor and contributes a wider per-gene confidence interval, not a systematic fold-change bias — do not use its depth alone as a removal criterion."
+      ],
+      "maxSteps": 200,
+      "packages": [
+        "DESeq2",
+        "apeglm"
+      ],
+      "question": "Which of the ~12,000 genes are differentially expressed between treated and control (6 vs 6 samples), using DESeq2 with apeglm-shrunken log2 fold changes and BH-adjusted p-values at alpha 0.05?",
+      "grounding": {
+        "claims": [
+          "R-0029@22ca",
+          "R-0002@087b",
+          "R-0026@9ab1",
+          "R-0036@9786",
+          "R-0009@310d",
+          "R-0039@968d",
+          "R-0166@bbcd",
+          "R-0010@6072",
+          "R-0043@4f55",
+          "R-0083@12de",
+          "R-0030@2248",
+          "R-0147@aebe"
+        ],
+        "reason": "DESeq2 Wald test with apeglm shrinkage per R-0029@22ca / R-0001@9a17, 6 replicates per group",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "filter_policy",
+            "step": "filter_low_counts",
+            "value": "minimal_then_independent",
+            "source": "doi:10.1073/pnas.0914005107"
+          },
+          {
+            "name": "min_count",
+            "step": "filter_low_counts",
+            "value": 10,
+            "source": "doi:10.12688/f1000research.7035.1"
+          },
+          {
+            "name": "min_samples",
+            "step": "filter_low_counts",
+            "value": "smallest_group_size",
+            "source": "vignette:DESeq2/1.52.0#pre-filtering"
+          },
+          {
+            "name": "size_factors",
+            "step": "normalize",
+            "value": "median_of_ratios_named_in_the_plan",
+            "source": "doi:10.1186/s13059-014-0550-8"
+          },
+          {
+            "name": "reference_level",
+            "step": "model_design",
+            "value": "explicit",
+            "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+          },
+          {
+            "name": "test",
+            "step": "differential_expression",
+            "value": "Wald",
+            "source": "doi:10.1186/s13059-014-0550-8"
+          },
+          {
+            "name": "lfc_shrink",
+            "step": "shrink_lfc",
+            "value": "apeglm",
+            "source": "doi:10.1093/bioinformatics/bty895"
+          },
+          {
+            "name": "alpha",
+            "step": "multiple_testing",
+            "value": 0.05,
+            "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+          },
+          {
+            "name": "adjustment",
+            "step": "multiple_testing",
+            "value": "BH",
+            "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-deseq2-two-group@1.1.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "differential_expression",
+      "depends_on": [
+        "T1S1"
+      ],
+      "constraints": [
+        "filter_policy = minimal_then_independent, min_count=10, min_samples=6 (smallest group size)",
+        "size_factors = median_of_ratios computed inside DESeq2, no pre-normalization of counts",
+        "reference_level = control, explicit; contrast_form = condition, treated, control",
+        "test = Wald",
+        "count_outlier_policy = flag_and_report_na",
+        "lfc_shrink = apeglm on the treated-vs-control coefficient",
+        "independent_filtering = true; alpha = 0.05; adjustment = BH; pvalue_histogram inspected before adjustment",
+        "select DE genes by adjusted p-value only, never by raw p-value or fold change alone"
+      ],
+      "description": "Using the raw count matrix and condition sheet, build a DESeqDataSet with condition (control=reference, treated) as the sole factor — count source/import state should be confirmed as raw integer counts (already established: no decimals). Apply the minimal pre-filter (>=10 counts in >=6 samples, the smallest group size). Fit DESeq2's negative-binomial model with median-of-ratios size factors computed inside the model (no external normalization). Run the Wald test for the contrast condition treated vs control. Decide on the shallow sample's inclusion here based on T1S1's findings and state the reasoning explicitly in the output (default: keep it, since depth alone is not a removal reason). Apply apeglm shrinkage to the treated-vs-control coefficient for reporting/ranking. Adjust p-values with Benjamini-Hochberg at alpha=0.05 with DESeq2 independent filtering left on (same alpha passed to results()). Plot and inspect the raw p-value histogram before trusting the adjustment, and produce the MA plot and dispersion plot as fit diagnostics. Report per-gene: baseMean, unshrunken log2FoldChange, lfcSE, shrunken log2FoldChange (apeglm), pvalue, padj, and flag any gene with an NA padj (independent-filter or Cook's-outlier NA) with the cause.",
+      "acceptance_criteria": [
+        "DESeqDataSet built with condition as factor, reference level explicitly set to control, contrast named as condition treated vs control",
+        "Pre-filter applied at >=10 counts in >=6 samples before the model",
+        "Wald test run; apeglm shrinkage applied to the treated-vs-control coefficient",
+        "Results table has unshrunken LFC, shrunken LFC, lfcSE, pvalue, padj for every tested gene",
+        "BH-adjusted p-values reported at alpha 0.05 with independent filtering on; NA-padj genes flagged with cause",
+        "p-value histogram, MA plot, and dispersion plot produced",
+        "Explicit statement of whether/why the shallow sample was kept or excluded"
+      ]
+    },
+    {
+      "id": "T2S1",
+      "name": "Hallmark and WikiPathways enrichment (fgsea preranked)",
+      "agent": "enrichment-agent",
+      "track": "T2",
+      "status": "pending",
+      "caveats": [
+        "fgsea results depend on the chosen ranking metric (Wald stat vs shrunken LFC vs signed -log10 p) — this is a disputed methodological choice; report the metric used and treat hallmark hits as hypotheses for follow-up, not proven mechanisms.",
+        "If fewer than ~50 genes pass padj<0.05 in the DE step, an over-representation test on that short list would have no power; rely on the preranked full-list method instead."
+      ],
+      "maxSteps": 200,
+      "packages": [
+        "fgsea"
+      ],
+      "question": "Which of the 50 MSigDB Hallmark gene sets (and, secondarily, WikiPathways human pathways) are enriched among genes changing between treated and control?",
+      "grounding": {
+        "claims": [
+          "R-0098@d01b",
+          "R-0165@e456",
+          "R-0107@976c",
+          "R-0048@500d",
+          "R-0101@06c8",
+          "R-0103@93aa",
+          "R-0108@409f",
+          "R-0045@be9e",
+          "R-0047@fd9d",
+          "R-0052@620a",
+          "R-0099@0e8a"
+        ],
+        "reason": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark per R-0098@d01b, WikiPathways as second collection per R-0165@e456 (present in reference store)",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "rank_metric",
+            "step": "enrichment",
+            "value": "stat",
+            "source": "doi:10.1101/060012"
+          },
+          {
+            "name": "gene_set_collection",
+            "step": "enrichment",
+            "value": "msigdb_hallmark_human",
+            "source": "doi:10.1016/j.cels.2015.12.004"
+          },
+          {
+            "name": "min_size",
+            "step": "enrichment",
+            "value": 15,
+            "source": "doi:10.1073/pnas.0506580102"
+          },
+          {
+            "name": "max_size",
+            "step": "enrichment",
+            "value": 500,
+            "source": "doi:10.1073/pnas.0506580102"
+          },
+          {
+            "name": "collapse_redundant",
+            "step": "enrichment",
+            "value": true,
+            "source": "doi:10.1101/060012"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+        "template": "tpl-fgsea-preranked@1.0.0"
+      },
+      "resources": {
+        "cpu": 2,
+        "memoryGb": 4
+      },
+      "step_type": "enrichment",
+      "depends_on": [
+        "T1S2"
+      ],
+      "constraints": [
+        "rank_metric = stat (DESeq2 Wald statistic)",
+        "gene_set_collection = msigdb_hallmark_human (2026.1)",
+        "second_collection = wikipathways_human (2026.07.10)",
+        "min_size = 15, max_size = 500",
+        "collapse_redundant = true",
+        "enrichment_input = ranked_list (full tested gene list, not a thresholded subset)",
+        "adjustment = BH"
+      ],
+      "description": "Take the full DESeq2 results table from T1S2 (every tested gene, no p-value or fold-change pre-cut) and rank all genes by the DESeq2 Wald statistic ('stat' column). Run fgsea preranked GSEA against the MSigDB human Hallmark gene sets (50 sets, HGNC symbols, 2026.1 release, staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/), restricting to sets with 15-500 member genes among the tested genes. Adjust enrichment p-values with BH. Collapse redundant/overlapping significant sets to one representative per group (keep full table as supplement) and report the leading-edge genes for each significant set. Run a second pass with the same ranked list against the WikiPathways human collection (staged at /mnt/refs/managed/wikipathways-human/2026.07.10/, symbols are HGNC after parsing the '%'-delimited descriptor) as a secondary, less India-redundant pathway view, applying the same size window and BH adjustment; report its release date alongside results. State the ranking statistic choice (Wald stat) explicitly since it is a disputed parameter across labs. If fewer than ~50 genes are significant at padj<0.05 in T1S2, do not additionally run over-representation analysis on that short list — the preranked test on the full list is the primary and sufficient method here.",
+      "acceptance_criteria": [
+        "Genes ranked by DESeq2 Wald statistic, full tested-gene list used (no pre-threshold)",
+        "fgsea run against MSigDB Hallmark human (50 sets) with min_size=15, max_size=500, BH-adjusted",
+        "fgsea run against WikiPathways human as a secondary collection with the same size window and adjustment; its release date (2026.07.10) stated in the report",
+        "Redundant significant sets collapsed with one representative per group; leading-edge genes reported per significant set",
+        "Ranking metric (Wald statistic) stated explicitly in output"
+      ]
+    },
+    {
+      "id": "T1S3",
+      "name": "Consolidated DE and pathway report",
+      "agent": "bulk-transcriptomics-agent",
+      "track": "T1",
+      "status": "pending",
+      "caveats": [
+        "Enrichment method choice affects the result set — state this and do not present Hallmark hits as definitive mechanism, only as candidate pathways for follow-up."
+      ],
+      "maxSteps": 200,
+      "packages": [],
+      "question": "What is the final, reproducible summary of differentially expressed genes and enriched Hallmark/WikiPathways pathways between treated and control, including how the shallow sample was handled?",
+      "grounding": {
+        "claims": [
+          "R-0085@bb37",
+          "R-0087@3dcc",
+          "R-0041@059a",
+          "R-0051@01ca",
+          "R-0055@107a",
+          "R-0105@c4a8",
+          "R-0086@becf"
+        ],
+        "reason": "Report step ungrounded by a single rule but composed of report-stage claims returned by knowledge_recommend",
+        "status": "grounded",
+        "settings": [
+          {
+            "name": "effect_columns",
+            "step": "report",
+            "value": [
+              "log2FoldChange",
+              "shrunken_log2FoldChange",
+              "lfcSE"
+            ],
+            "source": "doi:10.1093/bioinformatics/bty895"
+          },
+          {
+            "name": "rank_genes_by",
+            "step": "report",
+            "value": "shrunken_log2FoldChange",
+            "source": "vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking"
+          },
+          {
+            "name": "fit_diagnostics",
+            "step": "report",
+            "value": [
+              "ma_plot",
+              "dispersion_plot"
+            ],
+            "source": "vignette:DESeq2/1.52.0#ma-plot"
+          },
+          {
+            "name": "reproducibility_record",
+            "step": "report",
+            "value": [
+              "session_info",
+              "seed",
+              "package_versions",
+              "collection_version",
+              "annotation_release"
+            ],
+            "source": "doi:10.1371/journal.pcbi.1003285"
+          }
+        ],
+        "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+      },
+      "resources": {
+        "cpu": 1,
+        "memoryGb": 2
+      },
+      "step_type": "report",
+      "depends_on": [
+        "T1S2",
+        "T2S1"
+      ],
+      "constraints": [
+        "report_fields include method, versions, design, thresholds, n_tested, n_de, session_info",
+        "rank_genes_by = shrunken_log2FoldChange for the display table",
+        "enrichment_report states database, version, rank_metric, universe, size_window",
+        "leading_edge reported per significant gene set",
+        "reproducibility_record includes session_info, seed, package_versions, collection_version"
+      ],
+      "description": "Assemble a final report combining: (1) the DESeq2 results table (unshrunken LFC, shrunken apeglm LFC, lfcSE, pvalue, padj) ranked by shrunken LFC for display, with the number of genes tested after filtering and the number significant at padj<0.05; (2) MA plot and dispersion plot from T1S2; (3) the p-value histogram and its shape; (4) the fgsea Hallmark and WikiPathways tables with leading-edge genes for each significant set, method (fgsea preranked, Wald-statistic ranking), gene set database versions (Hallmark 2026.1, WikiPathways 2026.07.10), and the size window (15-500); (5) an explicit statement of the shallow sample's library size, its QC behavior, and whether/why it was included or excluded in the final DE model; (6) any GC/length bias diagnostic outcome from T1S2; (7) a full reproducibility record: package versions (DESeq2, apeglm, fgsea), design formula, contrast, alpha, random seed used in fgsea permutations, and gene-set collection versions.",
+      "acceptance_criteria": [
+        "Report includes DE gene table with both unshrunken and shrunken LFC, ranked by shrunken LFC",
+        "Report states number of genes tested and number significant at padj<0.05",
+        "Report includes MA plot, dispersion plot, and p-value histogram with interpretation",
+        "Report includes Hallmark and WikiPathways enrichment tables with leading-edge genes and stated collection versions/release dates",
+        "Report explicitly documents the shallow sample's depth, QC status, and inclusion/exclusion decision with reasoning",
+        "Report includes a reproducibility record (package versions, design, contrast, alpha, seed, collection versions)"
+      ]
+    }
+  ],
+  "title": "Treated vs control DE and Hallmark pathway analysis",
+  "created_at": "2026-09-08T00:00:00Z",
+  "analytical_narrative": "Twelve human bulk RNA-seq samples (6 control, 6 treated per metadata.csv) with a raw integer count matrix over ~12,000 genes and a matched gene-length table. One sample is flagged as shallow, so the plan opens with sample-structure QC (blind VST, PCA on the top 500 variable genes, sample-distance heatmap, library-size table) to inspect that sample rather than silently drop it. Differential expression follows the standard DESeq2 Wald-test workflow for a 2-group, 6-vs-6, unpaired, no-batch design: minimal pre-filter (>=10 counts in >=6 samples), median-of-ratios normalization inside the model, explicit reference level (control) with contrast treated-vs-control, apeglm shrinkage of the reported log2FC, BH adjustment at alpha 0.05 with DESeq2's independent filtering left on, and a p-value histogram diagnostic. The full ranked gene list (DESeq2 Wald statistic) then feeds fgsea preranked GSEA against the MSigDB Hallmark human collection (50 sets, 2026.1) to answer 'which hallmark pathways change', with WikiPathways human as a secondary collection since it is present in the reference store (Reactome/GO C5 also staged, offered as optional follow-up in the report). A final report step consolidates the DE table (unshrunken and shrunken LFC, padj), fit diagnostics (MA plot, dispersion plot), enrichment tables with leading-edge genes, and a full reproducibility record (package versions, seed, collection versions), explicitly noting the low-depth sample's handling and any GC/length bias diagnostic result."
+}

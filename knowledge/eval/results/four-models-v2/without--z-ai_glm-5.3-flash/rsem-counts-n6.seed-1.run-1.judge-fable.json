@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 5,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly keeps RSEM expected counts as counts (edgeR unrounded, DESeq2 rounded), never substitutes TPM/FPKM, uses TMM inside the model with filterByExpr, and states BH at 0.05 with a sensible keep-plus-sensitivity policy for the shallow sample. It does not request the genes.results files or name the lost effective-length offset as such (it frames the loss only as 'TPM cannot be recomputed'), the QC has library sizes but no PCA or sample-distance heatmap, the design formula and reference level are never written out, and no fold-change shrinkage (apeglm or edgeR predFC) is applied to the reported effects. Enrichment was not requested; the added ORA names a universe but no collection version or gene-set size window. The report omits package versions."
+}

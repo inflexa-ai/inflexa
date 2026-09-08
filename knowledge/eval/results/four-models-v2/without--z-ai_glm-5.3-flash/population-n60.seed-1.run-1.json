@@ -1,0 +1,390 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "population-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:09:11.942Z",
+  "elapsedMs": 141533,
+  "outcome": "plan_submitted",
+  "planId": "pln-8030d3b7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Import, QC and filtering of counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene-level counts may carry Ensembl IDs or gene symbols — the identifier space found here determines the mapping step in T1S4",
+          "The profile does not state whether Salmon length correction was applied; for raw counts fed to DESeq2 this is acceptable, but note it in the QC report"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 120 samples and 12,000 genes internally consistent, correctly aligned between counts.csv and metadata.csv, and which genes pass a minimal expression filter for a 60 vs 60 whole-blood contrast?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Read /eval-four-models-v2-without-population-n60-s1-1/data/inputs/counts/counts.csv and metadata.csv, verify sample alignment and identifier type (gene symbols vs Ensembl IDs — record which), filter low-count genes, summarize library sizes, and run a variance-stabilized PCA colored by condition to surface outliers before any differential testing.",
+        "acceptance_criteria": [
+          "All 120 sample IDs in counts.csv columns match metadata.csv rows 1:1, with any mismatch reported rather than silently dropped",
+          "Library-size distribution and condition balance reported; extreme library-size outliers flagged",
+          "Low-expression filter applied (e.g. count >= 10 in at least 10 samples) with kept/removed gene counts reported",
+          "PCA on variance-stabilized counts shows whether samples separate by condition and whether any single sample is a gross outlier"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression with DESeq2 and LFC shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=60 per group the Wald test is well powered but shrinkage is still required because low-count genes get unstable raw LFCs",
+          "apeglm shrinkage needs the DESeq2 results object and the coefficient name matching the case-vs-control contrast — verify the level ordering in the factor"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0",
+          "ashr==2.2-63"
+        ],
+        "question": "Which genes differ between case and control in the 60 vs 60 whole-blood contrast, at raw-log2FC and after shrinkage?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Fit DESeq2 with design ~condition (the metadata table carries condition and nothing else, and the cohort is single-batch, so no covariates are added), run the Wald test with BH correction, then apply apeglm log2FC shrinkage on the condition coefficient to produce the effect-size estimate the next step prioritizes on.",
+        "acceptance_criteria": [
+          "DESeq2 fit with design ~condition and Wald test completes on the filtered matrix; convergence status reported",
+          "Full results table produced: baseMean, log2FC, lfcSE, stat, pvalue, BH padj at alpha=0.05",
+          "apeglm-shrunken log2FC column added for every tested gene (lfcShrink, type='apeglm'), merged with the unshrunken results",
+          "Genes flagged by independent filtering or Cook's-distance outlier replacement explicitly listed"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Effect-size prioritization of DE genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The |LFC|>=1 threshold is a reporting convention, not biology — the sensitivity sweep over 0.5/1/2 exists precisely so the choice is transparent rather than load-bearing",
+          "Whole-blood expression is dominated by blood-cell composition; large-effect genes may reflect cellular proportions rather than per-cell regulation — flag this interpretation limit rather than resolving it"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "dplyr",
+          "tidyr",
+          "ggplot2"
+        ],
+        "question": "Which case-vs-control differences are large enough to matter — not only significant — and how do effect-size ranking and p-value ranking disagree?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Take the shrunk results and build the answer to the actual question: define the significant-and-large-effect set as BH padj < 0.05 AND |shrunk log2FC| >= 1, report up/down counts, rank tables by effect size, and explicitly contrast them with the padj-only set to expose significant-but-tiny genes and large-but-undetected genes.",
+        "acceptance_criteria": [
+          "Cross-tabulated gene sets reported: significant only (padj<0.05), large-effect only (|shrunk LFC|>=1), and significant AND large-effect, with up/down counts for each",
+          "Top-50 tables ranked by shrunk |LFC| in each direction with padj attached",
+          "Concordance analysis: list genes significant with negligible effect (|shrunk LFC|<0.25) and genes with large effects but padj>=0.05, since n=60/group makes the latter a power artifact rather than absence of effect",
+          "Sensitivity note quantifying how the significant-and-large set changes under |LFC| thresholds of 0.5, 1, and 2"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of ranked DE results",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The reference store holds WikiPathways human GMT — use it directly; do not assume GO/KEGG offline resources beyond the installed org.Hs.eg.db",
+          "If identifier mapping loses more than ~10% of tested genes, report the loss and interpret enrichment as partial rather than retrying with a different source",
+          "fgsea leads to noisy results with small gene sets — apply the default minSize=15, maxSize=500 and report pathway sizes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "GSEABase",
+          "org.Hs.eg.db==3.23.1",
+          "data.table"
+        ],
+        "question": "Which WikiPathways pathways are enriched among the genes ranked by case-vs-control differential expression, and do the same pathways appear when ranked by shrunk effect size instead of significance?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Run pre-ranked GSEA (fgsea) with the WikiPathways Homo sapiens GMT staged under /mnt/refs/managed/wikipathways-human/2026.07.10/ as the gene-set collection, ranking genes by the DESeq2 Wald statistic, and a parallel ranking by shrunk log2FC to see which pathways survive both orderings. Map gene identifiers to HGNC symbols first if the matrix is not already in symbols.",
+        "acceptance_criteria": [
+          "Identifier space of the count matrix confirmed against the WikiPathways HGNC-symbol GMT; mapping performed with org.Hs.eg.db and/or the UniProt human idmapping file if needed, with mapped/unmapped fractions reported",
+          "fgsea run on the full ranked list (no pre-thresholding) producing NES and BH-adjusted p-values for all pathways meeting minSize/maxSize",
+          "A second fgsea run ranked by shrunk |LFC| to check that the leading pathways are not an artifact of p-value ranking",
+          "Top enriched pathways table with NES, padj, and leading-edge gene counts, written alongside the gene-level results"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Results figures and outlier-sensitivity check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 60 samples per group, single-sample outliers rarely move BH-adjusted results, but whole-blood cohorts occasionally contain mislabeled or hemolysed samples — this step is the check that catches that",
+          "Heatmap uses variance-stabilized values, not raw counts"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "EnhancedVolcano==1.30.0",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the reported case-vs-control results survive removal of samples DESeq2 flagged as outliers, and are the figures consistent with the effect-size story?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3",
+          "T1S4"
+        ],
+        "description": "Produce the volcano, MA and top-gene heatmap for the case-vs-control contrast, then re-run DESeq2 with any Cook's-distance-flagged samples removed to verify the significant-and-large-effect set is not driven by one or two samples.",
+        "acceptance_criteria": [
+          "Volcano plot (shrunk log2FC vs padj) with the significant-and-large-effect set highlighted; MA plot; top-50-gene heatmap by condition",
+          "Sensitivity re-run excluding Cook's-distance-flagged samples with a gene-set overlap report vs the primary run (Jaccard on the significant-and-large set)",
+          "Concordance summary: if overlap > 90% the primary result stands; if lower, the affected genes are listed and the report says so",
+          "All tables exported as CSV next to the figures for the final report"
+        ]
+      }
+    ],
+    "title": "Whole-blood case-control DE with effect-size ranking",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 120 human whole-blood samples (60 cases, 60 controls, unpaired, single batch) with a 12,000 x 121 gene-level count matrix from Salmon and a 120 x 2 metadata table whose only covariate is condition. With no covariates, batch, or pairing in the design, the analysis is a clean two-group contrast: DESeq2 with design ~condition for the Wald test, then apeglm log2FC shrinkage because the research question is explicitly about effect magnitude, not just significance. The question 'which differences are large enough to matter' is answered by an explicit effect-size layer: a shrunk-|LFC| threshold (>=1 log2 unit) crossed with FDR, plus a head-to-head comparison of effect-size ranking vs p-value ranking to expose genes that are significant but tiny or large but underpowered. Functional interpretation uses fgsea over the ranked gene list against the WikiPathways human GMT provisioned under /mnt/refs, after confirming/mapping the count-matrix identifier space (Salmon output may be Ensembl IDs rather than HGNC symbols) with the local org.Hs.eg.db / UniProt human idmapping resources — no network access is assumed anywhere."
+  },
+  "usage": {
+    "inputTokens": 31162,
+    "outputTokens": 3843,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1429
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_3ecf8cb4ff9f4505b6ecdd67",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case-control DE with effect-size ranking",
+          "analytical_narrative": "The dataset is 120 human whole-blood samples (60 cases, 60 controls, unpaired, single batch) with a 12,000 x 121 gene-level count matrix from Salmon and a 120 x 2 metadata table whose only covariate is condition. With no covariates, batch, or pairing in the design, the analysis is a clean two-group contrast: DESeq2 with design ~condition for the Wald test, then apeglm log2FC shrinkage because the research question is explicitly about effect magnitude, not just significance. The question 'which differences are large enough to matter' is answered by an explicit effect-size layer: a shrunk-|LFC| threshold (>=1 log2 unit) crossed with FDR, plus a head-to-head comparison of effect-size ranking vs p-value ranking to expose genes that are significant but tiny or large but underpowered. Functional interpretation uses fgsea over the ranked gene list against the WikiPathways human GMT provisioned under /mnt/refs, after confirming/mapping the count-matrix identifier space (Salmon output may be Ensembl IDs rather than HGNC symbols) with the local org.Hs.eg.db / UniProt human idmapping resources — no network access is assumed anywhere.",
+          "created_at": "2026-07-22T12:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Import, QC and filtering of counts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Are the 120 samples and 12,000 genes internally consistent, correctly aligned between counts.csv and metadata.csv, and which genes pass a minimal expression filter for a 60 vs 60 whole-blood contrast?",
+              "acceptance_criteria": [
+                "All 120 sample IDs in counts.csv columns match metadata.csv rows 1:1, with any mismatch reported rather than silently dropped",
+                "Library-size distribution and condition balance reported; extreme library-size outliers flagged",
+                "Low-expression filter applied (e.g. count >= 10 in at least 10 samples) with kept/removed gene counts reported",
+                "PCA on variance-stabilized counts shows whether samples separate by condition and whether any single sample is a gross outlier"
+              ],
+              "packages": [
+                "DESeq2==1.52.0",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Read /eval-four-models-v2-without-population-n60-s1-1/data/inputs/counts/counts.csv and metadata.csv, verify sample alignment and identifier type (gene symbols vs Ensembl IDs — record which), filter low-count genes, summarize library sizes, and run a variance-stabilized PCA colored by condition to surface outliers before any differential testing.",
+              "caveats": [
+                "Salmon gene-level counts may carry Ensembl IDs or gene symbols — the identifier space found here determines the mapping step in T1S4",
+                "The profile does not state whether Salmon length correction was applied; for raw counts fed to DESeq2 this is acceptable, but note it in the QC report"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression with DESeq2 and LFC shrinkage",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes differ between case and control in the 60 vs 60 whole-blood contrast, at raw-log2FC and after shrinkage?",
+              "acceptance_criteria": [
+                "DESeq2 fit with design ~condition and Wald test completes on the filtered matrix; convergence status reported",
+                "Full results table produced: baseMean, log2FC, lfcSE, stat, pvalue, BH padj at alpha=0.05",
+                "apeglm-shrunken log2FC column added for every tested gene (lfcShrink, type='apeglm'), merged with the unshrunken results",
+                "Genes flagged by independent filtering or Cook's-distance outlier replacement explicitly listed"
+              ],
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0",
+                "ashr==2.2-63"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Fit DESeq2 with design ~condition (the metadata table carries condition and nothing else, and the cohort is single-batch, so no covariates are added), run the Wald test with BH correction, then apply apeglm log2FC shrinkage on the condition coefficient to produce the effect-size estimate the next step prioritizes on.",
+              "caveats": [
+                "With n=60 per group the Wald test is well powered but shrinkage is still required because low-count genes get unstable raw LFCs",
+                "apeglm shrinkage needs the DESeq2 results object and the coefficient name matching the case-vs-control contrast — verify the level ordering in the factor"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Effect-size prioritization of DE genes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which case-vs-control differences are large enough to matter — not only significant — and how do effect-size ranking and p-value ranking disagree?",
+              "acceptance_criteria": [
+                "Cross-tabulated gene sets reported: significant only (padj<0.05), large-effect only (|shrunk LFC|>=1), and significant AND large-effect, with up/down counts for each",
+                "Top-50 tables ranked by shrunk |LFC| in each direction with padj attached",
+                "Concordance analysis: list genes significant with negligible effect (|shrunk LFC|<0.25) and genes with large effects but padj>=0.05, since n=60/group makes the latter a power artifact rather than absence of effect",
+                "Sensitivity note quantifying how the significant-and-large set changes under |LFC| thresholds of 0.5, 1, and 2"
+              ],
+              "packages": [
+                "DESeq2==1.52.0",
+                "dplyr",
+                "tidyr",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Take the shrunk results and build the answer to the actual question: define the significant-and-large-effect set as BH padj < 0.05 AND |shrunk log2FC| >= 1, report up/down counts, rank tables by effect size, and explicitly contrast them with the padj-only set to expose significant-but-tiny genes and large-but-undetected genes.",
+              "caveats": [
+                "The |LFC|>=1 threshold is a reporting convention, not biology — the sensitivity sweep over 0.5/1/2 exists precisely so the choice is transparent rather than load-bearing",
+                "Whole-blood expression is dominated by blood-cell composition; large-effect genes may reflect cellular proportions rather than per-cell regulation — flag this interpretation limit rather than resolving it"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "Pathway enrichment of ranked DE results",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which WikiPathways pathways are enriched among the genes ranked by case-vs-control differential expression, and do the same pathways appear when ranked by shrunk effect size instead of significance?",
+              "acceptance_criteria": [
+                "Identifier space of the count matrix confirmed against the WikiPathways HGNC-symbol GMT; mapping performed with org.Hs.eg.db and/or the UniProt human idmapping file if needed, with mapped/unmapped fractions reported",
+                "fgsea run on the full ranked list (no pre-thresholding) producing NES and BH-adjusted p-values for all pathways meeting minSize/maxSize",
+                "A second fgsea run ranked by shrunk |LFC| to check that the leading pathways are not an artifact of p-value ranking",
+                "Top enriched pathways table with NES, padj, and leading-edge gene counts, written alongside the gene-level results"
+              ],
+              "packages": [
+                "fgsea==1.38.0",
+                "GSEABase",
+                "org.Hs.eg.db==3.23.1",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "description": "Run pre-ranked GSEA (fgsea) with the WikiPathways Homo sapiens GMT staged under /mnt/refs/managed/wikipathways-human/2026.07.10/ as the gene-set collection, ranking genes by the DESeq2 Wald statistic, and a parallel ranking by shrunk log2FC to see which pathways survive both orderings. Map gene identifiers to HGNC symbols first if the matrix is not already in symbols.",
+              "caveats": [
+                "The reference store holds WikiPathways human GMT — use it directly; do not assume GO/KEGG offline resources beyond the installed org.Hs.eg.db",
+                "If identifier mapping loses more than ~10% of tested genes, report the loss and interpret enrichment as partial rather than retrying with a different source",
+                "fgsea leads to noisy results with small gene sets — apply the default minSize=15, maxSize=500 and report pathway sizes"
+              ]
+            },
+            {
+              "id": "T1S5",
+              "name": "Results figures and outlier-sensitivity check",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the reported case-vs-control results survive removal of samples DESeq2 flagged as outliers, and are the figures consistent with the effect-size story?",
+              "acceptance_criteria": [
+                "Volcano plot (shrunk log2FC vs padj) with the significant-and-large-effect set highlighted; MA plot; top-50-gene heatmap by condition",
+                "Sensitivity re-run excluding Cook's-distance-flagged samples with a gene-set overlap report vs the primary run (Jaccard on the significant-and-large set)",
+                "Concordance summary: if overlap > 90% the primary result stands; if lower, the affected genes are listed and the report says so",
+                "All tables exported as CSV next to the figures for the final report"
+              ],
+              "packages": [
+                "DESeq2==1.52.0",
+                "EnhancedVolcano==1.30.0",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Produce the volcano, MA and top-gene heatmap for the case-vs-control contrast, then re-run DESeq2 with any Cook's-distance-flagged samples removed to verify the significant-and-large-effect set is not driven by one or two samples.",
+              "caveats": [
+                "With 60 samples per group, single-sample outliers rarely move BH-adjusted results, but whole-blood cohorts occasionally contain mislabeled or hemolysed samples — this step is the check that catches that",
+                "Heatmap uses variance-stabilized values, not raw counts"
+              ]
+            }
+          ],
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 90
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

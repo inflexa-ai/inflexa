@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan fits the 6 vs 6 unpaired single-batch design and gets the activity inference mostly right: signed CollecTRI 2.0 human regulons, decoupleR ulm, minimum five measured targets, BH across regulators, per-sample score matrix with limma ~condition, and it correctly avoids ORA on target sets and cutoff lists. Its central deviation from the reference is refusing to fit any count model, so the primary input the reference demands — a per-gene Wald or moderated-t statistic for the treated vs control contrast — is never produced; the per-sample log2-CPM route is only the reference's secondary consistency check, and mlm as the second estimator is replaced by a DoRothEA sensitivity run. QC is thorough and explicit with a flag-don't-drop policy, and the filter (≥10 counts in ≥6 samples) is minimal and justified. Normalization is TMM outside any count model because no count model exists, the reference level and alpha for BH are not stated explicitly, and no shrunken effect is reported, though the report fields (network, version, input, estimator, regulon size, regulators tested, inference caveat, sessionInfo) are well covered."
+}

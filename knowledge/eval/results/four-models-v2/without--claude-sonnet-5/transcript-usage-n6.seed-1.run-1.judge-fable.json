@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 2,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 5
+  },
+  "rationale": "The planner reached the correct outcome: it recognised that gene-level counts cannot answer a dominant-isoform question, refused to fit DESeq2/edgeR or fabricate a transcript matrix, and asked for the per-sample Salmon quant.sf or a transcript-level matrix, naming DTU methods (DEXSeq/IsoformSwitchAnalyzeR-style) as the path once data arrive. It did not request the transcript-to-gene map with annotation version or the effective lengths, and did not sketch the downstream plan the reference expects (tximport scaledTPM/dtuScaledTPM, dmFilter, gene- and transcript-level tests with stageR at overall FDR 0.05, a stated policy for the shallow sample_01), so QC, filtering, normalization, model/contrast, and FDR criteria are essentially unstated. Enrichment is correctly absent. The stop message is clear and specific about the data gap, which earns partial credit on reporting."
+}

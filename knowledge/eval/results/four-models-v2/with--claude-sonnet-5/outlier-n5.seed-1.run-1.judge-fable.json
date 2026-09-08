@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: it characterizes sample_03 by library size, detected genes, PCA and distance heatmap before any decision, then reports both DESeq2 fits (all 10 and minus sample_03) with their intersection and the genes that change status, plus an edgeR QL cross-check, apeglm shrinkage, BH at 0.05 with independent filtering, an explicit ~condition design with control as reference and a named contrast. The low-count filter (>=10 counts in >=5 samples) is tied to the smallest group, and normalization is kept inside the models (median-of-ratios, TMM). The one weakness is that the removal/primary-designation criterion is stated only qualitatively ('clear technical cause') rather than fixed numerically in advance (e.g., MAD distance or metric threshold), so the primary-fit decision is partly deferred. Enrichment was not asked for but is specified correctly (full ranked list on the Wald stat, named collections with versions, 15-500 size window, per-collection BH), and the report step lists methods, versions, thresholds, counts and caveats."
+}

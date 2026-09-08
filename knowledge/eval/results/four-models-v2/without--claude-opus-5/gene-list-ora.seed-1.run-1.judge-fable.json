@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit DESeq2, defines the foreground as padj<0.05 with a stated |log2FC|>=1 cutoff, uses the non-NA-padj tested genes as the explicit universe, names GO BP with enrichGO hypergeometric, BH at 0.05, minGSSize 10/maxGSSize 500, simplify at 0.7 Wang, and tests up and down apart while reporting gene ratio, background ratio, adjusted p and member genes. The shallow sample_01 is handled with an explicit no-correction policy and stated as a power caveat, and the contrast direction is verified against metadata; no PCA/sample QC is done, which is defensible for a delivered table but leaves that criterion only partly met. Filter, normalization, and design-formula criteria are largely inapplicable since no model is fit, and the plan handles the relevant analogs (independent-filtering NAs, contrast numerator) sensibly. The added GSEA is framed as a threshold-free sanity check rather than the answer, though folding it into a confidence label mildly blurs the ORA question; software versions beyond the annotation resource are not explicitly required in the report."
+}

@@ -1,0 +1,29 @@
+{
+  "template": "tpl-fgsea-preranked@1.0.0",
+  "method": "fgsea multilevel preranked GSEA",
+  "inputs": {
+    "results_path": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T1S2/output/de_treated_vs_control_results.csv",
+    "gmt_path": "output/wikipathways_human_2026.07.10_hgnc_symbols.gmt"
+  },
+  "database": "wikipathways_human_2026.07.10_hgnc_symbols.gmt",
+  "rank_metric": "stat",
+  "n_genes_input": 9782,
+  "n_genes_ranked": 9782,
+  "n_genes_in_sets": 2673,
+  "n_sets_input": 987,
+  "n_sets_tested": 402,
+  "n_significant": 101,
+  "n_up": 94,
+  "n_down": 7,
+  "n_main_pathways": 32,
+  "padj_cutoff": 0.05,
+  "min_size": 15,
+  "max_size": 500,
+  "eps": 0,
+  "seed": 20260904,
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "fgsea": "1.38.0",
+    "ggplot2": "4.0.3"
+  }
+}

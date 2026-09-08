@@ -1,0 +1,216 @@
+{
+  "schema": "inflexa.decision_record/0.1",
+  "template": {
+    "id": "tpl-deseq2-two-group",
+    "version": "1.0.0",
+    "label": "DESeq2 two-group differential expression with apeglm shrinkage",
+    "method": "M-0001"
+  },
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  },
+  "rendered_at": "2026-09-07T09:13:25.181Z",
+  "slots": [
+    {
+      "name": "counts_path",
+      "value": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        20
+      ]
+    },
+    {
+      "name": "metadata_path",
+      "value": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/data/inputs/local/metadata.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        21
+      ]
+    },
+    {
+      "name": "sample_id_column",
+      "value": "sample",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        22
+      ]
+    },
+    {
+      "name": "condition_column",
+      "value": "condition",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        23
+      ]
+    },
+    {
+      "name": "reference_level",
+      "value": "control",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        24
+      ]
+    },
+    {
+      "name": "test_level",
+      "value": "treated",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        25
+      ]
+    },
+    {
+      "name": "design",
+      "value": "~ condition",
+      "source": "default",
+      "adaptable": true,
+      "default_source": "doi:10.1186/s13059-014-0550-8",
+      "lines": [
+        26
+      ]
+    },
+    {
+      "name": "min_count",
+      "value": 10,
+      "source": "default",
+      "adaptable": true,
+      "default_source": "doi:10.12688/f1000research.7035.1",
+      "lines": [
+        27
+      ]
+    },
+    {
+      "name": "alpha",
+      "value": 0.05,
+      "source": "default",
+      "adaptable": false,
+      "default_source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing",
+      "lines": [
+        32
+      ]
+    },
+    {
+      "name": "lfc_shrink",
+      "value": "apeglm",
+      "source": "default",
+      "adaptable": true,
+      "default_source": "doi:10.1093/bioinformatics/bty895",
+      "lines": [
+        33
+      ]
+    },
+    {
+      "name": "lfc_threshold",
+      "value": 0,
+      "source": "default",
+      "adaptable": true,
+      "default_source": "vignette:DESeq2/1.52.0#tests-of-log2-fold-change-above-or-below-a-threshold",
+      "lines": [
+        34
+      ]
+    },
+    {
+      "name": "n_top_genes_pca",
+      "value": 500,
+      "source": "default",
+      "adaptable": true,
+      "default_source": "doi:10.12688/f1000research.7035.1",
+      "lines": [
+        35
+      ]
+    },
+    {
+      "name": "output_prefix",
+      "value": "deseq2",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        36
+      ]
+    }
+  ],
+  "environment": {
+    "match": "exact",
+    "pins": [
+      {
+        "name": "DESeq2",
+        "track": "bioconductor",
+        "version": "1.52.0",
+        "farm": "1.52.0",
+        "status": "exact"
+      },
+      {
+        "name": "apeglm",
+        "track": "bioconductor",
+        "version": "1.34.0",
+        "farm": "1.34.0",
+        "status": "exact"
+      },
+      {
+        "name": "ashr",
+        "track": "cran",
+        "version": "2.2-63",
+        "farm": "2.2-63",
+        "status": "exact"
+      },
+      {
+        "name": "ggplot2",
+        "track": "cran",
+        "version": "4.0.3",
+        "farm": "4.0.3",
+        "status": "exact"
+      },
+      {
+        "name": "pheatmap",
+        "track": "cran",
+        "version": "1.0.13",
+        "farm": "1.0.13",
+        "status": "exact"
+      },
+      {
+        "name": "jsonlite",
+        "track": "cran",
+        "version": "2.0.0",
+        "farm": "2.0.0",
+        "status": "exact"
+      }
+    ]
+  },
+  "syntax": {
+    "status": "ok"
+  },
+  "citations": [
+    {
+      "doi": "10.1186/s13059-014-0550-8",
+      "title": "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2",
+      "year": 2014,
+      "direction": "supports"
+    },
+    {
+      "title": "Analyzing RNA-seq data with DESeq2 (the DESeq2 vignette)",
+      "year": 2026,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1093/bioinformatics/bty895",
+      "title": "Heavy-tailed prior distributions for sequence count data: removing the noise and preserving large differences",
+      "year": 2019,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.12688/f1000research.7035.1",
+      "title": "RNA-Seq workflow: gene-level exploratory analysis and differential expression",
+      "year": 2015,
+      "direction": "supports"
+    }
+  ],
+  "unvetted_edits": [],
+  "script_path": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/runs/619852b4-1723-48f1-b3fe-f19dbee5d2d9/T1S2/scripts/tpl-deseq2-two-group.R"
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The classifier design matches the reference closely: repeated stratified nested CV with all selection, scaling and tuning inside training folds, elastic-net logistic regression among the candidates, out-of-fold thresholds, selection-frequency stability, a refit final model, and an explicit internal-validation-only caveat, plus a permutation null and a leaky contrast that go beyond the reference. The weak point is that the log-CPM/VST transform is fitted once on all 120 samples in T1S1 and only vaguely promised to be refit inside folds, and the label-blind count filter is a global decision, which is acceptable but not fully inside the CV. QC is thorough with an outlier policy, the filter is stated and justified, DESeq2 receives raw counts with apeglm and BH, but the reference level is not named and the |LFC|>0.5 cut is applied post hoc rather than as an lfcThreshold in the test. Enrichment states the ranking metric and a named human collection but gives no explicit ORA universe or gene-set size window, and package versions are not requested in the report."
+}

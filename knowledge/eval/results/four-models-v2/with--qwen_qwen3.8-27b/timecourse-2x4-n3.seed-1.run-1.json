@@ -1,0 +1,1592 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T08:39:39.613Z",
+  "elapsedMs": 346902,
+  "outcome": "plan_submitted",
+  "planId": "pln-92962edd",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon counts as delivered: no length correction is documented. Do not rescale or transform the counts before the model — the DESeq2 size factors handle library size inside the negative binomial model."
+        ],
+        "context": "Input: /eval-four-models-v2-with-timecourse-2x4-n3-s1-1/data/inputs/counts/counts.csv — 12,000 genes × 24 sample columns (gene identifier in the first column); salmon gene-level counts as delivered, no record of whether a length correction was applied, so use the values as raw counts (size factors estimated inside the model). /eval-four-models-v2-with-timecourse-2x4-n3-s1-1/data/inputs/metadata/metadata.csv — one row per sample with columns condition, time (t0..t3), time_hours. Verify that all 24 samples reconcile with the 2×4×3 design (exactly 3 samples in each of the 8 condition×time cells) before plotting. Color all plots by condition and by time.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 24 samples of the treated-vs-control cell-line time course (2 conditions × 4 time points t0–t3 × 3 replicates per cell) cluster by condition and time as expected, and does any sample depart from its expected cell?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)"
+        ],
+        "description": "PCA and distance heatmap of the 24 samples to confirm the 2×4×3 design structure and detect outliers before differential testing.",
+        "acceptance_criteria": [
+          "PCA on the 500 most variable genes (blind vst) colored by condition and by time, with all 24 samples present",
+          "Sample Euclidean distance heatmap",
+          "Confirmation that each of the 8 condition×time cells holds exactly 3 samples and that no sample departs from its cell or has a library size far outside the range; any departure is reported as a finding, not a stop"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 condition × time interaction test with ashr LFC shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The length offset is lost: salmon counts as delivered with no quantification files and no average transcript length table. Fit without a length offset, do not run tximport on a gene table, do not invent lengths, and state in the output that a change in isoform use can show as differential expression (R-0169@18ab).",
+          "The interaction term has low power with 3 replicates per cell: it is a difference of differences, so its standard error is larger than a main effect's at the same replicate number. Keep the interaction test as the primary result, report the simple effects beside it at the same threshold, and do not loosen the threshold to compensate. A gene absent from the interaction list is not shown to have the same effect in both conditions (R-0063@6190).",
+          "With 3 replicates per cell, count models find only a minority of the truly differentially expressed genes, most with large fold changes; keep alpha at 0.05 and do not change the threshold to compensate (R-0017@8a47).",
+          "Do not rely on alphabetical factor levels: the reference levels (condition: control, time: t0) must be set explicitly and reported, since a wrong reference inverts every fold change without an error.",
+          "t0 is the shared baseline: a significant interaction can be driven by a t0 level shift; the simple effects disambiguate where the treatment-specific change occurs."
+        ],
+        "context": "Input: counts.csv (12,000 genes × 24 samples, salmon gene-level counts as delivered) and metadata.csv (condition, time, time_hours) under /eval-four-models-v2-with-timecourse-2x4-n3-s1-1/data/inputs/. Import: the provenance does not document a length correction and no per-sample quantification files or average transcript length table exist, so fit the count model on the counts as delivered with no length offset; do not run tximport on a gene table and do not invent a length input. Set explicit reference levels before modeling (condition: control, time: t0) and record them; design ~ condition + time + condition:time. The interaction spans 3 coefficients (condition:treated × time t1, t2, t3). Primary test = joint test of those 3 interaction coefficients: LRT against the reduced model ~ condition + time (the multi-coefficient case per R-0013@2639), cross-checked with the multi-coefficient Wald test. Simple effects beside it: treatment vs control at t0 (main coefficient), and at t1/t2/t3 (two-coefficient contrasts of main effect plus interaction), each with LFC shrunk by ashr (apeglm accepts a single coefficient only, so ashr is used for these multi-coefficient contrasts). Pre-filter: keep a gene with at least 10 counts in at least 3 samples (smallest group size) — minimal, because independent filtering in results() does the rest. Size factors: median of ratios, estimated inside DESeq2 (no pre-normalization). Keep DESeq2's count-outlier flagging: with 3 replicates per cell a flagged gene gets p = NA — count and report those genes separately. Multiple testing: BH within each contrast, alpha = 0.05 passed to results (the same alpha as the report cutoff), FDR control per contrast. Power statement before the model: RNASeqPower and PROPER are not installed, so estimate expected power from the closed form using the fitted dispersion and library depth, state the fold change this 2×4×3 design can detect at 80% power, and note that more replicates help more than deeper sequencing. Note t0 is the shared baseline: a significant interaction can arise from a t0 shift, which the simple effects disambiguate.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ashr"
+        ],
+        "question": "Which of the 12,000 genes show a treatment-specific change over the four time points (t0–t3) beyond the shared time trend — i.e., a significant condition × time interaction — and what is the shape of each gene's treatment effect by time?",
+        "grounding": {
+          "claims": [
+            "R-0029@22ca",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0060@0ff9",
+            "R-0169@18ab",
+            "R-0162@ed74",
+            "R-0036@9786",
+            "R-0013@2639",
+            "R-0001@9a17",
+            "R-0039@968d",
+            "R-0063@6190",
+            "R-0017@8a47",
+            "R-0040@dd4c",
+            "R-0009@310d",
+            "R-0061@bcab",
+            "R-0166@bbcd",
+            "R-0083@12de",
+            "R-0010@6072",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "2×4 factorial interaction question, 3 replicates per cell, salmon counts as delivered: DESeq2 with the interaction term, joint test of the 3 interaction coefficients, ashr shrinkage for the multi-coefficient simple effects, BH within contrast — per R-0013@2639, R-0063@6190, R-0040@dd4c, R-0169@18ab and the cited rules",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter_policy",
+              "step": "filter_low_counts",
+              "value": "minimal_then_independent",
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "contrast_plan",
+              "step": "model_design",
+              "value": "one_named_contrast_per_comparison",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "reference_level_policy",
+              "step": "model_design",
+              "value": "explicit_and_reported",
+              "source": "doi:10.12688/f1000research.27893.1"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "gene_counts_without_length_offset",
+              "source": "doi:10.12688/f1000research.7563.2"
+            },
+            {
+              "name": "missing_input",
+              "step": "model_design",
+              "value": "quantification_directories_or_avg_tx_length_table",
+              "source": "vignette:tximport/2026-04-28#import-transcript-level-estimates"
+            },
+            {
+              "name": "power_plan",
+              "step": "model_design",
+              "value": "expected_power_from_replicates_depth_and_dispersion",
+              "source": "doi:10.1089/cmb.2012.0283"
+            },
+            {
+              "name": "power_tools_of_record",
+              "step": "model_design",
+              "value": "RNASeqPower_and_PROPER_absent_closed_form_instead",
+              "source": "rule:R-0162"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "design_terms",
+              "step": "differential_expression",
+              "value": [
+                "factor_a",
+                "factor_b",
+                "factor_a:factor_b"
+              ],
+              "source": "vignette:DESeq2/1.52.0#interactions"
+            },
+            {
+              "name": "test",
+              "step": "differential_expression",
+              "value": "interaction",
+              "source": "vignette:DESeq2/1.52.0#interactions"
+            },
+            {
+              "name": "count_outlier_policy",
+              "step": "differential_expression",
+              "value": "flag_and_report_na",
+              "source": "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+            },
+            {
+              "name": "interaction_power_caution",
+              "step": "differential_expression",
+              "value": true,
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "report_simple_effects",
+              "step": "differential_expression",
+              "value": true,
+              "source": "vignette:DESeq2/1.52.0#interactions"
+            },
+            {
+              "name": "power_caution",
+              "step": "differential_expression",
+              "value": true,
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "lfc_shrink",
+              "step": "shrink_lfc",
+              "value": "ashr",
+              "source": "doi:10.1093/biostatistics/kxw041"
+            },
+            {
+              "name": "adjustment_scope",
+              "step": "multiple_testing",
+              "value": "within_contrast",
+              "source": "guide:limma/2026-05-19#multiple-testing-across-contrasts"
+            },
+            {
+              "name": "contrast_label_in_report",
+              "step": "multiple_testing",
+              "value": "true",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "independent_filtering",
+              "step": "multiple_testing",
+              "value": true,
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "pvalue_histogram",
+              "step": "multiple_testing",
+              "value": "inspect_before_adjustment",
+              "source": "doi:10.3390/ht7030023"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "lfc_threshold_policy",
+              "step": "multiple_testing",
+              "value": "test_against_threshold",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-interaction@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+          "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+          "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+          "model_design: contrast_plan = one_named_contrast_per_comparison (vignette:DESeq2/1.52.0#contrasts)",
+          "model_design: reference_level_policy = explicit_and_reported (doi:10.12688/f1000research.27893.1)",
+          "model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)",
+          "model_design: missing_input = quantification_directories_or_avg_tx_length_table (vignette:tximport/2026-04-28#import-transcript-level-estimates)",
+          "model_design: power_plan = expected_power_from_replicates_depth_and_dispersion (doi:10.1089/cmb.2012.0283)",
+          "model_design: power_tools_of_record = RNASeqPower_and_PROPER_absent_closed_form_instead (rule:R-0162)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "differential_expression: design_terms = factor_a, factor_b, factor_a:factor_b (vignette:DESeq2/1.52.0#interactions)",
+          "differential_expression: test = interaction (vignette:DESeq2/1.52.0#interactions)",
+          "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "differential_expression: interaction_power_caution = true (doi:10.1261/rna.053959.115)",
+          "differential_expression: report_simple_effects = true (vignette:DESeq2/1.52.0#interactions)",
+          "differential_expression: power_caution = true (doi:10.1261/rna.053959.115)",
+          "shrink_lfc: lfc_shrink = ashr (doi:10.1093/biostatistics/kxw041)",
+          "multiple_testing: adjustment_scope = within_contrast (guide:limma/2026-05-19#multiple-testing-across-contrasts)",
+          "multiple_testing: contrast_label_in_report = true (vignette:DESeq2/1.52.0#contrasts)",
+          "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+          "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+          "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+          "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)"
+        ],
+        "description": "Minimal pre-filter, DESeq2 fit with the full interaction design ~ condition + time + condition:time on the 12,000 × 24 count matrix, joint interaction test as the primary result, simple effects per time point with ashr shrinkage, BH multiple testing within contrast, and the power statement.",
+        "acceptance_criteria": [
+          "Per-gene results table: gene id, baseMean, unshrunken LFC, shrunken LFC, lfcSE, p-value and adjusted p-value for the joint interaction test and for each of the four simple effects (treatment vs control at t0, t1, t2, t3); the contrast name is stated beside every adjusted p-value",
+          "Primary significant set: genes with adjusted p-value < 0.05 for the joint condition × time interaction test (the answer to the research question), plus the per-simple-effect significant sets at the same threshold",
+          "Counts reported: genes removed by the pre-filter, genes with NA p-value from count-outlier flagging (separate from independent-filter removals), genes tested after filtering, and genes passing each threshold",
+          "Saved plots: p-value histogram before adjustment (shape inspected — flat or declining expected), MA plot, dispersion plot",
+          "Power statement: expected power of this 2×4×3 design for the interaction test and the fold change detectable at 80% power"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report: interaction gene set, simple effects, robustness, reproducibility",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not present the union of the two methods as the result; the intersection is the high-confidence set.",
+          "With the low power of this design, state that a gene absent from the significant list is not shown to be unchanged.",
+          "The edgeR run must reuse the same counts, the same pre-filter, and the same explicit reference levels as the DESeq2 fit, so the comparison is on identical input."
+        ],
+        "context": "Assemble the report from the T1S2 outputs. Also run the edgeR quasi-likelihood F-test on the same counts and the same design (~ condition + time + condition:time, the same explicit reference levels control/t0) as the second method, and report the number of significant genes from each method and the size of the intersection; treat the intersection as the high-confidence set and list genes called by only one method as a secondary set named by method (R-0042@54e1). Report, before the gene tables: method, package versions, design formula, reference levels, thresholds, number of genes tested after filtering, number of DE genes per contrast, and sessionInfo (R-0041@059a). Put the MA plot and the dispersion plot before the gene tables and state what each shows (R-0087@3dcc). For the interaction, give each gene's simple effect in the reference time level, the simple effect in the other levels, and the interaction contrast side by side, with the reference levels named beside the table (R-0092@bb58). Rank the gene table and plots on the shrunken LFC, keeping the unshrunken estimate and its standard error alongside, and name the shrinkage estimator (ashr) in the table header (R-0085@bb37). State the expected power of the test at 3 replicates per cell and that an absent gene is not evidence of no effect (R-0094@6849). State the length-offset limitation: salmon counts as delivered with no documented length correction, so a change in isoform use can show as differential expression (R-0169@18ab). Store the reproducibility record with the results: sessionInfo, seed of every step using randomness, package versions (R-0086@becf).",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "What is the final answer — the genes with a treatment-specific temporal response — presented with the fit diagnostics, the expected-power statement, the cross-method robustness check, and the reproducibility record?",
+        "grounding": {
+          "claims": [
+            "R-0085@bb37",
+            "R-0087@3dcc",
+            "R-0092@bb58",
+            "R-0094@6849",
+            "R-0042@54e1",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step; constraints and settings are copied from the knowledge service's report skeleton",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "effect_columns",
+              "step": "report",
+              "value": [
+                "log2FoldChange",
+                "shrunken_log2FoldChange",
+                "lfcSE"
+              ],
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "rank_genes_by",
+              "step": "report",
+              "value": "shrunken_log2FoldChange",
+              "source": "vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking"
+            },
+            {
+              "name": "fit_diagnostics",
+              "step": "report",
+              "value": [
+                "ma_plot",
+                "dispersion_plot"
+              ],
+              "source": "vignette:DESeq2/1.52.0#ma-plot"
+            },
+            {
+              "name": "interaction_report",
+              "step": "report",
+              "value": [
+                "simple_effect_reference",
+                "simple_effect_other",
+                "interaction_contrast"
+              ],
+              "source": "vignette:DESeq2/1.52.0#interactions"
+            },
+            {
+              "name": "power_statement",
+              "step": "report",
+              "value": "expected_power_at_replicate_number",
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "robustness",
+              "step": "report",
+              "value": "overlap_of_two_methods",
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+          "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: interaction_report = simple_effect_reference, simple_effect_other, interaction_contrast (vignette:DESeq2/1.52.0#interactions)",
+          "report: power_statement = expected_power_at_replicate_number (doi:10.1261/rna.053959.115)",
+          "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+        ],
+        "description": "edgeR QL cross-check on the identical input, then the final report: interaction gene table with simple effects, diagnostics, power statement, and reproducibility record.",
+        "acceptance_criteria": [
+          "Report names the method, package versions, design formula, reference levels (condition: control, time: t0), thresholds, n_tested, and n_DE per contrast before the gene tables",
+          "High-confidence gene set = DESeq2 ∩ edgeR intersection for the interaction test; per-method-only genes listed separately as a secondary set",
+          "MA plot and dispersion plot present with an interpretation of what each shows",
+          "Simple effects and the interaction contrast side by side for each gene, ranked by shrunken LFC",
+          "Power statement at 3 replicates per cell and the length-offset limitation both stated",
+          "Reproducibility record (sessionInfo, seed, package versions) stored with the results"
+        ]
+      }
+    ],
+    "title": "Treatment × time interaction DE, cell-line time course",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is a two-factor interaction: which genes change over the four time points (t0–t3) specifically in the treated condition, beyond the shared time trend. The data are 12,000 salmon gene-level counts (as delivered; length correction not documented, so modeled without a length offset and the limitation is stated) for 24 samples — 2 conditions × 4 time points × 3 replicates per cell — with a metadata table (condition, time, time_hours). Step 1 confirms the sample structure (blind-vst PCA and distance heatmap) matches the 2×4×3 design before any test runs. Step 2 fits a single DESeq2 model with the full factorial design ~ condition + time + condition:time, explicit reference levels (condition: control, time: t0), a minimal pre-filter (10 counts in ≥3 samples), median-of-ratios size factors inside the model, and the joint test of the three condition:time interaction coefficients as the primary answer (LRT against ~ condition + time, multi-coefficient Wald cross-check). Simple effects (treatment vs control at each time point) are reported beside it at the same threshold with ashr-shrunk LFCs, because with 3 replicates per cell the interaction term — a difference of differences — has low power; BH adjustment within each contrast at alpha 0.05 with independent filtering. Step 3 assembles the report: gene table ranked by shrunken LFC, MA and dispersion diagnostics, the expected-power statement, an edgeR quasi-likelihood cross-check (intersection = high-confidence set), and the reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 289827,
+    "outputTokens": 22645,
+    "cacheReadInputTokens": 241152,
+    "reasoningTokens": 12919
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_6bad712aa34d4cf68dbdad5b",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 8,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "interaction": true
+      },
+      "outcome": "ok",
+      "durationMs": 53
+    },
+    {
+      "toolUseId": "call_458a9fcfcb4749c3b0a93334",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 8,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "interaction": true,
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "DESeq2 minimal pre-filter then independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 fixed-effects design ~ condition + time + condition:time with explicit reference levels (control, t0)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": [
+                  "condition",
+                  "time",
+                  "condition:time"
+                ]
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 joint interaction test on the 3 condition:time coefficients (LRT vs reduced model, multi-coefficient Wald cross-check), simple effects per time point",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": [
+                  "condition",
+                  "time",
+                  "condition:time"
+                ]
+              },
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "report_simple_effects",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "lfcShrink with ashr for the multi-coefficient simple-effect contrasts",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast with independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with edgeR QL cross-check, intersection as high-confidence set, power statement, reproducibility record",
+            "package": "edgeR"
+          }
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_ec13dfc28edf4cd5a9a27039",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "interaction": true,
+        "modality": "bulk_rna_seq",
+        "n_groups": 8,
+        "n_per_group_max": 3,
+        "n_per_group_min": 3,
+        "organism": "human",
+        "paired": false,
+        "question": "differential_expression",
+        "steps": [
+          {
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "DESeq2 minimal pre-filter then independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "DESeq2 median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "DESeq2 fixed-effects design ~ condition + time + condition:time with explicit reference levels (control, t0)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              }
+            ],
+            "step_type": "model_design"
+          },
+          {
+            "method": "DESeq2 joint interaction test on the 3 condition:time coefficients (LRT vs reduced model, multi-coefficient Wald cross-check), simple effects per time point",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "report_simple_effects",
+                "value": true
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "lfcShrink with ashr for the multi-coefficient simple-effect contrasts",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ],
+            "step_type": "shrink_lfc"
+          },
+          {
+            "method": "Benjamini-Hochberg within each contrast with independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ],
+            "step_type": "multiple_testing"
+          },
+          {
+            "method": "Report with edgeR QL cross-check, intersection as high-confidence set, power statement, reproducibility record",
+            "package": "edgeR",
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "call_0910599553494daa91f08df3",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "count_source": "salmon",
+        "data_state": "counts",
+        "import_state": "unknown",
+        "interaction": true,
+        "modality": "bulk_rna_seq",
+        "n_groups": 8,
+        "n_per_group_max": 3,
+        "n_per_group_min": 3,
+        "organism": "human",
+        "paired": false,
+        "question": "differential_expression",
+        "steps": [
+          {
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "DESeq2 median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "DESeq2 fixed-effects design ~ condition + time + condition:time with explicit reference levels (control, t0)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              }
+            ],
+            "step_type": "model_design"
+          },
+          {
+            "method": "DESeq2 joint interaction test on the 3 condition:time coefficients (LRT vs reduced model, multi-coefficient Wald cross-check), simple effects per time point",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "report_simple_effects",
+                "value": true
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "lfcShrink with ashr for the multi-coefficient simple-effect contrasts",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ],
+            "step_type": "shrink_lfc"
+          },
+          {
+            "method": "Benjamini-Hochberg within each contrast with independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ],
+            "step_type": "multiple_testing"
+          },
+          {
+            "method": "Report with edgeR QL cross-check, intersection as high-confidence set, power statement, reproducibility record",
+            "package": "edgeR",
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "call_f6d555b532d141d28e69bdaa",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Treatment × time interaction DE, cell-line time course\", \"analytical_narrative\": \"The research question is a two-factor interaction: which genes change over the four time points (t0–t3) specifically in the treated condition, beyond the shared time trend. The data are 12,000 salmon gene-level counts (as delivered; length correction not documented, so modeled without a length offset and the limitation is stated) for 24 samples — 2 conditions × 4 time points × 3 replicates per cell — with a metadata table (condition, time, time_hours). Step 1 confirms the sample structure (blind-vst PCA and distance heatmap) matches the 2×4×3 design before any test runs. Step 2 fits a single DESeq2 model with the full factorial design ~ condition + time + condition:time, explicit reference levels (condition: control, time: t0), a minimal pre-filter (10 counts in ≥3 samples), median-of-ratios size factors inside the model, and the joint test of the three condition:time interaction coefficients as the primary answer (LRT against ~ condition + time, multi-coefficient Wald cross-check). Simple effects (treatment vs control at each time point) are reported beside it at the same threshold with ashr-shrunk LFCs, because with 3 replicates per cell the interaction term — a difference of differences — has low power; BH adjustment within each contrast at alpha 0.05 with independent filtering. Step 3 assembles the report: gene table ranked by shrunken LFC, MA and dispersion diagnostics, the expected-power statement, an edgeR quasi-likelihood cross-check (intersection = high-confidence set), and the reproducibility record.\", \"created_at\": \"2026-09-07T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC\", \"track\": \"T1\", \"step_type\": \"qc\", \"question\": \"Do the 24 samples of the treated-vs-control cell-line time course (2 conditions × 4 time points t0–t3 × 3 replicates per cell) cluster by condition and time as expected, and does any sample depart from its expected cell?\", \"context\": \"Input: /eval-four-models-v2-with-timecourse-2x4-n3-s1-1/data/inputs/counts/counts.csv — 12,000 genes × 24 sample columns (gene identifier in the first column); salmon gene-level counts as delivered, no record of whether a length correction was applied, so use the values as raw counts (size factors estimated inside the model). /eval-four-models-v2-with-timecourse-2x4-n3-s1-1/data/inputs/metadata/metadata.csv — one row per sample with columns condition, time (t0..t3), time_hours. Verify that all 24 samples reconcile with the 2×4×3 design (exactly 3 samples in each of the 8 condition×time cells) before plotting. Color all plots by condition and by time.\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\"], \"acceptance_criteria\": [\"PCA on the 500 most variable genes (blind vst) colored by condition and by time, with all 24 samples present\", \"Sample Euclidean distance heatmap\", \"Confirmation that each of the 8 condition×time cells holds exactly 3 samples and that no sample departs from its cell or has a library size far outside the range; any departure is reported as a finding, not a stop\"], \"caveats\": [\"Salmon counts as delivered: no length correction is documented. Do not rescale or transform the counts before the model — the DESeq2 size factors handle library size inside the negative binomial model.\"], \"packages\": [\"DESeq2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"PCA and distance heatmap of the 24 samples to confirm the 2×4×3 design structure and detect outliers before differential testing.\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf\"}}, {\"id\": \"T1S2\", \"name\": \"DESeq2 condition × time interaction test with ashr LFC shrinkage\", \"track\": \"T1\", \"step_type\": \"analysis\", \"question\": \"Which of the 12,000 genes show a treatment-specific change over the four time points (t0–t3) beyond the shared time trend — i.e., a significant condition × time interaction — and what is the shape of each gene's treatment effect by time?\", \"context\": \"Input: counts.csv (12,000 genes × 24 samples, salmon gene-level counts as delivered) and metadata.csv (condition, time, time_hours) under /eval-four-models-v2-with-timecourse-2x4-n3-s1-1/data/inputs/. Import: the provenance does not document a length correction and no per-sample quantification files or average transcript length table exist, so fit the count model on the counts as delivered with no length offset; do not run tximport on a gene table and do not invent a length input. Set explicit reference levels before modeling (condition: control, time: t0) and record them; design ~ condition + time + condition:time. The interaction spans 3 coefficients (condition:treated × time t1, t2, t3). Primary test = joint test of those 3 interaction coefficients: LRT against the reduced model ~ condition + time (the multi-coefficient case per R-0013@2639), cross-checked with the multi-coefficient Wald test. Simple effects beside it: treatment vs control at t0 (main coefficient), and at t1/t2/t3 (two-coefficient contrasts of main effect plus interaction), each with LFC shrunk by ashr (apeglm accepts a single coefficient only, so ashr is used for these multi-coefficient contrasts). Pre-filter: keep a gene with at least 10 counts in at least 3 samples (smallest group size) — minimal, because independent filtering in results() does the rest. Size factors: median of ratios, estimated inside DESeq2 (no pre-normalization). Keep DESeq2's count-outlier flagging: with 3 replicates per cell a flagged gene gets p = NA — count and report those genes separately. Multiple testing: BH within each contrast, alpha = 0.05 passed to results (the same alpha as the report cutoff), FDR control per contrast. Power statement before the model: RNASeqPower and PROPER are not installed, so estimate expected power from the closed form using the fitted dispersion and library depth, state the fold change this 2×4×3 design can detect at 80% power, and note that more replicates help more than deeper sequencing. Note t0 is the shared baseline: a significant interaction can arise from a t0 shift, which the simple effects disambiguate.\", \"constraints\": [\"filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)\", \"filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)\", \"filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)\", \"normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)\", \"model_design: contrast_plan = one_named_contrast_per_comparison (vignette:DESeq2/1.52.0#contrasts)\", \"model_design: reference_level_policy = explicit_and_reported (doi:10.12688/f1000research.27893.1)\", \"model_design: import = gene_counts_without_length_offset (doi:10.12688/f1000research.7563.2)\", \"model_design: missing_input = quantification_directories_or_avg_tx_length_table (vignette:tximport/2026-04-28#import-transcript-level-estimates)\", \"model_design: power_plan = expected_power_from_replicates_depth_and_dispersion (doi:10.1089/cmb.2012.0283)\", \"model_design: power_tools_of_record = RNASeqPower_and_PROPER_absent_closed_form_instead (rule:R-0162)\", \"model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)\", \"model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)\", \"differential_expression: design_terms = factor_a, factor_b, factor_a:factor_b (vignette:DESeq2/1.52.0#interactions)\", \"differential_expression: test = interaction (vignette:DESeq2/1.52.0#interactions)\", \"differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)\", \"differential_expression: interaction_power_caution = true (doi:10.1261/rna.053959.115)\", \"differential_expression: report_simple_effects = true (vignette:DESeq2/1.52.0#interactions)\", \"differential_expression: power_caution = true (doi:10.1261/rna.053959.115)\", \"shrink_lfc: lfc_shrink = ashr (doi:10.1093/biostatistics/kxw041)\", \"multiple_testing: adjustment_scope = within_contrast (guide:limma/2026-05-19#multiple-testing-across-contrasts)\", \"multiple_testing: contrast_label_in_report = true (vignette:DESeq2/1.52.0#contrasts)\", \"multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)\", \"multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)\", \"multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)\", \"multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)\", \"multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)\"], \"acceptance_criteria\": [\"Per-gene results table: gene id, baseMean, unshrunken LFC, shrunken LFC, lfcSE, p-value and adjusted p-value for the joint interaction test and for each of the four simple effects (treatment vs control at t0, t1, t2, t3); the contrast name is stated beside every adjusted p-value\", \"Primary significant set: genes with adjusted p-value < 0.05 for the joint condition × time interaction test (the answer to the research question), plus the per-simple-effect significant sets at the same threshold\", \"Counts reported: genes removed by the pre-filter, genes with NA p-value from count-outlier flagging (separate from independent-filter removals), genes tested after filtering, and genes passing each threshold\", \"Saved plots: p-value histogram before adjustment (shape inspected — flat or declining expected), MA plot, dispersion plot\", \"Power statement: expected power of this 2×4×3 design for the interaction test and the fold change detectable at 80% power\"], \"caveats\": [\"The length offset is lost: salmon counts as delivered with no quantification files and no average transcript length table. Fit without a length offset, do not run tximport on a gene table, do not invent lengths, and state in the output that a change in isoform use can show as differential expression (R-0169@18ab).\", \"The interaction term has low power with 3 replicates per cell: it is a difference of differences, so its standard error is larger than a main effect's at the same replicate number. Keep the interaction test as the primary result, report the simple effects beside it at the same threshold, and do not loosen the threshold to compensate. A gene absent from the interaction list is not shown to have the same effect in both conditions (R-0063@6190).\", \"With 3 replicates per cell, count models find only a minority of the truly differentially expressed genes, most with large fold changes; keep alpha at 0.05 and do not change the threshold to compensate (R-0017@8a47).\", \"Do not rely on alphabetical factor levels: the reference levels (condition: control, time: t0) must be set explicitly and reported, since a wrong reference inverts every fold change without an error.\", \"t0 is the shared baseline: a significant interaction can be driven by a t0 level shift; the simple effects disambiguate where the treatment-specific change occurs.\"], \"packages\": [\"DESeq2\", \"ashr\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"Minimal pre-filter, DESeq2 fit with the full interaction design ~ condition + time + condition:time on the 12,000 × 24 count matrix, joint interaction test as the primary result, simple effects per time point with ashr shrinkage, BH multiple testing within contrast, and the power statement.\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0029@22ca\", \"R-0002@087b\", \"R-0026@9ab1\", \"R-0060@0ff9\", \"R-0169@18ab\", \"R-0162@ed74\", \"R-0036@9786\", \"R-0013@2639\", \"R-0001@9a17\", \"R-0039@968d\", \"R-0063@6190\", \"R-0017@8a47\", \"R-0040@dd4c\", \"R-0009@310d\", \"R-0061@bcab\", \"R-0166@bbcd\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-deseq2-interaction@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter_policy\", \"value\": \"minimal_then_independent\", \"source\": \"doi:10.1073/pnas.0914005107\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_count\", \"value\": 10, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_samples\", \"value\": \"smallest_group_size\", \"source\": \"vignette:DESeq2/1.52.0#pre-filtering\"}, {\"step\": \"normalize\", \"name\": \"size_factors\", \"value\": \"median_of_ratios_named_in_the_plan\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"model_design\", \"name\": \"contrast_plan\", \"value\": \"one_named_contrast_per_comparison\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"model_design\", \"name\": \"reference_level_policy\", \"value\": \"explicit_and_reported\", \"source\": \"doi:10.12688/f1000research.27893.1\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"gene_counts_without_length_offset\", \"source\": \"doi:10.12688/f1000research.7563.2\"}, {\"step\": \"model_design\", \"name\": \"missing_input\", \"value\": \"quantification_directories_or_avg_tx_length_table\", \"source\": \"vignette:tximport/2026-04-28#import-transcript-level-estimates\"}, {\"step\": \"model_design\", \"name\": \"power_plan\", \"value\": \"expected_power_from_replicates_depth_and_dispersion\", \"source\": \"doi:10.1089/cmb.2012.0283\"}, {\"step\": \"model_design\", \"name\": \"power_tools_of_record\", \"value\": \"RNASeqPower_and_PROPER_absent_closed_form_instead\", \"source\": \"rule:R-0162\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"differential_expression\", \"name\": \"design_terms\", \"value\": [\"factor_a\", \"factor_b\", \"factor_a:factor_b\"], \"source\": \"vignette:DESeq2/1.52.0#interactions\"}, {\"step\": \"differential_expression\", \"name\": \"test\", \"value\": \"interaction\", \"source\": \"vignette:DESeq2/1.52.0#interactions\"}, {\"step\": \"differential_expression\", \"name\": \"count_outlier_policy\", \"value\": \"flag_and_report_na\", \"source\": \"vignette:DESeq2/1.52.0#approach-to-count-outliers\"}, {\"step\": \"differential_expression\", \"name\": \"interaction_power_caution\", \"value\": true, \"source\": \"doi:10.1261/rna.053959.115\"}, {\"step\": \"differential_expression\", \"name\": \"report_simple_effects\", \"value\": true, \"source\": \"vignette:DESeq2/1.52.0#interactions\"}, {\"step\": \"differential_expression\", \"name\": \"power_caution\", \"value\": true, \"source\": \"doi:10.1261/rna.053959.115\"}, {\"step\": \"shrink_lfc\", \"name\": \"lfc_shrink\", \"value\": \"ashr\", \"source\": \"doi:10.1093/biostatistics/kxw041\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment_scope\", \"value\": \"within_contrast\", \"source\": \"guide:limma/2026-05-19#multiple-testing-across-contrasts\"}, {\"step\": \"multiple_testing\", \"name\": \"contrast_label_in_report\", \"value\": \"true\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"multiple_testing\", \"name\": \"independent_filtering\", \"value\": true, \"source\": \"doi:10.1073/pnas.0914005107\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"2×4 factorial interaction question, 3 replicates per cell, salmon counts as delivered: DESeq2 with the interaction term, joint test of the 3 interaction coefficients, ashr shrinkage for the multi-coefficient simple effects, BH within contrast — per R-0013@2639, R-0063@6190, R-0040@dd4c, R-0169@18ab and the cited rules\"}}, {\"id\": \"T1S3\", \"name\": \"Report: interaction gene set, simple effects, robustness, reproducibility\", \"track\": \"T1\", \"step_type\": \"report\", \"question\": \"What is the final answer — the genes with a treatment-specific temporal response — presented with the fit diagnostics, the expected-power statement, the cross-method robustness check, and the reproducibility record?\", \"context\": \"Assemble the report from the T1S2 outputs. Also run the edgeR quasi-likelihood F-test on the same counts and the same design (~ condition + time + condition:time, the same explicit reference levels control/t0) as the second method, and report the number of significant genes from each method and the size of the intersection; treat the intersection as the high-confidence set and list genes called by only one method as a secondary set named by method (R-0042@54e1). Report, before the gene tables: method, package versions, design formula, reference levels, thresholds, number of genes tested after filtering, number of DE genes per contrast, and sessionInfo (R-0041@059a). Put the MA plot and the dispersion plot before the gene tables and state what each shows (R-0087@3dcc). For the interaction, give each gene's simple effect in the reference time level, the simple effect in the other levels, and the interaction contrast side by side, with the reference levels named beside the table (R-0092@bb58). Rank the gene table and plots on the shrunken LFC, keeping the unshrunken estimate and its standard error alongside, and name the shrinkage estimator (ashr) in the table header (R-0085@bb37). State the expected power of the test at 3 replicates per cell and that an absent gene is not evidence of no effect (R-0094@6849). State the length-offset limitation: salmon counts as delivered with no documented length correction, so a change in isoform use can show as differential expression (R-0169@18ab). Store the reproducibility record with the results: sessionInfo, seed of every step using randomness, package versions (R-0086@becf).\", \"constraints\": [\"report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)\", \"report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)\", \"report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)\", \"report: interaction_report = simple_effect_reference, simple_effect_other, interaction_contrast (vignette:DESeq2/1.52.0#interactions)\", \"report: power_statement = expected_power_at_replicate_number (doi:10.1261/rna.053959.115)\", \"report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)\", \"report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)\", \"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\"], \"acceptance_criteria\": [\"Report names the method, package versions, design formula, reference levels (condition: control, time: t0), thresholds, n_tested, and n_DE per contrast before the gene tables\", \"High-confidence gene set = DESeq2 ∩ edgeR intersection for the interaction test; per-method-only genes listed separately as a secondary set\", \"MA plot and dispersion plot present with an interpretation of what each shows\", \"Simple effects and the interaction contrast side by side for each gene, ranked by shrunken LFC\", \"Power statement at 3 replicates per cell and the length-offset limitation both stated\", \"Reproducibility record (sessionInfo, seed, package versions) stored with the results\"], \"caveats\": [\"Do not present the union of the two methods as the result; the intersection is the high-confidence set.\", \"With the low power of this design, state that a gene absent from the significant list is not shown to be unchanged.\", \"The edgeR run must reuse the same counts, the same pre-filter, and the same explicit reference levels as the DESeq2 fit, so the comparison is on identical input.\"], \"packages\": [\"edgeR\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"agent\": \"bulk-transcriptomics-agent\", \"description\": \"edgeR QL cross-check on the identical input, then the final report: interaction gene table with simple effects, diagnostics, power statement, and reproducibility record.\", \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0085@bb37\", \"R-0087@3dcc\", \"R-0092@bb58\", \"R-0094@6849\", \"R-0042@54e1\", \"R-0041@059a\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"effect_columns\", \"value\": [\"log2FoldChange\", \"shrunken_log2FoldChange\", \"lfcSE\"], \"source\": \"doi:10.1093/bioinformatics/bty895\"}, {\"step\": \"report\", \"name\": \"rank_genes_by\", \"value\": \"shrunken_log2FoldChange\", \"source\": \"vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking\"}, {\"step\": \"report\", \"name\": \"fit_diagnostics\", \"value\": [\"ma_plot\", \"dispersion_plot\"], \"source\": \"vignette:DESeq2/1.52.0#ma-plot\"}, {\"step\": \"report\", \"name\": \"interaction_report\", \"value\": [\"simple_effect_reference\", \"simple_effect_other\", \"interaction_contrast\"], \"source\": \"vignette:DESeq2/1.52.0#interactions\"}, {\"step\": \"report\", \"name\": \"power_statement\", \"value\": \"expected_power_at_replicate_number\", \"source\": \"doi:10.1261/rna.053959.115\"}, {\"step\": \"report\", \"name\": \"robustness\", \"value\": \"overlap_of_two_methods\", \"source\": \"doi:10.1261/rna.053959.115\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step; constraints and settings are copied from the knowledge service's report skeleton\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 53
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 8,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "interaction": true
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 8,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "interaction": true
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-interaction@1.0.0",
+            "rules": [
+              "R-0029@22ca",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0060@0ff9",
+              "R-0169@18ab",
+              "R-0162@ed74",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0169@18ab",
+                "severity": "warn",
+                "message": "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+                "outcome": "report_missing_length_input"
+              },
+              {
+                "rule": "R-0162@ed74",
+                "severity": "warn",
+                "message": "With two or three replicates per group, the design step states the expected power of the test before the model. The tools of record for a power and sample size calculation, RNASeqPower and PROPER, are not in the pool here. Compute the power from the closed form of the sample size in terms of the depth, the biological coefficient of variation, the fold change, and the significance level, or take the dispersion from a pilot or a public dataset of the same tissue, and state the fold change that the design can find with 80 percent power. State that a larger replicate count raises the power more than a deeper sequencing does. The statement is a caution on the plan and not a reason to loosen the threshold."
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0001"
+            },
+            "template": "tpl-deseq2-interaction@1.0.0",
+            "rules": [
+              "R-0013@2639",
+              "R-0001@9a17",
+              "R-0039@968d",
+              "R-0063@6190",
+              "R-0017@8a47"
+            ],
+            "flags": [
+              {
+                "rule": "R-0063@6190",
+                "severity": "warn",
+                "message": "With an interaction question and three or fewer replicates in a cell of the design, the interaction term has low power. The interaction coefficient is a difference of two differences, thus its standard error is larger than the standard error of a main effect at the same replicate number. Keep the interaction test as the primary result, but report the simple effects in each level beside it, with the same threshold. State the power limit in the report, and do not loosen the threshold to compensate. A gene that is absent from the interaction list is not shown to have the same effect in both levels."
+              },
+              {
+                "rule": "R-0017@8a47",
+                "severity": "warn",
+                "message": "If the smallest group holds three replicates, the test has low power. Both count models find only a small share of the true differentially expressed genes, most of them with a large fold change. Interpret the result with caution, and state the power limit in the report. Keep alpha at its default value, and do not change the threshold to compensate for the small design. A gene that is not in the list is not shown to be unchanged."
+              }
+            ]
+          },
+          {
+            "step": "shrink_lfc",
+            "method": {
+              "id": "M-0014"
+            },
+            "rules": [
+              "R-0040@dd4c",
+              "R-0009@310d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0061@bcab",
+              "R-0166@bbcd",
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0085@bb37",
+              "R-0087@3dcc",
+              "R-0092@bb58",
+              "R-0094@6849",
+              "R-0042@54e1",
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0013@2639"
+          },
+          {
+            "id": "R-0085@bb37"
+          },
+          {
+            "id": "R-0087@3dcc"
+          },
+          {
+            "id": "R-0092@bb58"
+          },
+          {
+            "id": "R-0094@6849"
+          },
+          {
+            "id": "R-0042@54e1"
+          },
+          {
+            "id": "R-0001@9a17"
+          },
+          {
+            "id": "R-0029@22ca"
+          },
+          {
+            "id": "R-0060@0ff9"
+          },
+          {
+            "id": "R-0169@18ab"
+          },
+          {
+            "id": "R-0039@968d"
+          },
+          {
+            "id": "R-0040@dd4c"
+          },
+          {
+            "id": "R-0063@6190"
+          },
+          {
+            "id": "R-0162@ed74"
+          },
+          {
+            "id": "R-0009@310d"
+          },
+          {
+            "id": "R-0017@8a47"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0061@bcab"
+          },
+          {
+            "id": "R-0166@bbcd"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 48220,
+      "elapsedMs": 23
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 8,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "interaction": true
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "DESeq2 minimal pre-filter then independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 fixed-effects design ~ condition + time + condition:time with explicit reference levels (control, t0)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 joint interaction test on the 3 condition:time coefficients (LRT vs reduced model, multi-coefficient Wald cross-check), simple effects per time point",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "report_simple_effects",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "lfcShrink with ashr for the multi-coefficient simple-effect contrasts",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast with independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with edgeR QL cross-check, intersection as high-confidence set, power statement, reproducibility record",
+            "package": "edgeR"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0029@22ca",
+            "message": "Benjamini-Hochberg false discovery rate with independent filtering is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 516,
+      "elapsedMs": 15
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 8,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "interaction": true
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA on top variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 fixed-effects design ~ condition + time + condition:time with explicit reference levels (control, t0)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 joint interaction test on the 3 condition:time coefficients (LRT vs reduced model, multi-coefficient Wald cross-check), simple effects per time point",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "condition + time + condition:time"
+              },
+              {
+                "name": "test",
+                "value": "interaction"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              },
+              {
+                "name": "report_simple_effects",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "lfcShrink with ashr for the multi-coefficient simple-effect contrasts",
+            "package": "ashr",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "ashr"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg within each contrast with independent filtering on",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "adjustment_scope",
+                "value": "within_contrast"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with edgeR QL cross-check, intersection as high-confidence set, power statement, reproducibility record",
+            "package": "edgeR"
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 11
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

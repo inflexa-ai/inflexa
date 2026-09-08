@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames the question as the genotype:treatment interaction in a full factorial DESeq2 model with explicit WT/vehicle reference levels, tests the interaction coefficient directly, then extracts the four simple effects from the same fit, and adds a limma-voom check on the identical design — exactly matching the reference. QC covers sample concordance, integer status, library sizes, VST PCA and correlation heatmap coloured by both factors with a stated no-silent-drop policy; the filter (≥10 counts in ≥4 samples) is minimal and tied to the smallest group. BH at stated alphas with ashr shrinkage reserved for ranking is handled well; normalization is left implicit as DESeq2 defaults rather than stating size factors. GSEA uses the full Wald-ranked list with a size window and intersected universe but does not pin a collection version, and the report requirements omit an explicit statement of package versions."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly makes mMCP-counter on TMM log2 CPM the primary species-matched method, keeps and flags sample_01, runs PCA colored by condition, tests each population with Welch/Mann-Whitney, applies BH across populations per method, and reports effect sizes and group means without mixing score units across populations. Its central flaw is EPIC: the plan asserts a 'mouse TRef' reference that does not exist (TRef is human), so it would give mouse symbols to a human reference, and it hedges on feeding log2 CPM to an absolute method rather than committing to linear TPM/CPM; the fallback clause only partly mitigates this. The babelgene ortholog projection of scGate signatures with UCell is a proper ortholog map, though scoring gating signatures on bulk is an acknowledged approximation. The CPM>1 in 6 filter is reasonable though it may discard marker genes; the report specifies units, marker coverage, and caveats but does not name tool versions."
+}

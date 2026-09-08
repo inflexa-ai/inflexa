@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that TPM is not a count and fits limma on log2(TPM+1) with eBayes(trend=TRUE), explicitly refusing voom, DESeq2/edgeR, and any reconstruction of counts, but it never asks the core for the raw counts or quantification directories. QC on the log values (PCA, clustering, outlier flagged not dropped) is adequate, while the expression filter is left as a vague 'e.g.' with no tie to the smallest group size, and the design sets no explicit reference level for the contrast. BH at 0.05 via topTable is stated, but |logFC| thresholds are applied post hoc rather than in the test (no treat). Enrichment and TF-activity tracks go beyond what was asked and are under-specified (ambiguous ranking metric, no collection versions, no size window, no universe for the directional lists); the report section states caveats and thresholds but omits software versions."
+}

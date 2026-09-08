@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the design: a two-group DESeq2 Wald fit on raw counts with median-of-ratios inside the model, ~condition with vehicle as explicit reference and a named numerator/denominator contrast, minimal >=10-in-6 prefilter plus independent filtering, BH at 0.05 and apeglm for the reported effect. The TF step is correct on every point the reference demands (ulm on the stat column of all tested genes, CollecTRI with signs kept, min regulon 5, BH, target counts, collection and version), though it omits the per-sample activity matrix with limma as a replicate-consistency check. QC is present and condition-coloured but the outlier policy is only 'name the sample', with no stated handling for a shallow or divergent library; the strandedness inference is noise for a count table. The preranked GSEA is well specified but not asked for, and the report step references a two-method robustness overlap and a threshold test that are never actually planned, leaving small inconsistencies rather than errors."
+}

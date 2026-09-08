@@ -1,0 +1,249 @@
+{
+  "runId": "6b692565-63c3-4c64-8953-bea66a07c077",
+  "overview": "Bulk RNA-seq of 12 human samples (control vs. treated, one low-depth control excluded after QC) reveals a large, statistically robust transcriptional shift (826 genes at padj<0.05, reproducible in a sensitivity analysis) dominated by two convergent programs: NF-κB/interferon-driven inflammatory activation reciprocally coupled to suppression of oxidative phosphorylation, alongside a parallel TGF-β/p53-associated growth-arrest signature. Together these are consistent with a senescence-associated secretory phenotype (SASP)-like transcriptional state, a coherent and literature-grounded hypothesis rather than a proven mechanism, since treatment identity is unspecified and bulk transcriptomics cannot resolve cell-intrinsic programs from compositional shifts.",
+  "conclusions": "The treated condition induces a large, highly significant, and reproducible transcriptional shift (826 genes at padj<0.05, robust to a sample-exclusion sensitivity analysis with r=0.99 concordance) dominated by two convergent programs: NF-κB/interferon-driven inflammatory activation — with IL15RA as its single most significant readout, and corroborated independently by both Hallmark and Reactome enrichment (cytokine/interleukin signaling) — and a reciprocal collapse of the oxidative phosphorylation transcriptional program, exemplified at the single-gene level by near-complete loss of the mitochondrial ADP/ATP translocase SLC25A5. Both arms of this pattern are well precedented in the immunometabolism literature (LPS/TNF-driven macrophage 'Warburg shift', type-I-interferon-driven T-cell mitochondrial suppression, and closely analogous human bulk transcriptomic signatures in sepsis and post-infectious lung disease), which gives strong confidence that the treated condition triggers a genuine, evolutionarily conserved inflammatory-metabolic reprogramming rather than a technical artifact — this is confirmatory pathway-level biology, not a novel discovery.\n\nWhat is more novel and less certain is the magnitude of SLC25A5/ANT2 loss: no gene-specific literature ties its transcriptional regulation to NF-κB or interferon signaling, despite its structural membership in the mitochondrial permeability transition pore complex alongside VDAC and cyclophilin D. This should be treated as a hypothesis-generating, single-cohort observation — a candidate downstream marker of the broader mitochondrial collapse, not a validated mechanism — and warrants orthogonal (protein-level or functional respirometry) follow-up before further interpretation.\n\nSeparately, CDKN2B induction together with Hallmark P53_PATHWAY enrichment signals active cell-cycle arrest. CDKN2B is the textbook TGF-β/SMAD-driven G1 arrest effector, not a canonical direct p53 target gene, so despite co-enrichment these most likely represent parallel convergent outputs of a shared upstream stress rather than one causing the other. Combined with the inflammatory/interferon program and the documented precedent that IL15/IL15RA trans-presentation is a feature of 'senescence surveillance' signaling in drug-induced senescent tumor cells, the overall transcriptional state is consistent with — though not proven to be — a senescence-associated secretory phenotype (SASP)-like response. Bulk RNA-seq without single-cell resolution, senescence-specific markers, or a time course cannot establish this directly; it should be framed as a testable follow-up hypothesis, not a conclusion.\n\nOn translational distance: IL15RA/IL-15 signaling is a mature drug-development axis (IL-15 superagonists such as N-803/ALT-803 are FDA-approved and in combination immunotherapy trials), so this finding demonstrates that whatever the treatment is, it engages a well-characterized, druggable inflammatory receptor axis — useful as pathway-engagement evidence, not as a new biomarker or target discovery, since the treatment's identity and intent are not known from this run. The OXPHOS-suppression finding is mechanistically substantial and echoes patterns that correlate with clinical outcomes in independent human cohorts, but here it remains a discovery/preclinical-level association with no biomarker validation or orthogonal functional confirmation. Overall, the run establishes a biologically coherent, well-grounded inflammatory-metabolic-senescence transcriptional signature; the translational distance from 'differentially expressed gene' to 'validated biomarker or target' remains substantial for every finding except the pathway-level confirmation of NF-κB/interferon engagement.",
+  "findings": [
+    {
+      "stepId": "T1S2",
+      "title": "IL15RA is the top-ranked differentially expressed gene, consistent with NF-κB/interferon-driven trans-presentation induction",
+      "description": "IL15RA is the single most significantly upregulated gene in the primary contrast (shrunken log2FC +6.34, padj 7.7e-46), reproduced as the top hit in the sensitivity analysis retaining the QC-flagged sample. It encodes the non-signaling receptor subunit responsible for trans-presenting IL-15 to NK and memory CD8 T cells.",
+      "confidence": "high",
+      "noveltyStatus": "confirmed",
+      "literatureInterpretation": "IL15RA carries both an NF-κB site and an IRF-E element in its promoter, and is directly demonstrated to be induced by NF-κB activation (rheumatoid synoviocytes) and by IFN-γ/type-I IFN via IRF1 (epithelial cells) — mechanistically explaining its co-induction with the Hallmark TNFA_SIGNALING_VIA_NFKB and interferon response gene sets seen in this run. The magnitude and top-rank status of this specific gene in this dataset is an assay-specific extreme that fits, but is not individually reported at this scale in, the established literature.",
+      "references": [
+        {
+          "pmid": "10906187",
+          "citation": "Azimi et al. 2000",
+          "relevance": "Identifies the IRF-E + NF-κB virus-inducible element in the IL-15 promoter, the mechanistic basis for combined NF-κB/interferon induction of the IL-15/IL15RA axis.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "34893528",
+          "citation": "Kim, Rha & Shin 2022",
+          "relevance": "Shows IFN-γ (IRF1-dependent) and type I IFN induce IL-15/IL-15Rα trans-presentation in human epithelial cells with functional NK-cell activation.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "15452177",
+          "citation": "Burkett et al. 2004",
+          "relevance": "Foundational in vivo demonstration that IL-15Rα trans-presentation supports NK and memory CD8 T-cell homeostasis, establishing the biological role of the gene.",
+          "concordance": "contextualizes"
+        },
+        {
+          "pmid": "29628312",
+          "citation": "Wrangle et al. 2018",
+          "relevance": "Phase 1b trial of the IL-15 superagonist ALT-803 with nivolumab in NSCLC, anchoring the IL-15/IL15RA axis as an active area of drug development.",
+          "concordance": "extends"
+        },
+        {
+          "pmid": "25879761",
+          "citation": "Santos Savio et al. 2015",
+          "relevance": "Human synovial fluid data linking IL-15Rα co-expression with TNFα/IL-6 and disease activity, supporting IL15RA as an inflammatory-context biomarker candidate.",
+          "concordance": "contextualizes"
+        }
+      ],
+      "translationalRelevance": {
+        "stage": "preclinical-validation",
+        "actionType": "mechanism-of-action",
+        "rationale": "IL15RA/IL-15 trans-presentation is targeted by an FDA-approved IL-15 superagonist (N-803/ALT-803) tested in combination immunotherapy trials, giving this pathway-level engagement direct drug-development precedent even though the treatment used in this run is unspecified."
+      }
+    },
+    {
+      "stepId": "T2S1",
+      "title": "Reciprocal enrichment: NF-κB/interferon inflammatory pathways up, oxidative phosphorylation and respiratory electron transport down",
+      "description": "Hallmark TNFA_SIGNALING_VIA_NFKB, INTERFERON_GAMMA_RESPONSE, INTERFERON_ALPHA_RESPONSE and INFLAMMATORY_RESPONSE are all strongly enriched up (NES +2.1 to +3.0, padj as low as 7.8e-32), while HALLMARK_OXIDATIVE_PHOSPHORYLATION and multiple Reactome respiratory-chain pathways are strongly enriched down (NES -2.6 to -3.1) — independently corroborated by Reactome cytokine/interleukin signaling being up and respiratory electron transport being down.",
+      "confidence": "high",
+      "noveltyStatus": "confirmed",
+      "literatureInterpretation": "This reciprocal pattern is well established in immunometabolism: LPS/TNF-activated macrophages undergo a Warburg-like glycolytic switch with suppressed OXPHOS (mediated by succinate/HIF-1α and NO-driven inhibition of the electron transport chain), TNF itself causes mitochondrial uncoupling that feeds forward into NF-κB, and persistent type-I interferon signaling independently suppresses mitochondrial oxidative metabolism in human CD8 T cells. Independent human bulk-transcriptomic studies (sepsis monocytes, post-infectious bronchiolitis obliterans sputum) show essentially the same paired signature, in the second case correlating with lung function — this run's magnitude is at the high end of, but consistent with, that body of evidence.",
+      "references": [
+        {
+          "pmid": "23535595",
+          "citation": "Tannahill et al. 2013",
+          "relevance": "Founding demonstration that LPS-activated macrophages switch from OXPHOS to glycolysis via succinate/HIF-1α, establishing the core inflammatory-OXPHOS reciprocal program.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "27732846",
+          "citation": "Van den Bossche et al. 2016",
+          "relevance": "Shows M1 macrophage OXPHOS suppression is NO-dependent and functionally locks cells in the inflammatory state.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "24316229",
+          "citation": "Kastl et al. 2014",
+          "relevance": "TNF-α causes mitochondrial uncoupling and ROS that feed forward into NF-κB activation, a direct TNF-mitochondria mechanistic link relevant to the enriched TNFA_SIGNALING_VIA_NFKB set.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "42194095",
+          "citation": "Jerkic et al. 2026",
+          "relevance": "Independent human bulk transcriptomic precedent showing TNFα/NF-κB pathways up and OXPHOS pathways down together, correlating with lung function, closely paralleling this run's pattern.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "41927787",
+          "citation": "Cheng et al. 2026",
+          "relevance": "Persistent type I interferon signaling suppresses mitochondrial oxidative metabolism in human CD8 T cells, extending the phenomenon to the interferon arm and to lymphocytes in vivo.",
+          "concordance": "extends"
+        }
+      ],
+      "translationalRelevance": {
+        "stage": "preclinical-validation",
+        "actionType": "mechanism-of-action",
+        "rationale": "Independent human transcriptomic studies link this same inflammatory-OXPHOS reciprocal signature to functional and clinical correlates (lung function in bronchiolitis obliterans, reversible monocyte dysfunction in sepsis), but no biomarker or outcome validation exists for this dataset."
+      }
+    },
+    {
+      "stepId": "T1S2",
+      "title": "SLC25A5 (ANT2) shows profound downregulation with no established link to inflammatory/interferon signaling",
+      "description": "SLC25A5, the mitochondrial ADP/ATP translocase (ANT2), is among the most strongly downregulated individual genes in the primary contrast (shrunken log2FC -4.71, padj 4.6e-21), consistent with the broader OXPHOS/mitochondrial pathway suppression but notable as an individually extreme single-gene effect.",
+      "confidence": "medium",
+      "noveltyStatus": "novel",
+      "literatureInterpretation": "Targeted literature searches found no prior study linking SLC25A5/ANT2 transcriptional regulation to inflammatory or interferon signaling. The gene sits structurally within the mitochondrial permeability transition pore complex (with VDAC and cyclophilin D), and in cancer biology ANT2 is typically described as induced (not suppressed) in glycolytic cells — the opposite direction from what is seen here — suggesting this gene is being swept down as part of the general nuclear-encoded mitochondrial gene collapse rather than reflecting an isoform-specific glycolytic-reprogramming mechanism. This should be treated as hypothesis-generating, not literature-confirmed.",
+      "references": [
+        {
+          "pmid": "23535595",
+          "citation": "Tannahill et al. 2013",
+          "relevance": "Provides the general immunometabolic framework (inflammatory OXPHOS suppression) within which SLC25A5's downregulation sits, though the paper does not address this gene specifically.",
+          "concordance": "contextualizes"
+        },
+        {
+          "pmid": "27732846",
+          "citation": "Van den Bossche et al. 2016",
+          "relevance": "Establishes mechanisms (NO-mediated ETC inhibition) that could plausibly extend to ANT2 loss, though not gene-specifically demonstrated.",
+          "concordance": "contextualizes"
+        }
+      ]
+    },
+    {
+      "stepId": "T1S2",
+      "title": "CDKN2B induction and Hallmark P53 pathway enrichment indicate convergent growth-arrest signaling",
+      "description": "CDKN2B (p15INK4b) is strongly upregulated (shrunken log2FC +2.97, padj 6.7e-24), co-occurring with significant enrichment of HALLMARK_P53_PATHWAY (NES +1.76, padj 3.8e-4) in the same contrast that shows strong inflammatory/interferon activation.",
+      "confidence": "medium",
+      "noveltyStatus": "partially_confirmed",
+      "literatureInterpretation": "CDKN2B induction by TGF-β/SMAD signaling is a textbook, 30-year-established mechanism of G1 arrest and is repeatedly linked to TGF-β-driven cellular senescence, independent of p53. CDKN2B is not, however, a canonical direct p53 target gene (weak STRING evidence for direct TP53 interaction), so its co-enrichment with the Hallmark p53 pathway more likely reflects two parallel arrest programs triggered by a shared upstream stress than a causal p53→CDKN2B relationship. A plausible unifying hypothesis is a senescence-associated secretory phenotype (SASP), in which cGAS-STING-driven NF-κB/interferon signaling and IL15/IL15RA induction (documented in drug-induced senescent tumor cells for 'senescence surveillance') accompany TGF-β/p53-driven arrest — but this is not established for this specific dataset and one older study found interferon does not induce CDKN2B directly in at least one cell model.",
+      "references": [
+        {
+          "pmid": "8078588",
+          "citation": "Hannon & Beach 1994",
+          "relevance": "Founding paper establishing p15INK4b (CDKN2B) as the direct effector of TGF-β-induced G1 arrest.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "11013220",
+          "citation": "Feng, Lin & Derynck 2000",
+          "relevance": "Defines the SMAD2/3/4-Sp1 mechanism directly transactivating CDKN2B in response to TGF-β.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "20583212",
+          "citation": "Senturk et al. 2010",
+          "relevance": "Shows TGF-β drives p53-independent, p15/p21-dependent cellular senescence, supporting a senescence interpretation independent of the p53 pathway.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "28976970",
+          "citation": "Dou et al. 2017",
+          "relevance": "Shows cytoplasmic chromatin fragments in senescent cells activate cGAS-STING to drive NF-κB/type-I-interferon-like signaling, the mechanistic bridge proposed between the arrest genes and the inflammatory signature.",
+          "concordance": "contextualizes"
+        },
+        {
+          "pmid": "29691234",
+          "citation": "Borrelli et al. 2018",
+          "relevance": "Shows drug-induced senescent tumor cells upregulate IL15/IL15RA for NK-cell 'senescence surveillance', a direct precedent tying IL15RA induction to a senescence program alongside arrest genes like CDKN2B.",
+          "concordance": "extends"
+        },
+        {
+          "pmid": "8751161",
+          "citation": "Yamada et al. 1995",
+          "relevance": "In IFN-treated Daudi lymphoma cells, G1 arrest occurred without p15Ink4b induction, cautioning against assuming interferon directly transactivates CDKN2B.",
+          "concordance": "contradicts"
+        }
+      ]
+    }
+  ],
+  "themes": [
+    {
+      "name": "NF-κB/interferon inflammatory activation is reciprocally coupled to suppression of oxidative phosphorylation",
+      "findings": [
+        {
+          "stepId": "T1S2",
+          "title": "IL15RA is the top-ranked differentially expressed gene, consistent with NF-κB/interferon-driven trans-presentation induction"
+        },
+        {
+          "stepId": "T2S1",
+          "title": "Reciprocal enrichment: NF-κB/interferon inflammatory pathways up, oxidative phosphorylation and respiratory electron transport down"
+        },
+        {
+          "stepId": "T1S2",
+          "title": "SLC25A5 (ANT2) shows profound downregulation with no established link to inflammatory/interferon signaling"
+        }
+      ],
+      "narrative": "The treated samples show a canonical, mechanistically coherent inflammatory transcriptional program: NF-κB and interferon signaling induce IL15RA through documented promoter elements, while the same upstream signals are independently known to suppress mitochondrial oxidative metabolism through NO/ROS-mediated ETC inhibition and interferon-stimulated-gene interfaces with the respiratory chain. SLC25A5's extreme, individually unprecedented loss sits within this collapse but is not itself literature-confirmed as an inflammation-responsive gene, making it the theme's most speculative element. Together the pattern closely parallels independent human transcriptomic signatures from sepsis and post-infectious lung disease, arguing this is real, conserved biology rather than a dataset-specific artifact."
+    },
+    {
+      "name": "A convergent senescence/SASP-like arrest program plausibly accompanies the inflammatory signature",
+      "findings": [
+        {
+          "stepId": "T1S2",
+          "title": "CDKN2B induction and Hallmark P53 pathway enrichment indicate convergent growth-arrest signaling"
+        },
+        {
+          "stepId": "T1S2",
+          "title": "IL15RA is the top-ranked differentially expressed gene, consistent with NF-κB/interferon-driven trans-presentation induction"
+        }
+      ],
+      "narrative": "CDKN2B and Hallmark p53-pathway enrichment indicate active cell-cycle arrest signaling operating in parallel with, rather than downstream of, the inflammatory/interferon program. Literature on cellular senescence offers a plausible unifying frame — cGAS-STING-driven SASP signaling links chromatin damage in arrested cells to NF-κB/interferon output, and IL15/IL15RA induction is independently documented as a senescence-surveillance signal in drug-induced senescent tumor cells. This is a coherent hypothesis grounded in established senescence biology, not a conclusion this bulk dataset can prove, since no senescence-specific marker or single-cell resolution is available."
+    }
+  ],
+  "limitations": [
+    "Sample_01 was excluded from the primary contrast per upstream QC (n=5 vs 6 unpaired design); a sensitivity analysis retaining it (n=6 vs 6) shows high overall concordance (r=0.99) but disagrees on 123 genes at the padj<0.05 boundary, so individual borderline gene calls should be checked against both tables.",
+    "63.6% of the ranked gene universe consists of synthetic placeholder identifiers with no resolvable HGNC symbol; all Hallmark/Reactome enrichment signal is derived from only the mappable 36.4% subset, so any real signal in the unmapped majority is invisible to this analysis by construction.",
+    "The treatment's identity and pharmacological intent are not specified beyond 'treated' vs. 'control' in the available metadata; all mechanistic interpretation of the NF-κB/interferon/senescence-like program is inferred from the transcriptional pattern itself, not from known pharmacology of the intervention.",
+    "Bulk RNA-seq cannot distinguish a coordinated cell-intrinsic transcriptional program from a shift in cell-type composition (e.g., increased immune infiltrate); both the senescence/SASP interpretation and the OXPHOS-suppression interpretation are equally consistent with a compositional shift.",
+    "No batch/lane/run-date covariate exists in the metadata and no donor identifier distinct from sample exists, so batch effects and biological non-independence of replicates cannot be ruled out.",
+    "SLC25A5's role in this context is not supported by any gene-specific prior literature; it is a novel, single-cohort statistical observation pending orthogonal (protein-level or functional) validation before any mechanistic or biomarker claim."
+  ],
+  "keyReferences": [
+    {
+      "pmid": "10906187",
+      "citation": "Azimi et al. 2000",
+      "description": "Defines the IRF-E + NF-κB regulatory element in the IL-15 promoter, the mechanistic anchor for IL15RA's co-induction with NF-κB/interferon Hallmark sets in this run."
+    },
+    {
+      "pmid": "34893528",
+      "citation": "Kim, Rha & Shin 2022",
+      "description": "Recent direct demonstration that IFN-γ/type I IFN induce IL-15/IL-15Rα trans-presentation with functional NK-cell activation, grounding the interferon arm of the IL15RA finding."
+    },
+    {
+      "pmid": "29628312",
+      "citation": "Wrangle et al. 2018",
+      "description": "Clinical trial of the IL-15 superagonist ALT-803, establishing the translational/drug-development relevance of the IL15RA axis identified as the top DE hit."
+    },
+    {
+      "pmid": "23535595",
+      "citation": "Tannahill et al. 2013",
+      "description": "Founding immunometabolism paper establishing the inflammatory-OXPHOS reciprocal switch that mirrors the Hallmark/Reactome pattern seen in this run."
+    },
+    {
+      "pmid": "27732846",
+      "citation": "Van den Bossche et al. 2016",
+      "description": "Mechanistic basis (NO-dependent) for inflammatory suppression of OXPHOS, relevant to both the pathway-level finding and the SLC25A5 observation."
+    },
+    {
+      "pmid": "42194095",
+      "citation": "Jerkic et al. 2026",
+      "description": "Independent human bulk transcriptomic dataset showing the same paired TNF/NF-κB-up, OXPHOS-down signature correlated with a clinical outcome, the closest external precedent for this run's central pattern."
+    },
+    {
+      "pmid": "8078588",
+      "citation": "Hannon & Beach 1994",
+      "description": "Founding paper establishing CDKN2B as the direct TGF-β-induced arrest effector, anchoring the growth-arrest theme."
+    },
+    {
+      "pmid": "29691234",
+      "citation": "Borrelli et al. 2018",
+      "description": "Shows senescent tumor cells induce IL15/IL15RA for NK surveillance, the key link connecting the inflammatory and growth-arrest themes under a senescence/SASP hypothesis."
+    }
+  ]
+}

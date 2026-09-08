@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models for TPM input and fits limma on log2(TPM+1) with trend=TRUE, an explicit Control reference, a Lesional-Control contrast, BH at 0.05 via topTable, and no scaling, size factors, or voom, matching the reference. QC runs PCA/MDS and a distance heatmap on the log values with outlier flagging, and the filter (>=1 TPM in at least 6 samples, the smaller group) is minimal and justified. It omits the reference's key action of asking the core for the raw counts or Salmon quantification directories, and it does not state an explicit outlier-removal policy. Enrichment was not requested and the reference omits it; the plan adds a well-specified enrichment step (tested-gene universe, named collections with versions, 15-500 size window, fgsea fallback with the moderated t as ranking metric), which is technically sound but extends beyond the question asked."
+}

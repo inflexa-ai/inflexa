@@ -1,0 +1,778 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:43:57.864Z",
+  "elapsedMs": 115938,
+  "outcome": "plan_submitted",
+  "planId": "pln-82915c6d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts/metadata, QC, and build DESeq2 dataset",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "dplyr"
+        ],
+        "question": "Do the counts.csv (12000 genes x 24 samples) and metadata.csv (24 samples: condition, time, time_hours) align, and what QC filters and design factors are needed before modeling the condition:time interaction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample names in counts.csv columns match metadata.csv rows exactly, with condition (2 levels) and time (4 levels: t0-t3) confirmed as factors, replicate count = 3 per condition:time cell",
+          "Low-count genes filtered (e.g. require count >=10 in at least 3 samples, the smallest group size) before DESeq2 fitting, with number of genes retained reported",
+          "A DESeqDataSet object is constructed with design ~ condition + time + condition:time and saved for downstream steps",
+          "Library size / PCA or sample-distance QC plot produced to confirm no obvious outlier samples or batch confound between condition and time"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "LRT for condition:time interaction (treatment-specific change over time)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "dplyr"
+        ],
+        "question": "Which of the 12000 genes show a statistically significant treatment-specific temporal trajectory, i.e. condition:time interaction, beyond genes that change with time similarly in both conditions?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 likelihood ratio test run: full model ~condition + time + condition:time vs reduced model ~condition + time, using the DESeqDataSet from T1S1",
+          "Results table reports gene ID, LRT statistic, raw p-value, BH-adjusted p-value (padj) for every tested gene, with genes at padj < 0.05 flagged as significant interaction hits",
+          "Report the count of significant interaction genes separately from the count of genes with only a main time effect or only a main condition effect (fit ~condition+time reduced-vs-intercept and ~time alone as secondary references) so the interaction-specific list is not conflated with a general time-responsive list",
+          "Per-gene, per-condition normalized (e.g. variance-stabilized) trajectories across t0-t3 exported for the significant interaction genes for downstream visualization/clustering"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Cluster treatment-specific trajectories",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pheatmap",
+          "ComplexHeatmap",
+          "dplyr"
+        ],
+        "question": "Among genes with a significant condition:time interaction, what distinct shapes of treatment-specific divergence exist across t0-t3 (e.g. early-diverging, late-diverging, opposite-direction trajectories)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "VST/normalized per-condition mean trajectories for the significant interaction gene set (from T1S2) are scaled (e.g. z-scored per gene) and clustered (hierarchical or k-means) into a modest number of trajectory shape clusters",
+          "Cluster assignment table (gene -> cluster) and a heatmap or line-plot summary of the mean trajectory per cluster per condition are produced",
+          "Number of clusters chosen is justified (e.g. elbow/silhouette) rather than fixed arbitrarily, and cluster sizes reported"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway enrichment of treatment-specific interaction genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "Are the genes with a significant condition:time interaction (and each trajectory cluster from T2S1) enriched for particular WikiPathways human pathways, suggesting a coherent biological process driving the treatment-specific temporal response?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Over-representation (or fgsea-style ranked) test run against the WikiPathways human gene set collection (HGNC symbols) for the full significant interaction gene list from T1S2, using all tested genes (from T1S2, not just significant) as the background/universe",
+          "Same enrichment test repeated per trajectory cluster from T2S1 to check whether different divergence shapes map to different pathways",
+          "Output table of enriched pathways with adjusted p-values (BH/FDR) per gene set and per cluster; if the input gene IDs from counts.csv are not HGNC symbols, an explicit ID-mapping step is applied before the enrichment test and the mapping rate is reported",
+          "If no pathway reaches significance, this null result is reported explicitly rather than lowering the threshold post hoc"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Network context of top treatment-specific interaction genes",
+        "agent": "network-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "dplyr",
+          "stringr"
+        ],
+        "question": "Do the genes with the strongest condition:time interaction signal occupy hub positions in the human protein-protein interaction network, which would support them as more plausible drivers rather than incidental transcriptional noise?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "STRING human PPI network (protein.links, high-confidence combined_score >= 700) is joined to the protein.info file to map STRING IDs to gene symbols, and this mapping is explicitly validated against the gene identifiers in the DE results before use",
+          "Subnetwork induced by the significant interaction gene list from T1S2 is extracted, with node degree (within-subnetwork and within-full-network) computed for each gene",
+          "Genes reported ranked by network degree/hub score alongside their interaction LRT statistic and padj from T1S2, to flag any genes that are both strong interaction hits and network hubs",
+          "If gene ID mapping between counts.csv identifiers and STRING/UniProt symbols fails for a large fraction of genes, that failure rate is reported rather than silently dropping genes"
+        ]
+      }
+    ],
+    "title": "Treatment x Time Interaction DE in Bulk RNA-seq",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is a 2-condition x 4-timepoint (t0-t3) bulk RNA-seq time course in a human cell line, 3 replicates per cell (24 samples, 12000 genes, raw salmon gene counts). The research question — which genes show a treatment-specific change over time beyond the shared time trend — is a statistical question about a condition:time interaction, not a simple pairwise contrast. The correct design is DESeq2's likelihood ratio test (LRT): fit a full model ~condition + time + condition:time and a reduced model ~condition + time, so the LRT isolates genes whose temporal trajectory differs by condition, independent of genes that simply move with time in both arms (which the reduced model already absorbs) or that differ by condition at a fixed offset (main effect, also absorbed by the reduced model). Track 1 does QC/import and the interaction DE test. Track 2 characterizes the genes the interaction test flags: clusters their per-condition trajectories (to distinguish, e.g., early-divergent vs late-divergent genes) and tests those genes for pathway enrichment against WikiPathways human gene sets, which are present in the reference store. Track 3 places the top interaction-effect genes into the STRING human PPI network (present in the reference store, requires the accompanying info file for ENSP-to-symbol mapping) to flag genes acting as network hubs, since hub perturbation is a stronger causal candidate than an isolated hit. All steps stay within the input files' identifier space (need to confirm gene ID type in counts.csv — Ensembl or symbol — during import) and use only packages confirmed present in this sandbox (DESeq2, clusterProfiler/fgsea are available; ImpulseDE2/maSigPro/tradeSeq were checked and are NOT installed, so the LRT approach is used instead of those specialized time-course packages)."
+  },
+  "usage": {
+    "inputTokens": 2833070,
+    "outputTokens": 6850,
+    "cacheCreationInputTokens": 135585,
+    "cacheReadInputTokens": 2696957,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01H9CES4z1VKMdbsZEB4FAHf",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "splines",
+          "fgsea",
+          "tximport"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01SFibqfMXuTA2VEH5YFsXiw",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01DRoP1P6VhHpsU6WMJCb65F",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01MQcCvcKB31dZtTsqwEzhtk",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time course RNA-seq condition interaction spline",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1176
+    },
+    {
+      "toolUseId": "toolu_01CAMmzwQiZ2mxhussVNeSpG",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test time course RNA-seq design",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 444
+    },
+    {
+      "toolUseId": "toolu_0183EpRyi6Ng8VMN1i1YGaVg",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq time course differential expression full reduced model likelihood ratio test",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 827
+    },
+    {
+      "toolUseId": "toolu_013dCucWYRwKbxJnM92TiAY6",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "time course RNA-seq analysis methods DESeq2 tutorial",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 449
+    },
+    {
+      "toolUseId": "toolu_01Jeh1rg2fq7dHZgkhEw6KXV",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 947
+    },
+    {
+      "toolUseId": "toolu_015167YGfEzWDL3F6oPpyw5f",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "condition-specific temporal gene expression interaction treatment control time course likelihood ratio test",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 649
+    },
+    {
+      "toolUseId": "toolu_01G11RHySEtkHqiRLVEwX8p2",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "maSigPro time series differential expression treatment",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 656
+    },
+    {
+      "toolUseId": "toolu_017WHVZfNsZ4p1dS2orK3Hs1",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 665
+    },
+    {
+      "toolUseId": "toolu_01C9AUCdUTMxaHJXP7K81USN",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/thelovelab/deseq2",
+        "query": "likelihood ratio test time course design reduced model interaction condition time full vs reduced"
+      },
+      "outcome": "ok",
+      "durationMs": 338
+    },
+    {
+      "toolUseId": "toolu_013UV3PTAXZ39kCC98uD11Y9",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "likelihood ratio test time course design reduced model interaction condition time"
+      },
+      "outcome": "ok",
+      "durationMs": 303
+    },
+    {
+      "toolUseId": "toolu_01HD4ZgiYmiytSNzPphmGPnF",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 likelihood ratio test time course design ~ condition + time + condition:time reduced model interaction test"
+      },
+      "outcome": "ok",
+      "durationMs": 1038
+    },
+    {
+      "toolUseId": "toolu_01GmrSEUbEX3pkD6HSbNGTNk",
+      "name": "list_available_refs",
+      "input": {
+        "query": "string ppi human"
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    },
+    {
+      "toolUseId": "toolu_01YNQRSoGwkRAyYHy7QSpCTx",
+      "name": "list_available_refs",
+      "input": {
+        "query": "string",
+        "category": "interaction-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01SGdNv6LuE73ej1Fd28bUmH",
+      "name": "list_available_refs",
+      "input": {
+        "category": "interaction-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_01MjSmeuDBPcj8dGwFKwq9Fz",
+      "name": "list_available_refs",
+      "input": {
+        "query": "9606.protein"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_017KdDT4s9biAT1vbSBuUJrt",
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01BX18VHhoDvLERpiZHaLjdz",
+      "name": "list_available_refs",
+      "input": {
+        "query": "HUMAN_9606"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01ShtvbvonHD17udvHHc8dJE",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene id mapping ensembl symbol biomart"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_018hEqStmNJPZue7UaAGA5bg",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01MyDd4gk854ZemrGnzxPRtB",
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_011uorhXe7T2GqayXgqyJJXH",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode gtf annotation human"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_018M2ekMQnM5XUqtiD63bH8g",
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01SuD8jECx5GQ8PuJYMBAcnB",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "group-specific temporal trajectory RNA-seq spline basis treatment interaction gene expression",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 463
+    },
+    {
+      "toolUseId": "toolu_01Wp8hphspetzh1kWrH5y7Wk",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ImpulseDE2 differential temporal RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 282
+    },
+    {
+      "toolUseId": "toolu_01BSbKP3YjuSodwA3UM7zdHu",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ImpulseDE2 case-only time course differential expression pattern",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1265
+    },
+    {
+      "toolUseId": "toolu_01UoDpUn7dwx5UgFpeGVKYXx",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Fischer ImpulseDE2 longitudinal RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 209
+    },
+    {
+      "toolUseId": "toolu_01RkXyrZLejLEkfkoXPTGZt9",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "ImpulseDE2 detects differentially expressed genes time course case-control",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8903
+    },
+    {
+      "toolUseId": "toolu_01CCxeg1bpe81DuMLeDZzJgz",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "likelihood ratio test interaction term time course RNA-seq DESeq2 reduced model",
+        "maxResults": 5
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01CisvAvVwn9qiT4M8CzcsRm",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ImpulseDE2",
+          "maSigPro",
+          "tradeSeq",
+          "clusterProfiler",
+          "goseq"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01FDHJWq9o9jqEP1brrRZXnL",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_014dbNfxzeJ4vtcbfsxLPgzM",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "decoupler",
+          "biomaRt",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_014hbUkCqHk9UVhGp7bVMBxH",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01A8eSkhecaJfZHTHAkZV5rE",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01McTwn65g8kUoTurmPjRT2T",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01Wdmd6FQRzQCcnohHdbDZtK",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01HzPqxmtEQdCP1yJ1qV9mXY",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01KxGBBpEiPBeHpvEZUejwLm",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "stringr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01BqAYPcJLv2ihN9mV8jNjGE",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "dplyr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01PH1kjzNdkiVdfTsujqfVS6",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01LpznbEh86yHKSNMyaqzF9F",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_015zFfcXnUhgndDVqSe1WPRs",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treatment x Time Interaction DE in Bulk RNA-seq",
+          "analytical_narrative": "The dataset is a 2-condition x 4-timepoint (t0-t3) bulk RNA-seq time course in a human cell line, 3 replicates per cell (24 samples, 12000 genes, raw salmon gene counts). The research question — which genes show a treatment-specific change over time beyond the shared time trend — is a statistical question about a condition:time interaction, not a simple pairwise contrast. The correct design is DESeq2's likelihood ratio test (LRT): fit a full model ~condition + time + condition:time and a reduced model ~condition + time, so the LRT isolates genes whose temporal trajectory differs by condition, independent of genes that simply move with time in both arms (which the reduced model already absorbs) or that differ by condition at a fixed offset (main effect, also absorbed by the reduced model). Track 1 does QC/import and the interaction DE test. Track 2 characterizes the genes the interaction test flags: clusters their per-condition trajectories (to distinguish, e.g., early-divergent vs late-divergent genes) and tests those genes for pathway enrichment against WikiPathways human gene sets, which are present in the reference store. Track 3 places the top interaction-effect genes into the STRING human PPI network (present in the reference store, requires the accompanying info file for ENSP-to-symbol mapping) to flag genes acting as network hubs, since hub perturbation is a stronger causal candidate than an isolated hit. All steps stay within the input files' identifier space (need to confirm gene ID type in counts.csv — Ensembl or symbol — during import) and use only packages confirmed present in this sandbox (DESeq2, clusterProfiler/fgsea are available; ImpulseDE2/maSigPro/tradeSeq were checked and are NOT installed, so the LRT approach is used instead of those specialized time-course packages).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts/metadata, QC, and build DESeq2 dataset",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the counts.csv (12000 genes x 24 samples) and metadata.csv (24 samples: condition, time, time_hours) align, and what QC filters and design factors are needed before modeling the condition:time interaction?",
+              "acceptance_criteria": [
+                "Sample names in counts.csv columns match metadata.csv rows exactly, with condition (2 levels) and time (4 levels: t0-t3) confirmed as factors, replicate count = 3 per condition:time cell",
+                "Low-count genes filtered (e.g. require count >=10 in at least 3 samples, the smallest group size) before DESeq2 fitting, with number of genes retained reported",
+                "A DESeqDataSet object is constructed with design ~ condition + time + condition:time and saved for downstream steps",
+                "Library size / PCA or sample-distance QC plot produced to confirm no obvious outlier samples or batch confound between condition and time"
+              ],
+              "packages": [
+                "DESeq2",
+                "dplyr"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "LRT for condition:time interaction (treatment-specific change over time)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes show a statistically significant treatment-specific temporal trajectory, i.e. condition:time interaction, beyond genes that change with time similarly in both conditions?",
+              "acceptance_criteria": [
+                "DESeq2 likelihood ratio test run: full model ~condition + time + condition:time vs reduced model ~condition + time, using the DESeqDataSet from T1S1",
+                "Results table reports gene ID, LRT statistic, raw p-value, BH-adjusted p-value (padj) for every tested gene, with genes at padj < 0.05 flagged as significant interaction hits",
+                "Report the count of significant interaction genes separately from the count of genes with only a main time effect or only a main condition effect (fit ~condition+time reduced-vs-intercept and ~time alone as secondary references) so the interaction-specific list is not conflated with a general time-responsive list",
+                "Per-gene, per-condition normalized (e.g. variance-stabilized) trajectories across t0-t3 exported for the significant interaction genes for downstream visualization/clustering"
+              ],
+              "packages": [
+                "DESeq2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Cluster treatment-specific trajectories",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Among genes with a significant condition:time interaction, what distinct shapes of treatment-specific divergence exist across t0-t3 (e.g. early-diverging, late-diverging, opposite-direction trajectories)?",
+              "acceptance_criteria": [
+                "VST/normalized per-condition mean trajectories for the significant interaction gene set (from T1S2) are scaled (e.g. z-scored per gene) and clustered (hierarchical or k-means) into a modest number of trajectory shape clusters",
+                "Cluster assignment table (gene -> cluster) and a heatmap or line-plot summary of the mean trajectory per cluster per condition are produced",
+                "Number of clusters chosen is justified (e.g. elbow/silhouette) rather than fixed arbitrarily, and cluster sizes reported"
+              ],
+              "packages": [
+                "pheatmap",
+                "ComplexHeatmap",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway enrichment of treatment-specific interaction genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Are the genes with a significant condition:time interaction (and each trajectory cluster from T2S1) enriched for particular WikiPathways human pathways, suggesting a coherent biological process driving the treatment-specific temporal response?",
+              "acceptance_criteria": [
+                "Over-representation (or fgsea-style ranked) test run against the WikiPathways human gene set collection (HGNC symbols) for the full significant interaction gene list from T1S2, using all tested genes (from T1S2, not just significant) as the background/universe",
+                "Same enrichment test repeated per trajectory cluster from T2S1 to check whether different divergence shapes map to different pathways",
+                "Output table of enriched pathways with adjusted p-values (BH/FDR) per gene set and per cluster; if the input gene IDs from counts.csv are not HGNC symbols, an explicit ID-mapping step is applied before the enrichment test and the mapping rate is reported",
+                "If no pathway reaches significance, this null result is reported explicitly rather than lowering the threshold post hoc"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Network context of top treatment-specific interaction genes",
+              "track": "T3",
+              "step_type": "network_analysis",
+              "question": "Do the genes with the strongest condition:time interaction signal occupy hub positions in the human protein-protein interaction network, which would support them as more plausible drivers rather than incidental transcriptional noise?",
+              "acceptance_criteria": [
+                "STRING human PPI network (protein.links, high-confidence combined_score >= 700) is joined to the protein.info file to map STRING IDs to gene symbols, and this mapping is explicitly validated against the gene identifiers in the DE results before use",
+                "Subnetwork induced by the significant interaction gene list from T1S2 is extracted, with node degree (within-subnetwork and within-full-network) computed for each gene",
+                "Genes reported ranked by network degree/hub score alongside their interaction LRT statistic and padj from T1S2, to flag any genes that are both strong interaction hits and network hubs",
+                "If gene ID mapping between counts.csv identifiers and STRING/UniProt symbols fails for a large fraction of genes, that failure rate is reported rather than silently dropping genes"
+              ],
+              "packages": [
+                "igraph",
+                "dplyr",
+                "stringr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent"
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 56
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

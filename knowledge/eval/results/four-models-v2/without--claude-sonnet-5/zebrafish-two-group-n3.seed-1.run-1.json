@@ -1,0 +1,815 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "zebrafish-two-group-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:08:40.099Z",
+  "elapsedMs": 134986,
+  "outcome": "plan_submitted",
+  "planId": "pln-4962f727",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is the minimum for a valid variance estimate in DESeq2 — flag results as underpowered for subtle effect sizes and do not overclaim significance at borderline padj",
+          "Counts.csv profile does not confirm whether Salmon length-correction was already applied; treat as raw gene-level counts appropriate for DESeq2's own size-factor normalization, and note this assumption in the output",
+          "Confirm gene identifiers in counts.csv (Ensembl Danio rerio IDs) match the keytype expected by org.Dr.eg.db before any annotation join"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "tximport",
+          "pandas",
+          "org.Dr.eg.db",
+          "AnnotationDbi",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between treated and control zebrafish larvae (3 vs 3, unpaired, single batch), using raw Salmon gene-level counts on the Ensembl Danio rerio annotation?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts matrix (12000 genes x 6 samples) and metadata (6 x 2) are loaded and sample order/names are matched between the two files before any modeling",
+          "Low-count genes are filtered (e.g. require a minimum total or per-group count) prior to DESeq2 fitting",
+          "DESeq2 is run with condition (treated vs control) as the sole design factor since design is unpaired single-batch",
+          "Output includes a full results table with log2FoldChange, shrunk LFC (apeglm or ashr), p-value, and BH-adjusted p-value for every tested gene, plus a normalized-counts matrix and a PCA/sample-distance plot for QC",
+          "Significant gene list is defined using padj < 0.05 (state the threshold explicitly) and reported with counts of up- vs down-regulated genes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Native zebrafish GO enrichment",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO annotation depth for zebrafish is sparser than for human/mouse, so an absence of a hit is weaker evidence than the same absence in human data",
+          "Report only if org.Dr.eg.db GO annotations resolve for a reasonable fraction of the input gene list; if coverage is very low, say so explicitly rather than reporting an enrichment run on too few genes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "AnnotationDbi",
+          "GOSemSim",
+          "GO.db"
+        ],
+        "question": "Which Gene Ontology biological processes, molecular functions, and cellular components are enriched among the zebrafish genes differentially expressed between treated and control larvae, tested natively in zebrafish gene-identifier space?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the significant gene list (padj < 0.05) from T1S1 as the foreground and all tested (non-filtered) genes from T1S1 as the background/universe",
+          "Runs clusterProfiler enrichGO (or equivalent) against org.Dr.eg.db across BP, MF, CC ontologies with BH-adjusted p-values reported",
+          "Reports up- and down-regulated gene sets separately, or at minimum flags direction in the result table",
+          "States the enrichment gene-set size (number of terms tested) and the FDR threshold used, and collapses/notes redundancy among nested GO parent-child terms rather than reporting every hit as independent"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Ortholog mapping to human gene symbols",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Ortholog mapping is inherently lossy — some zebrafish genes have no human ortholog, or map ambiguously (paralog expansion from teleost genome duplication is common in zebrafish); report the loss rate rather than assuming complete coverage",
+          "Only unambiguous 1:1 orthologs should feed the downstream human-pathway enrichment step; many:many mappings should be reported separately, not merged in"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "babelgene",
+          "AnnotationDbi",
+          "org.Dr.eg.db",
+          "pandas"
+        ],
+        "question": "What are the human ortholog gene symbols for the zebrafish genes tested in the differential expression analysis, to enable enrichment against human pathway resources?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses babelgene::orthologs() (or equivalent offline ortholog table) to map the zebrafish Ensembl/Entrez gene identifiers from T1S1's full results table to human HGNC symbols",
+          "Reports mapping coverage explicitly: how many of the tested zebrafish genes (and how many of the significant genes) received a 1:1 human ortholog call versus many:many or no call",
+          "Produces a mapped table carrying zebrafish gene ID, human ortholog symbol, log2FoldChange, and padj for every gene that received an unambiguous ortholog",
+          "Does not silently drop or collapse many:many ortholog relationships without flagging them in the output"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Human pathway enrichment via ortholog-mapped genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This step depends entirely on ortholog-mapping quality from T2S2 — report enrichment results alongside the ortholog coverage rate so readers can judge how representative the mapped gene set is of the full DE signal",
+          "Do not conflate 'enriched in the human-ortholog-mapped set' with 'the zebrafish pathway is active' — state this distinction directly in reported output"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "pandas"
+        ],
+        "question": "Which human-curated pathways (WikiPathways, MSigDB Hallmark, GO, and canonical KEGG-MEDICUS/BioCarta/PID) are enriched among the human orthologs of the zebrafish genes differentially expressed between treated and control larvae?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "Uses the 1:1-ortholog-mapped significant gene list from T2S2 as foreground and the full mapped tested-gene list as background/universe",
+          "Tests against WikiPathways human, MSigDB Hallmark human, MSigDB GO (BP/CC/MF) human, and MSigDB canonical pathways human (KEGG-MEDICUS/BioCarta/PID) gene sets, each reported separately with BH-adjusted p-values",
+          "If any of these reference GMTs are not resolvable in the environment at run time, the step reports which ones ran and which were skipped rather than failing silently",
+          "Every enrichment hit is reported with the caveat that it reflects the human ortholog's annotated pathway membership, not a zebrafish-validated pathway — findings are translational/inferential, not zebrafish-native evidence"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Synthesis of DE genes and enriched pathways",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Do not overstate confidence in pathway calls given the small sample size and the reliance on ortholog mapping for the human-resource half of the enrichment"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Summarizing across the native zebrafish GO enrichment and the ortholog-based human pathway enrichment, which genes differ between treated and control zebrafish larvae and which pathways do they point to?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "T2S1",
+          "T2S3"
+        ],
+        "acceptance_criteria": [
+          "Combines the DESeq2 significant gene list (T1S1), native GO enrichment (T2S1), and human ortholog pathway enrichment (T2S3) into one consolidated table/report",
+          "Clearly separates findings that are zebrafish-native (GO via org.Dr.eg.db) from findings that required cross-species ortholog inference (WikiPathways/MSigDB human), stating the ortholog coverage rate from T2S2 alongside any human-pathway claim",
+          "States explicitly that this is a single-batch, n=3-per-group study, so pathway-level conclusions should be read as hypothesis-generating rather than confirmatory"
+        ]
+      }
+    ],
+    "title": "Zebrafish larvae DE + pathway enrichment, drug vs control",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is a small bulk RNA-seq experiment (12000 genes x 6 samples, salmon gene-level counts on Ensembl Danio rerio annotation) with a clean two-group unpaired design (3 treated vs 3 control zebrafish larvae pools, single batch). This supports a standard DESeq2 negative-binomial differential expression workflow without batch correction. No zebrafish-specific pathway gene-set reference (WikiPathways zebrafish, zebrafish MSigDB) is staged in this environment — only human and mouse GMTs and org.Dr.eg.db (present) are available for zebrafish. The plan therefore: (1) runs QC + DESeq2 DE directly on the zebrafish counts using org.Dr.eg.db for ID/annotation bookkeeping; (2) maps the resulting zebrafish DE gene list to human orthologs using babelgene (installed, offline, supports Danio rerio -> Homo sapiens ortholog tables) so that the rich human pathway resources (WikiPathways human, MSigDB hallmark/GO/canonical human) can be used for enrichment, since no native zebrafish GMT is staged; (3) also runs GO enrichment natively in zebrafish space via clusterProfiler/org.Dr.eg.db (GO terms are organism-native and don't require ortholog mapping), giving a native-species check alongside the ortholog-based human-pathway enrichment. Both enrichment routes are reported side by side, and the ortholog-mapping step's incomplete coverage is flagged explicitly rather than treated as a complete 1:1 mapping."
+  },
+  "usage": {
+    "inputTokens": 2316483,
+    "outputTokens": 7658,
+    "cacheCreationInputTokens": 218304,
+    "cacheReadInputTokens": 2097819,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_013yxnMpfn85nkUG3wgD1mEC",
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_011he2iRnHyzMzPc1SuPn5Do",
+      "name": "list_available_refs",
+      "input": {
+        "query": "Danio rerio"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01TXywChSyB7RWoHBmmQEnHr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Dr.eg.db zebrafish gene identifier"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01WPCBeV4NvnjBbV7xMt2bda",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_016bq5s5Y87CNotwBr6U5mR9",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01Pwt5GHnnXj47aHejpJiNbA",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01RrQDCaRx5qdrBojpHLN9n1",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_011dub6fQdeTqVjbg7HcWYKy",
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_018mzebTbisrmc6jwZahm8Ee",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Dr.eg.db",
+          "biomaRt",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01GeX9Mn3kZMdJHn97d24pLr",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Drerio.v79",
+          "AnnotationHub",
+          "pydeseq2",
+          "DESeq2",
+          "tximport"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01Sbh2X3QgPvfXVhtqSMMu8D",
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish",
+        "path": "/mnt/refs/managed"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_017w6Fpv9r4nC1FSnFWenRRV",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01WPrYYNCJEyfnXtUFH8iS4r",
+      "name": "list_available_refs",
+      "input": {
+        "query": "ortholog",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01DSahG4cKg58xvwLUPioJYr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "homolog",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_0137tS5UwcppowRUru1sXQnr",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "babelgene",
+          "biomartr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_018mhQjX4FPr3tVLKGZA8u5c",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/cran/babelgene",
+        "query": "zebrafish Danio rerio ortholog mapping to human gene symbols"
+      },
+      "outcome": "ok",
+      "durationMs": 516
+    },
+    {
+      "toolUseId": "toolu_01EnYUA5t9Zn4xSwGrQMFRFN",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "babelgene",
+        "query": "zebrafish ortholog mapping to human genes"
+      },
+      "outcome": "ok",
+      "durationMs": 310
+    },
+    {
+      "toolUseId": "toolu_01Rd69y9bFfuzWHZNxREpUSw",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/igordot/babelgene",
+        "query": "orthologs function species zebrafish Danio rerio human_genes"
+      },
+      "outcome": "ok",
+      "durationMs": 688
+    },
+    {
+      "toolUseId": "toolu_01PwkUPaPQVz7SRXw8XK66in",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "babelgene R package human mouse ortholog mapping",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 771
+    },
+    {
+      "toolUseId": "toolu_0161BS128KzM44RuEGbq1YWt",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "babelgene ortholog mapping package Danio rerio",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 22831
+    },
+    {
+      "toolUseId": "toolu_01E6NCeVhMZLuTNi4DeQ2K8A",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/cran/babelgene",
+        "query": "orthologs species argument list supported species zebrafish"
+      },
+      "outcome": "ok",
+      "durationMs": 360
+    },
+    {
+      "toolUseId": "toolu_01PstH1Ye2yUtbWSxKo3P32L",
+      "name": "search_github_repos",
+      "input": {
+        "query": "babelgene R package zebrafish ortholog",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 399
+    },
+    {
+      "toolUseId": "toolu_016ppsBQgr7yKvf1qV8UmbHR",
+      "name": "search_arxiv",
+      "input": {
+        "query": "babelgene zebrafish ortholog",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 512
+    },
+    {
+      "toolUseId": "toolu_01EAEGoJDEKMy4DJ6P1phjgj",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "zebrafish larvae drug exposure RNA-seq differential expression pathway analysis",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 3332
+    },
+    {
+      "toolUseId": "toolu_017yGhUXBpgbGV8FXFUvahYg",
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "zebrafish larvae drug exposure RNA-seq",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Danio rerio"
+      },
+      "outcome": "ok",
+      "durationMs": 753
+    },
+    {
+      "toolUseId": "toolu_01PNiGoG431wqKpgEa54eETa",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "39154758"
+        ],
+        "maxAuthors": 5,
+        "maxMeshTerms": 10
+      },
+      "outcome": "ok",
+      "durationMs": 664
+    },
+    {
+      "toolUseId": "toolu_018wRFqF7bhsrMnwcbjVpuKb",
+      "name": "list_available_packages",
+      "input": {
+        "query": "org.Dr"
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01MKGeURRrrthcUkydLHrusG",
+      "name": "list_available_refs",
+      "input": {
+        "query": "Ensembl Dr Danio annotation gtf"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_015wJdy5A59vWv9F7r3rL9gx",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomaRt",
+          "AnnotationHub",
+          "ensembldb",
+          "gprofiler2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01R8dto3LopG1pK8519D6jNr",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomart",
+          "R.utils"
+        ],
+        "language": "python"
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_017xh2pVF8LXNWH9gNFNupAe",
+      "name": "list_available_refs",
+      "input": {
+        "query": "ensembl gene id gene symbol biomart zebrafish annotation",
+        "limit": 30
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01AjAwNGrmxKVoWGfEgDz3p7",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/bioconductor/org.dr.eg.db",
+        "query": "map Ensembl gene ids to gene symbols and human orthologs"
+      },
+      "outcome": "ok",
+      "durationMs": 299
+    },
+    {
+      "toolUseId": "toolu_01HUPPoPEbtkWq6gEsDvw6pN",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "org.Dr.eg.db",
+        "query": "map Ensembl gene ids to gene symbols"
+      },
+      "outcome": "ok",
+      "durationMs": 493
+    },
+    {
+      "toolUseId": "toolu_01F1cZt1LTgWQSTo4sxkqeYn",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "org.Dr.eg.db",
+        "query": "select mapIds keytype ENSEMBL SYMBOL zebrafish gene annotation database"
+      },
+      "outcome": "ok",
+      "durationMs": 435
+    },
+    {
+      "toolUseId": "toolu_01YN5Vf8EkzrLMz78n9x7CBx",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/jkitchin/org-db-v3",
+        "query": "select mapIds keytype ENSEMBL SYMBOL zebrafish gene annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 963
+    },
+    {
+      "toolUseId": "toolu_01UkiNjNup6cebYahAzrwwvo",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "genefilter",
+          "GO.db",
+          "KEGGREST",
+          "goseq"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01GQ8oqghFFG3WKWk7BEhCDP",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "AnnotationDbi",
+          "org.Dr.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_014dp8boEPBx6vkh4euX9fGn",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "GOSemSim",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_015FpW3pW4QRBQn9XmJJ7xVC",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01NWYVTVFJB7WYwiE9AquTLu",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "not relevant, testing"
+      },
+      "outcome": "ok",
+      "durationMs": 896
+    },
+    {
+      "toolUseId": "toolu_013TMtJLtZcdZF52QzrBDJvy",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "clusterProfiler",
+        "query": "enricher function for custom GMT gene sets, OrgDb mapIds symbol to entrez zebrafish"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01F3qyZzy2vcLW9B59GLaVbf",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Zebrafish larvae DE + pathway enrichment, drug vs control",
+          "analytical_narrative": "The dataset is a small bulk RNA-seq experiment (12000 genes x 6 samples, salmon gene-level counts on Ensembl Danio rerio annotation) with a clean two-group unpaired design (3 treated vs 3 control zebrafish larvae pools, single batch). This supports a standard DESeq2 negative-binomial differential expression workflow without batch correction. No zebrafish-specific pathway gene-set reference (WikiPathways zebrafish, zebrafish MSigDB) is staged in this environment — only human and mouse GMTs and org.Dr.eg.db (present) are available for zebrafish. The plan therefore: (1) runs QC + DESeq2 DE directly on the zebrafish counts using org.Dr.eg.db for ID/annotation bookkeeping; (2) maps the resulting zebrafish DE gene list to human orthologs using babelgene (installed, offline, supports Danio rerio -> Homo sapiens ortholog tables) so that the rich human pathway resources (WikiPathways human, MSigDB hallmark/GO/canonical human) can be used for enrichment, since no native zebrafish GMT is staged; (3) also runs GO enrichment natively in zebrafish space via clusterProfiler/org.Dr.eg.db (GO terms are organism-native and don't require ortholog mapping), giving a native-species check alongside the ortholog-based human-pathway enrichment. Both enrichment routes are reported side by side, and the ortholog-mapping step's incomplete coverage is flagged explicitly rather than treated as a complete 1:1 mapping.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control zebrafish larvae (3 vs 3, unpaired, single batch), using raw Salmon gene-level counts on the Ensembl Danio rerio annotation?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 6 samples) and metadata (6 x 2) are loaded and sample order/names are matched between the two files before any modeling",
+                "Low-count genes are filtered (e.g. require a minimum total or per-group count) prior to DESeq2 fitting",
+                "DESeq2 is run with condition (treated vs control) as the sole design factor since design is unpaired single-batch",
+                "Output includes a full results table with log2FoldChange, shrunk LFC (apeglm or ashr), p-value, and BH-adjusted p-value for every tested gene, plus a normalized-counts matrix and a PCA/sample-distance plot for QC",
+                "Significant gene list is defined using padj < 0.05 (state the threshold explicitly) and reported with counts of up- vs down-regulated genes"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "tximport",
+                "pandas",
+                "org.Dr.eg.db",
+                "AnnotationDbi",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per group is the minimum for a valid variance estimate in DESeq2 — flag results as underpowered for subtle effect sizes and do not overclaim significance at borderline padj",
+                "Counts.csv profile does not confirm whether Salmon length-correction was already applied; treat as raw gene-level counts appropriate for DESeq2's own size-factor normalization, and note this assumption in the output",
+                "Confirm gene identifiers in counts.csv (Ensembl Danio rerio IDs) match the keytype expected by org.Dr.eg.db before any annotation join"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Native zebrafish GO enrichment",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which Gene Ontology biological processes, molecular functions, and cellular components are enriched among the zebrafish genes differentially expressed between treated and control larvae, tested natively in zebrafish gene-identifier space?",
+              "acceptance_criteria": [
+                "Uses the significant gene list (padj < 0.05) from T1S1 as the foreground and all tested (non-filtered) genes from T1S1 as the background/universe",
+                "Runs clusterProfiler enrichGO (or equivalent) against org.Dr.eg.db across BP, MF, CC ontologies with BH-adjusted p-values reported",
+                "Reports up- and down-regulated gene sets separately, or at minimum flags direction in the result table",
+                "States the enrichment gene-set size (number of terms tested) and the FDR threshold used, and collapses/notes redundancy among nested GO parent-child terms rather than reporting every hit as independent"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "AnnotationDbi",
+                "GOSemSim",
+                "GO.db"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "GO annotation depth for zebrafish is sparser than for human/mouse, so an absence of a hit is weaker evidence than the same absence in human data",
+                "Report only if org.Dr.eg.db GO annotations resolve for a reasonable fraction of the input gene list; if coverage is very low, say so explicitly rather than reporting an enrichment run on too few genes"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Ortholog mapping to human gene symbols",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "What are the human ortholog gene symbols for the zebrafish genes tested in the differential expression analysis, to enable enrichment against human pathway resources?",
+              "acceptance_criteria": [
+                "Uses babelgene::orthologs() (or equivalent offline ortholog table) to map the zebrafish Ensembl/Entrez gene identifiers from T1S1's full results table to human HGNC symbols",
+                "Reports mapping coverage explicitly: how many of the tested zebrafish genes (and how many of the significant genes) received a 1:1 human ortholog call versus many:many or no call",
+                "Produces a mapped table carrying zebrafish gene ID, human ortholog symbol, log2FoldChange, and padj for every gene that received an unambiguous ortholog",
+                "Does not silently drop or collapse many:many ortholog relationships without flagging them in the output"
+              ],
+              "packages": [
+                "babelgene",
+                "AnnotationDbi",
+                "org.Dr.eg.db",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "Ortholog mapping is inherently lossy — some zebrafish genes have no human ortholog, or map ambiguously (paralog expansion from teleost genome duplication is common in zebrafish); report the loss rate rather than assuming complete coverage",
+                "Only unambiguous 1:1 orthologs should feed the downstream human-pathway enrichment step; many:many mappings should be reported separately, not merged in"
+              ]
+            },
+            {
+              "id": "T2S3",
+              "name": "Human pathway enrichment via ortholog-mapped genes",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which human-curated pathways (WikiPathways, MSigDB Hallmark, GO, and canonical KEGG-MEDICUS/BioCarta/PID) are enriched among the human orthologs of the zebrafish genes differentially expressed between treated and control larvae?",
+              "acceptance_criteria": [
+                "Uses the 1:1-ortholog-mapped significant gene list from T2S2 as foreground and the full mapped tested-gene list as background/universe",
+                "Tests against WikiPathways human, MSigDB Hallmark human, MSigDB GO (BP/CC/MF) human, and MSigDB canonical pathways human (KEGG-MEDICUS/BioCarta/PID) gene sets, each reported separately with BH-adjusted p-values",
+                "If any of these reference GMTs are not resolvable in the environment at run time, the step reports which ones ran and which were skipped rather than failing silently",
+                "Every enrichment hit is reported with the caveat that it reflects the human ortholog's annotated pathway membership, not a zebrafish-validated pathway — findings are translational/inferential, not zebrafish-native evidence"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "This step depends entirely on ortholog-mapping quality from T2S2 — report enrichment results alongside the ortholog coverage rate so readers can judge how representative the mapped gene set is of the full DE signal",
+                "Do not conflate 'enriched in the human-ortholog-mapped set' with 'the zebrafish pathway is active' — state this distinction directly in reported output"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Synthesis of DE genes and enriched pathways",
+              "track": "T3",
+              "step_type": "reporting",
+              "question": "Summarizing across the native zebrafish GO enrichment and the ortholog-based human pathway enrichment, which genes differ between treated and control zebrafish larvae and which pathways do they point to?",
+              "acceptance_criteria": [
+                "Combines the DESeq2 significant gene list (T1S1), native GO enrichment (T2S1), and human ortholog pathway enrichment (T2S3) into one consolidated table/report",
+                "Clearly separates findings that are zebrafish-native (GO via org.Dr.eg.db) from findings that required cross-species ortholog inference (WikiPathways/MSigDB human), stating the ortholog coverage rate from T2S2 alongside any human-pathway claim",
+                "States explicitly that this is a single-batch, n=3-per-group study, so pathway-level conclusions should be read as hypothesis-generating rather than confirmatory"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Do not overstate confidence in pathway calls given the small sample size and the reliance on ortholog mapping for the human-resource half of the enrichment"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 64
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

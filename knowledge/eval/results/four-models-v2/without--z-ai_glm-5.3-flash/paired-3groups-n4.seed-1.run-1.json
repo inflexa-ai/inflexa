@@ -1,0 +1,646 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "paired-3groups-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:03:39.067Z",
+  "elapsedMs": 332856,
+  "outcome": "plan_submitted",
+  "planId": "pln-206365cb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, ID harmonization and gene filtering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene counts without tximport length correction can carry a small gene-length bias; note this in the report rather than attempting to fix it (no transcript-level input exists in this dataset)",
+          "With 4 subjects the run is powered only for large effects — conclusions must carry effect sizes, not just p-values"
+        ],
+        "context": "Dataset: /eval-four-models-v2-without-paired-3groups-n4-s1-1 — 12000 genes x 13 columns in counts.csv (12 samples + ID column), metadata.csv 12 rows x 3 columns (sample, subject, condition). 4 subjects each measured under control, treated_a, treated_b. Counts are gene-level Salmon output as delivered; whether length correction was applied is not recorded — acceptable for DESeq2/edgeR count models, note as a limitation in the QC report. Environment has no network access.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "AnnotationDbi",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 12 samples well-behaved (library size, no outliers), what identifier space are the 12000 gene rows in, and does expression structure reflect subject pairing as expected for the control / treated_a / treated_b design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use only files under /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/ and reference data already staged under /mnt/refs",
+          "No network calls: do not use biomaRt or any download; ID mapping must use the offline org.Hs.eg.db package",
+          "Do not remove samples without reporting which and why"
+        ],
+        "description": "Load counts.csv (12000 genes x 13 columns; 12 samples + gene ID column) and metadata.csv (12 x 3: sample, subject, condition). Verify sample ID alignment between the two files, report library sizes and per-condition totals. Determine whether the gene identifiers are HGNC symbols, Ensembl IDs, or Entrez IDs; if not symbols, map to HGNC symbols offline via org.Hs.eg.db (AnnotationDbi) and report unmapped rate. Filter low-expression genes (retain genes with raw count >= 10 in at least 4 samples, i.e. the size of one condition group). Produce VST-transformed (DESeq2) PCA colored by condition and by subject, plus a sample-to-sample correlation heatmap, to confirm the expected within-subject structure and flag any outlier sample. Needs no external reference beyond the offline org.Hs.eg.db annotation (already installed).",
+        "acceptance_criteria": [
+          "A QC table reporting library sizes per sample, per-condition totals, and post-filter gene count",
+          "The identifier space of the counts is stated explicitly (symbol vs Ensembl vs Entrez) and, if not HGNC symbols, a mapped symbol-keyed matrix is produced",
+          "PCA plots colored by condition and by subject are produced; the subject vs condition structure is reported (which axis dominates)",
+          "No sample is silently dropped: any outlier flag is reported with the statistic that flagged it"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Paired differential expression (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 per condition means BH-FDR at 0.05 will be a conservative call; report the FDR 0.1 gene counts as well so the sensitivity of conclusions to the threshold is visible",
+          "Genes filtered by independent filtering must be counted and reported, not silently dropped"
+        ],
+        "context": "Same dataset as T1S1. DESeq2 1.52.0 and apeglm 1.34.0 are installed. lfcShrink(apeglm) requires coefficient names (e.g. 'condition_treated_a_vs_control'); the treated_b vs treated_a contrast must be run with contrast= (no shrinkage) since it is not a coefficient of the reference design. FDR: Benjamini-Hochberg via results(). Independent filtering by DESeq2 is left on; the filtered-out count is reported.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes respond to treated_a vs control within subject, which respond to treated_b vs control within subject, and which genes differ directly between treated_b and treated_a (FDR < 0.05, BH-corrected, log2FC with apeglm shrinkage)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Subject MUST be in the design formula — the unpaired alternative (~ condition alone) discards the pairing and is not acceptable for the primary result",
+          "Keep the unshrunken Wald log2FC in every output table alongside the shrunken one",
+          "Write full tables (all retained genes), not only significant rows"
+        ],
+        "description": "Fit one DESeq2 model on the filtered count matrix with design ~ subject + condition (condition factor levels ordered control -> treated_a -> treated_b, control as reference; subject as a blocking factor consuming 3 of the 12 degrees of freedom, leaving 7 residual df). Extract three contrasts: treated_a vs control (response to A within subject), treated_b vs control (response to B within subject), and treated_b vs treated_a (direct difference between the two treatments). Apply BH multiple-testing correction per contrast. Apply apeglm log2FC shrinkage for the two treatment-vs-control contrasts (via coefficient names) and report both shrunken and unshrunken LFC. Save full per-gene result tables as CSV.",
+        "acceptance_criteria": [
+          "A single DESeqDataSet fitted with design ~ subject + condition and control set as the reference level",
+          "Three result tables (one per contrast), each with all tested genes, including log2FC, Wald statistic, p-value and BH-adjusted p-value; FDR threshold 0.05 reported alongside",
+          "Significant-gene counts per contrast at FDR 0.05 and at FDR 0.1 are reported",
+          "LFC-shrunk estimates present for treated_a_vs_control and treated_b_vs_control",
+          "The 7 residual degrees of freedom of the model are stated in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DE visualization and responder classification",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Overlap counts at n=4 subjects are small-number statistics; present them with gene counts, not percentages alone"
+        ],
+        "context": "Consumes the three DESeq2 result tables from T1S2. The A-only / B-only / shared / A-vs-B classification is the direct answer to the research question and is the key deliverable of the track.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexUpset",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "How do the treated_a-vs-control, treated_b-vs-control and treated_b-vs-treated_a gene sets overlap, and which specific genes distinguish the two treatments?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Label the A-vs-B contrast explicitly in every figure so it is not confused with the two-vs-control contrasts",
+          "Base volcano plots on the shrunken LFC for treatment-vs-control contrasts and on the unshrunken LFC for the B-vs-A contrast, consistent with T1S2"
+        ],
+        "description": "Visualize and summarize the three DESeq2 contrast tables: volcano plots and MA plots per contrast (shrunken LFC for treatment-vs-control, unshrunken for treated_b vs treated_a), a heatmap of the top significant genes (union of FDR < 0.05 across the two treatment-vs-control contrasts) annotated by subject and condition, and a cross-contrast classification: genes responding to A only, to B only, to both (with concordant or opposing direction), and genes with a significant direct treated_b vs treated_a difference. Produce a compact summary table of these classes with top genes by shrunken LFC.",
+        "acceptance_criteria": [
+          "Volcano and MA plots for all three contrasts",
+          "One labeled heatmap of the union of significant genes (FDR < 0.05 in at least one contrast) with subject and condition annotations",
+          "A summary table enumerating: A-only responders, B-only responders, shared responders, and genes with a significant treated_b vs treated_a difference, with example top genes per class (by shrunken LFC)",
+          "Agreement statistic between the A-only and B-only responder direction (fraction same-sign log2FC among shared responders)"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Model sensitivity check (edgeR + limma)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "limma duplicateCorrelation with a 3-level within-subject factor and 4 blocks is near the limit of what the method supports; treat its FDR set with more caution than its log2FC correlation",
+          "Do not average the frameworks' p-values — compare, do not merge"
+        ],
+        "context": "edgeR 4.10.3 and limma 3.68.5 are installed. edgeR handles subject blocking by including subject in the design matrix; limma handles it via duplicateCorrelation with blocking = subject. This dataset is named 'eval-four-models', i.e. the modeling choice is itself of interest to the user.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "data.table"
+        ],
+        "question": "Are the treated_a-vs-control, treated_b-vs-control and treated_b-vs-treated_a DE calls stable across independent count models (DESeq2 vs edgeR QL vs limma-voom), given only 4 paired subjects?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Same gene filter and same subject blocking as T1S2 — differences must come from the model, not from preprocessing",
+          "Report per contrast, not pooled"
+        ],
+        "description": "Re-run the three contrasts in two additional frameworks on the same filtered matrix: edgeR quasi-likelihood with design ~ subject + condition, and limma-voom with duplicateCorrelation blocking on subject. Compare against DESeq2 (T1S2) per contrast: correlation of log2FC estimates, and overlap of FDR < 0.05 gene sets. Report which contrasts are robust to the modeling choice and which are not, as a plain concordance table.",
+        "acceptance_criteria": [
+          "Both edgeR and limma-voom runs completed on the same filtered matrix with subject in the model (edgeR: subject blocking via design ~ subject + condition; limma: voom + duplicateCorrelation with subject as a blocking factor)",
+          "Concordance table: Spearman/Pearson correlation of log2FC per contrast across methods, and Jaccard/overlap counts of FDR < 0.05 sets",
+          "A short verdict: which of the three contrasts are method-robust and which are not",
+          "If edgeR or limma fails on this matrix, the failure is reported explicitly and the step completes with whichever framework succeeded"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "WikiPathways GSEA on treatment signatures",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GSEA on the treated_b vs treated_a contrast has the lowest power of the three; its enrichment table should be labeled as exploratory",
+          "WikiPathways sets are small and overlapping; report set sizes alongside NES and avoid over-interpreting pathways with fewer than 10 matched genes"
+        ],
+        "context": "Reference data confirmed present in this environment: WikiPathways Homo sapiens GMT under /mnt/refs (2026.07.10, HGNC gene symbols; first field '%'-delimited name|ID|species). fgsea 1.38.0 and GSEABase 1.74.0 installed. If T1S1 mapped Ensembl IDs to symbols, the ranked lists are already symbol-keyed; otherwise map ranked list IDs to symbols offline via org.Hs.eg.db before matching to the GMT.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table"
+        ],
+        "question": "Which WikiPathways biological processes are enriched among the genes responding to treated_a, to treated_b, and among genes that differ between treated_b and treated_a?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the staged human WikiPathways GMT only — the rat and mouse GMTs in the same store are wrong for this Homo sapiens dataset",
+          "No network access: do not use gseapy enrichment databases or download MSigDB; the staged GMT and offline packages are the only sources",
+          "Report gene-set size and matched-gene count per pathway so small-set instability is visible"
+        ],
+        "description": "Run fgsea (fgseaMultilevel) on the ranked gene lists — DESeq2 Wald statistics (unshrunken, the standard GSEA ranking statistic) from each of the three contrasts in T1S2 — against the staged human WikiPathways gene sets (GMT: one pathway per line, '%'-delimited descriptor, HGNC symbols; ~341 KB). Report per-contrast pathway enrichment with NES, p-value and BH-adjusted p-value, plus leading-edge genes for the top pathways. This gives the biological reading of the treatment responses and of what distinguishes treatment A from treatment B. If the GMT resource is absent at run time, report its absence and produce the ranked lists as output so the analysis still completes.",
+        "acceptance_criteria": [
+          "An enrichment table per contrast (pathway, NES, p-value, BH-adjusted p-value, leading-edge gene count)",
+          "Pathway names parsed from the GMT '%'-delimited first field, filtered to human sets",
+          "A plain-language summary of which biological processes are enriched among treated_a responders, treated_b responders, and the A-vs-B difference",
+          "If the GMT is absent at run time, the step reports the gap and completes without enrichments rather than failing"
+        ]
+      }
+    ],
+    "title": "Paired in-subject treatment response DE and A-vs-B contrast",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12000 genes x 12 samples of Salmon-derived gene-level counts from human blood, with 4 subjects each measured under control, treated_a and treated_b — a fully paired three-condition design. Because each subject carries all three conditions, the correct primary model blocks on subject: DESeq2 with design ~ subject + condition (7 residual df) gives within-subject treatment responses, answering the research question directly through three contrasts: treated_a vs control, treated_b vs control (the two responses), and treated_b vs treated_a (the direct difference between treatments). The pipeline first verifies sample integrity and gene identifier space and filters low-count genes (T1S1), then fits the paired model with BH correction and apeglm LFC shrinkage (T1S2), then classifies responders — A-only, B-only, shared, and A-vs-B-different — with visual summary (T1S3). Because n=4 subjects makes any single model fragile and the dataset name ('eval-four-models') signals that model choice matters to the user, T1S4 re-runs the same three contrasts in edgeR QL and limma-voom + duplicateCorrelation and reports cross-framework concordance per contrast. Finally, T2S1 places the treatment signatures in biological context by fgsea against the staged human WikiPathways GMT, covering what each treatment does and what separates them. Resources are sized to the tiny matrix (12k x 12), not to generic defaults."
+  },
+  "usage": {
+    "inputTokens": 68403,
+    "outputTokens": 9516,
+    "cacheReadInputTokens": 37120,
+    "reasoningTokens": 2814
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_e6e0502a25a04b588d7e1490",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-15T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A QC table reporting library sizes per sample, per-condition totals, and post-filter gene count",
+                "The identifier space of the counts is stated explicitly (symbol vs Ensembl vs Entrez) and, if not HGNC symbols, a mapped symbol-keyed matrix is produced",
+                "PCA plots colored by condition and by subject are produced; the subject vs condition structure is reported (which axis dominates)",
+                "No sample is silently dropped: any outlier flag is reported with the statistic that flagged it"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: /eval-four-models-v2-without-paired-3groups-n4-s1-1 — 12000 genes x 13 columns in counts.csv (12 samples + ID column), metadata.csv 12 rows x 3 columns (sample, subject, condition). 4 subjects each measured under control, treated_a, treated_b. Counts are gene-level Salmon output as delivered; whether length correction was applied is not recorded — acceptable for DESeq2/edgeR count models, note as a limitation in the QC report. Environment has no network access.",
+              "caveats": [
+                "Salmon gene counts without tximport length correction can carry a small gene-length bias; note this in the report rather than attempting to fix it (no transcript-level input exists in this dataset)",
+                "With 4 subjects the run is powered only for large effects — conclusions must carry effect sizes, not just p-values"
+              ],
+              "constraints": [
+                "Use only files under /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/ and reference data already staged under /mnt/refs",
+                "No network calls: do not use biomaRt or any download; ID mapping must use the offline org.Hs.eg.db package",
+                "Do not remove samples without reporting which and why"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv (12000 genes x 13 columns; 12 samples + gene ID column) and metadata.csv (12 x 3: sample, subject, condition). Verify sample ID alignment between the two files, report library sizes and per-condition totals. Determine whether the gene identifiers are HGNC symbols, Ensembl IDs, or Entrez IDs; if not symbols, map to HGNC symbols offline via org.Hs.eg.db (AnnotationDbi) and report unmapped rate. Filter low-expression genes (retain genes with raw count >= 10 in at least 4 samples, i.e. the size of one condition group). Produce VST-transformed (DESeq2) PCA colored by condition and by subject, plus a sample-to-sample correlation heatmap, to confirm the expected within-subject structure and flag any outlier sample. Needs no external reference beyond the offline org.Hs.eg.db annotation (already installed).",
+              "id": "T1S1",
+              "name": "QC, ID harmonization and gene filtering",
+              "packages": [
+                "DESeq2",
+                "AnnotationDbi",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Are the 12 samples well-behaved (library size, no outliers), what identifier space are the 12000 gene rows in, and does expression structure reflect subject pairing as expected for the control / treated_a / treated_b design?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "A single DESeqDataSet fitted with design ~ subject + condition and control set as the reference level",
+                "Three result tables (one per contrast), each with all tested genes, including log2FC, Wald statistic, p-value and BH-adjusted p-value; FDR threshold 0.05 reported alongside",
+                "Significant-gene counts per contrast at FDR 0.05 and at FDR 0.1 are reported",
+                "LFC-shrunk estimates present for treated_a_vs_control and treated_b_vs_control",
+                "The 7 residual degrees of freedom of the model are stated in the output"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same dataset as T1S1. DESeq2 1.52.0 and apeglm 1.34.0 are installed. lfcShrink(apeglm) requires coefficient names (e.g. 'condition_treated_a_vs_control'); the treated_b vs treated_a contrast must be run with contrast= (no shrinkage) since it is not a coefficient of the reference design. FDR: Benjamini-Hochberg via results(). Independent filtering by DESeq2 is left on; the filtered-out count is reported.",
+              "caveats": [
+                "n=4 per condition means BH-FDR at 0.05 will be a conservative call; report the FDR 0.1 gene counts as well so the sensitivity of conclusions to the threshold is visible",
+                "Genes filtered by independent filtering must be counted and reported, not silently dropped"
+              ],
+              "constraints": [
+                "Subject MUST be in the design formula — the unpaired alternative (~ condition alone) discards the pairing and is not acceptable for the primary result",
+                "Keep the unshrunken Wald log2FC in every output table alongside the shrunken one",
+                "Write full tables (all retained genes), not only significant rows"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit one DESeq2 model on the filtered count matrix with design ~ subject + condition (condition factor levels ordered control -> treated_a -> treated_b, control as reference; subject as a blocking factor consuming 3 of the 12 degrees of freedom, leaving 7 residual df). Extract three contrasts: treated_a vs control (response to A within subject), treated_b vs control (response to B within subject), and treated_b vs treated_a (direct difference between the two treatments). Apply BH multiple-testing correction per contrast. Apply apeglm log2FC shrinkage for the two treatment-vs-control contrasts (via coefficient names) and report both shrunken and unshrunken LFC. Save full per-gene result tables as CSV.",
+              "id": "T1S2",
+              "name": "Paired differential expression (DESeq2)",
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "question": "Which genes respond to treated_a vs control within subject, which respond to treated_b vs control within subject, and which genes differ directly between treated_b and treated_a (FDR < 0.05, BH-corrected, log2FC with apeglm shrinkage)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Volcano and MA plots for all three contrasts",
+                "One labeled heatmap of the union of significant genes (FDR < 0.05 in at least one contrast) with subject and condition annotations",
+                "A summary table enumerating: A-only responders, B-only responders, shared responders, and genes with a significant treated_b vs treated_a difference, with example top genes per class (by shrunken LFC)",
+                "Agreement statistic between the A-only and B-only responder direction (fraction same-sign log2FC among shared responders)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consumes the three DESeq2 result tables from T1S2. The A-only / B-only / shared / A-vs-B classification is the direct answer to the research question and is the key deliverable of the track.",
+              "caveats": [
+                "Overlap counts at n=4 subjects are small-number statistics; present them with gene counts, not percentages alone"
+              ],
+              "constraints": [
+                "Label the A-vs-B contrast explicitly in every figure so it is not confused with the two-vs-control contrasts",
+                "Base volcano plots on the shrunken LFC for treatment-vs-control contrasts and on the unshrunken LFC for the B-vs-A contrast, consistent with T1S2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Visualize and summarize the three DESeq2 contrast tables: volcano plots and MA plots per contrast (shrunken LFC for treatment-vs-control, unshrunken for treated_b vs treated_a), a heatmap of the top significant genes (union of FDR < 0.05 across the two treatment-vs-control contrasts) annotated by subject and condition, and a cross-contrast classification: genes responding to A only, to B only, to both (with concordant or opposing direction), and genes with a significant direct treated_b vs treated_a difference. Produce a compact summary table of these classes with top genes by shrunken LFC.",
+              "id": "T1S3",
+              "name": "DE visualization and responder classification",
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ComplexUpset",
+                "ggplot2",
+                "dplyr"
+              ],
+              "question": "How do the treated_a-vs-control, treated_b-vs-control and treated_b-vs-treated_a gene sets overlap, and which specific genes distinguish the two treatments?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Both edgeR and limma-voom runs completed on the same filtered matrix with subject in the model (edgeR: subject blocking via design ~ subject + condition; limma: voom + duplicateCorrelation with subject as a blocking factor)",
+                "Concordance table: Spearman/Pearson correlation of log2FC per contrast across methods, and Jaccard/overlap counts of FDR < 0.05 sets",
+                "A short verdict: which of the three contrasts are method-robust and which are not",
+                "If edgeR or limma fails on this matrix, the failure is reported explicitly and the step completes with whichever framework succeeded"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "edgeR 4.10.3 and limma 3.68.5 are installed. edgeR handles subject blocking by including subject in the design matrix; limma handles it via duplicateCorrelation with blocking = subject. This dataset is named 'eval-four-models', i.e. the modeling choice is itself of interest to the user.",
+              "caveats": [
+                "limma duplicateCorrelation with a 3-level within-subject factor and 4 blocks is near the limit of what the method supports; treat its FDR set with more caution than its log2FC correlation",
+                "Do not average the frameworks' p-values — compare, do not merge"
+              ],
+              "constraints": [
+                "Same gene filter and same subject blocking as T1S2 — differences must come from the model, not from preprocessing",
+                "Report per contrast, not pooled"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Re-run the three contrasts in two additional frameworks on the same filtered matrix: edgeR quasi-likelihood with design ~ subject + condition, and limma-voom with duplicateCorrelation blocking on subject. Compare against DESeq2 (T1S2) per contrast: correlation of log2FC estimates, and overlap of FDR < 0.05 gene sets. Report which contrasts are robust to the modeling choice and which are not, as a plain concordance table.",
+              "id": "T1S4",
+              "name": "Model sensitivity check (edgeR + limma)",
+              "packages": [
+                "edgeR",
+                "limma",
+                "data.table"
+              ],
+              "question": "Are the treated_a-vs-control, treated_b-vs-control and treated_b-vs-treated_a DE calls stable across independent count models (DESeq2 vs edgeR QL vs limma-voom), given only 4 paired subjects?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "An enrichment table per contrast (pathway, NES, p-value, BH-adjusted p-value, leading-edge gene count)",
+                "Pathway names parsed from the GMT '%'-delimited first field, filtered to human sets",
+                "A plain-language summary of which biological processes are enriched among treated_a responders, treated_b responders, and the A-vs-B difference",
+                "If the GMT is absent at run time, the step reports the gap and completes without enrichments rather than failing"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference data confirmed present in this environment: WikiPathways Homo sapiens GMT under /mnt/refs (2026.07.10, HGNC gene symbols; first field '%'-delimited name|ID|species). fgsea 1.38.0 and GSEABase 1.74.0 installed. If T1S1 mapped Ensembl IDs to symbols, the ranked lists are already symbol-keyed; otherwise map ranked list IDs to symbols offline via org.Hs.eg.db before matching to the GMT.",
+              "caveats": [
+                "GSEA on the treated_b vs treated_a contrast has the lowest power of the three; its enrichment table should be labeled as exploratory",
+                "WikiPathways sets are small and overlapping; report set sizes alongside NES and avoid over-interpreting pathways with fewer than 10 matched genes"
+              ],
+              "constraints": [
+                "Use the staged human WikiPathways GMT only — the rat and mouse GMTs in the same store are wrong for this Homo sapiens dataset",
+                "No network access: do not use gseapy enrichment databases or download MSigDB; the staged GMT and offline packages are the only sources",
+                "Report gene-set size and matched-gene count per pathway so small-set instability is visible"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run fgsea (fgseaMultilevel) on the ranked gene lists — DESeq2 Wald statistics (unshrunken, the standard GSEA ranking statistic) from each of the three contrasts in T1S2 — against the staged human WikiPathways gene sets (GMT: one pathway per line, '%'-delimited descriptor, HGNC symbols; ~341 KB). Report per-contrast pathway enrichment with NES, p-value and BH-adjusted p-value, plus leading-edge genes for the top pathways. This gives the biological reading of the treatment responses and of what distinguishes treatment A from treatment B. If the GMT resource is absent at run time, report its absence and produce the ranked lists as output so the analysis still completes.",
+              "id": "T2S1",
+              "name": "WikiPathways GSEA on treatment signatures",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table"
+              ],
+              "question": "Which WikiPathways biological processes are enriched among the genes responding to treated_a, to treated_b, and among genes that differ between treated_b and treated_a?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Paired in-subject treatment response DE and A-vs-B contrast"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_e2321efb2e5b498898171962",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is 12000 genes x 12 samples of Salmon-derived gene-level counts from human blood, with 4 subjects each measured under control, treated_a and treated_b — a fully paired three-condition design. Because each subject carries all three conditions, the correct primary model blocks on subject: DESeq2 with design ~ subject + condition (7 residual df) gives within-subject treatment responses, answering the research question directly through three contrasts: treated_a vs control, treated_b vs control (the two responses), and treated_b vs treated_a (the direct difference between treatments). The pipeline first verifies sample integrity and gene identifier space and filters low-count genes (T1S1), then fits the paired model with BH correction and apeglm LFC shrinkage (T1S2), then classifies responders — A-only, B-only, shared, and A-vs-B-different — with visual summary (T1S3). Because n=4 subjects makes any single model fragile and the dataset name ('eval-four-models') signals that model choice matters to the user, T1S4 re-runs the same three contrasts in edgeR QL and limma-voom + duplicateCorrelation and reports cross-framework concordance per contrast. Finally, T2S1 places the treatment signatures in biological context by fgsea against the staged human WikiPathways GMT, covering what each treatment does and what separates them. Resources are sized to the tiny matrix (12k x 12), not to generic defaults.",
+          "created_at": "2026-07-15T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A QC table reporting library sizes per sample, per-condition totals, and post-filter gene count",
+                "The identifier space of the counts is stated explicitly (symbol vs Ensembl vs Entrez) and, if not HGNC symbols, a mapped symbol-keyed matrix is produced",
+                "PCA plots colored by condition and by subject are produced; the subject vs condition structure is reported (which axis dominates)",
+                "No sample is silently dropped: any outlier flag is reported with the statistic that flagged it"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: /eval-four-models-v2-without-paired-3groups-n4-s1-1 — 12000 genes x 13 columns in counts.csv (12 samples + ID column), metadata.csv 12 rows x 3 columns (sample, subject, condition). 4 subjects each measured under control, treated_a, treated_b. Counts are gene-level Salmon output as delivered; whether length correction was applied is not recorded — acceptable for DESeq2/edgeR count models, note as a limitation in the QC report. Environment has no network access.",
+              "caveats": [
+                "Salmon gene counts without tximport length correction can carry a small gene-length bias; note this in the report rather than attempting to fix it (no transcript-level input exists in this dataset)",
+                "With 4 subjects the run is powered only for large effects — conclusions must carry effect sizes, not just p-values"
+              ],
+              "constraints": [
+                "Use only files under /eval-four-models-v2-without-paired-3groups-n4-s1-1/data/inputs/ and reference data already staged under /mnt/refs",
+                "No network calls: do not use biomaRt or any download; ID mapping must use the offline org.Hs.eg.db package",
+                "Do not remove samples without reporting which and why"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv (12000 genes x 13 columns; 12 samples + gene ID column) and metadata.csv (12 x 3: sample, subject, condition). Verify sample ID alignment between the two files, report library sizes and per-condition totals. Determine whether the gene identifiers are HGNC symbols, Ensembl IDs, or Entrez IDs; if not symbols, map to HGNC symbols offline via org.Hs.eg.db (AnnotationDbi) and report unmapped rate. Filter low-expression genes (retain genes with raw count >= 10 in at least 4 samples, i.e. the size of one condition group). Produce VST-transformed (DESeq2) PCA colored by condition and by subject, plus a sample-to-sample correlation heatmap, to confirm the expected within-subject structure and flag any outlier sample. Needs no external reference beyond the offline org.Hs.eg.db annotation (already installed).",
+              "id": "T1S1",
+              "name": "QC, ID harmonization and gene filtering",
+              "packages": [
+                "DESeq2",
+                "AnnotationDbi",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Are the 12 samples well-behaved (library size, no outliers), what identifier space are the 12000 gene rows in, and does expression structure reflect subject pairing as expected for the control / treated_a / treated_b design?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "A single DESeqDataSet fitted with design ~ subject + condition and control set as the reference level",
+                "Three result tables (one per contrast), each with all tested genes, including log2FC, Wald statistic, p-value and BH-adjusted p-value; FDR threshold 0.05 reported alongside",
+                "Significant-gene counts per contrast at FDR 0.05 and at FDR 0.1 are reported",
+                "LFC-shrunk estimates present for treated_a_vs_control and treated_b_vs_control",
+                "The 7 residual degrees of freedom of the model are stated in the output"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same dataset as T1S1. DESeq2 1.52.0 and apeglm 1.34.0 are installed. lfcShrink(apeglm) requires coefficient names (e.g. 'condition_treated_a_vs_control'); the treated_b vs treated_a contrast must be run with contrast= (no shrinkage) since it is not a coefficient of the reference design. FDR: Benjamini-Hochberg via results(). Independent filtering by DESeq2 is left on; the filtered-out count is reported.",
+              "caveats": [
+                "n=4 per condition means BH-FDR at 0.05 will be a conservative call; report the FDR 0.1 gene counts as well so the sensitivity of conclusions to the threshold is visible",
+                "Genes filtered by independent filtering must be counted and reported, not silently dropped"
+              ],
+              "constraints": [
+                "Subject MUST be in the design formula — the unpaired alternative (~ condition alone) discards the pairing and is not acceptable for the primary result",
+                "Keep the unshrunken Wald log2FC in every output table alongside the shrunken one",
+                "Write full tables (all retained genes), not only significant rows"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit one DESeq2 model on the filtered count matrix with design ~ subject + condition (condition factor levels ordered control -> treated_a -> treated_b, control as reference; subject as a blocking factor consuming 3 of the 12 degrees of freedom, leaving 7 residual df). Extract three contrasts: treated_a vs control (response to A within subject), treated_b vs control (response to B within subject), and treated_b vs treated_a (direct difference between the two treatments). Apply BH multiple-testing correction per contrast. Apply apeglm log2FC shrinkage for the two treatment-vs-control contrasts (via coefficient names) and report both shrunken and unshrunken LFC. Save full per-gene result tables as CSV.",
+              "id": "T1S2",
+              "name": "Paired differential expression (DESeq2)",
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "question": "Which genes respond to treated_a vs control within subject, which respond to treated_b vs control within subject, and which genes differ directly between treated_b and treated_a (FDR < 0.05, BH-corrected, log2FC with apeglm shrinkage)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Volcano and MA plots for all three contrasts",
+                "One labeled heatmap of the union of significant genes (FDR < 0.05 in at least one contrast) with subject and condition annotations",
+                "A summary table enumerating: A-only responders, B-only responders, shared responders, and genes with a significant treated_b vs treated_a difference, with example top genes per class (by shrunken LFC)",
+                "Agreement statistic between the A-only and B-only responder direction (fraction same-sign log2FC among shared responders)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consumes the three DESeq2 result tables from T1S2. The A-only / B-only / shared / A-vs-B classification is the direct answer to the research question and is the key deliverable of the track.",
+              "caveats": [
+                "Overlap counts at n=4 subjects are small-number statistics; present them with gene counts, not percentages alone"
+              ],
+              "constraints": [
+                "Label the A-vs-B contrast explicitly in every figure so it is not confused with the two-vs-control contrasts",
+                "Base volcano plots on the shrunken LFC for treatment-vs-control contrasts and on the unshrunken LFC for the B-vs-A contrast, consistent with T1S2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Visualize and summarize the three DESeq2 contrast tables: volcano plots and MA plots per contrast (shrunken LFC for treatment-vs-control, unshrunken for treated_b vs treated_a), a heatmap of the top significant genes (union of FDR < 0.05 across the two treatment-vs-control contrasts) annotated by subject and condition, and a cross-contrast classification: genes responding to A only, to B only, to both (with concordant or opposing direction), and genes with a significant direct treated_b vs treated_a difference. Produce a compact summary table of these classes with top genes by shrunken LFC.",
+              "id": "T1S3",
+              "name": "DE visualization and responder classification",
+              "packages": [
+                "DESeq2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ComplexUpset",
+                "ggplot2",
+                "dplyr"
+              ],
+              "question": "How do the treated_a-vs-control, treated_b-vs-control and treated_b-vs-treated_a gene sets overlap, and which specific genes distinguish the two treatments?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Both edgeR and limma-voom runs completed on the same filtered matrix with subject in the model (edgeR: subject blocking via design ~ subject + condition; limma: voom + duplicateCorrelation with subject as a blocking factor)",
+                "Concordance table: Spearman/Pearson correlation of log2FC per contrast across methods, and Jaccard/overlap counts of FDR < 0.05 sets",
+                "A short verdict: which of the three contrasts are method-robust and which are not",
+                "If edgeR or limma fails on this matrix, the failure is reported explicitly and the step completes with whichever framework succeeded"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "edgeR 4.10.3 and limma 3.68.5 are installed. edgeR handles subject blocking by including subject in the design matrix; limma handles it via duplicateCorrelation with blocking = subject. This dataset is named 'eval-four-models', i.e. the modeling choice is itself of interest to the user.",
+              "caveats": [
+                "limma duplicateCorrelation with a 3-level within-subject factor and 4 blocks is near the limit of what the method supports; treat its FDR set with more caution than its log2FC correlation",
+                "Do not average the frameworks' p-values — compare, do not merge"
+              ],
+              "constraints": [
+                "Same gene filter and same subject blocking as T1S2 — differences must come from the model, not from preprocessing",
+                "Report per contrast, not pooled"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Re-run the three contrasts in two additional frameworks on the same filtered matrix: edgeR quasi-likelihood with design ~ subject + condition, and limma-voom with duplicateCorrelation blocking on subject. Compare against DESeq2 (T1S2) per contrast: correlation of log2FC estimates, and overlap of FDR < 0.05 gene sets. Report which contrasts are robust to the modeling choice and which are not, as a plain concordance table.",
+              "id": "T1S4",
+              "name": "Model sensitivity check (edgeR + limma)",
+              "packages": [
+                "edgeR",
+                "limma",
+                "data.table"
+              ],
+              "question": "Are the treated_a-vs-control, treated_b-vs-control and treated_b-vs-treated_a DE calls stable across independent count models (DESeq2 vs edgeR QL vs limma-voom), given only 4 paired subjects?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "An enrichment table per contrast (pathway, NES, p-value, BH-adjusted p-value, leading-edge gene count)",
+                "Pathway names parsed from the GMT '%'-delimited first field, filtered to human sets",
+                "A plain-language summary of which biological processes are enriched among treated_a responders, treated_b responders, and the A-vs-B difference",
+                "If the GMT is absent at run time, the step reports the gap and completes without enrichments rather than failing"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference data confirmed present in this environment: WikiPathways Homo sapiens GMT under /mnt/refs (2026.07.10, HGNC gene symbols; first field '%'-delimited name|ID|species). fgsea 1.38.0 and GSEABase 1.74.0 installed. If T1S1 mapped Ensembl IDs to symbols, the ranked lists are already symbol-keyed; otherwise map ranked list IDs to symbols offline via org.Hs.eg.db before matching to the GMT.",
+              "caveats": [
+                "GSEA on the treated_b vs treated_a contrast has the lowest power of the three; its enrichment table should be labeled as exploratory",
+                "WikiPathways sets are small and overlapping; report set sizes alongside NES and avoid over-interpreting pathways with fewer than 10 matched genes"
+              ],
+              "constraints": [
+                "Use the staged human WikiPathways GMT only — the rat and mouse GMTs in the same store are wrong for this Homo sapiens dataset",
+                "No network access: do not use gseapy enrichment databases or download MSigDB; the staged GMT and offline packages are the only sources",
+                "Report gene-set size and matched-gene count per pathway so small-set instability is visible"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run fgsea (fgseaMultilevel) on the ranked gene lists — DESeq2 Wald statistics (unshrunken, the standard GSEA ranking statistic) from each of the three contrasts in T1S2 — against the staged human WikiPathways gene sets (GMT: one pathway per line, '%'-delimited descriptor, HGNC symbols; ~341 KB). Report per-contrast pathway enrichment with NES, p-value and BH-adjusted p-value, plus leading-edge genes for the top pathways. This gives the biological reading of the treatment responses and of what distinguishes treatment A from treatment B. If the GMT resource is absent at run time, report its absence and produce the ranked lists as output so the analysis still completes.",
+              "id": "T2S1",
+              "name": "WikiPathways GSEA on treatment signatures",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table"
+              ],
+              "question": "Which WikiPathways biological processes are enriched among the genes responding to treated_a, to treated_b, and among genes that differ between treated_b and treated_a?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Paired in-subject treatment response DE and A-vs-B contrast"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 73
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

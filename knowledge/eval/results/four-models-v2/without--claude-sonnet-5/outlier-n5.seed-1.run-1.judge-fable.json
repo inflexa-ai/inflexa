@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses DESeq2 on raw Salmon counts with a single-factor unpaired design, characterizes sample_03 (library size, detection, PCA, distances) before testing, and fits with and without it, reporting the overlap and LFC correlation — matching the reference's two-fit transparency. Weaknesses: the removal decision rests on a qualitative 'QC verdict' rather than a criterion fixed before the test; no explicit low-count pre-filter beyond DESeq2 default independent filtering; the reference level and contrast are not stated; the |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold in the test. Enrichment was not requested, and the added step lacks a stated collection version, ORA universe, size window, and a fixed ranking metric. Report omits package versions."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly identifies that dispersion cannot be estimated with n=1 per group, but then runs edgeR exactTest with an assumed BCV and NOISeq anyway, producing p-values and FDR and calling genes 'DE' at FDR<0.05, which the reference explicitly rejects; the caveats do not repair an invalid inference, and the plan never names the replicated design that would support inference. QC covers library size and detected genes but has no policy for a shallow or outlier sample. The CPM>1 filter is minimal and reported, and TMM is used, though the plan is ambiguous about passing a saved 'normalized' matrix into the DGEList. Enrichment is not warranted on lists derived from invalid tests, yet the plan runs ORA on them (universe stated, collection named, no version or size window). Report states thresholds and counts and caveats but omits versions and the descriptive-only framing the reference requires."
+}

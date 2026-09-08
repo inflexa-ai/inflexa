@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every axis: raw STAR/featureCounts counts go directly into DESeq2 Wald (with an edgeR QL cross-check), no tximport, no length offset, and an explicit statement that TPM/FPKM do not apply to a 3' tag library. Normalization is median-of-ratios/TMM inside the model, the design ~condition has an explicit control reference and a (condition, treated, control) contrast, BH at 0.05 with independent filtering and apeglm shrinkage, and any fold-change threshold is correctly deferred to lfcThreshold. QC (blind VST PCA, distance heatmap, library sizes, explicit no-drop policy) precedes the model, the filter uses the lower 5-in-3 floor with the retained gene count reported, enrichment is correctly omitted, and the report specifies method, versions, design, thresholds, n tested/n DE, power caveat, and reproducibility record. The only slip is the filter justification's claim that long genes collect fewer reads in a 3' library, which is imprecise (all genes get one read per molecule), though the chosen floor itself is correct."
+}

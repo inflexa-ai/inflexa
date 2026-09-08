@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction, fits the full formula in PyDESeq2 with explicit WT/vehicle reference levels, tests the interaction coefficient by Wald, and follows with within-genotype drug contrasts, though it hedges between subset fits and full-model contrasts and gives no fallback if PyDESeq2 cannot express the interaction or contrast. QC includes library sizes, detection, and PCA colored by both factors with outlier flagging, but no stated outlier policy; the sum<10 filter is minimal and the plan explicitly warns against over-filtering. Normalization inside the model is implied (raw counts into PyDESeq2, size factors saved) but not stated as such, and no log fold change shrinkage is mentioned for reported effects. Enrichment names collections but omits versions, an explicit ORA universe, the GSEA ranking metric, and a set-size window, and the STRING network step is unrequested padding. The report commitments cover thresholds, counts, and the power caveat but not package versions."
+}

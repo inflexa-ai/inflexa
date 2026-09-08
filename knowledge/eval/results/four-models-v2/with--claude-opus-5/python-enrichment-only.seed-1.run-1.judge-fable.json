@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan does exactly what the reference asks: no refit, the full 12000-gene table ranked by the Wald statistic, gseapy.prerank against a locally resolved MSigDB Hallmark GMT with the release named, a 15-500 size window, >=1000 permutations, a fixed seed, BH adjustment, and NES/FDR/leading edge reported with a versioned reproducibility record. QC is design-specific (blind VST PCA, distance heatmap, library sizes) with an explicit keep-and-report policy for sample_01, and the contrast direction and reference level are stated so NES signs are interpretable. Deductions: the tie rule is promised but not actually specified and missing `stat` values (NA from DESeq2 independent filtering or outlier flagging) are never addressed; the low-count filter and shrinkage criteria are largely inapplicable since no count model is fit, and the plan correctly avoids filtering the ranked list but does not say anything about how the 12000-gene universe was filtered upstream or about a filter for the QC transform."
+}

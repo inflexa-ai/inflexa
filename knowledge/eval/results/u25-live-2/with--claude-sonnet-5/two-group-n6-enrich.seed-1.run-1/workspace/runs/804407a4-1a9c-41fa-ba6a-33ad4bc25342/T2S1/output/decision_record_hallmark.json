@@ -1,0 +1,151 @@
+{
+  "schema": "inflexa.decision_record/0.1",
+  "template": {
+    "id": "tpl-fgsea-preranked",
+    "version": "1.0.0",
+    "label": "fgsea preranked gene set enrichment on a differential expression results table",
+    "method": {
+      "id": "M-0010",
+      "label": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark"
+    }
+  },
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "rendered_at": "2026-09-07T16:28:14.846Z",
+  "slots": [
+    {
+      "name": "results_path",
+      "value": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T1S2/output/de_treated_vs_control_results.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        20
+      ]
+    },
+    {
+      "name": "rank_metric",
+      "value": "stat",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        21
+      ]
+    },
+    {
+      "name": "gmt_path",
+      "value": "/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        22
+      ]
+    },
+    {
+      "name": "min_size",
+      "value": 15,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        23
+      ]
+    },
+    {
+      "name": "max_size",
+      "value": 500,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        24
+      ]
+    },
+    {
+      "name": "eps",
+      "value": 0,
+      "source": "default",
+      "adaptable": false,
+      "default_source": "doi:10.1101/060012",
+      "lines": [
+        25
+      ]
+    },
+    {
+      "name": "seed",
+      "value": 20260904,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        26
+      ]
+    },
+    {
+      "name": "output_prefix",
+      "value": "hallmark_treated_vs_control",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        27
+      ]
+    }
+  ],
+  "environment": {
+    "match": "exact",
+    "pins": [
+      {
+        "name": "fgsea",
+        "track": "bioconductor",
+        "version": "1.38.0",
+        "farm": "1.38.0",
+        "status": "exact"
+      },
+      {
+        "name": "ggplot2",
+        "track": "cran",
+        "version": "4.0.3",
+        "farm": "4.0.3",
+        "status": "exact"
+      },
+      {
+        "name": "jsonlite",
+        "track": "cran",
+        "version": "2.0.0",
+        "farm": "2.0.0",
+        "status": "exact"
+      }
+    ]
+  },
+  "syntax": {
+    "status": "ok"
+  },
+  "citations": [
+    {
+      "doi": "10.1073/pnas.0506580102",
+      "title": "Gene set enrichment analysis: a knowledge-based approach for interpreting genome-wide expression profiles",
+      "year": 2005,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1101/060012",
+      "title": "Fast gene set enrichment analysis",
+      "year": 2021,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1038/s41596-018-0103-9",
+      "title": "Pathway enrichment analysis and visualization of omics data using g:Profiler, GSEA, Cytoscape and EnrichmentMap",
+      "year": 2019,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1016/j.cels.2015.12.004",
+      "title": "The Molecular Signatures Database (MSigDB) hallmark gene set collection",
+      "year": 2015,
+      "direction": "supports"
+    }
+  ],
+  "unvetted_edits": [],
+  "script_path": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T2S1/scripts/tpl-fgsea-preranked.R",
+  "bound_slots": [],
+  "settings_overrides": []
+}

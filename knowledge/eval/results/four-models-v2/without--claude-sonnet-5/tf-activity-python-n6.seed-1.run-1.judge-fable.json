@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference core: PyDESeq2 on raw counts for the unpaired 6v6 single-batch design, then decoupler ulm on the signed Wald statistic against the local CollecTRI 2.0 CSV with a minimum regulon size of five and explicit coverage reporting, all in Python. It falls short on the design-level details: the low-count filter has no stated threshold or justification, size-factor normalization inside the model is never named, the design formula and reference level are only implied, and BH is not named either for genes or across the tested regulators. QC is limited to a PCA or correlation plot without library sizes, coloring, or an outlier policy, and the per-sample activity matrix for replicate consistency is absent. Reporting is reasonably complete on method, network, thresholds, and caveats but does not commit to stating package versions."
+}

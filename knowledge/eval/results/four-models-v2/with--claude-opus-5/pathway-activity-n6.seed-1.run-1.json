@@ -1,0 +1,1265 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T22:39:14.005Z",
+  "elapsedMs": 116145,
+  "outcome": "plan_submitted",
+  "planId": "pln-c62e7e27",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and log-CPM matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median must be kept through sample-structure QC, inspected on PCA and the distance heatmap, and reported beside the others; count models down-weight it through its size factor, so removal is a judgment and not a default",
+          "Low depth inflates the variance of low-expression genes; if sample_01 sits apart on PCA, distinguish a depth artefact (it moves toward its group after CPM/VST) from a genuine biological or identity outlier",
+          "Salmon length correction status is unknown; if the matrix is fractional and gets rounded, note that this is a substitute for a proper tximport length-scaled import"
+        ],
+        "context": "Human bronchial epithelium, 6 cytokine-stimulated vs 6 vehicle control, unpaired, single batch, gene-level counts from Salmon. Profile caveat: sample_01 has a library size about 4x below the median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pheatmap",
+          "ggplot2",
+          "matrixStats"
+        ],
+        "question": "Do the 12 bronchial epithelial samples separate by condition (cytokine-stimulated vs vehicle), and does sample_01 — at about a quarter of the median library size — behave as an outlier or merely as a shallow library?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Raw counts with a low-depth sample: blind VST, PCA on the top 500 variable genes and a sample-distance heatmap per R-0033@40bf, with sample_01 kept, inspected and reported per R-0008@440d.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind",
+          "low_depth_policy = keep_inspect_report — do not delete sample_01 silently; removal requires a stated reason beyond depth",
+          "Colour every QC plot by condition; there is one batch, so no batch covariate is fitted",
+          "Do not run differential expression in this step; the research question is footprint activity, not a gene-level contrast"
+        ],
+        "description": "Load /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples plus the gene ID column) and /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample and condition). Verify sample IDs match between the two files and align column order to the metadata. Record whether counts are integer or fractional; the record does not state whether the Salmon length correction was applied, so state the assumption explicitly and, if fractional, round to integers for the DESeq2 object and say so. Build a DESeq2 object with ~condition, apply blind VST, run PCA on the 500 most variable genes coloured by condition, and draw the Euclidean sample-distance heatmap. Tabulate library size and number of detected genes (count > 0) per sample, with sample_01 marked. Produce and save the per-sample log2-CPM matrix (edgeR cpm with log=TRUE, prior.count=1, on genes passing filterByExpr) that the two activity steps consume — CPM scaling is what removes the depth difference of sample_01 from the downstream footprint scores. Emit an explicit keep-or-drop decision for sample_01 with a written reason; the default is keep.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv reconcile 1:1 for all 12 samples; any mismatch is reported rather than silently reindexed",
+          "PCA on the top 500 variable genes of the blind VST and the sample-distance heatmap are saved, both coloured by condition",
+          "A per-sample table of library size and detected genes is saved with sample_01 identified and its ratio to the median library size stated",
+          "The log2-CPM matrix over expression-filtered genes is written to disk for downstream steps, with the number of genes retained reported",
+          "A written keep/drop decision for sample_01 with its stated reason is recorded; if dropped, the reason is more than low depth alone",
+          "The integer-vs-fractional state of the input counts and the handling chosen (rounding or not) is stated"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "PROGENy signalling pathway activity per sample",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "An activity score is an inference from a prior model, not a measurement; a high score is a hypothesis for follow-up",
+          "PROGENy weights were learned largely from perturbation experiments in cell lines; the footprint transfers to bronchial epithelium as an assumption, not a fact",
+          "With 12000 genes in the matrix, some pathways may match well under 500 responsive genes — a pathway with poor coverage has an unstable score and must be flagged rather than ranked alongside well-covered ones",
+          "Only 6 samples per group: a pathway score difference of modest size will have wide confidence intervals"
+        ],
+        "context": "The question explicitly asks for footprint rather than membership: a PROGENy score is a weighted read-out of downstream perturbation-response genes, so a pathway can score high with no change in the expression of its own components, and the reverse. Human data, so the human PROGENy weights must be used, never the mouse ones.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "limma",
+          "ggplot2",
+          "pheatmap",
+          "dplyr"
+        ],
+        "question": "Which of the 14 PROGENy signalling pathways carry a different transcriptional footprint in the cytokine-stimulated bronchial epithelial samples than in the vehicle controls?",
+        "grounding": {
+          "claims": [
+            "R-0115@1504",
+            "R-0122@08af",
+            "R-0112@f200"
+          ],
+          "reason": "Signalling pathway activity judged by footprint: PROGENy human weights with decoupleR mlm on the per-sample log matrix, top 500 responsive genes, read as footprint not membership per R-0115@1504; SPIA absent, so no topology method per R-0122@08af.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "footprint_model",
+              "step": "pathway_activity",
+              "value": "progeny_human",
+              "source": "doi:10.1038/s41467-017-02391-6"
+            },
+            {
+              "name": "activity_method",
+              "step": "pathway_activity",
+              "value": "mlm",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "top_responsive_genes",
+              "step": "pathway_activity",
+              "value": 500,
+              "source": "rule:R-0115"
+            },
+            {
+              "name": "interpretation",
+              "step": "pathway_activity",
+              "value": "footprint_not_membership",
+              "source": "doi:10.1038/s41467-017-02391-6"
+            },
+            {
+              "name": "topology_method",
+              "step": "pathway_activity",
+              "value": "spia_absent_footprint_or_enrichment_instead",
+              "source": "doi:10.1093/bioinformatics/btn577"
+            },
+            {
+              "name": "activity_input",
+              "step": "tf_activity",
+              "value": "per_sample_log_matrix",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "score_test",
+              "step": "tf_activity",
+              "value": "limma_on_scores_bh_across_regulators",
+              "source": "rule:R-0112"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-decoupler-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_activity",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "footprint_model = progeny_human — human weights only, matched to taxon 9606",
+          "activity_method = mlm (multivariate linear model); ulm is the documented second estimator if mlm fails to fit",
+          "top_responsive_genes = 500",
+          "Input is the per-sample log2-CPM matrix from T1S1, not a differential-expression statistic",
+          "interpretation = footprint_not_membership",
+          "Report gene-symbol match rate between the PROGENy weights and the count matrix row names; if the counts carry Ensembl IDs, map to HGNC symbols first and report how many of the 12000 genes mapped",
+          "Do not run SPIA or any topology-aware pathway impact method — it is not installed; state that neither layer uses pathway graph topology"
+        ],
+        "description": "This step answers the research question. Load the human PROGENy footprint model of perturbation-responsive genes with per-gene weights for the 14 signalling pathways from the reference store (it is present as an R serialized data frame with gene, weight, p.value and pathway columns; rename to source/target/weight for decoupleR). Keep the top 500 responsive genes per pathway. Run decoupleR run_mlm on the per-sample log2-CPM matrix from T1S1 to obtain one activity score per pathway per sample (14 x 12). Then test cytokine-stimulated vs vehicle with limma on the score matrix using the condition design, and adjust p-values with Benjamini-Hochberg across the 14 pathways. Report the score matrix as a heatmap with samples ordered by condition, the per-pathway effect size, t, p and BH-adjusted p, and the fraction of each pathway's 500 responsive genes present in the filtered expression matrix. Check where sample_01 falls in the score space and rerun the contrast with it excluded as a sensitivity analysis, reporting whether any pathway changes its sign or crosses the significance threshold.",
+        "acceptance_criteria": [
+          "A 14 x 12 pathway-by-sample activity score matrix is produced and saved from the human PROGENy weights, with the number of responsive genes per pathway that were matched into the expression matrix reported",
+          "The treated-vs-control contrast on the scores is reported with effect size, t, raw p and BH-adjusted p for all 14 pathways, none omitted",
+          "A heatmap of scores with samples grouped by condition is saved",
+          "The sensitivity analysis excluding sample_01 is reported and any pathway whose conclusion changes is named",
+          "The report states explicitly that a score is a footprint of downstream responsive genes and not the expression of pathway members, and that no pathway graph topology enters the score",
+          "If the human PROGENy weights cannot be resolved in the environment, the step stops and reports the absence rather than substituting a membership-based gene set collection"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Transcription factor activity on CollecTRI regulons",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A prior knowledge network is tissue-agnostic: a regulator that acts only in bronchial epithelium can be missed, and a target silent in this tissue adds noise to its regulator's score",
+          "Regulon sizes are highly uneven in CollecTRI; a TF with barely 5 matched targets gives a fragile score and must be flagged, not ranked beside a TF with hundreds",
+          "With 12000 genes profiled rather than a full transcriptome, regulon coverage is truncated for every TF — report the coverage distribution",
+          "Concordance between the PROGENy and CollecTRI layers is reassuring but not independent: both read the same expression matrix through overlapping downstream genes"
+        ],
+        "context": "The TF layer is the regulator-level complement to the pathway footprint: both are inferences from prior knowledge networks over the same log-CPM matrix, so their agreement is a meaningful internal consistency check and their disagreement is informative. DoRothEA human regulons (confidence A–C) are also present in the store and are the documented alternative if CollecTRI cannot be loaded.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupleR",
+          "limma",
+          "ggplot2",
+          "pheatmap",
+          "dplyr",
+          "readr"
+        ],
+        "question": "Which transcription factors show a different inferred activity in cytokine-stimulated versus vehicle bronchial epithelium, and do they corroborate the pathways that scored in T2S2?",
+        "grounding": {
+          "claims": [
+            "R-0112@f200",
+            "R-0111@b668",
+            "R-0113@7a4d",
+            "R-0114@9db7",
+            "R-0121@5f27"
+          ],
+          "reason": "TF activity as the question with no DE step in the walk: decoupleR ulm per sample on the log matrix with signed CollecTRI regulons, then limma on the scores with BH across regulators per R-0112@f200; prior network only because 6 per group cannot support network inference per R-0121@5f27, and VIPER/ARACNe are absent per R-0114@9db7.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "activity_input",
+              "step": "tf_activity",
+              "value": "per_sample_log_matrix",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "activity_method",
+              "step": "tf_activity",
+              "value": "ulm",
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "score_test",
+              "step": "tf_activity",
+              "value": "limma_on_scores_bh_across_regulators",
+              "source": "rule:R-0112"
+            },
+            {
+              "name": "regulon_collection",
+              "step": "tf_activity",
+              "value": "collectri_human",
+              "source": "doi:10.1093/nar/gkad841"
+            },
+            {
+              "name": "min_regulon_size",
+              "step": "tf_activity",
+              "value": 5,
+              "source": "doi:10.1093/bioadv/vbac016"
+            },
+            {
+              "name": "edge_sign",
+              "step": "tf_activity",
+              "value": "keep_mode_of_regulation",
+              "source": "doi:10.1093/nar/gkad841"
+            },
+            {
+              "name": "alternative_regulon",
+              "step": "tf_activity",
+              "value": "dorothea_confidence_A_to_C",
+              "source": "doi:10.1101/gr.240663.118"
+            },
+            {
+              "name": "regulon_preference",
+              "step": "tf_activity",
+              "value": "collectri_first",
+              "source": "doi:10.1093/nar/gkad841"
+            },
+            {
+              "name": "aracne_regulon_policy",
+              "step": "tf_activity",
+              "value": "viper_absent_prior_network_with_decoupler_instead",
+              "source": "doi:10.1038/ng.3593"
+            },
+            {
+              "name": "network_source",
+              "step": "tf_activity",
+              "value": "prior_knowledge_network_only",
+              "source": "doi:10.1093/bioinformatics/btw216"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-decoupler-tf-activity@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "tf_activity",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "regulon_collection = collectri_human, preferred over DoRothEA",
+          "alternative_regulon = dorothea_confidence_A_to_C, used only if CollecTRI is unavailable, with the confidence levels stated",
+          "activity_method = ulm; activity_input = per_sample_log_matrix from T1S1",
+          "min_regulon_size = 5",
+          "edge_sign = keep_mode_of_regulation — do not discard the +1/-1 weight",
+          "score_test = limma on the score matrix with the condition design, BH across regulators",
+          "network_source = prior_knowledge_network_only — do not infer a regulatory network from these 12 samples",
+          "Do not attempt VIPER on an ARACNe regulon; neither is installed and 6 samples per group cannot support mutual-information network inference"
+        ],
+        "description": "Load the human CollecTRI literature-curated TF-target regulon network from the reference store (CSV with source, target and signed weight columns) and keep the sign of each edge so a repressed target lowers rather than raises the score. Run decoupleR run_ulm on the per-sample log2-CPM matrix from T1S1 with min_n = 5, giving one activity score per TF per sample. Test cytokine-stimulated vs vehicle with limma on the score matrix and adjust across regulators with Benjamini-Hochberg. Report the number of regulators that passed the minimum regulon size and entered the test, the top regulators by adjusted p in both directions, and a heatmap of the top regulator scores by sample. Cross-tabulate the leading regulators against the pathways that scored in T2S2 — for a cytokine stimulus, NF-kB/JAK-STAT footprint activity should co-occur with RELA/NFKB1, STAT1/STAT2 and IRF regulators; state agreement and disagreement rather than only agreement. Include sample_01 in the primary run and report its position in the score space.",
+        "acceptance_criteria": [
+          "A TF-by-sample activity score matrix is produced from the human CollecTRI regulons with edge signs retained",
+          "The number of regulators with at least 5 targets in the filtered expression matrix, and hence the number tested, is reported",
+          "The treated-vs-control limma contrast on scores is reported with effect size, t, p and BH-adjusted p across regulators",
+          "A cross-tabulation of the leading regulators against the T2S2 pathway results is reported, naming both concordant and discordant items",
+          "The report names the network and its version and states that an activity is an inference from a prior network, not a measurement",
+          "If CollecTRI cannot be resolved, DoRothEA human confidence A–C is used instead and the substitution with its confidence levels is stated"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Activity report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not report only the concordant regulators and pathways; a selective concordance narrative is the main way this analysis becomes misleading"
+        ],
+        "context": "Both analytical layers are activity inferences over prior knowledge networks. The report must keep that framing rather than presenting scores as measured pathway states.",
+        "maxSteps": 200,
+        "packages": [
+          "sessioninfo",
+          "rmarkdown",
+          "knitr"
+        ],
+        "question": "What is the defensible answer to which signalling pathways are active in cytokine-stimulated versus vehicle bronchial epithelium on footprint evidence, and how strong is it?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0119@5f4d"
+          ],
+          "reason": "No rule covers the report step as such; it carries the reproducibility record of R-0086@becf and the activity report fields and caution of R-0119@5f4d.",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            },
+            {
+              "name": "activity_report_fields",
+              "step": "report",
+              "value": [
+                "network_name",
+                "network_version",
+                "input_statistic",
+                "contrast",
+                "estimator",
+                "min_regulon_size",
+                "n_regulators_tested",
+                "inference_caution"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2",
+          "T2S3"
+        ],
+        "constraints": [
+          "reproducibility_record = sessionInfo, seed, package versions, collection version, annotation release",
+          "activity_report_fields = network name, network version, input statistic, contrast, estimator, minimum regulon size, number of regulators tested, inference caution",
+          "Do not upgrade any activity score to a claim about a mechanism being engaged; a high score is a hypothesis for follow-up"
+        ],
+        "description": "Assemble a single report from T1S1, T2S2 and T2S3. Lead with the pathway footprint result: which of the 14 PROGENy pathways differ between cytokine-stimulated and vehicle samples, with direction, effect size and BH-adjusted p, and the explicit statement that this is a footprint of downstream responsive genes rather than expression of pathway members. Follow with the TF activity layer and its agreement or disagreement with the pathway layer. Carry the sample_01 handling forward: its library size relative to the median, its position on PCA and in both score spaces, the keep/drop decision and its reason, and the leave-one-out sensitivity result. State the standing limitations: 6 per group, activity is inference from a prior network and not a measurement, no pathway graph topology entered either layer (SPIA is absent), no regulatory network was inferred from these samples, and Salmon length-correction status was unknown. Include the reproducibility record: sessionInfo, package versions, the random seed of any step that uses randomness, and the version of the PROGENy and CollecTRI collections actually loaded.",
+        "acceptance_criteria": [
+          "The report names the network and version, the input statistic and contrast, the estimator, the minimum regulon size, and the number of regulators and pathways tested for each layer",
+          "The pathway footprint result is stated first with direction and adjusted p, framed as footprint not membership",
+          "Agreement and disagreement between the PROGENy and CollecTRI layers are both stated",
+          "The sample_01 library size, its keep/drop decision with reason, and the leave-one-out sensitivity outcome are recorded",
+          "The reproducibility record with sessionInfo, package versions, seeds and collection versions is stored with the results, not in a separate note",
+          "Limitations are stated plainly: n=6 per group, inference from prior networks, no topology, unknown length-correction state"
+        ]
+      }
+    ],
+    "title": "Cytokine vs vehicle bronchial epithelium pathway footprint activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks which signalling pathways are active in the cytokine-stimulated bronchial epithelial samples relative to vehicle, judged by transcriptional footprint rather than by expression of pathway members. That is exactly the footprint-inference setting: PROGENy perturbation-response weights for the 14 signalling pathways, scored per sample with the decoupleR multivariate linear model, plus CollecTRI transcription-factor regulons scored with the univariate linear model as the regulator-level complement. No pathway-membership over-representation is planned, since it answers a different question.\n\nThe input is a 12000 x 13 gene-level count CSV from Salmon (one ID column plus 12 samples) with a 12 x 2 metadata table carrying condition, 6 treated vs 6 control, unpaired, single batch. The record does not state whether the Salmon length correction was applied, so the first step must record that ambiguity and, because the counts may be fractional, round for the DESeq2/edgeR path and state the choice.\n\nThe profile flags sample_01 at roughly a quarter of the median library size. The procedure is explicit here: keep it, inspect it on PCA and the sample-distance heatmap, report its library size and detected-gene count beside the others, and remove it only with a stated reason. T1S1 does that and hands down an explicit keep/drop decision. Because the activity steps run on a per-sample log-CPM matrix rather than on a count model, a depth-driven sample cannot be down-weighted by a size factor there — so T1S1 also produces the CPM normalisation that neutralises depth, and T2S2/T2S3 must re-check whether sample_01 still sits apart in the score space and report a sensitivity analysis with it excluded.\n\nT2S2 is the answer to the research question: PROGENy human weights (present in the reference store), top 500 responsive genes per pathway, mlm on the per-sample log matrix, then limma on the 14 x 12 score matrix for the treated-vs-control contrast with BH adjustment. T2S3 adds TF activity on CollecTRI (also present), ulm, minimum regulon size 5, signed edges kept, limma on scores with BH across regulators — a cytokine footprint should show as NFKB/JAK-STAT pathway activity with the corresponding STAT/IRF/RELA regulators, and agreement between the two layers is the internal check. T1S4 assembles the report with the reproducibility record and the standing caution that an activity score is an inference from a prior network, not a measurement. No ARACNe/VIPER network inference is planned: 6 per group is far below what mutual-information network inference needs, and SPIA (topology-aware impact) is not installed, so neither layer uses pathway graph topology and the report must say so."
+  },
+  "usage": {
+    "inputTokens": 309651,
+    "outputTokens": 9896,
+    "cacheCreationInputTokens": 100517,
+    "cacheReadInputTokens": 209074,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01KEqKavvGNsLQobi1ZoAyda",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "preferred_language": "R"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01RQ1HfCxViMwyeuMowr7gV4",
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01JogquEbqJPUU2vvYsrhExC",
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01QLiRtUMERxd6L6puATRy8k",
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01VfiXYUZuFKqKFYbBewxsbF",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_01FMngRoBKC3Dz32EtM1CaGM",
+      "name": "knowledge_check",
+      "input": {
+        "question": "tf_activity",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "pathway_activity"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top 500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "PROGENy footprint model with decoupleR mlm",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupleR ulm on CollecTRI regulons",
+            "method_id": "M-0037",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_regulators"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "activity report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "toolu_01P6ocBQ442XSKRpXQJBoCG3",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Cytokine vs vehicle bronchial epithelium pathway footprint activity",
+          "analytical_narrative": "The question asks which signalling pathways are active in the cytokine-stimulated bronchial epithelial samples relative to vehicle, judged by transcriptional footprint rather than by expression of pathway members. That is exactly the footprint-inference setting: PROGENy perturbation-response weights for the 14 signalling pathways, scored per sample with the decoupleR multivariate linear model, plus CollecTRI transcription-factor regulons scored with the univariate linear model as the regulator-level complement. No pathway-membership over-representation is planned, since it answers a different question.\n\nThe input is a 12000 x 13 gene-level count CSV from Salmon (one ID column plus 12 samples) with a 12 x 2 metadata table carrying condition, 6 treated vs 6 control, unpaired, single batch. The record does not state whether the Salmon length correction was applied, so the first step must record that ambiguity and, because the counts may be fractional, round for the DESeq2/edgeR path and state the choice.\n\nThe profile flags sample_01 at roughly a quarter of the median library size. The procedure is explicit here: keep it, inspect it on PCA and the sample-distance heatmap, report its library size and detected-gene count beside the others, and remove it only with a stated reason. T1S1 does that and hands down an explicit keep/drop decision. Because the activity steps run on a per-sample log-CPM matrix rather than on a count model, a depth-driven sample cannot be down-weighted by a size factor there — so T1S1 also produces the CPM normalisation that neutralises depth, and T2S2/T2S3 must re-check whether sample_01 still sits apart in the score space and report a sensitivity analysis with it excluded.\n\nT2S2 is the answer to the research question: PROGENy human weights (present in the reference store), top 500 responsive genes per pathway, mlm on the per-sample log matrix, then limma on the 14 x 12 score matrix for the treated-vs-control contrast with BH adjustment. T2S3 adds TF activity on CollecTRI (also present), ulm, minimum regulon size 5, signed edges kept, limma on scores with BH across regulators — a cytokine footprint should show as NFKB/JAK-STAT pathway activity with the corresponding STAT/IRF/RELA regulators, and agreement between the two layers is the internal check. T1S4 assembles the report with the reproducibility record and the standing caution that an activity score is an inference from a prior network, not a measurement. No ARACNe/VIPER network inference is planned: 6 per group is far below what mutual-information network inference needs, and SPIA (topology-aware impact) is not installed, so neither layer uses pathway graph topology and the report must say so.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and log-CPM matrix",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 bronchial epithelial samples separate by condition (cytokine-stimulated vs vehicle), and does sample_01 — at about a quarter of the median library size — behave as an outlier or merely as a shallow library?",
+              "description": "Load /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples plus the gene ID column) and /eval-four-models-v2-with-pathway-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample and condition). Verify sample IDs match between the two files and align column order to the metadata. Record whether counts are integer or fractional; the record does not state whether the Salmon length correction was applied, so state the assumption explicitly and, if fractional, round to integers for the DESeq2 object and say so. Build a DESeq2 object with ~condition, apply blind VST, run PCA on the 500 most variable genes coloured by condition, and draw the Euclidean sample-distance heatmap. Tabulate library size and number of detected genes (count > 0) per sample, with sample_01 marked. Produce and save the per-sample log2-CPM matrix (edgeR cpm with log=TRUE, prior.count=1, on genes passing filterByExpr) that the two activity steps consume — CPM scaling is what removes the depth difference of sample_01 from the downstream footprint scores. Emit an explicit keep-or-drop decision for sample_01 with a written reason; the default is keep.",
+              "context": "Human bronchial epithelium, 6 cytokine-stimulated vs 6 vehicle control, unpaired, single batch, gene-level counts from Salmon. Profile caveat: sample_01 has a library size about 4x below the median.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv reconcile 1:1 for all 12 samples; any mismatch is reported rather than silently reindexed",
+                "PCA on the top 500 variable genes of the blind VST and the sample-distance heatmap are saved, both coloured by condition",
+                "A per-sample table of library size and detected genes is saved with sample_01 identified and its ratio to the median library size stated",
+                "The log2-CPM matrix over expression-filtered genes is written to disk for downstream steps, with the number of genes retained reported",
+                "A written keep/drop decision for sample_01 with its stated reason is recorded; if dropped, the reason is more than low depth alone",
+                "The integer-vs-fractional state of the input counts and the handling chosen (rounding or not) is stated"
+              ],
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind",
+                "low_depth_policy = keep_inspect_report — do not delete sample_01 silently; removal requires a stated reason beyond depth",
+                "Colour every QC plot by condition; there is one batch, so no batch covariate is fitted",
+                "Do not run differential expression in this step; the research question is footprint activity, not a gene-level contrast"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median must be kept through sample-structure QC, inspected on PCA and the distance heatmap, and reported beside the others; count models down-weight it through its size factor, so removal is a judgment and not a default",
+                "Low depth inflates the variance of low-expression genes; if sample_01 sits apart on PCA, distinguish a depth artefact (it moves toward its group after CPM/VST) from a genuine biological or identity outlier",
+                "Salmon length correction status is unknown; if the matrix is fractional and gets rounded, note that this is a substitute for a proper tximport length-scaled import"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "pheatmap",
+                "ggplot2",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw counts with a low-depth sample: blind VST, PCA on the top 500 variable genes and a sample-distance heatmap per R-0033@40bf, with sample_01 kept, inspected and reported per R-0008@440d.",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "low_depth_policy",
+                    "value": "keep_inspect_report",
+                    "source": "doi:10.1186/s13059-016-0881-8"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "PROGENy signalling pathway activity per sample",
+              "track": "T2",
+              "step_type": "pathway_activity",
+              "question": "Which of the 14 PROGENy signalling pathways carry a different transcriptional footprint in the cytokine-stimulated bronchial epithelial samples than in the vehicle controls?",
+              "description": "This step answers the research question. Load the human PROGENy footprint model of perturbation-responsive genes with per-gene weights for the 14 signalling pathways from the reference store (it is present as an R serialized data frame with gene, weight, p.value and pathway columns; rename to source/target/weight for decoupleR). Keep the top 500 responsive genes per pathway. Run decoupleR run_mlm on the per-sample log2-CPM matrix from T1S1 to obtain one activity score per pathway per sample (14 x 12). Then test cytokine-stimulated vs vehicle with limma on the score matrix using the condition design, and adjust p-values with Benjamini-Hochberg across the 14 pathways. Report the score matrix as a heatmap with samples ordered by condition, the per-pathway effect size, t, p and BH-adjusted p, and the fraction of each pathway's 500 responsive genes present in the filtered expression matrix. Check where sample_01 falls in the score space and rerun the contrast with it excluded as a sensitivity analysis, reporting whether any pathway changes its sign or crosses the significance threshold.",
+              "context": "The question explicitly asks for footprint rather than membership: a PROGENy score is a weighted read-out of downstream perturbation-response genes, so a pathway can score high with no change in the expression of its own components, and the reverse. Human data, so the human PROGENy weights must be used, never the mouse ones.",
+              "acceptance_criteria": [
+                "A 14 x 12 pathway-by-sample activity score matrix is produced and saved from the human PROGENy weights, with the number of responsive genes per pathway that were matched into the expression matrix reported",
+                "The treated-vs-control contrast on the scores is reported with effect size, t, raw p and BH-adjusted p for all 14 pathways, none omitted",
+                "A heatmap of scores with samples grouped by condition is saved",
+                "The sensitivity analysis excluding sample_01 is reported and any pathway whose conclusion changes is named",
+                "The report states explicitly that a score is a footprint of downstream responsive genes and not the expression of pathway members, and that no pathway graph topology enters the score",
+                "If the human PROGENy weights cannot be resolved in the environment, the step stops and reports the absence rather than substituting a membership-based gene set collection"
+              ],
+              "constraints": [
+                "footprint_model = progeny_human — human weights only, matched to taxon 9606",
+                "activity_method = mlm (multivariate linear model); ulm is the documented second estimator if mlm fails to fit",
+                "top_responsive_genes = 500",
+                "Input is the per-sample log2-CPM matrix from T1S1, not a differential-expression statistic",
+                "interpretation = footprint_not_membership",
+                "Report gene-symbol match rate between the PROGENy weights and the count matrix row names; if the counts carry Ensembl IDs, map to HGNC symbols first and report how many of the 12000 genes mapped",
+                "Do not run SPIA or any topology-aware pathway impact method — it is not installed; state that neither layer uses pathway graph topology"
+              ],
+              "caveats": [
+                "An activity score is an inference from a prior model, not a measurement; a high score is a hypothesis for follow-up",
+                "PROGENy weights were learned largely from perturbation experiments in cell lines; the footprint transfers to bronchial epithelium as an assumption, not a fact",
+                "With 12000 genes in the matrix, some pathways may match well under 500 responsive genes — a pathway with poor coverage has an unstable score and must be flagged rather than ranked alongside well-covered ones",
+                "Only 6 samples per group: a pathway score difference of modest size will have wide confidence intervals"
+              ],
+              "packages": [
+                "decoupleR",
+                "limma",
+                "ggplot2",
+                "pheatmap",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0115@1504",
+                  "R-0122@08af",
+                  "R-0112@f200"
+                ],
+                "template": "tpl-decoupler-tf-activity@1.0.0",
+                "reason": "Signalling pathway activity judged by footprint: PROGENy human weights with decoupleR mlm on the per-sample log matrix, top 500 responsive genes, read as footprint not membership per R-0115@1504; SPIA absent, so no topology method per R-0122@08af.",
+                "settings": [
+                  {
+                    "step": "pathway_activity",
+                    "name": "footprint_model",
+                    "value": "progeny_human",
+                    "source": "doi:10.1038/s41467-017-02391-6"
+                  },
+                  {
+                    "step": "pathway_activity",
+                    "name": "activity_method",
+                    "value": "mlm",
+                    "source": "doi:10.1093/bioadv/vbac016"
+                  },
+                  {
+                    "step": "pathway_activity",
+                    "name": "top_responsive_genes",
+                    "value": 500,
+                    "source": "rule:R-0115"
+                  },
+                  {
+                    "step": "pathway_activity",
+                    "name": "interpretation",
+                    "value": "footprint_not_membership",
+                    "source": "doi:10.1038/s41467-017-02391-6"
+                  },
+                  {
+                    "step": "pathway_activity",
+                    "name": "topology_method",
+                    "value": "spia_absent_footprint_or_enrichment_instead",
+                    "source": "doi:10.1093/bioinformatics/btn577"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "activity_input",
+                    "value": "per_sample_log_matrix",
+                    "source": "doi:10.1093/bioadv/vbac016"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "score_test",
+                    "value": "limma_on_scores_bh_across_regulators",
+                    "source": "rule:R-0112"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T2S3",
+              "name": "Transcription factor activity on CollecTRI regulons",
+              "track": "T2",
+              "step_type": "tf_activity",
+              "question": "Which transcription factors show a different inferred activity in cytokine-stimulated versus vehicle bronchial epithelium, and do they corroborate the pathways that scored in T2S2?",
+              "description": "Load the human CollecTRI literature-curated TF-target regulon network from the reference store (CSV with source, target and signed weight columns) and keep the sign of each edge so a repressed target lowers rather than raises the score. Run decoupleR run_ulm on the per-sample log2-CPM matrix from T1S1 with min_n = 5, giving one activity score per TF per sample. Test cytokine-stimulated vs vehicle with limma on the score matrix and adjust across regulators with Benjamini-Hochberg. Report the number of regulators that passed the minimum regulon size and entered the test, the top regulators by adjusted p in both directions, and a heatmap of the top regulator scores by sample. Cross-tabulate the leading regulators against the pathways that scored in T2S2 — for a cytokine stimulus, NF-kB/JAK-STAT footprint activity should co-occur with RELA/NFKB1, STAT1/STAT2 and IRF regulators; state agreement and disagreement rather than only agreement. Include sample_01 in the primary run and report its position in the score space.",
+              "context": "The TF layer is the regulator-level complement to the pathway footprint: both are inferences from prior knowledge networks over the same log-CPM matrix, so their agreement is a meaningful internal consistency check and their disagreement is informative. DoRothEA human regulons (confidence A–C) are also present in the store and are the documented alternative if CollecTRI cannot be loaded.",
+              "acceptance_criteria": [
+                "A TF-by-sample activity score matrix is produced from the human CollecTRI regulons with edge signs retained",
+                "The number of regulators with at least 5 targets in the filtered expression matrix, and hence the number tested, is reported",
+                "The treated-vs-control limma contrast on scores is reported with effect size, t, p and BH-adjusted p across regulators",
+                "A cross-tabulation of the leading regulators against the T2S2 pathway results is reported, naming both concordant and discordant items",
+                "The report names the network and its version and states that an activity is an inference from a prior network, not a measurement",
+                "If CollecTRI cannot be resolved, DoRothEA human confidence A–C is used instead and the substitution with its confidence levels is stated"
+              ],
+              "constraints": [
+                "regulon_collection = collectri_human, preferred over DoRothEA",
+                "alternative_regulon = dorothea_confidence_A_to_C, used only if CollecTRI is unavailable, with the confidence levels stated",
+                "activity_method = ulm; activity_input = per_sample_log_matrix from T1S1",
+                "min_regulon_size = 5",
+                "edge_sign = keep_mode_of_regulation — do not discard the +1/-1 weight",
+                "score_test = limma on the score matrix with the condition design, BH across regulators",
+                "network_source = prior_knowledge_network_only — do not infer a regulatory network from these 12 samples",
+                "Do not attempt VIPER on an ARACNe regulon; neither is installed and 6 samples per group cannot support mutual-information network inference"
+              ],
+              "caveats": [
+                "A prior knowledge network is tissue-agnostic: a regulator that acts only in bronchial epithelium can be missed, and a target silent in this tissue adds noise to its regulator's score",
+                "Regulon sizes are highly uneven in CollecTRI; a TF with barely 5 matched targets gives a fragile score and must be flagged, not ranked beside a TF with hundreds",
+                "With 12000 genes profiled rather than a full transcriptome, regulon coverage is truncated for every TF — report the coverage distribution",
+                "Concordance between the PROGENy and CollecTRI layers is reassuring but not independent: both read the same expression matrix through overlapping downstream genes"
+              ],
+              "packages": [
+                "decoupleR",
+                "limma",
+                "ggplot2",
+                "pheatmap",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0112@f200",
+                  "R-0111@b668",
+                  "R-0113@7a4d",
+                  "R-0114@9db7",
+                  "R-0121@5f27"
+                ],
+                "template": "tpl-decoupler-tf-activity@1.0.0",
+                "reason": "TF activity as the question with no DE step in the walk: decoupleR ulm per sample on the log matrix with signed CollecTRI regulons, then limma on the scores with BH across regulators per R-0112@f200; prior network only because 6 per group cannot support network inference per R-0121@5f27, and VIPER/ARACNe are absent per R-0114@9db7.",
+                "settings": [
+                  {
+                    "step": "tf_activity",
+                    "name": "activity_input",
+                    "value": "per_sample_log_matrix",
+                    "source": "doi:10.1093/bioadv/vbac016"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "activity_method",
+                    "value": "ulm",
+                    "source": "doi:10.1093/bioadv/vbac016"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "score_test",
+                    "value": "limma_on_scores_bh_across_regulators",
+                    "source": "rule:R-0112"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "regulon_collection",
+                    "value": "collectri_human",
+                    "source": "doi:10.1093/nar/gkad841"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "min_regulon_size",
+                    "value": 5,
+                    "source": "doi:10.1093/bioadv/vbac016"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "edge_sign",
+                    "value": "keep_mode_of_regulation",
+                    "source": "doi:10.1093/nar/gkad841"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "alternative_regulon",
+                    "value": "dorothea_confidence_A_to_C",
+                    "source": "doi:10.1101/gr.240663.118"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "regulon_preference",
+                    "value": "collectri_first",
+                    "source": "doi:10.1093/nar/gkad841"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "aracne_regulon_policy",
+                    "value": "viper_absent_prior_network_with_decoupler_instead",
+                    "source": "doi:10.1038/ng.3593"
+                  },
+                  {
+                    "step": "tf_activity",
+                    "name": "network_source",
+                    "value": "prior_knowledge_network_only",
+                    "source": "doi:10.1093/bioinformatics/btw216"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "Activity report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to which signalling pathways are active in cytokine-stimulated versus vehicle bronchial epithelium on footprint evidence, and how strong is it?",
+              "description": "Assemble a single report from T1S1, T2S2 and T2S3. Lead with the pathway footprint result: which of the 14 PROGENy pathways differ between cytokine-stimulated and vehicle samples, with direction, effect size and BH-adjusted p, and the explicit statement that this is a footprint of downstream responsive genes rather than expression of pathway members. Follow with the TF activity layer and its agreement or disagreement with the pathway layer. Carry the sample_01 handling forward: its library size relative to the median, its position on PCA and in both score spaces, the keep/drop decision and its reason, and the leave-one-out sensitivity result. State the standing limitations: 6 per group, activity is inference from a prior network and not a measurement, no pathway graph topology entered either layer (SPIA is absent), no regulatory network was inferred from these samples, and Salmon length-correction status was unknown. Include the reproducibility record: sessionInfo, package versions, the random seed of any step that uses randomness, and the version of the PROGENy and CollecTRI collections actually loaded.",
+              "context": "Both analytical layers are activity inferences over prior knowledge networks. The report must keep that framing rather than presenting scores as measured pathway states.",
+              "acceptance_criteria": [
+                "The report names the network and version, the input statistic and contrast, the estimator, the minimum regulon size, and the number of regulators and pathways tested for each layer",
+                "The pathway footprint result is stated first with direction and adjusted p, framed as footprint not membership",
+                "Agreement and disagreement between the PROGENy and CollecTRI layers are both stated",
+                "The sample_01 library size, its keep/drop decision with reason, and the leave-one-out sensitivity outcome are recorded",
+                "The reproducibility record with sessionInfo, package versions, seeds and collection versions is stored with the results, not in a separate note",
+                "Limitations are stated plainly: n=6 per group, inference from prior networks, no topology, unknown length-correction state"
+              ],
+              "constraints": [
+                "reproducibility_record = sessionInfo, seed, package versions, collection version, annotation release",
+                "activity_report_fields = network name, network version, input statistic, contrast, estimator, minimum regulon size, number of regulators tested, inference caution",
+                "Do not upgrade any activity score to a claim about a mechanism being engaged; a high score is a hypothesis for follow-up"
+              ],
+              "caveats": [
+                "Do not report only the concordant regulators and pathways; a selective concordance narrative is the main way this analysis becomes misleading"
+              ],
+              "packages": [
+                "sessioninfo",
+                "rmarkdown",
+                "knitr"
+              ],
+              "depends_on": [
+                "T2S2",
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0119@5f4d"
+                ],
+                "reason": "No rule covers the report step as such; it carries the reproducibility record of R-0086@becf and the activity report fields and caution of R-0119@5f4d.",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  },
+                  {
+                    "step": "report",
+                    "name": "activity_report_fields",
+                    "value": [
+                      "network_name",
+                      "network_version",
+                      "input_statistic",
+                      "contrast",
+                      "estimator",
+                      "min_regulon_size",
+                      "n_regulators_tested",
+                      "inference_caution"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1009935"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 59
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "pathway_activity"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ],
+          "extra_analyses": [
+            "pathway_activity"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "tf_activity",
+            "method": {
+              "id": "M-0035"
+            },
+            "template": "tpl-decoupler-tf-activity@1.0.0",
+            "rules": [
+              "R-0112@f200",
+              "R-0120@7639",
+              "R-0111@b668",
+              "R-0113@7a4d",
+              "R-0114@9db7",
+              "R-0121@5f27"
+            ]
+          },
+          {
+            "step": "pathway_activity",
+            "method": {
+              "id": "M-0036"
+            },
+            "template": "tpl-progeny-pathway-activity@1.0.0",
+            "rules": [
+              "R-0123@5521",
+              "R-0115@1504",
+              "R-0122@08af"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf",
+              "R-0119@5f4d"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0112@f200"
+          },
+          {
+            "id": "R-0120@7639"
+          },
+          {
+            "id": "R-0123@5521"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0111@b668"
+          },
+          {
+            "id": "R-0113@7a4d"
+          },
+          {
+            "id": "R-0114@9db7"
+          },
+          {
+            "id": "R-0115@1504"
+          },
+          {
+            "id": "R-0119@5f4d"
+          },
+          {
+            "id": "R-0121@5f27"
+          },
+          {
+            "id": "R-0122@08af"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 23125,
+      "elapsedMs": 7
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "tf_activity",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "pathway_activity"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top 500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "pathway_activity",
+            "method": "PROGENy footprint model with decoupleR mlm",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "footprint_model",
+                "value": "progeny_human"
+              },
+              {
+                "name": "activity_method",
+                "value": "mlm"
+              },
+              {
+                "name": "top_responsive_genes",
+                "value": 500
+              },
+              {
+                "name": "interpretation",
+                "value": "footprint_not_membership"
+              }
+            ]
+          },
+          {
+            "step_type": "tf_activity",
+            "method": "decoupleR ulm on CollecTRI regulons",
+            "method_id": "M-0037",
+            "package": "decoupleR",
+            "parameters": [
+              {
+                "name": "activity_input",
+                "value": "per_sample_log_matrix"
+              },
+              {
+                "name": "activity_method",
+                "value": "ulm"
+              },
+              {
+                "name": "min_regulon_size",
+                "value": 5
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_bh_across_regulators"
+              },
+              {
+                "name": "regulon_collection",
+                "value": "collectri_human"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "activity report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 4
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

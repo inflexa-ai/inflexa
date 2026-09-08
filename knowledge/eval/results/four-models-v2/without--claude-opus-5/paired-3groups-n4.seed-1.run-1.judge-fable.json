@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: one DESeq2 fit with ~ subject + condition on all 12 samples, an LRT against ~ subject as the omnibus test, three pairwise Wald contrasts with control releveled as reference, apeglm/ashr shrinkage and BH at 0.05 stated per contrast, and an explicit refusal to refit on subsets or drop the blocking term. QC covers PCA coloured by condition and shaped by subject, distances, library sizes and size factors, though the policy for a flagged outlier or shallow sample is only 'name it' rather than a stated action. The |shrunken LFC|>1 count is a post hoc threshold rather than an lfcThreshold in the test, size-factor normalization is implied by DESeq2 and a size-factor table rather than stated as the normalization step, and the fgsea section names collections, ranking metric and a 15-500 size window but no collection version. Report elements (design, thresholds, tested/significant counts, n=4 caveats) are well specified, but software versions are not required in the output."
+}

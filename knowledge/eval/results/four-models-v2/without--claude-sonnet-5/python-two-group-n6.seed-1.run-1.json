@@ -1,0 +1,438 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "python-two-group-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:53:16.776Z",
+  "elapsedMs": 45730,
+  "outcome": "plan_submitted",
+  "planId": "pln-3d824566",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts/metadata and quantify sample_01 depth issue",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A single very shallow sample can distort library-size normalization for the whole cohort if not handled carefully (e.g., median-of-ratios is more robust than total-count scaling, but still worth checking)"
+        ],
+        "context": "Input files: counts.csv (12000 genes x 12 samples, raw Salmon gene-level counts) and metadata.csv (12 samples x condition: AD lesional vs control). Design is unpaired, single batch, 6 vs 6. Caveat: sample_01 has library size ~4x below median.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "What is the library size distribution across the 12 skin samples (6 AD lesional vs 6 control), and how far below median is sample_01's depth — is it an outlier severe enough to bias normalization or DE calls?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use Python only (pandas/numpy), no R",
+          "Do not drop sample_01 at this step — only quantify and flag; the DE step decides handling"
+        ],
+        "acceptance_criteria": [
+          "Per-sample total counts and detected-gene counts computed and reported for all 12 samples",
+          "sample_01's library size is quantified as a ratio to the cohort median and flagged explicitly",
+          "A written recommendation is produced: keep sample_01 with normalization vs exclude, to be used by the DE step",
+          "Output table (CSV) of per-sample QC metrics saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Differential expression: AD lesional vs control (full cohort)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "12 samples is a small cohort; dispersion estimates are noisy and a single low-depth sample can inflate variance for genes it dominates",
+          "This is the primary (full-cohort) run; a leave-one-out sensitivity run is a separate step"
+        ],
+        "context": "Raw gene-level counts from Salmon, 12000 genes x 12 samples (6 AD lesional vs 6 control, unpaired, single batch). Use the QC table from T1S1 to confirm sample_01's size factor is estimated sensibly, not to exclude it in this primary run.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin using raw Salmon gene-level counts, modeled with a negative-binomial GLM (pydeseq2), across all 12000 genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use Python only (pydeseq2), no R/DESeq2",
+          "Use raw integer counts as pydeseq2 input; do not pre-normalize",
+          "Filter genes with near-zero counts across all samples before fitting to stabilize dispersion estimation",
+          "Report whether pydeseq2 flagged sample_01 as an outlier via Cook's distance"
+        ],
+        "acceptance_criteria": [
+          "pydeseq2 DeseqDataSet fit on raw counts with condition (AD lesional vs control) as the design factor, low-count genes filtered before fitting",
+          "Full results table (log2FC, p-value, BH-adjusted p-value) exported for all tested genes",
+          "Significant DE gene list reported at padj < 0.05 with |log2FC| >= 1, with counts of up/down genes",
+          "MA plot and volcano plot saved",
+          "Size factors reported per sample so sample_01's estimated size factor (reflecting its low depth) is visible in output"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Sensitivity DE excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With only 11 samples remaining, statistical power drops further; treat this as a robustness check, not a replacement primary analysis"
+        ],
+        "context": "Same counts.csv/metadata.csv as T2S1, but with sample_01 removed. This directly tests robustness given the flagged low-depth sample.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the AD lesional vs control DE results (genes and effect sizes) change materially when sample_01 (the ~4x-shallow sample) is excluded, i.e., is the primary DE call robust to this one sample?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use Python only (pydeseq2)",
+          "Use the same gene filtering and significance thresholds as T2S1 for a fair comparison"
+        ],
+        "acceptance_criteria": [
+          "pydeseq2 re-fit on the 11 remaining samples (condition group sizes noted, e.g. 5 or 6 vs 5 depending on which arm sample_01 belongs to)",
+          "Overlap of significant genes (padj<0.05, |log2FC|>=1) between full-cohort (T2S1) and leave-one-out result reported as counts and Jaccard/overlap fraction",
+          "Genes significant in one run but not the other are listed explicitly as sample_01-sensitive calls",
+          "Correlation of log2FC between the two runs reported (scatter plot)"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Hallmark pathway enrichment (pre-ranked GSEA)",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Only 12000 genes are profiled (not a full ~20k transcriptome), so hallmark set coverage may be partial for some pathways — report the fraction of each set's genes actually present in the data"
+        ],
+        "context": "Uses the full-cohort DE result table from T2S1 (12000 genes, HGNC gene symbols expected from Salmon quantification annotation) and the MSigDB human hallmark gene set collection (h.all.v2026.1.Hs.symbols.gmt, 50 sets) confirmed present in the reference store, organism-matched to this human skin dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changed between AD lesional and control skin, using the full-cohort DE ranking statistic?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Use Python only (gseapy prerank), no R (no fgsea/clusterProfiler)",
+          "Confirm gene identifiers in the counts matrix are HGNC symbols before joining to the hallmark GMT; if they are Ensembl IDs, map to symbols first using the human ID mapping reference before running GSEA",
+          "If the hallmark gene set file is unavailable at run time, report the gap and skip rather than fabricate enrichment results"
+        ],
+        "acceptance_criteria": [
+          "Genes ranked by DE test statistic (e.g., DESeq2 Wald stat or signed -log10(p)*sign(log2FC)) from T2S1's full-cohort results",
+          "Pre-ranked GSEA run against the MSigDB human hallmark gene sets (50 sets, HGNC symbols)",
+          "Results table with NES, p-value, FDR q-value per hallmark pathway exported",
+          "Significant pathways (FDR q < 0.25 per standard GSEA convention, or q<0.05 if stricter reporting desired) listed with direction (up in lesional vs control)",
+          "Enrichment plots for top pathways saved"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Synthesis: DE genes and hallmark pathways with sample_01 sensitivity flags",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs 6 (or 5 vs 6 after exclusion) is a small underpowered design; treat any single-study finding as hypothesis-generating"
+        ],
+        "context": "Final integration step combining differential expression, sensitivity analysis, and hallmark enrichment outputs from T2S1, T2S2, and T3S1 into one decision-ready report for the AD lesional vs control comparison.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "What is the final list of genes and hallmark pathways that change between AD lesional and control skin, and which of these calls depend on the shallow sample_01 rather than being robust across the sensitivity analysis?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T2S1",
+          "T2S2",
+          "T3S1"
+        ],
+        "constraints": [
+          "Use Python only (pandas), no R",
+          "Report uncertainty explicitly rather than picking one run as 'the' answer when full-cohort and leave-one-out results disagree"
+        ],
+        "acceptance_criteria": [
+          "Combined table joining T2S1 significant DE genes, T2S2 sensitivity overlap flag, and T3S1 hallmark pathway membership",
+          "Top up/down DE genes and top enriched hallmark pathways summarized in plain text with effect sizes and significance",
+          "Explicit call-out of any DE gene or pathway result that reverses or loses significance when sample_01 is excluded",
+          "No claims beyond what full-cohort and sensitivity results jointly support"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control DE + hallmark GSEA",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (salmon gene-level counts, 12000 genes x 12 samples) comparing 6 atopic dermatitis lesional skin samples vs 6 control skin samples, unpaired, single batch. sample_01 has a library size ~4x below the median, so it must be flagged and handled with sensitivity analysis rather than silently dropped or silently kept. The plan: (1) QC the count matrix and metadata, quantify the sample_01 depth issue and decide/document a handling strategy (down-weighting via DESeq2's built-in size-factor normalization plus an explicit sensitivity run excluding sample_01); (2) run DESeq2-equivalent differential expression in Python (pydeseq2) on the full 6v6 design, and a leave-one-out sensitivity comparison excluding sample_01, to check whether DE results are driven by that sample; (3) run pre-ranked GSEA against the MSigDB human hallmark gene sets (50 sets, HGNC symbols) using the DE result's ranking statistic; (4) synthesize DE genes and hallmark pathways into a decision-ready summary, explicitly reporting genes/pathways whose significance depends on sample_01. All steps use Python only per user constraint (pydeseq2 for DE, gseapy/blitzgsea-compatible prerank GSEA). Reference data used: MSigDB human hallmark gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) confirmed present and organism-matched (human)."
+  },
+  "usage": {
+    "inputTokens": 140436,
+    "outputTokens": 4284,
+    "cacheCreationInputTokens": 77609,
+    "cacheReadInputTokens": 62791,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Anb1F9pMRzyt6fBCRFDLcJ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01EE94usbNKJkaHhB5gsQQQp",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "gseapy",
+          "blitzgsea",
+          "decoupler",
+          "statsmodels",
+          "pandas",
+          "numpy"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_017tQTZT2EiZoCtUberZSEyg",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control DE + hallmark GSEA",
+          "analytical_narrative": "The dataset is bulk RNA-seq (salmon gene-level counts, 12000 genes x 12 samples) comparing 6 atopic dermatitis lesional skin samples vs 6 control skin samples, unpaired, single batch. sample_01 has a library size ~4x below the median, so it must be flagged and handled with sensitivity analysis rather than silently dropped or silently kept. The plan: (1) QC the count matrix and metadata, quantify the sample_01 depth issue and decide/document a handling strategy (down-weighting via DESeq2's built-in size-factor normalization plus an explicit sensitivity run excluding sample_01); (2) run DESeq2-equivalent differential expression in Python (pydeseq2) on the full 6v6 design, and a leave-one-out sensitivity comparison excluding sample_01, to check whether DE results are driven by that sample; (3) run pre-ranked GSEA against the MSigDB human hallmark gene sets (50 sets, HGNC symbols) using the DE result's ranking statistic; (4) synthesize DE genes and hallmark pathways into a decision-ready summary, explicitly reporting genes/pathways whose significance depends on sample_01. All steps use Python only per user constraint (pydeseq2 for DE, gseapy/blitzgsea-compatible prerank GSEA). Reference data used: MSigDB human hallmark gene sets (h.all.v2026.1.Hs.symbols.gmt, 50 sets, HGNC symbols) confirmed present and organism-matched (human).",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts/metadata and quantify sample_01 depth issue",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What is the library size distribution across the 12 skin samples (6 AD lesional vs 6 control), and how far below median is sample_01's depth — is it an outlier severe enough to bias normalization or DE calls?",
+              "acceptance_criteria": [
+                "Per-sample total counts and detected-gene counts computed and reported for all 12 samples",
+                "sample_01's library size is quantified as a ratio to the cohort median and flagged explicitly",
+                "A written recommendation is produced: keep sample_01 with normalization vs exclude, to be used by the DE step",
+                "Output table (CSV) of per-sample QC metrics saved for downstream steps"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input files: counts.csv (12000 genes x 12 samples, raw Salmon gene-level counts) and metadata.csv (12 samples x condition: AD lesional vs control). Design is unpaired, single batch, 6 vs 6. Caveat: sample_01 has library size ~4x below median.",
+              "constraints": [
+                "Use Python only (pandas/numpy), no R",
+                "Do not drop sample_01 at this step — only quantify and flag; the DE step decides handling"
+              ],
+              "caveats": [
+                "A single very shallow sample can distort library-size normalization for the whole cohort if not handled carefully (e.g., median-of-ratios is more robust than total-count scaling, but still worth checking)"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Differential expression: AD lesional vs control (full cohort)",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin using raw Salmon gene-level counts, modeled with a negative-binomial GLM (pydeseq2), across all 12000 genes?",
+              "acceptance_criteria": [
+                "pydeseq2 DeseqDataSet fit on raw counts with condition (AD lesional vs control) as the design factor, low-count genes filtered before fitting",
+                "Full results table (log2FC, p-value, BH-adjusted p-value) exported for all tested genes",
+                "Significant DE gene list reported at padj < 0.05 with |log2FC| >= 1, with counts of up/down genes",
+                "MA plot and volcano plot saved",
+                "Size factors reported per sample so sample_01's estimated size factor (reflecting its low depth) is visible in output"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw gene-level counts from Salmon, 12000 genes x 12 samples (6 AD lesional vs 6 control, unpaired, single batch). Use the QC table from T1S1 to confirm sample_01's size factor is estimated sensibly, not to exclude it in this primary run.",
+              "constraints": [
+                "Use Python only (pydeseq2), no R/DESeq2",
+                "Use raw integer counts as pydeseq2 input; do not pre-normalize",
+                "Filter genes with near-zero counts across all samples before fitting to stabilize dispersion estimation",
+                "Report whether pydeseq2 flagged sample_01 as an outlier via Cook's distance"
+              ],
+              "caveats": [
+                "12 samples is a small cohort; dispersion estimates are noisy and a single low-depth sample can inflate variance for genes it dominates",
+                "This is the primary (full-cohort) run; a leave-one-out sensitivity run is a separate step"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Sensitivity DE excluding sample_01",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Do the AD lesional vs control DE results (genes and effect sizes) change materially when sample_01 (the ~4x-shallow sample) is excluded, i.e., is the primary DE call robust to this one sample?",
+              "acceptance_criteria": [
+                "pydeseq2 re-fit on the 11 remaining samples (condition group sizes noted, e.g. 5 or 6 vs 5 depending on which arm sample_01 belongs to)",
+                "Overlap of significant genes (padj<0.05, |log2FC|>=1) between full-cohort (T2S1) and leave-one-out result reported as counts and Jaccard/overlap fraction",
+                "Genes significant in one run but not the other are listed explicitly as sample_01-sensitive calls",
+                "Correlation of log2FC between the two runs reported (scatter plot)"
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same counts.csv/metadata.csv as T2S1, but with sample_01 removed. This directly tests robustness given the flagged low-depth sample.",
+              "constraints": [
+                "Use Python only (pydeseq2)",
+                "Use the same gene filtering and significance thresholds as T2S1 for a fair comparison"
+              ],
+              "caveats": [
+                "With only 11 samples remaining, statistical power drops further; treat this as a robustness check, not a replacement primary analysis"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Hallmark pathway enrichment (pre-ranked GSEA)",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changed between AD lesional and control skin, using the full-cohort DE ranking statistic?",
+              "acceptance_criteria": [
+                "Genes ranked by DE test statistic (e.g., DESeq2 Wald stat or signed -log10(p)*sign(log2FC)) from T2S1's full-cohort results",
+                "Pre-ranked GSEA run against the MSigDB human hallmark gene sets (50 sets, HGNC symbols)",
+                "Results table with NES, p-value, FDR q-value per hallmark pathway exported",
+                "Significant pathways (FDR q < 0.25 per standard GSEA convention, or q<0.05 if stricter reporting desired) listed with direction (up in lesional vs control)",
+                "Enrichment plots for top pathways saved"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the full-cohort DE result table from T2S1 (12000 genes, HGNC gene symbols expected from Salmon quantification annotation) and the MSigDB human hallmark gene set collection (h.all.v2026.1.Hs.symbols.gmt, 50 sets) confirmed present in the reference store, organism-matched to this human skin dataset.",
+              "constraints": [
+                "Use Python only (gseapy prerank), no R (no fgsea/clusterProfiler)",
+                "Confirm gene identifiers in the counts matrix are HGNC symbols before joining to the hallmark GMT; if they are Ensembl IDs, map to symbols first using the human ID mapping reference before running GSEA",
+                "If the hallmark gene set file is unavailable at run time, report the gap and skip rather than fabricate enrichment results"
+              ],
+              "caveats": [
+                "Only 12000 genes are profiled (not a full ~20k transcriptome), so hallmark set coverage may be partial for some pathways — report the fraction of each set's genes actually present in the data"
+              ]
+            },
+            {
+              "id": "T4S1",
+              "name": "Synthesis: DE genes and hallmark pathways with sample_01 sensitivity flags",
+              "track": "T4",
+              "step_type": "synthesis",
+              "question": "What is the final list of genes and hallmark pathways that change between AD lesional and control skin, and which of these calls depend on the shallow sample_01 rather than being robust across the sensitivity analysis?",
+              "acceptance_criteria": [
+                "Combined table joining T2S1 significant DE genes, T2S2 sensitivity overlap flag, and T3S1 hallmark pathway membership",
+                "Top up/down DE genes and top enriched hallmark pathways summarized in plain text with effect sizes and significance",
+                "Explicit call-out of any DE gene or pathway result that reverses or loses significance when sample_01 is excluded",
+                "No claims beyond what full-cohort and sensitivity results jointly support"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final integration step combining differential expression, sensitivity analysis, and hallmark enrichment outputs from T2S1, T2S2, and T3S1 into one decision-ready report for the AD lesional vs control comparison.",
+              "constraints": [
+                "Use Python only (pandas), no R",
+                "Report uncertainty explicitly rather than picking one run as 'the' answer when full-cohort and leave-one-out results disagree"
+              ],
+              "caveats": [
+                "n=6 vs 6 (or 5 vs 6 after exclusion) is a small underpowered design; treat any single-study finding as hypothesis-generating"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 74
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

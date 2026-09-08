@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 4,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 5
+  },
+  "rationale": "The plan engages with the strandedness concern but never performs an actual strandedness inference (infer_experiment.py or salmon libType A) or re-count; it substitutes an antisense-overlap exposure bound and then fits the model on the counts as delivered, which the reference calls wrong, and it also invents a three-model intersection rule that further erodes power at n=3. QC is solid (library sizes, PCA, distances, liver-marker plausibility) though color-by-condition and an explicit outlier policy are not stated. Normalization is correctly inside DESeq2 and the ~condition Wald test with apeglm and BH at 0.05 is stated, but the low-count filter is unspecified and the |LFC|>=1 cut is applied post hoc rather than in the test. Enrichment is unrequested and weakly justified for 3v3; the ranking metric and named versioned collection are given but no size window or ORA universe. The report lacks software versions and explicit counts of tested/significant genes."
+}

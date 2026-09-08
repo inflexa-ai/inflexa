@@ -1,0 +1,671 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "qc-only-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T18:29:16.908Z",
+  "elapsedMs": 47138,
+  "outcome": "plan_submitted",
+  "planId": "pln-c1876c13",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Library size, PCA, and sample-distance QC on all 12 samples",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01's low depth will shrink its size-factor-normalized signal and can pull it toward the origin or inflate its apparent dispersion on the PCA/heatmap independent of biology; treat any separation it shows on those grounds with caution",
+          "This step is exploratory QC only — no differential expression test is performed, so no p-values or fold changes are reported here",
+          "Gene-level counts are from Salmon without a stated length-correction status; this does not affect vst/PCA/clustering QC, which operates on the counts as given"
+        ],
+        "context": "Data: /eval-four-models-v2-with-qc-only-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw gene-level counts from Salmon, length-correction state not stated) and .../metadata/metadata.csv (12 x 2: sample, condition). Design is 6 vs 6, unpaired, single batch — no batch covariate to color by. The data profile flags sample_01 as having a library size ~4x below the median; this step is the first and only place in this analysis that sample is evaluated, since no differential test is being run yet.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2",
+          "PoiClaClu"
+        ],
+        "question": "Across the 6 AD-lesional and 6 control skin samples (raw salmon gene-level counts, 12000 genes x 12 samples, single batch), what are the per-sample library sizes, how do samples separate on a variance-stabilized PCA colored by condition, what does the sample-to-sample Euclidean distance heatmap show about within-group coherence, and — specifically for sample_01, whose library size is about 4x below the cohort median — does it cluster with its assigned condition group or does it look like an outlier that should be flagged or excluded?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC per R-0033@40bf (vst-blind PCA on top 500 variable genes + sample distance heatmap, colored by condition) with the low-depth-sample handling of R-0008@440d (keep, inspect, report, remove only with stated reason) applied to sample_01, which the data profile flags at ~4x below median library size.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2's varianceStabilizingTransformation(..., blind=TRUE) — not the design-aware transform — for PCA and distance calculations",
+          "Do not remove sample_01 before generating and inspecting the PCA and distance heatmap; any exclusion decision must follow that inspection, not precede it"
+        ],
+        "acceptance_criteria": [
+          "Report per-sample library size (total raw counts) for all 12 samples, sorted, with the median and sample_01's fold-deviation from it stated explicitly",
+          "Produce a PCA plot (PC1 vs PC2, and report % variance explained) on the DESeq2 blind variance-stabilizing transform of the top 500 most variable genes, points colored by condition (AD_lesional vs control) and labeled by sample ID",
+          "Produce a sample-to-sample Euclidean distance heatmap (on the same vst-blind matrix) with hierarchical clustering, labeled by sample ID and condition",
+          "State explicitly whether the 6 vs 6 groups separate along PC1/PC2 or show overlap",
+          "Give an explicit, reasoned verdict on sample_01: where it falls on the PCA and the distance heatmap relative to its condition group, and a recommendation (retain with caveat / flag for sensitivity analysis / exclude) with the stated justification — do not silently drop or silently keep it"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: 12-sample QC & structure check",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "Before any differential testing, characterize the 12-sample cohort (6 AD-lesional, 6 control skin, salmon gene-level counts, single batch, unpaired) on its own terms: raw library sizes per sample, a variance-stabilized PCA to see whether the two conditions separate along the leading axes, and a sample-to-sample Euclidean distance heatmap to check clustering coherence within each group. sample_01's library size (~4x below the median) is flagged in the data profile as a specific quality concern; the QC step keeps it in the analysis, examines where it falls on the PCA and distance heatmap relative to its group, and delivers an explicit verdict (keep vs exclude, with the stated reason) rather than silently dropping it. This is a pure QC/EDA deliverable — no hypothesis test is run."
+  },
+  "usage": {
+    "inputTokens": 378553,
+    "outputTokens": 4682,
+    "cacheCreationInputTokens": 78378,
+    "cacheReadInputTokens": 300091,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01EPgcF8y6Xm4RAfiLaZsrnd",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 47
+    },
+    {
+      "toolUseId": "toolu_01HXFU7o4NM82qTMDodta9er",
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap + library size barplot",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "toolu_01Gcau87epSdLdvAGAo89Vyb",
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_01FoWUZyfFS6x5ruTvYmaEUF",
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method_id": "M-0001",
+            "method": "vst blind PCA sample distances",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "toolu_01MBgPRi6g5dxZYC6hLHwzQ3",
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": []
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01P9wfkjd58gCAyzdMBJtCUM",
+      "name": "knowledge_check",
+      "input": {
+        "question": "qc",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_018RLwXbmTeff4Vp7bk7fsfp",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: 12-sample QC & structure check",
+          "analytical_narrative": "Before any differential testing, characterize the 12-sample cohort (6 AD-lesional, 6 control skin, salmon gene-level counts, single batch, unpaired) on its own terms: raw library sizes per sample, a variance-stabilized PCA to see whether the two conditions separate along the leading axes, and a sample-to-sample Euclidean distance heatmap to check clustering coherence within each group. sample_01's library size (~4x below the median) is flagged in the data profile as a specific quality concern; the QC step keeps it in the analysis, examines where it falls on the PCA and distance heatmap relative to its group, and delivers an explicit verdict (keep vs exclude, with the stated reason) rather than silently dropping it. This is a pure QC/EDA deliverable — no hypothesis test is run.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Library size, PCA, and sample-distance QC on all 12 samples",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Across the 6 AD-lesional and 6 control skin samples (raw salmon gene-level counts, 12000 genes x 12 samples, single batch), what are the per-sample library sizes, how do samples separate on a variance-stabilized PCA colored by condition, what does the sample-to-sample Euclidean distance heatmap show about within-group coherence, and — specifically for sample_01, whose library size is about 4x below the cohort median — does it cluster with its assigned condition group or does it look like an outlier that should be flagged or excluded?",
+              "context": "Data: /eval-four-models-v2-with-qc-only-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, raw gene-level counts from Salmon, length-correction state not stated) and .../metadata/metadata.csv (12 x 2: sample, condition). Design is 6 vs 6, unpaired, single batch — no batch covariate to color by. The data profile flags sample_01 as having a library size ~4x below the median; this step is the first and only place in this analysis that sample is evaluated, since no differential test is being run yet.",
+              "acceptance_criteria": [
+                "Report per-sample library size (total raw counts) for all 12 samples, sorted, with the median and sample_01's fold-deviation from it stated explicitly",
+                "Produce a PCA plot (PC1 vs PC2, and report % variance explained) on the DESeq2 blind variance-stabilizing transform of the top 500 most variable genes, points colored by condition (AD_lesional vs control) and labeled by sample ID",
+                "Produce a sample-to-sample Euclidean distance heatmap (on the same vst-blind matrix) with hierarchical clustering, labeled by sample ID and condition",
+                "State explicitly whether the 6 vs 6 groups separate along PC1/PC2 or show overlap",
+                "Give an explicit, reasoned verdict on sample_01: where it falls on the PCA and the distance heatmap relative to its condition group, and a recommendation (retain with caveat / flag for sensitivity analysis / exclude) with the stated justification — do not silently drop or silently keep it"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2",
+                "PoiClaClu"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Sample structure QC per R-0033@40bf (vst-blind PCA on top 500 variable genes + sample distance heatmap, colored by condition) with the low-depth-sample handling of R-0008@440d (keep, inspect, report, remove only with stated reason) applied to sample_01, which the data profile flags at ~4x below median library size.",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "low_depth_policy",
+                    "value": "keep_inspect_report",
+                    "source": "doi:10.1186/s13059-016-0881-8"
+                  }
+                ]
+              },
+              "caveats": [
+                "sample_01's low depth will shrink its size-factor-normalized signal and can pull it toward the origin or inflate its apparent dispersion on the PCA/heatmap independent of biology; treat any separation it shows on those grounds with caution",
+                "This step is exploratory QC only — no differential expression test is performed, so no p-values or fold changes are reported here",
+                "Gene-level counts are from Salmon without a stated length-correction status; this does not affect vst/PCA/clustering QC, which operates on the counts as given"
+              ],
+              "constraints": [
+                "Use DESeq2's varianceStabilizingTransformation(..., blind=TRUE) — not the design-aware transform — for PCA and distance calculations",
+                "Do not remove sample_01 before generating and inspecting the PCA and distance heatmap; any exclusion decision must follow that inspection, not precede it"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0008@440d"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 3988,
+      "elapsedMs": 11
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) + PCA + sample distance heatmap + library size barplot",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0033@40bf",
+            "message": "DESeq2 Wald test with apeglm log fold change shrinkage is not a permitted method for qc_sample_structure in this situation.",
+            "permitted": [
+              "Sample structure QC: vst(blind), PCA, sample distances, library sizes"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 477,
+      "elapsedMs": 3
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC: vst(blind), PCA, sample distances, library sizes",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0033@40bf",
+            "message": "DESeq2 Wald test with apeglm log fold change shrinkage is not a permitted method for qc_sample_structure in this situation.",
+            "permitted": [
+              "Sample structure QC: vst(blind), PCA, sample distances, library sizes"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 477,
+      "elapsedMs": 4
+    },
+    {
+      "seq": 4,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "qc",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst blind PCA sample distances",
+            "method_id": "M-0001",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0033@40bf",
+            "message": "DESeq2 Wald test with apeglm log fold change shrinkage is not a permitted method for qc_sample_structure in this situation.",
+            "permitted": [
+              "Sample structure QC: vst(blind), PCA, sample distances, library sizes"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 477,
+      "elapsedMs": 5
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

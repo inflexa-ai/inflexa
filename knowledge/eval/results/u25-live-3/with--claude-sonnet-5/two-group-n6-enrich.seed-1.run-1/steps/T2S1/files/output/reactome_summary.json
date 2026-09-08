@@ -1,0 +1,29 @@
+{
+  "template": "tpl-fgsea-preranked@1.0.0",
+  "method": "fgsea multilevel preranked GSEA",
+  "inputs": {
+    "results_path": "output/ranked_genes_symbol.csv",
+    "gmt_path": "output/refdata/ReactomePathways.gmt"
+  },
+  "database": "ReactomePathways.gmt",
+  "rank_metric": "stat",
+  "n_genes_input": 9402,
+  "n_genes_ranked": 9402,
+  "n_genes_in_sets": 2852,
+  "n_sets_input": 2868,
+  "n_sets_tested": 766,
+  "n_significant": 97,
+  "n_up": 90,
+  "n_down": 7,
+  "n_main_pathways": 22,
+  "padj_cutoff": 0.05,
+  "min_size": 15,
+  "max_size": 500,
+  "eps": 0,
+  "seed": 20260904,
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "fgsea": "1.38.0",
+    "ggplot2": "4.0.3"
+  }
+}

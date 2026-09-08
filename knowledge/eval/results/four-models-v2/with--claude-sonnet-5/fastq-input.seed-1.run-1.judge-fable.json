@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the correct outcome for this data state: it recognized that paired-end FASTQ files cannot be tested for differential expression, refused to invent a count matrix, named the quantification routes (Salmon/kallisto quant files or a gene-level count matrix) and inventoried the environment for aligners, indices, and references before asking the user. It did not, however, ask explicitly which reference build and annotation version should govern quantification, and it did not sketch the downstream two-group, three-replicate plan (DESeq2/edgeR, ~condition with control as reference, BH at 0.05, LFC shrinkage, PCA/library-size QC, low-power caveat) that the reference expects once counts arrive. Because no plan was submitted, the QC, filtering, normalization, formula, and FDR criteria have nothing stated to credit. Enrichment is correctly absent given nothing can be tested yet, and the stop message itself is a clear, well-justified caveat but not a report specification."
+}

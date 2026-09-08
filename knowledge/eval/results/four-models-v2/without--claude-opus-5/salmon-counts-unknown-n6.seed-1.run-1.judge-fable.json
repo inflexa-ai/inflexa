@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refuses to run tximport on a gene table, does not assert length correction because Salmon produced it, characterizes the value range for fractional entries and column-sum scale, and fits a DESeq2 Wald model with ~condition, control as reference, size factors inside the model, BH at 0.05 and apeglm shrinkage, with a defensible limma fallback if the table proves to be TPM. It falls short of the reference in two ways: it never asks the core for the quant.sf directories or a per-gene average-length table and does not say what would change if they arrived, and it nowhere states the specific caveat that the length offset is lost so isoform-usage shifts can masquerade as differential expression. QC is complete with PCA, correlation clustering, library sizes and a flag-only outlier policy; the low-count floor is minimal and stated. Enrichment was not requested; the plan includes it with a correct filtered universe and ranking metric but no collection version or numeric set-size window, and the report section omits software versions and the lost-offset caveat. The |log2FC|>1 subset is applied post hoc rather than as an lfcThreshold in the test."
+}

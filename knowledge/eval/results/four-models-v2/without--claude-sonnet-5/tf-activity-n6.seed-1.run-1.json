@@ -1,0 +1,383 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "tf-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:36:01.245Z",
+  "elapsedMs": 56272,
+  "outcome": "plan_submitted",
+  "planId": "pln-1d539808",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 differential expression: aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "12000 genes and 12 samples is small — do not over-allocate resources",
+          "Confirm whether counts require independent filtering of low-expression genes before size-factor estimation; salmon-derived counts may need integer rounding for DESeq2"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas"
+        ],
+        "question": "What are the gene-level differential expression statistics (log2FC, p-value, padj) between the 6 aldosterone-treated and 6 vehicle-control kidney samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts matrix (12000 genes x 12 samples) and metadata (12 x 2, condition column) are loaded and sample order/IDs are matched between the two files",
+          "Low-count genes are filtered (e.g. row sum or CPM threshold) before modeling",
+          "DESeq2 is run with condition (treated vs control) as the single factor, matching the unpaired single-batch design",
+          "Output is a full results table with log2FoldChange, stat, pvalue, padj for all tested genes, plus a diagnostic (PCA or dispersion plot) confirming no gross outliers/batch structure"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF activity inference from the differential signature (CollecTRI/DoRothEA)",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "CollecTRI/DoRothEA regulons are literature-curated priors, not direct measurements of TF binding or activity in kidney tissue — treat top hits as candidate drivers, not proven mechanism",
+          "DoRothEA .rda is R-serialized; if reading from Python, load via rpy2 or convert with R first",
+          "Small n (6 vs 6) limits power for the per-sample statistical test — report this as a caveat on any TF whose signature-level score is not corroborated per-sample",
+          "Do not conflate 'TF activity score' with 'TF gene expression change' — a TF can show activity change while its own transcript is unchanged"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "rpy2"
+        ],
+        "question": "Which transcription factors show the strongest inferred activity change (up or down) between aldosterone-treated and vehicle kidney samples, based on the DESeq2 differential signature?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "A human TF-target regulon network (CollecTRI regulon CSV, or DoRothEA human confidence A-C as fallback) is loaded from the reference store and confirmed present before use; report explicitly if absent and stop rather than silently substituting",
+          "decoupler's multivariate method (e.g. ulm or consensus) is run on the DESeq2 gene-level statistic (e.g. the Wald stat or log2FC/padj-derived t-statistic) against the regulon to produce one activity score per TF",
+          "decoupler is also run per-sample (on normalized/vst expression, 12 samples x genes) against the same regulon to get a TF-by-sample activity matrix",
+          "Per-sample TF activity scores are compared between the 6 treated and 6 control samples (t-test or Wilcoxon, BH-corrected) to confirm the direction and statistical consistency of top TFs from the signature-level result",
+          "A ranked table of TFs (activity score, direction, per-sample test p-value/padj) is produced, with the top drivers (both up- and down-regulated activity) clearly flagged"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Orthogonal check: TF target enrichment (MSigDB GTRD) and pathway context (WikiPathways human)",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "GTRD sets reflect ChIP-seq binding proximity, not confirmed regulation — treat overlap with T2S1 as corroborating evidence of TF identity only, not mechanism",
+          "WikiPathways human GMT member genes are HGNC symbols — confirm the DESeq2 output gene identifiers are also HGNC symbols (or map them) before running enrichment"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "gseapy"
+        ],
+        "question": "Do the top TF drivers identified from the regulon-based activity inference have independent support from ChIP-seq-based TF-target binding sets (MSigDB GTRD) and from pathway enrichment of the DESeq2 signature (WikiPathways human)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "MSigDB GTRD TF-target gene sets (unsigned) and WikiPathways human GMT are confirmed present and loaded",
+          "An enrichment test (e.g. fgsea/decoupler ORA or GSEA) is run on the ranked DESeq2 gene list against both gene set collections",
+          "Enrichment results for the GTRD TF sets are cross-referenced against the top TFs from T2S1's regulon-based ranking, explicitly noting overlap/agreement or lack thereof (GTRD sets carry no direction, so agreement is limited to identity of the TF, not the sign)",
+          "Pathway enrichment results (WikiPathways) are reported alongside the TF list to give biological context (e.g. mineralocorticoid/sodium transport-related pathways expected for aldosterone treatment)",
+          "Final output is a consolidated report ranking candidate TF drivers with: signature-level activity score, per-sample directional consistency, and orthogonal GTRD/pathway support"
+        ]
+      }
+    ],
+    "title": "TF activity drivers of aldosterone response in kidney",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (12000 genes x 12 samples, Salmon gene-level counts) with a clean 6 vs 6 unpaired design (aldosterone-treated vs vehicle, single batch). To identify which transcription factors drive the treated-vs-control response, the standard and most defensible route is: (1) run a proper count-based differential expression model (DESeq2) to get a stable, variance-moderated gene-level signature rather than relying on fold-changes computed ad hoc; (2) feed the resulting per-gene statistics into a TF-activity inference method (decoupler with the CollecTRI or DoRothEA human regulon, both present in the reference store) using a multivariate method (e.g. ULM/consensus) to estimate per-TF activity scores from the differential signature, which is the accepted way to answer 'which TFs drive this response' from bulk transcriptomics without direct TF binding data; (3) also compute per-sample TF activity scores (not just on the summary statistic) so the direction and consistency across the 6 vs 6 replicates can be verified statistically (t-test/Wilcoxon on per-sample scores between groups), guarding against a single-contrast artifact; (4) cross-check the top TFs against pathway context (WikiPathways human) and, secondarily, the TF-target sets from MSigDB GTRD (unsigned, ChIP-based) as an orthogonal, non-regulon-model line of evidence, since CollecTRI/DoRothEA regulons are literature-curated priors and an independent binding-based set guards against over-reliance on one resource. All human reference resources needed (CollecTRI regulon, DoRothEA human regulon, WikiPathways human, MSigDB GTRD TF sets) are present in the reference store and organism-matched (Homo sapiens). No translational/clinical steps are warranted since the question is purely mechanistic (TF driver discovery), not biomarker or drug-target evaluation."
+  },
+  "usage": {
+    "inputTokens": 193804,
+    "outputTokens": 5747,
+    "cacheCreationInputTokens": 82314,
+    "cacheReadInputTokens": 111442,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01DnosFaTVhLZQgCDsaHo2UV",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "toolu_01X8eVmNhioEKXQdzhSYWf2F",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01J6bitVpDJHNKx2ndVsGPi9",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "pydeseq2",
+          "DESeq2",
+          "dorothea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_013mTwEBPZTLQBD2eNijMQZa",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "TF activity drivers of aldosterone response in kidney",
+          "analytical_narrative": "The dataset is bulk RNA-seq (12000 genes x 12 samples, Salmon gene-level counts) with a clean 6 vs 6 unpaired design (aldosterone-treated vs vehicle, single batch). To identify which transcription factors drive the treated-vs-control response, the standard and most defensible route is: (1) run a proper count-based differential expression model (DESeq2) to get a stable, variance-moderated gene-level signature rather than relying on fold-changes computed ad hoc; (2) feed the resulting per-gene statistics into a TF-activity inference method (decoupler with the CollecTRI or DoRothEA human regulon, both present in the reference store) using a multivariate method (e.g. ULM/consensus) to estimate per-TF activity scores from the differential signature, which is the accepted way to answer 'which TFs drive this response' from bulk transcriptomics without direct TF binding data; (3) also compute per-sample TF activity scores (not just on the summary statistic) so the direction and consistency across the 6 vs 6 replicates can be verified statistically (t-test/Wilcoxon on per-sample scores between groups), guarding against a single-contrast artifact; (4) cross-check the top TFs against pathway context (WikiPathways human) and, secondarily, the TF-target sets from MSigDB GTRD (unsigned, ChIP-based) as an orthogonal, non-regulon-model line of evidence, since CollecTRI/DoRothEA regulons are literature-curated priors and an independent binding-based set guards against over-reliance on one resource. All human reference resources needed (CollecTRI regulon, DoRothEA human regulon, WikiPathways human, MSigDB GTRD TF sets) are present in the reference store and organism-matched (Homo sapiens). No translational/clinical steps are warranted since the question is purely mechanistic (TF driver discovery), not biomarker or drug-target evaluation.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 differential expression: aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What are the gene-level differential expression statistics (log2FC, p-value, padj) between the 6 aldosterone-treated and 6 vehicle-control kidney samples?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 12 samples) and metadata (12 x 2, condition column) are loaded and sample order/IDs are matched between the two files",
+                "Low-count genes are filtered (e.g. row sum or CPM threshold) before modeling",
+                "DESeq2 is run with condition (treated vs control) as the single factor, matching the unpaired single-batch design",
+                "Output is a full results table with log2FoldChange, stat, pvalue, padj for all tested genes, plus a diagnostic (PCA or dispersion plot) confirming no gross outliers/batch structure"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 genes and 12 samples is small — do not over-allocate resources",
+                "Confirm whether counts require independent filtering of low-expression genes before size-factor estimation; salmon-derived counts may need integer rounding for DESeq2"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity inference from the differential signature (CollecTRI/DoRothEA)",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which transcription factors show the strongest inferred activity change (up or down) between aldosterone-treated and vehicle kidney samples, based on the DESeq2 differential signature?",
+              "acceptance_criteria": [
+                "A human TF-target regulon network (CollecTRI regulon CSV, or DoRothEA human confidence A-C as fallback) is loaded from the reference store and confirmed present before use; report explicitly if absent and stop rather than silently substituting",
+                "decoupler's multivariate method (e.g. ulm or consensus) is run on the DESeq2 gene-level statistic (e.g. the Wald stat or log2FC/padj-derived t-statistic) against the regulon to produce one activity score per TF",
+                "decoupler is also run per-sample (on normalized/vst expression, 12 samples x genes) against the same regulon to get a TF-by-sample activity matrix",
+                "Per-sample TF activity scores are compared between the 6 treated and 6 control samples (t-test or Wilcoxon, BH-corrected) to confirm the direction and statistical consistency of top TFs from the signature-level result",
+                "A ranked table of TFs (activity score, direction, per-sample test p-value/padj) is produced, with the top drivers (both up- and down-regulated activity) clearly flagged"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "CollecTRI/DoRothEA regulons are literature-curated priors, not direct measurements of TF binding or activity in kidney tissue — treat top hits as candidate drivers, not proven mechanism",
+                "DoRothEA .rda is R-serialized; if reading from Python, load via rpy2 or convert with R first",
+                "Small n (6 vs 6) limits power for the per-sample statistical test — report this as a caveat on any TF whose signature-level score is not corroborated per-sample",
+                "Do not conflate 'TF activity score' with 'TF gene expression change' — a TF can show activity change while its own transcript is unchanged"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Orthogonal check: TF target enrichment (MSigDB GTRD) and pathway context (WikiPathways human)",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Do the top TF drivers identified from the regulon-based activity inference have independent support from ChIP-seq-based TF-target binding sets (MSigDB GTRD) and from pathway enrichment of the DESeq2 signature (WikiPathways human)?",
+              "acceptance_criteria": [
+                "MSigDB GTRD TF-target gene sets (unsigned) and WikiPathways human GMT are confirmed present and loaded",
+                "An enrichment test (e.g. fgsea/decoupler ORA or GSEA) is run on the ranked DESeq2 gene list against both gene set collections",
+                "Enrichment results for the GTRD TF sets are cross-referenced against the top TFs from T2S1's regulon-based ranking, explicitly noting overlap/agreement or lack thereof (GTRD sets carry no direction, so agreement is limited to identity of the TF, not the sign)",
+                "Pathway enrichment results (WikiPathways) are reported alongside the TF list to give biological context (e.g. mineralocorticoid/sodium transport-related pathways expected for aldosterone treatment)",
+                "Final output is a consolidated report ranking candidate TF drivers with: signature-level activity score, per-sample directional consistency, and orthogonal GTRD/pathway support"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "GTRD sets reflect ChIP-seq binding proximity, not confirmed regulation — treat overlap with T2S1 as corroborating evidence of TF identity only, not mechanism",
+                "WikiPathways human GMT member genes are HGNC symbols — confirm the DESeq2 output gene identifiers are also HGNC symbols (or map them) before running enrichment"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01GsQix3uunXUJiKGdkYbZNL",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "TF activity drivers of aldosterone response in kidney",
+          "analytical_narrative": "The dataset is bulk RNA-seq (12000 genes x 12 samples, Salmon gene-level counts) with a clean 6 vs 6 unpaired design (aldosterone-treated vs vehicle, single batch). To identify which transcription factors drive the treated-vs-control response, the standard and most defensible route is: (1) run a proper count-based differential expression model (DESeq2) to get a stable, variance-moderated gene-level signature rather than relying on fold-changes computed ad hoc; (2) feed the resulting per-gene statistics into a TF-activity inference method (decoupler with the CollecTRI or DoRothEA human regulon, both present in the reference store) using a multivariate method (e.g. ULM/consensus) to estimate per-TF activity scores from the differential signature, which is the accepted way to answer 'which TFs drive this response' from bulk transcriptomics without direct TF binding data; (3) also compute per-sample TF activity scores (not just on the summary statistic) so the direction and consistency across the 6 vs 6 replicates can be verified statistically (t-test/Wilcoxon on per-sample scores between groups), guarding against a single-contrast artifact; (4) cross-check the top TFs against pathway context (WikiPathways human) and, secondarily, the TF-target sets from MSigDB GTRD (unsigned, ChIP-based) as an orthogonal, non-regulon-model line of evidence, since CollecTRI/DoRothEA regulons are literature-curated priors and an independent binding-based set guards against over-reliance on one resource. All human reference resources needed (CollecTRI regulon, DoRothEA human regulon, WikiPathways human, MSigDB GTRD TF sets) are present in the reference store and organism-matched (Homo sapiens). No translational/clinical steps are warranted since the question is purely mechanistic (TF driver discovery), not biomarker or drug-target evaluation.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 differential expression: aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What are the gene-level differential expression statistics (log2FC, p-value, padj) between the 6 aldosterone-treated and 6 vehicle-control kidney samples?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 12 samples) and metadata (12 x 2, condition column) are loaded and sample order/IDs are matched between the two files",
+                "Low-count genes are filtered (e.g. row sum or CPM threshold) before modeling",
+                "DESeq2 is run with condition (treated vs control) as the single factor, matching the unpaired single-batch design",
+                "Output is a full results table with log2FoldChange, stat, pvalue, padj for all tested genes, plus a diagnostic (PCA or dispersion plot) confirming no gross outliers/batch structure"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "12000 genes and 12 samples is small — do not over-allocate resources",
+                "Confirm whether counts require independent filtering of low-expression genes before size-factor estimation; salmon-derived counts may need integer rounding for DESeq2"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity inference from the differential signature (CollecTRI/DoRothEA)",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which transcription factors show the strongest inferred activity change (up or down) between aldosterone-treated and vehicle kidney samples, based on the DESeq2 differential signature?",
+              "acceptance_criteria": [
+                "A human TF-target regulon network (CollecTRI regulon CSV, or DoRothEA human confidence A-C as fallback) is loaded from the reference store and confirmed present before use; report explicitly if absent and stop rather than silently substituting",
+                "decoupler's multivariate method (e.g. ulm or consensus) is run on the DESeq2 gene-level statistic (e.g. the Wald stat or log2FC/padj-derived t-statistic) against the regulon to produce one activity score per TF",
+                "decoupler is also run per-sample (on normalized/vst expression, 12 samples x genes) against the same regulon to get a TF-by-sample activity matrix",
+                "Per-sample TF activity scores are compared between the 6 treated and 6 control samples (t-test or Wilcoxon, BH-corrected) to confirm the direction and statistical consistency of top TFs from the signature-level result",
+                "A ranked table of TFs (activity score, direction, per-sample test p-value/padj) is produced, with the top drivers (both up- and down-regulated activity) clearly flagged"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "CollecTRI/DoRothEA regulons are literature-curated priors, not direct measurements of TF binding or activity in kidney tissue — treat top hits as candidate drivers, not proven mechanism",
+                "DoRothEA .rda is R-serialized; if reading from Python, load via rpy2 or convert with R first",
+                "Small n (6 vs 6) limits power for the per-sample statistical test — report this as a caveat on any TF whose signature-level score is not corroborated per-sample",
+                "Do not conflate 'TF activity score' with 'TF gene expression change' — a TF can show activity change while its own transcript is unchanged"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Orthogonal check: TF target enrichment (MSigDB GTRD) and pathway context (WikiPathways human)",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Do the top TF drivers identified from the regulon-based activity inference have independent support from ChIP-seq-based TF-target binding sets (MSigDB GTRD) and from pathway enrichment of the DESeq2 signature (WikiPathways human)?",
+              "acceptance_criteria": [
+                "MSigDB GTRD TF-target gene sets (unsigned) and WikiPathways human GMT are confirmed present and loaded",
+                "An enrichment test (e.g. fgsea/decoupler ORA or GSEA) is run on the ranked DESeq2 gene list against both gene set collections",
+                "Enrichment results for the GTRD TF sets are cross-referenced against the top TFs from T2S1's regulon-based ranking, explicitly noting overlap/agreement or lack thereof (GTRD sets carry no direction, so agreement is limited to identity of the TF, not the sign)",
+                "Pathway enrichment results (WikiPathways) are reported alongside the TF list to give biological context (e.g. mineralocorticoid/sodium transport-related pathways expected for aldosterone treatment)",
+                "Final output is a consolidated report ranking candidate TF drivers with: signature-level activity score, per-sample directional consistency, and orthogonal GTRD/pathway support"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "GTRD sets reflect ChIP-seq binding proximity, not confirmed regulation — treat overlap with T2S1 as corroborating evidence of TF identity only, not mechanism",
+                "WikiPathways human GMT member genes are HGNC symbols — confirm the DESeq2 output gene identifiers are also HGNC symbols (or map them) before running enrichment"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,438 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "population-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:13:53.248Z",
+  "elapsedMs": 96780,
+  "outcome": "plan_submitted",
+  "planId": "pln-663b4960",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count matrix QC and covariate structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Whole blood is compositionally heterogeneous; a strong PC1 that is not condition is expected and is a real confounder for interpretation, not a data error.",
+          "If globin transcripts dominate, effective library size for the rest of the transcriptome is much lower than the raw total — say so.",
+          "12,000 genes is smaller than a full transcriptome; the matrix has likely been pre-filtered upstream, which means an additional aggressive filter here may over-trim."
+        ],
+        "context": "Human whole-blood bulk RNA-seq, single batch, unpaired, 60 cases vs 60 controls, gene-level counts from Salmon. There are no covariates in the metadata beyond condition, so the design is ~condition; this step exists to find out whether that simple design is defensible or whether an unmodelled axis (blood cell composition, sex, sequencing depth) dominates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "SummarizedExperiment",
+          "ggplot2",
+          "matrixStats",
+          "data.table"
+        ],
+        "question": "Are the Salmon gene-level counts in counts.csv (12,000 genes x 120 samples) valid raw counts that join cleanly to the 60-case/60-control labels in metadata.csv, and does any structure other than case/control dominate the sample-level variance?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Do not impute, drop, or reassign any sample without stating the rule and the count removed; the default is to keep all 120 and describe outliers.",
+          "Report the exact number of genes passing the expression filter out of 12,000 and the filter rule used.",
+          "Explicitly state whether counts were integer or required rounding, and carry that statement into the saved QC report.",
+          "Use the actual condition level names as they appear in metadata.csv; do not rename them."
+        ],
+        "description": "Load /eval-four-models-v2-without-population-n60-s1-1/data/inputs/counts/counts.csv (12000 x 121 — first column is the gene identifier, remaining 120 are samples) and /eval-four-models-v2-without-population-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 2: sample id + condition). Verify that all 120 count columns match metadata sample ids exactly (report any mismatch instead of silently intersecting), and confirm the condition column really holds 60 cases and 60 controls. Determine the gene identifier space (HGNC symbol vs Ensembl vs Entrez) and record it for downstream steps. Check whether the count values are integers: the data profile explicitly states the record does not say whether a length correction was applied, so if values are non-integer, report this prominently, round for the NB model, and flag the result as carrying that caveat. Compute per-sample library sizes, detected-gene counts, and the fraction of counts taken by the top 10-20 genes (whole blood is dominated by globin/HBB and by neutrophil transcripts — a sample where one gene takes a large share is a composition outlier, not a technical failure, and should be described rather than deleted). Apply an expression filter (edgeR filterByExpr with the condition as group, or a min-count rule) and report how many of the 12,000 genes survive. Run VST/rlog and PCA, colour by condition, and report the variance explained by PC1-PC4 and how strongly each of the first few PCs associates with condition. Save the filtered count matrix, the aligned sample table, and the VST matrix as artifacts for downstream steps.",
+        "acceptance_criteria": [
+          "A QC report stating: 120/120 samples joined, the observed case and control counts, the gene identifier space, whether counts were integers, genes retained after filtering, and per-sample library size range.",
+          "A PCA plot and a table of variance explained for PC1-PC4 with the association of each to condition.",
+          "Saved artifacts: filtered counts matrix, aligned sample metadata, VST-transformed matrix."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, cases vs controls",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=60 per group the test is well powered, so a large significant gene count with small fold changes is the expected outcome — that is the setup for T1S3, not a problem to be hidden by tightening the p-value.",
+          "apeglm shrinkage changes effect size, not significance; do not re-rank p-values by it.",
+          "If the p-value histogram is skewed or bimodal near 1, report it — it usually signals unmodelled structure flagged in T1S1."
+        ],
+        "context": "This step answers the first half of the research question. The design has no covariates available, so it is ~condition; if T1S1 found a dominant non-condition PC, that limitation must be restated here rather than corrected by adding an unvalidated surrogate variable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between the 60 cases and the 60 controls in whole blood, at BH-adjusted FDR 0.05?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Set the condition factor reference to the control level explicitly and state in the output which direction a positive log2FoldChange means.",
+          "Use BH adjustment at FDR 0.05 as the primary significance rule; report the count at 0.01 as a secondary figure.",
+          "Compute apeglm shrinkage on the condition coefficient via lfcShrink and keep BOTH raw and shrunken LFC in the saved table — do not overwrite one with the other.",
+          "Save results for ALL tested genes, not just the significant ones; T1S3 and T1S4 need the full ranking.",
+          "Include the p-value histogram; a non-uniform null under the alternative-free mass invalidates the FDR claim and must be reported if seen."
+        ],
+        "description": "Using the filtered counts and aligned metadata from T1S1, fit DESeq2 with design ~condition on the unpaired two-group comparison (cases vs controls, controls as the reference level — set the factor levels explicitly so the sign of the log2 fold change is unambiguous). Use the Wald test with Benjamini-Hochberg adjustment and independent filtering as DESeq2 applies it by default. Produce the full results table for every tested gene with baseMean, raw log2FoldChange, lfcSE, stat, pvalue, and padj. Additionally compute apeglm-shrunken log2 fold changes for the condition coefficient, because with 60 vs 60 and low-count genes the unshrunken LFC is inflated and would corrupt the effect-size ranking in T1S3. Report: the number of genes with padj < 0.05, the number with padj < 0.01, the direction split (up in cases vs down in cases), a p-value histogram to check the null behaves, and the top 30 genes by padj with both raw and shrunken LFC shown side by side. Produce an MA plot and a volcano plot annotated with the top genes by shrunken effect size rather than by p-value alone. Save the full results table (all genes, both LFC versions) as the primary artifact for T1S3 and T1S4.",
+        "acceptance_criteria": [
+          "A full results table covering every gene that passed filtering, with baseMean, raw log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, pvalue, padj.",
+          "Reported counts of padj < 0.05 and padj < 0.01 genes with the up/down split.",
+          "MA plot, volcano plot, and p-value histogram saved.",
+          "A one-line statement of the contrast direction convention used."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Effect-size tiering and lfcThreshold testing",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A fold-change threshold is a convention, not a biological constant; the report must say so rather than implying 0.5 or 1.0 marks a mechanistic boundary.",
+          "'Large but not significant' genes are usually low-count or high-variance and should be presented as hypothesis-generating only.",
+          "Cohen's d on VST values assumes approximate normality per group; with n=60 per group this is tolerable but should be stated.",
+          "Group-mean fold change can be driven by a subset of samples — the heatmap is there to expose that, and any tier-1 gene whose signal comes from a handful of samples must be called out."
+        ],
+        "context": "This is the step the research question's second clause asks for. The key methodological point is that filtering a theta=0 result by fold change is a common but statistically loose practice; DESeq2's lfcThreshold test is the principled version and both should be reported so the difference is visible.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "ComplexHeatmap",
+          "effsize",
+          "data.table",
+          "dplyr"
+        ],
+        "question": "Of the genes that differ between cases and controls, which differences are large enough to matter — and how many significant genes carry fold changes too small to be biologically meaningful?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "State the chosen theta values (0.5 primary, 1.0 secondary) and justify them as conventions, not as data-derived truths; do not silently pick a threshold that maximises the gene count.",
+          "Use the apeglm-shrunken LFC for all effect-size ranking and tiering; note where raw and shrunken LFC give materially different tier assignments.",
+          "Report the lfcThreshold-test count AND the naive padj+|LFC| intersection count side by side, with the difference explained.",
+          "Compute Cohen's d on the VST matrix from T1S1, not on raw counts.",
+          "Every tier count must be an absolute number of genes, not only a percentage."
+        ],
+        "description": "Take the full DESeq2 results from T1S2 and separate statistical significance from effect magnitude explicitly. (1) Report the distribution of shrunken |log2FoldChange| among genes with padj < 0.05 — median, quartiles, and the fraction below |LFC| of 0.5 and 1.0 — to quantify directly how much of the significant list is small-effect. (2) Run a formal threshold test: re-run DESeq2's Wald test with lfcThreshold set to a stated theta (use 0.5 as primary, i.e. roughly a 1.4-fold change, and 1.0 as a stricter secondary) with altHypothesis='greaterAbs'. This tests H0: |LFC| <= theta and controls FDR for the claim 'the effect exceeds theta', which a post-hoc fold-change filter on the theta=0 result does not. Report how many genes pass at each theta and how that number compares to naively intersecting padj<0.05 with |LFC|>theta. (3) Compute a standardised, variance-aware effect size per gene from the VST matrix (Cohen's d between the case and control groups, with its confidence interval), so magnitude is expressed relative to between-sample spread and not only as a ratio — in whole blood a 2-fold change of a highly variable gene can be less meaningful than a 1.3-fold change of a tight one. (4) Emit a tiered gene table with an explicit tier column: 'significant and large' (passes lfcThreshold test), 'significant but small' (padj<0.05 at theta=0 only), and 'large but not significant' (|shrunken LFC| > theta, padj >= 0.05), with counts for each tier. (5) Rank the 'significant and large' tier by shrunken LFC and by Cohen's d separately and show where the two rankings disagree. (6) Produce a volcano plot with both the significance and the effect-size boundaries drawn, and a heatmap of VST values for the top tier across all 120 samples so within-group consistency is visible rather than assumed from the group means.",
+        "acceptance_criteria": [
+          "A tiered results table with an explicit tier label per gene and reported counts for 'significant and large', 'significant but small', and 'large but not significant'.",
+          "Reported counts from the lfcThreshold Wald test at theta=0.5 and theta=1.0, alongside the naive post-hoc intersection counts.",
+          "Per-gene Cohen's d with confidence intervals for the top tier, and a note on where LFC-ranking and d-ranking disagree.",
+          "Volcano plot with both boundaries drawn and a VST heatmap of the top tier across all 120 samples."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Ranked GSEA on the case vs control signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GO BP sets are nested and highly overlapping, so significant sets arrive in correlated blocks — collapse or cluster them before reporting a count.",
+          "Whole-blood signatures are strongly driven by cell-type proportion differences; enrichment alone cannot distinguish composition from regulation, and this must be stated rather than implied away.",
+          "If the gene set collections are unavailable at run time, this step degrades to a reported gap — the DE and effect-size results from T1S2/T1S3 remain the primary answer."
+        ],
+        "context": "Rank-based GSEA is used deliberately instead of over-representation of a thresholded list, because the research question treats the threshold itself as the open issue. GSEA uses the whole ranking and so does not inherit the arbitrariness of the cutoff.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "ggplot2",
+          "data.table",
+          "dplyr"
+        ],
+        "question": "Which biological processes are coordinately shifted between the 60 cases and the 60 controls in whole blood, independent of any fold-change cutoff?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use ranked GSEA over the full gene list; do not run over-representation analysis on a padj-filtered list as the primary result.",
+          "Confirm the human hallmark and GO-BP gene-set resources are present before use; if either is absent, report that plainly and proceed with whatever is available rather than substituting a different organism's sets.",
+          "Never use mouse or rat gene sets — the data is Homo sapiens.",
+          "Report the identifier mapping rate if any mapping was required.",
+          "Explicitly flag pathways whose leading edge consists only of small-effect genes from T1S3."
+        ],
+        "description": "Using the complete ranked gene list from T1S2 (rank by the Wald statistic, or by shrunken log2FoldChange as a sensitivity check — report both and note disagreement), run fgsea against human gene-set collections: the hallmark collection as the primary readout and GO Biological Process as the mechanism-level follow-up. These are staged as human symbol GMTs in the environment; confirm their presence at run time before use. If T1S1 reported that the counts carry Ensembl or Entrez identifiers rather than HGNC symbols, map them to symbols using the staged human UniProt ID-mapping resource first and report the mapping rate and how many genes were lost. Use BH adjustment across gene sets, a minimum set size of 15 and maximum of 500, and report normalised enrichment scores with adjusted p-values. Present the top enriched sets in each direction with their leading-edge genes, and cross-reference the leading edges against the 'significant and large' tier from T1S3 — a pathway driven entirely by small-effect genes should be labelled as such. Given whole blood, explicitly check whether the top sets are immune/inflammatory or neutrophil/erythroid-composition-flavoured, since a shift in cell composition between cases and controls produces coherent pathway enrichment without any per-cell regulatory change; state this as an alternative explanation wherever it applies.",
+        "acceptance_criteria": [
+          "A ranked GSEA results table for hallmark and GO-BP with NES, p-value, BH-adjusted p-value, set size, and leading-edge genes.",
+          "Enrichment plots for the top sets in each direction.",
+          "A cross-reference showing, for each top pathway, how many of its leading-edge genes fall in the T1S3 'significant and large' tier.",
+          "An explicit written assessment of whether the enrichment is consistent with a blood cell-composition shift rather than regulation."
+        ]
+      }
+    ],
+    "title": "Whole-blood case vs control DE with effect-size filtering",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch human whole-blood bulk RNA-seq experiment: gene-level Salmon counts for 12,000 genes across 121 columns (one is the gene identifier column, 120 samples) plus a 120-row metadata table carrying one condition column with 60 cases and 60 controls. The question has two halves — which genes differ (a testing problem) and which differences are large enough to matter (an effect-size problem) — so the plan keeps them separate rather than collapsing both into one thresholded gene list.\n\nT1S1 loads the counts, verifies the sample-identifier join against metadata.csv, drops the non-count identifier column, checks that the matrix is integer-valued raw counts (the profile explicitly flags that the record does not state whether a length correction was applied — if values are non-integer TPM/length-scaled, that must be caught before DESeq2 sees them and either rounded with the caveat recorded or handled via a length-aware path), filters low-count genes, and runs a library-size/PCA-based QC that also checks whether the case/control split separates on PC1-PC2 or whether some unlabelled structure (sex, cell-composition, depth) dominates. With 60 vs 60 and a single batch there is no batch term to fit; the sample size is large enough that a hidden compositional axis in whole blood is the main confounding risk, so it is quantified rather than assumed away.\n\nT1S2 runs the actual contrast, cases vs controls, with DESeq2's negative-binomial Wald test on the unpaired two-group design, BH-adjusted. This is where 'which genes differ' is answered. Because 60 vs 60 is well powered, statistical significance alone will flag many genes with trivial fold changes — that is precisely the failure mode the question anticipates. So T1S2 also produces shrunken log2 fold changes (apeglm) so effect sizes are not inflated by low-count noise, and reports the significance-only list alongside its size.\n\nT1S3 answers the second half explicitly. It separates the two axes with a rank-by-effect-size table, an lfcThreshold-based formal test (DESeq2 can test H0:|LFC| <= theta rather than H0:LFC=0, which is the statistically correct way to ask 'is the effect bigger than theta', not a post-hoc filter), and a standardised effect measure per gene so that fold change is interpretable relative to between-sample variability. The output is a tiered gene list: significant-only, significant-and-large, and large-but-not-significant, with an explicit statement of how the tiering thresholds were chosen and of the fact that a fold-change cutoff applied after testing does not control error rate the way the lfcThreshold test does.\n\nT1S4 gives the DE result biological reading via ranked GSEA over the staged human hallmark and GO-BP collections (HGNC symbols; the counts must first be confirmed to carry symbols, and mapped via the staged human UniProt ID-mapping file if they carry Ensembl/Entrez IDs instead). GSEA on the full ranked statistic is used rather than over-representation of a thresholded list, because the whole point of the question is that the threshold is contested — a rank-based test does not depend on it. This step enriches the interpretation; if the gene-set resources turn out to be unavailable at run time it should report that and the DE result still stands."
+  },
+  "usage": {
+    "inputTokens": 92829,
+    "outputTokens": 6846,
+    "cacheCreationInputTokens": 73843,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01BdCxmYezYKu4bPhnCfEydU",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pydeseq2",
+          "fgsea",
+          "clusterProfiler",
+          "msigdbr",
+          "sva"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01LByU8DSEa9Ww2SieaRRQS6",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01A56zCnUAF7DAMPQCCvCWre",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood case vs control DE with effect-size filtering",
+          "analytical_narrative": "The input is a single-batch human whole-blood bulk RNA-seq experiment: gene-level Salmon counts for 12,000 genes across 121 columns (one is the gene identifier column, 120 samples) plus a 120-row metadata table carrying one condition column with 60 cases and 60 controls. The question has two halves — which genes differ (a testing problem) and which differences are large enough to matter (an effect-size problem) — so the plan keeps them separate rather than collapsing both into one thresholded gene list.\n\nT1S1 loads the counts, verifies the sample-identifier join against metadata.csv, drops the non-count identifier column, checks that the matrix is integer-valued raw counts (the profile explicitly flags that the record does not state whether a length correction was applied — if values are non-integer TPM/length-scaled, that must be caught before DESeq2 sees them and either rounded with the caveat recorded or handled via a length-aware path), filters low-count genes, and runs a library-size/PCA-based QC that also checks whether the case/control split separates on PC1-PC2 or whether some unlabelled structure (sex, cell-composition, depth) dominates. With 60 vs 60 and a single batch there is no batch term to fit; the sample size is large enough that a hidden compositional axis in whole blood is the main confounding risk, so it is quantified rather than assumed away.\n\nT1S2 runs the actual contrast, cases vs controls, with DESeq2's negative-binomial Wald test on the unpaired two-group design, BH-adjusted. This is where 'which genes differ' is answered. Because 60 vs 60 is well powered, statistical significance alone will flag many genes with trivial fold changes — that is precisely the failure mode the question anticipates. So T1S2 also produces shrunken log2 fold changes (apeglm) so effect sizes are not inflated by low-count noise, and reports the significance-only list alongside its size.\n\nT1S3 answers the second half explicitly. It separates the two axes with a rank-by-effect-size table, an lfcThreshold-based formal test (DESeq2 can test H0:|LFC| <= theta rather than H0:LFC=0, which is the statistically correct way to ask 'is the effect bigger than theta', not a post-hoc filter), and a standardised effect measure per gene so that fold change is interpretable relative to between-sample variability. The output is a tiered gene list: significant-only, significant-and-large, and large-but-not-significant, with an explicit statement of how the tiering thresholds were chosen and of the fact that a fold-change cutoff applied after testing does not control error rate the way the lfcThreshold test does.\n\nT1S4 gives the DE result biological reading via ranked GSEA over the staged human hallmark and GO-BP collections (HGNC symbols; the counts must first be confirmed to carry symbols, and mapped via the staged human UniProt ID-mapping file if they carry Ensembl/Entrez IDs instead). GSEA on the full ranked statistic is used rather than over-representation of a thresholded list, because the whole point of the question is that the threshold is contested — a rank-based test does not depend on it. This step enriches the interpretation; if the gene-set resources turn out to be unavailable at run time it should report that and the DE result still stands.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count matrix QC and covariate structure",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Are the Salmon gene-level counts in counts.csv (12,000 genes x 120 samples) valid raw counts that join cleanly to the 60-case/60-control labels in metadata.csv, and does any structure other than case/control dominate the sample-level variance?",
+              "description": "Load /eval-four-models-v2-without-population-n60-s1-1/data/inputs/counts/counts.csv (12000 x 121 — first column is the gene identifier, remaining 120 are samples) and /eval-four-models-v2-without-population-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 2: sample id + condition). Verify that all 120 count columns match metadata sample ids exactly (report any mismatch instead of silently intersecting), and confirm the condition column really holds 60 cases and 60 controls. Determine the gene identifier space (HGNC symbol vs Ensembl vs Entrez) and record it for downstream steps. Check whether the count values are integers: the data profile explicitly states the record does not say whether a length correction was applied, so if values are non-integer, report this prominently, round for the NB model, and flag the result as carrying that caveat. Compute per-sample library sizes, detected-gene counts, and the fraction of counts taken by the top 10-20 genes (whole blood is dominated by globin/HBB and by neutrophil transcripts — a sample where one gene takes a large share is a composition outlier, not a technical failure, and should be described rather than deleted). Apply an expression filter (edgeR filterByExpr with the condition as group, or a min-count rule) and report how many of the 12,000 genes survive. Run VST/rlog and PCA, colour by condition, and report the variance explained by PC1-PC4 and how strongly each of the first few PCs associates with condition. Save the filtered count matrix, the aligned sample table, and the VST matrix as artifacts for downstream steps.",
+              "context": "Human whole-blood bulk RNA-seq, single batch, unpaired, 60 cases vs 60 controls, gene-level counts from Salmon. There are no covariates in the metadata beyond condition, so the design is ~condition; this step exists to find out whether that simple design is defensible or whether an unmodelled axis (blood cell composition, sex, sequencing depth) dominates.",
+              "constraints": [
+                "Do not impute, drop, or reassign any sample without stating the rule and the count removed; the default is to keep all 120 and describe outliers.",
+                "Report the exact number of genes passing the expression filter out of 12,000 and the filter rule used.",
+                "Explicitly state whether counts were integer or required rounding, and carry that statement into the saved QC report.",
+                "Use the actual condition level names as they appear in metadata.csv; do not rename them."
+              ],
+              "acceptance_criteria": [
+                "A QC report stating: 120/120 samples joined, the observed case and control counts, the gene identifier space, whether counts were integers, genes retained after filtering, and per-sample library size range.",
+                "A PCA plot and a table of variance explained for PC1-PC4 with the association of each to condition.",
+                "Saved artifacts: filtered counts matrix, aligned sample metadata, VST-transformed matrix."
+              ],
+              "caveats": [
+                "Whole blood is compositionally heterogeneous; a strong PC1 that is not condition is expected and is a real confounder for interpretation, not a data error.",
+                "If globin transcripts dominate, effective library size for the rest of the transcriptome is much lower than the raw total — say so.",
+                "12,000 genes is smaller than a full transcriptome; the matrix has likely been pre-filtered upstream, which means an additional aggressive filter here may over-trim."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "SummarizedExperiment",
+                "ggplot2",
+                "matrixStats",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, cases vs controls",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the 60 cases and the 60 controls in whole blood, at BH-adjusted FDR 0.05?",
+              "description": "Using the filtered counts and aligned metadata from T1S1, fit DESeq2 with design ~condition on the unpaired two-group comparison (cases vs controls, controls as the reference level — set the factor levels explicitly so the sign of the log2 fold change is unambiguous). Use the Wald test with Benjamini-Hochberg adjustment and independent filtering as DESeq2 applies it by default. Produce the full results table for every tested gene with baseMean, raw log2FoldChange, lfcSE, stat, pvalue, and padj. Additionally compute apeglm-shrunken log2 fold changes for the condition coefficient, because with 60 vs 60 and low-count genes the unshrunken LFC is inflated and would corrupt the effect-size ranking in T1S3. Report: the number of genes with padj < 0.05, the number with padj < 0.01, the direction split (up in cases vs down in cases), a p-value histogram to check the null behaves, and the top 30 genes by padj with both raw and shrunken LFC shown side by side. Produce an MA plot and a volcano plot annotated with the top genes by shrunken effect size rather than by p-value alone. Save the full results table (all genes, both LFC versions) as the primary artifact for T1S3 and T1S4.",
+              "context": "This step answers the first half of the research question. The design has no covariates available, so it is ~condition; if T1S1 found a dominant non-condition PC, that limitation must be restated here rather than corrected by adding an unvalidated surrogate variable.",
+              "constraints": [
+                "Set the condition factor reference to the control level explicitly and state in the output which direction a positive log2FoldChange means.",
+                "Use BH adjustment at FDR 0.05 as the primary significance rule; report the count at 0.01 as a secondary figure.",
+                "Compute apeglm shrinkage on the condition coefficient via lfcShrink and keep BOTH raw and shrunken LFC in the saved table — do not overwrite one with the other.",
+                "Save results for ALL tested genes, not just the significant ones; T1S3 and T1S4 need the full ranking.",
+                "Include the p-value histogram; a non-uniform null under the alternative-free mass invalidates the FDR claim and must be reported if seen."
+              ],
+              "acceptance_criteria": [
+                "A full results table covering every gene that passed filtering, with baseMean, raw log2FoldChange, apeglm-shrunken log2FoldChange, lfcSE, pvalue, padj.",
+                "Reported counts of padj < 0.05 and padj < 0.01 genes with the up/down split.",
+                "MA plot, volcano plot, and p-value histogram saved.",
+                "A one-line statement of the contrast direction convention used."
+              ],
+              "caveats": [
+                "With n=60 per group the test is well powered, so a large significant gene count with small fold changes is the expected outcome — that is the setup for T1S3, not a problem to be hidden by tightening the p-value.",
+                "apeglm shrinkage changes effect size, not significance; do not re-rank p-values by it.",
+                "If the p-value histogram is skewed or bimodal near 1, report it — it usually signals unmodelled structure flagged in T1S1."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Effect-size tiering and lfcThreshold testing",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Of the genes that differ between cases and controls, which differences are large enough to matter — and how many significant genes carry fold changes too small to be biologically meaningful?",
+              "description": "Take the full DESeq2 results from T1S2 and separate statistical significance from effect magnitude explicitly. (1) Report the distribution of shrunken |log2FoldChange| among genes with padj < 0.05 — median, quartiles, and the fraction below |LFC| of 0.5 and 1.0 — to quantify directly how much of the significant list is small-effect. (2) Run a formal threshold test: re-run DESeq2's Wald test with lfcThreshold set to a stated theta (use 0.5 as primary, i.e. roughly a 1.4-fold change, and 1.0 as a stricter secondary) with altHypothesis='greaterAbs'. This tests H0: |LFC| <= theta and controls FDR for the claim 'the effect exceeds theta', which a post-hoc fold-change filter on the theta=0 result does not. Report how many genes pass at each theta and how that number compares to naively intersecting padj<0.05 with |LFC|>theta. (3) Compute a standardised, variance-aware effect size per gene from the VST matrix (Cohen's d between the case and control groups, with its confidence interval), so magnitude is expressed relative to between-sample spread and not only as a ratio — in whole blood a 2-fold change of a highly variable gene can be less meaningful than a 1.3-fold change of a tight one. (4) Emit a tiered gene table with an explicit tier column: 'significant and large' (passes lfcThreshold test), 'significant but small' (padj<0.05 at theta=0 only), and 'large but not significant' (|shrunken LFC| > theta, padj >= 0.05), with counts for each tier. (5) Rank the 'significant and large' tier by shrunken LFC and by Cohen's d separately and show where the two rankings disagree. (6) Produce a volcano plot with both the significance and the effect-size boundaries drawn, and a heatmap of VST values for the top tier across all 120 samples so within-group consistency is visible rather than assumed from the group means.",
+              "context": "This is the step the research question's second clause asks for. The key methodological point is that filtering a theta=0 result by fold change is a common but statistically loose practice; DESeq2's lfcThreshold test is the principled version and both should be reported so the difference is visible.",
+              "constraints": [
+                "State the chosen theta values (0.5 primary, 1.0 secondary) and justify them as conventions, not as data-derived truths; do not silently pick a threshold that maximises the gene count.",
+                "Use the apeglm-shrunken LFC for all effect-size ranking and tiering; note where raw and shrunken LFC give materially different tier assignments.",
+                "Report the lfcThreshold-test count AND the naive padj+|LFC| intersection count side by side, with the difference explained.",
+                "Compute Cohen's d on the VST matrix from T1S1, not on raw counts.",
+                "Every tier count must be an absolute number of genes, not only a percentage."
+              ],
+              "acceptance_criteria": [
+                "A tiered results table with an explicit tier label per gene and reported counts for 'significant and large', 'significant but small', and 'large but not significant'.",
+                "Reported counts from the lfcThreshold Wald test at theta=0.5 and theta=1.0, alongside the naive post-hoc intersection counts.",
+                "Per-gene Cohen's d with confidence intervals for the top tier, and a note on where LFC-ranking and d-ranking disagree.",
+                "Volcano plot with both boundaries drawn and a VST heatmap of the top tier across all 120 samples."
+              ],
+              "caveats": [
+                "A fold-change threshold is a convention, not a biological constant; the report must say so rather than implying 0.5 or 1.0 marks a mechanistic boundary.",
+                "'Large but not significant' genes are usually low-count or high-variance and should be presented as hypothesis-generating only.",
+                "Cohen's d on VST values assumes approximate normality per group; with n=60 per group this is tolerable but should be stated.",
+                "Group-mean fold change can be driven by a subset of samples — the heatmap is there to expose that, and any tier-1 gene whose signal comes from a handful of samples must be called out."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "ComplexHeatmap",
+                "effsize",
+                "data.table",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Ranked GSEA on the case vs control signature",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological processes are coordinately shifted between the 60 cases and the 60 controls in whole blood, independent of any fold-change cutoff?",
+              "description": "Using the complete ranked gene list from T1S2 (rank by the Wald statistic, or by shrunken log2FoldChange as a sensitivity check — report both and note disagreement), run fgsea against human gene-set collections: the hallmark collection as the primary readout and GO Biological Process as the mechanism-level follow-up. These are staged as human symbol GMTs in the environment; confirm their presence at run time before use. If T1S1 reported that the counts carry Ensembl or Entrez identifiers rather than HGNC symbols, map them to symbols using the staged human UniProt ID-mapping resource first and report the mapping rate and how many genes were lost. Use BH adjustment across gene sets, a minimum set size of 15 and maximum of 500, and report normalised enrichment scores with adjusted p-values. Present the top enriched sets in each direction with their leading-edge genes, and cross-reference the leading edges against the 'significant and large' tier from T1S3 — a pathway driven entirely by small-effect genes should be labelled as such. Given whole blood, explicitly check whether the top sets are immune/inflammatory or neutrophil/erythroid-composition-flavoured, since a shift in cell composition between cases and controls produces coherent pathway enrichment without any per-cell regulatory change; state this as an alternative explanation wherever it applies.",
+              "context": "Rank-based GSEA is used deliberately instead of over-representation of a thresholded list, because the research question treats the threshold itself as the open issue. GSEA uses the whole ranking and so does not inherit the arbitrariness of the cutoff.",
+              "constraints": [
+                "Use ranked GSEA over the full gene list; do not run over-representation analysis on a padj-filtered list as the primary result.",
+                "Confirm the human hallmark and GO-BP gene-set resources are present before use; if either is absent, report that plainly and proceed with whatever is available rather than substituting a different organism's sets.",
+                "Never use mouse or rat gene sets — the data is Homo sapiens.",
+                "Report the identifier mapping rate if any mapping was required.",
+                "Explicitly flag pathways whose leading edge consists only of small-effect genes from T1S3."
+              ],
+              "acceptance_criteria": [
+                "A ranked GSEA results table for hallmark and GO-BP with NES, p-value, BH-adjusted p-value, set size, and leading-edge genes.",
+                "Enrichment plots for the top sets in each direction.",
+                "A cross-reference showing, for each top pathway, how many of its leading-edge genes fall in the T1S3 'significant and large' tier.",
+                "An explicit written assessment of whether the enrichment is consistent with a blood cell-composition shift rather than regulation."
+              ],
+              "caveats": [
+                "GO BP sets are nested and highly overlapping, so significant sets arrive in correlated blocks — collapse or cluster them before reporting a count.",
+                "Whole-blood signatures are strongly driven by cell-type proportion differences; enrichment alone cannot distinguish composition from regulation, and this must be stated rather than implied away.",
+                "If the gene set collections are unavailable at run time, this step degrades to a reported gap — the DE and effect-size results from T1S2/T1S3 remain the primary answer."
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "ggplot2",
+                "data.table",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

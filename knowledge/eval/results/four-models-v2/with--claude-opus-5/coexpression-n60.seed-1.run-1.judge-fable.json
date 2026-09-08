@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core method: blind VST substrate, signed WGCNA, lowest power reaching fit index 0.8 with the curve reported, TOM plus dynamic tree cut at minModuleSize 30 and mergeCutHeight 0.25, eigengene-trait correlation with BH across modules, kME hubs, and a well-specified outlier policy via Z.k and distance heatmap. It departs from the reference by explicitly refusing a top-variable-gene pre-selection (running all filterByExpr survivors instead of ~5000), by ranking hubs on kME without gene significance, and by using WikiPathways rather than MSigDB Hallmark, though the universe is correctly the network gene set and the collection is named. The 0/1 trait coding does not state which level is 1, no alpha is declared for the BH-adjusted module p-values, and no gene-set size window is given. Reporting is thorough, with power/fit, module sizes, the eigengene-trait table, reproducibility record, and the cell-composition caveat clearly required."
+}

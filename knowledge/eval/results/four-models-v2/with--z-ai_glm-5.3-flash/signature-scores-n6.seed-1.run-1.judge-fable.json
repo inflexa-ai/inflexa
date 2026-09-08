@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: filter, median-of-ratios normalization, log2 matrix, UCell rank-based per-sample scores over the versioned Hallmark collection with per-set gene coverage recorded and low-overlap sets flagged, then limma with a two-group condition design and BH across the 50 signatures, plus a leave-one-out sensitivity for sample_01 rather than silent removal. QC is complete and design-specific (vst blind PCA, distance heatmap, library size and detected genes for sample_01 against the median, explicit keep policy). Weaknesses: the design formula and reference level are only implied by the stated contrast direction rather than written out; no alpha is stated for BH; the effect on UCell scores is labelled 'log2FC' rather than a difference of mean scores; and eBayes trend/robust settings for a score matrix are not mentioned."
+}

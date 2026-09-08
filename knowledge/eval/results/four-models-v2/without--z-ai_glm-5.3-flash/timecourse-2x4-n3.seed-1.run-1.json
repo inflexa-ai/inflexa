@@ -1,0 +1,321 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "timecourse-2x4-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:46:28.865Z",
+  "elapsedMs": 59174,
+  "outcome": "plan_submitted",
+  "planId": "pln-39bd2c07",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 interaction-model differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential",
+        "status": "pending",
+        "context": "counts.csv is 12000 genes x 25 columns (24 samples + gene id) from salmon; metadata.csv has condition, time, time_hours. 2 conditions x 4 time points (t0..t3) x 3 replicates.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "numpy==2.5.2"
+        ],
+        "question": "Which genes show a treatment-specific change over t0-t3 beyond the shared time trend (condition:time interaction) in the 2x4 cell-line RNA-seq design?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load counts.csv (12,000 genes x 24 samples) and metadata.csv (condition, time, time_hours) into a DESeq2/PyDESeq2 design. Fit the additive model ~condition + time and the full model ~condition + time + condition:time (condition and time as factors; t0 reference). The interaction term isolates treatment-specific deviations from the shared time trend. Use likelihood-ratio test (full vs reduced) for the omnibus time-dependent treatment effect, plus Wald tests on per-time-point interaction contrasts (t1,t2,t3 vs t0) for directionality.",
+        "acceptance_criteria": [
+          "DESeqDataSet built from counts.csv with design ~ condition + time + condition:time, releveling t0 as reference",
+          "prefiltering removes genes with tiny counts; diagnostic size-factor dispersion summaries reported",
+          "results() for the interaction term (or LRT comparing to ~condition+time) produced and saved as CSV with log2FC, p-value, padj"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Shrink interaction LFCs and summarize top genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential",
+        "status": "pending",
+        "context": "PyDESeq2 supports LFC shrinkage; alternatively report raw MLE LFCs and note the shrinkage status. 12k genes is small enough for per-contrast shrinkage.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "matplotlib==3.11.1",
+          "seaborn==0.13.2"
+        ],
+        "question": "What are the effect sizes and temporal patterns of the treatment-specific interaction genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Apply log2FC shrinkage where available on the interaction contrasts, assemble a ranked gene table (gene id, per-time-point interaction log2FCs, Wald/LRT stats, FDR), and produce MA and volcano plots plus a heatmap of top interaction genes across the 24 samples.",
+        "acceptance_criteria": [
+          "Shrunken LFCs computed for interaction contrasts and exported",
+          "Combined table (gene, base stats, per-time-point interaction effects, padj) written",
+          "MA/volcano-style plots of the interaction LRT/Wald results saved",
+          "Number of genes passing FDR < 0.05 reported"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of interaction genes",
+        "agent": "enrichment-agent",
+        "track": "enrichment",
+        "status": "pending",
+        "context": "Reference available at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC symbols). Counts carry gene symbols or ids from salmon — map to HGNC symbols first; UniProt human idmapping at /mnt/refs/managed/uniprot-idmapping-human/current/ can bridge identifiers if needed. If symbol mapping coverage is poor, report the gap rather than forcing enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy==1.3.1",
+          "pandas==3.0.5"
+        ],
+        "question": "Which biological pathways show treatment-specific temporal perturbation among the interaction genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Take the significant condition:time interaction genes and test over-representation against the WikiPathways human GMT (HGNC symbols) using the tested genes as background (gseapy ORA). Report pathways whose perturbation response is treatment-specific.",
+        "acceptance_criteria": [
+          "GMT parsed from WikiPathways Homo sapiens with readable set names",
+          "Over-representation of FDR-significant interaction genes (and, separately, direction-stratified up/down lists) computed with background = tested genes",
+          "Results table with pathway name, overlap, adjusted p-value saved; report is annotated with any gene-symbol-to-GMT mapping coverage caveat"
+        ]
+      }
+    ],
+    "title": "Treatment-by-time interaction DE in cell-line RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The design is 2 conditions x 4 time points (t0..t3), 3 replicates each, 12,000-gene salmon counts. The research question is specifically about genes whose time course differs between conditions, so the core analysis fits a DESeq2-style GLM with an explicit condition:time interaction; the LRT against the additive model (~condition + time) tests the omnibus treatment-specific temporal effect, and per-time-point Wald contrasts give directionality. Shrunken LFCs, plots, and a ranked table summarize the hits, and a WikiPathways human over-representation analysis (HGNC symbols, tested genes as background) annotates which pathways are treatment-specifically perturbed."
+  },
+  "usage": {
+    "inputTokens": 63726,
+    "outputTokens": 2476,
+    "cacheReadInputTokens": 31168,
+    "reasoningTokens": 61
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_47ceca52bc0b4bd98a836cad",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-14T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "DESeqDataSet built from counts.csv with design ~ condition + time + condition:time, releveling t0 as reference",
+                "prefiltering removes genes with tiny counts; diagnostic size-factor dispersion summaries reported",
+                "results() for the interaction term (or LRT comparing to ~condition+time) produced and saved as CSV with log2FC, p-value, padj"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "counts.csv is 12000 genes x 25 columns (24 samples + gene id) from salmon; metadata.csv has condition, time, time_hours. 2 conditions x 4 time points (t0..t3) x 3 replicates.",
+              "depends_on": [],
+              "description": "Load counts.csv (12,000 genes x 24 samples) and metadata.csv (condition, time, time_hours) into a DESeq2/PyDESeq2 design. Fit the additive model ~condition + time and the full model ~condition + time + condition:time (condition and time as factors; t0 reference). The interaction term isolates treatment-specific deviations from the shared time trend. Use likelihood-ratio test (full vs reduced) for the omnibus time-dependent treatment effect, plus Wald tests on per-time-point interaction contrasts (t1,t2,t3 vs t0) for directionality.",
+              "id": "T1S1",
+              "name": "DESeq2 interaction-model differential expression",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "numpy==2.5.2"
+              ],
+              "question": "Which genes show a treatment-specific change over t0-t3 beyond the shared time trend (condition:time interaction) in the 2x4 cell-line RNA-seq design?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "Shrunken LFCs computed for interaction contrasts and exported",
+                "Combined table (gene, base stats, per-time-point interaction effects, padj) written",
+                "MA/volcano-style plots of the interaction LRT/Wald results saved",
+                "Number of genes passing FDR < 0.05 reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "PyDESeq2 supports LFC shrinkage; alternatively report raw MLE LFCs and note the shrinkage status. 12k genes is small enough for per-contrast shrinkage.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Apply log2FC shrinkage (apeMethod/ashr-style) where available on the interaction contrasts, assemble a ranked gene table (gene id, per-time-point interaction log2FCs, Wald/LRT stats, FDR), and produce MA and volcano plots plus a heatmap of top interaction genes across the 24 samples.",
+              "id": "T1S2",
+              "name": "Shrink interaction LFCs and summarize top genes",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "matplotlib==3.11.1",
+                "seaborn==0.13.2"
+              ],
+              "question": "What are the effect sizes and temporal patterns of the treatment-specific interaction genes?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "GMT parsed from WikiPathways Homo sapiens with readable set names",
+                "Over-representation of FDR-significant interaction genes (and, separately, direction-stratified up/down lists) computed with background = tested genes",
+                "Results table with pathway name, overlap, adjusted p-value saved; report is annotated with any gene-symbol-to-GMT mapping coverage caveat"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference available at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC symbols). Counts carry gene symbols or ids from salmon — map to HGNC symbols first; UniProt human idmapping at /mnt/refs/managed/uniprot-idmapping-human/current/ can bridge identifiers if needed. If symbol mapping coverage is poor, report the gap rather than forcing enrichment.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Take the significant condition:time interaction genes and test over-representation against the WikiPathways human GMT (HGNC symbols) using the tested genes as background (gseapy enrichr-style ORA or blitzgsea). Report pathways whose perturbation response is treatment-specific.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of interaction genes",
+              "packages": [
+                "gseapy==1.3.1",
+                "pandas==3.0.5"
+              ],
+              "question": "Which biological pathways show treatment-specific temporal perturbation among the interaction genes?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            }
+          ],
+          "title": "Treatment-by-time interaction DE in cell-line RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_5a421e4b45b749dfaa49a1bb",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The design is 2 conditions x 4 time points (t0..t3), 3 replicates each, 12,000-gene salmon counts. The research question is specifically about genes whose time course differs between conditions, so the core analysis fits a DESeq2-style GLM with an explicit condition:time interaction; the LRT against the additive model (~condition + time) tests the omnibus treatment-specific temporal effect, and per-time-point Wald contrasts give directionality. Shrunken LFCs, plots, and a ranked table summarize the hits, and a WikiPathways human over-representation analysis (HGNC symbols, tested genes as background) annotates which pathways are treatment-specifically perturbed.",
+          "created_at": "2026-07-14T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "DESeqDataSet built from counts.csv with design ~ condition + time + condition:time, releveling t0 as reference",
+                "prefiltering removes genes with tiny counts; diagnostic size-factor dispersion summaries reported",
+                "results() for the interaction term (or LRT comparing to ~condition+time) produced and saved as CSV with log2FC, p-value, padj"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "counts.csv is 12000 genes x 25 columns (24 samples + gene id) from salmon; metadata.csv has condition, time, time_hours. 2 conditions x 4 time points (t0..t3) x 3 replicates.",
+              "depends_on": [],
+              "description": "Load counts.csv (12,000 genes x 24 samples) and metadata.csv (condition, time, time_hours) into a DESeq2/PyDESeq2 design. Fit the additive model ~condition + time and the full model ~condition + time + condition:time (condition and time as factors; t0 reference). The interaction term isolates treatment-specific deviations from the shared time trend. Use likelihood-ratio test (full vs reduced) for the omnibus time-dependent treatment effect, plus Wald tests on per-time-point interaction contrasts (t1,t2,t3 vs t0) for directionality.",
+              "id": "T1S1",
+              "name": "DESeq2 interaction-model differential expression",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "numpy==2.5.2"
+              ],
+              "question": "Which genes show a treatment-specific change over t0-t3 beyond the shared time trend (condition:time interaction) in the 2x4 cell-line RNA-seq design?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential"
+            },
+            {
+              "acceptance_criteria": [
+                "Shrunken LFCs computed for interaction contrasts and exported",
+                "Combined table (gene, base stats, per-time-point interaction effects, padj) written",
+                "MA/volcano-style plots of the interaction LRT/Wald results saved",
+                "Number of genes passing FDR < 0.05 reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "PyDESeq2 supports LFC shrinkage; alternatively report raw MLE LFCs and note the shrinkage status. 12k genes is small enough for per-contrast shrinkage.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Apply log2FC shrinkage where available on the interaction contrasts, assemble a ranked gene table (gene id, per-time-point interaction log2FCs, Wald/LRT stats, FDR), and produce MA and volcano plots plus a heatmap of top interaction genes across the 24 samples.",
+              "id": "T1S2",
+              "name": "Shrink interaction LFCs and summarize top genes",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "matplotlib==3.11.1",
+                "seaborn==0.13.2"
+              ],
+              "question": "What are the effect sizes and temporal patterns of the treatment-specific interaction genes?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential"
+            },
+            {
+              "acceptance_criteria": [
+                "GMT parsed from WikiPathways Homo sapiens with readable set names",
+                "Over-representation of FDR-significant interaction genes (and, separately, direction-stratified up/down lists) computed with background = tested genes",
+                "Results table with pathway name, overlap, adjusted p-value saved; report is annotated with any gene-symbol-to-GMT mapping coverage caveat"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference available at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC symbols). Counts carry gene symbols or ids from salmon — map to HGNC symbols first; UniProt human idmapping at /mnt/refs/managed/uniprot-idmapping-human/current/ can bridge identifiers if needed. If symbol mapping coverage is poor, report the gap rather than forcing enrichment.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Take the significant condition:time interaction genes and test over-representation against the WikiPathways human GMT (HGNC symbols) using the tested genes as background (gseapy ORA). Report pathways whose perturbation response is treatment-specific.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of interaction genes",
+              "packages": [
+                "gseapy==1.3.1",
+                "pandas==3.0.5"
+              ],
+              "question": "Which biological pathways show treatment-specific temporal perturbation among the interaction genes?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "enrichment"
+            }
+          ],
+          "title": "Treatment-by-time interaction DE in cell-line RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 51
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

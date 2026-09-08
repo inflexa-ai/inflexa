@@ -1,0 +1,336 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:59:17.968Z",
+  "elapsedMs": 104809,
+  "outcome": "plan_submitted",
+  "planId": "pln-75389e2d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count QC and sample plausibility",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 vs 3 the PCA has limited resolution — interpret PC separation qualitatively, not as a test",
+          "Strandedness of counting is unknown; this step only assesses plausibility, it cannot re-count"
+        ],
+        "context": "Data: /eval-four-models-v2-without-strandedness-unknown-n3-s1-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw STAR/featureCounts gene-level integer counts, human liver) plus metadata.csv (6 x 2, condition column: 3 treated vs 3 control). Design is unpaired, single batch. Liver marker panel to check: ALB, TTR, PON1, APOA1, CYP3A4, G6PC, SERPINA1 (absence across all samples signals wrong annotation or wrong counts).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 6 liver RNA-seq samples (3 treated / 3 control) internally consistent, and do the STAR/featureCounts counts look plausible for human liver, given the user's doubt that the counts are right?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load counts.csv and metadata.csv, verify sample-ID alignment, integer-ness, and count sanity. Compute library sizes, per-gene and per-sample detection, low-count filtering preview, VST-transformed PCA and sample-to-sample distance clustering to flag outliers, and check that the profile is plausible for human liver by scoring canonical liver genes (e.g., albumin, transthyretin, cytochrome P450s, housekeeping controls). Emits a QC report and a validated count/metadata pair for downstream steps.",
+        "acceptance_criteria": [
+          "Sample names in counts and metadata reconcile 1:1; discrepancies reported",
+          "Count matrix confirmed integer-valued or violations listed",
+          "QC report includes library sizes, detected-gene counts, PCA plot, sample-distance heatmap, and liver-marker expression table",
+          "Outlier or plausibility failures explicitly flagged in the report"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Strandedness risk and count-integrity assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The gene matrix is pre-filtered to ~12000 genes, so at-risk fractions are computed over this matrix, not over the whole transcriptome",
+          "This step cannot determine the actual strandedness setting used at counting — only quantify exposure"
+        ],
+        "context": "Same count matrix as T1S1 (12000 genes, human). Use EnsDb.Hsapiens.v86 (installed) to get gene coordinates and strand; overlap logic via GenomicRanges. The count file is gene-level only — no transcript or per-read strand information exists, so strandedness can only be bounded, not recovered.",
+        "maxSteps": 200,
+        "packages": [
+          "EnsDb.Hsapiens.v86",
+          "GenomicRanges",
+          "data.table"
+        ],
+        "question": "How much of the count matrix could be corrupted by an unknown/wrong strandedness setting at featureCounts, and can treated-vs-control DE proceed safely on gene-level counts?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Because strandedness was never recorded, reads from overlapping genes on opposite strands could have been mis-assigned at the featureCounts stage, and a wrong -s setting can silently corrupt counts. Using human gene coordinates and strands from the installed EnsDb.Hsapiens.v86 annotation, identify genes in the count matrix that overlap an antisense neighbor (sense/antisense pairs, including completely bidirectional loci), then quantify what fraction of matrix genes and of total mapped counts sit in such at-risk pairs. Report the verdict: if at-risk counts are a small fraction, proceed to DE with a caveat; if large, flag which DE hits could be strand artifacts. Optionally compare count distributions of at-risk vs safe genes for anomalies.",
+        "acceptance_criteria": [
+          "Table of sense/antisense overlapping gene pairs built from the human annotation",
+          "Reported: number and % of matrix genes in at-risk pairs, and % of total counts assigned to them",
+          "Explicit verdict: whether unstranded-count DE is materially affected, with the numbers to back it",
+          "If at-risk genes are excluded from the primary DE, they are listed in a companion table rather than silently dropped"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression: DESeq2 with edgeR and voom concordance",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Any gene flagged at-risk in T1S2 that reaches significance must be marked as possibly a strand artifact",
+          "Report optimistic-vs-concordant status: genes found by only one of the three models are candidate, not confirmed"
+        ],
+        "context": "Design ~ condition (treated vs control), n=3 per arm, unpaired, single batch — no covariates available in the 6x2 metadata. With 3 vs 3, expect wide confidence intervals; report effect sizes with uncertainty rather than FDR alone. The folder name suggests a multi-model evaluation: DESeq2 (negative binomial), edgeR (quasi-likelihood), and limma-voom (linear model) are the three standard count-model frameworks available here.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between the 3 treated and 3 control liver samples, and which of those differences are robust to the choice of count-based statistical model?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "description": "Primary analysis with DESeq2: filter low-count genes, size-factor normalization, design ~condition, Wald test, BH FDR, and apeglm LFC shrinkage for ranking. Run edgeR quasi-likelihood and limma-voom on the same filtered matrix as sensitivity analyses; compare hit lists across the three models and report concordant genes (found by all three) separately from model-specific ones. Outputs: full results tables, volcano plot, heatmap of top genes, and a concordant-signature list for enrichment.",
+        "acceptance_criteria": [
+          "DESeq2 results table with log2FC, shrunken log2FC, Wald p, BH-adjusted p for all tested genes",
+          "edgeR and limma-voom results tables from the same filtered matrix and design",
+          "Concordance table: hits shared by all methods (e.g., FDR < 0.05, |LFC| >= 1 in DESeq2) vs method-specific hits",
+          "Volcano plot and top-hit heatmap (treated vs control)",
+          "Concordant-gene shortlist written as CSV for the enrichment step",
+          "Explicit statement of power limits from n=3 vs 3 and of any hits overlapping the T1S2 at-risk gene list"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of the treated-vs-control signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With a small DE list from 3v3 data, enrichment signals will be modest — report NES with FDR and avoid over-interpretation",
+          "Run enrichment on both the full ranked list (fgsea) and, as a check, the concordant-gene shortlist"
+        ],
+        "context": "Human (Homo sapiens) dataset. The environment provisions WikiPathways human HGNC-symbol GMT under /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt. Gene IDs in the count matrix must be reconciled to HGNC symbols (or Entrez) before matching; if gene identifiers are not symbols, map via the available human ID-mapping resource and report unmapped fraction.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table"
+        ],
+        "question": "Which biological pathways are shifted in the treated liver samples relative to controls, given the ranked DE gene list from T1S3?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "description": "Run fgsea against WikiPathways human gene sets (HGNC symbols, provisioned under /mnt/refs) using the full ranked list (shrunken log2FC from DESeq2), plus over-representation of the concordant-gene shortlist from T1S3. Report pathways enriched in treated vs control with NES, FDR, and leading-edge genes. If the human gene set resource is unavailable, report the gap and output the ranked list for later use.",
+        "acceptance_criteria": [
+          "fgsea run on the ranked shrunken-LFC list against the human WikiPathways gmt",
+          "Results table with pathway, NES, p, FDR; both enriched directions reported",
+          "Leading-edge genes named for top pathways",
+          "If the human pathway resource is absent at run time, the step reports the gap and stops gracefully — DE results from T1S3 remain valid on their own"
+        ]
+      }
+    ],
+    "title": "Liver 3v3 drug-treatment DE with count QC and strandedness check",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-13T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a small human liver bulk RNA-seq experiment (counts.csv: 12000 genes x 6 samples of raw STAR/featureCounts integer counts; metadata.csv: 6 x 2 with a condition column defining 3 treated vs 3 control, unpaired, single batch). Two facts shape the plan: (1) the user doubts the counts, and (2) library strandedness was never recorded, so a wrong strand setting at the featureCounts stage could have mis-assigned reads on overlapping genes. The plan therefore first validates the counts (sample alignment, library sizes, PCA/clustering to flag outliers, and a liver-marker plausibility check), then bounds the strandedness risk by identifying genes in the count matrix that overlap an antisense neighbor using the installed human EnsDb annotation — if at-risk genes carry a small share of counts, gene-level DE is safe; if large, hits overlapping those genes are flagged. Differential expression then runs with DESeq2 (primary, with apeglm shrinkage) on design ~condition with 3 vs 3, plus edgeR quasi-likelihood and limma-voom on the same filtered matrix as sensitivity analyses; genes found by all three models are reported as the robust signature, and any hit falling in the at-risk antisense-overlap set is annotated as possibly strand-artifact. The signature is finally contextualized with fgsea against the provisioned WikiPathways human GMT. With 3 vs 3 the power is limited, so concordance across models and effect sizes, not FDR alone, drive the conclusions."
+  },
+  "usage": {
+    "inputTokens": 31208,
+    "outputTokens": 4356,
+    "cacheReadInputTokens": 11520,
+    "reasoningTokens": 1902
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_7ee6388388864038b25a4bc6",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-13T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Sample names in counts and metadata reconcile 1:1; discrepancies reported",
+                "Count matrix confirmed integer-valued or violations listed",
+                "QC report includes library sizes, detected-gene counts, PCA plot, sample-distance heatmap, and liver-marker expression table",
+                "Outlier or plausibility failures explicitly flagged in the report"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-v2-without-strandedness-unknown-n3-s1-1/data/inputs/counts/counts.csv (12000 genes x 6 samples, raw STAR/featureCounts gene-level integer counts, human liver) plus metadata.csv (6 x 2, condition column: 3 treated vs 3 control). Design is unpaired, single batch. Liver marker panel to check: ALB, TTR, PON1, APOA1, CYP3A4, G6PC, SERPINA1 (absence across all samples signals wrong annotation or wrong counts).",
+              "caveats": [
+                "With 3 vs 3 the PCA has limited resolution — interpret PC separation qualitatively, not as a test",
+                "Strandedness of counting is unknown; this step only assesses plausibility, it cannot re-count"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv and metadata.csv, verify sample-ID alignment, integer-ness, and count sanity. Compute library sizes, per-gene and per-sample detection, low-count filtering preview, VST-transformed PCA and sample-to-sample distance clustering to flag outliers, and check that the profile is plausible for human liver by scoring canonical liver genes (e.g., albumin, transthyretin, cytochrome P450s, housekeeping controls). Emits a QC report and a validated count/metadata pair for downstream steps.",
+              "id": "T1S1",
+              "name": "Count QC and sample plausibility",
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Are the 6 liver RNA-seq samples (3 treated / 3 control) internally consistent, and do the STAR/featureCounts counts look plausible for human liver, given the user's doubt that the counts are right?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Table of sense/antisense overlapping gene pairs built from the human annotation",
+                "Reported: number and % of matrix genes in at-risk pairs, and % of total counts assigned to them",
+                "Explicit verdict: whether unstranded-count DE is materially affected, with the numbers to back it",
+                "If at-risk genes are excluded from the primary DE, they are listed in a companion table rather than silently dropped"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same count matrix as T1S1 (12000 genes, human). Use EnsDb.Hsapiens.v86 (installed) to get gene coordinates and strand; overlap logic via GenomicRanges. The count file is gene-level only — no transcript or per-read strand information exists, so strandedness can only be bounded, not recovered.",
+              "caveats": [
+                "The gene matrix is pre-filtered to ~12000 genes, so at-risk fractions are computed over this matrix, not over the whole transcriptome",
+                "This step cannot determine the actual strandedness setting used at counting — only quantify exposure"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Because strandedness was never recorded, reads from overlapping genes on opposite strands could have been mis-assigned at the featureCounts stage, and a wrong -s setting can silently corrupt counts. Using human gene coordinates and strands from the installed EnsDb.Hsapiens.v86 annotation, identify genes in the count matrix that overlap an antisense neighbor (sense/antisense pairs, including completely bidirectional loci), then quantify what fraction of matrix genes and of total mapped counts sit in such at-risk pairs. Report the verdict: if at-risk counts are a small fraction, proceed to DE with a caveat; if large, flag which DE hits could be strand artifacts. Optionally compare count distributions of at-risk vs safe genes for anomalies.",
+              "id": "T1S2",
+              "name": "Strandedness risk and count-integrity assessment",
+              "packages": [
+                "EnsDb.Hsapiens.v86",
+                "GenomicRanges",
+                "data.table"
+              ],
+              "question": "How much of the count matrix could be corrupted by an unknown/wrong strandedness setting at featureCounts, and can treated-vs-control DE proceed safely on gene-level counts?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "DESeq2 results table with log2FC, shrunken log2FC, Wald p, BH-adjusted p for all tested genes",
+                "edgeR and limma-voom results tables from the same filtered matrix and design",
+                "Concordance table: hits shared by all methods (e.g., FDR < 0.05, |LFC| >= 1 in DESeq2) vs method-specific hits",
+                "Volcano plot and top-hit heatmap (treated vs control)",
+                "Concordant-gene shortlist written as CSV for the enrichment step",
+                "Explicit statement of power limits from n=3 vs 3 and of any hits overlapping the T1S2 at-risk gene list"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Design ~ condition (treated vs control), n=3 per arm, unpaired, single batch — no covariates available in the 6x2 metadata. With 3 vs 3, expect wide confidence intervals; report effect sizes with uncertainty rather than FDR alone. The folder name suggests a multi-model evaluation: DESeq2 (negative binomial), edgeR (quasi-likelihood), and limma-voom (linear model) are the three standard count-model frameworks available here.",
+              "caveats": [
+                "Any gene flagged at-risk in T1S2 that reaches significance must be marked as possibly a strand artifact",
+                "Report optimistic-vs-concordant status: genes found by only one of the three models are candidate, not confirmed"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Primary analysis with DESeq2: filter low-count genes, size-factor normalization, design ~condition, Wald test, BH FDR, and apeglm LFC shrinkage for ranking. Run edgeR quasi-likelihood and limma-voom on the same filtered matrix as sensitivity analyses; compare hit lists across the three models and report concordant genes (found by all three) separately from model-specific ones. Outputs: full results tables, volcano plot, heatmap of top genes, and a concordant-signature list for enrichment.",
+              "id": "T1S3",
+              "name": "Differential expression: DESeq2 with edgeR and voom concordance",
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "apeglm",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "question": "Which genes differ between the 3 treated and 3 control liver samples, and which of those differences are robust to the choice of count-based statistical model?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "fgsea run on the ranked shrunken-LFC list against the human WikiPathways gmt",
+                "Results table with pathway, NES, p, FDR; both enriched directions reported",
+                "Leading-edge genes named for top pathways",
+                "If the human pathway resource is absent at run time, the step reports the gap and stops gracefully — DE results from T1S3 remain valid on their own"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Human (Homo sapiens) dataset. The environment provisions WikiPathways human HGNC-symbol GMT under /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt. Gene IDs in the count matrix must be reconciled to HGNC symbols (or Entrez) before matching; if gene identifiers are not symbols, map via the available human ID-mapping resource and report unmapped fraction.",
+              "caveats": [
+                "With a small DE list from 3v3 data, enrichment signals will be modest — report NES with FDR and avoid over-interpretation",
+                "Run enrichment on both the full ranked list (fgsea) and, as a check, the concordant-gene shortlist"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "description": "Run fgsea against WikiPathways human gene sets (HGNC symbols, provisioned under /mnt/refs) using the full ranked list (shrunken log2FC from DESeq2), plus over-representation of the concordant-gene shortlist from T1S3. Report pathways enriched in treated vs control with NES, FDR, and leading-edge genes. If the human gene set resource is unavailable, report the gap and output the ranked list for later use.",
+              "id": "T1S4",
+              "name": "Pathway enrichment of the treated-vs-control signature",
+              "packages": [
+                "fgsea",
+                "data.table"
+              ],
+              "question": "Which biological pathways are shifted in the treated liver samples relative to controls, given the ranked DE gene list from T1S3?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Liver 3v3 drug-treatment DE with count QC and strandedness check",
+          "analytical_narrative": "The dataset is a small human liver bulk RNA-seq experiment (counts.csv: 12000 genes x 6 samples of raw STAR/featureCounts integer counts; metadata.csv: 6 x 2 with a condition column defining 3 treated vs 3 control, unpaired, single batch). Two facts shape the plan: (1) the user doubts the counts, and (2) library strandedness was never recorded, so a wrong strand setting at the featureCounts stage could have mis-assigned reads on overlapping genes. The plan therefore first validates the counts (sample alignment, library sizes, PCA/clustering to flag outliers, and a liver-marker plausibility check), then bounds the strandedness risk by identifying genes in the count matrix that overlap an antisense neighbor using the installed human EnsDb annotation — if at-risk genes carry a small share of counts, gene-level DE is safe; if large, hits overlapping those genes are flagged. Differential expression then runs with DESeq2 (primary, with apeglm shrinkage) on design ~condition with 3 vs 3, plus edgeR quasi-likelihood and limma-voom on the same filtered matrix as sensitivity analyses; genes found by all three models are reported as the robust signature, and any hit falling in the at-risk antisense-overlap set is annotated as possibly strand-artifact. The signature is finally contextualized with fgsea against the provisioned WikiPathways human GMT. With 3 vs 3 the power is limited, so concordance across models and effect sizes, not FDR alone, drive the conclusions."
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 75
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

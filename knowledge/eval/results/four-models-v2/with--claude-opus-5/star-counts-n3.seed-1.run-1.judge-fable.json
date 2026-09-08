@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly routes STAR/featureCounts integer counts straight into DESeqDataSetFromMatrix with no tximport or length offset, uses median-of-ratios inside the model, a justified minimal filter (>=10 in >=3, the smallest group), an explicit control reference level, a named (condition, treated, control) contrast, BH at alpha 0.05 with apeglm shrinkage and no post hoc fold-change filter. QC (library sizes, blind VST PCA, distance heatmap, coloured by condition) precedes the test with a stated flag-only outlier policy appropriate for n=3, and enrichment is correctly and explicitly omitted. The report records design, contrast, thresholds, tested/significant counts, NA breakdown, versions, seed, sessionInfo and a clear low-power caveat; the only minor weakness is framing the DESeq2/edgeR intersection as the headline set rather than DESeq2 as the primary result, which slightly muddles the reportable gene list."
+}

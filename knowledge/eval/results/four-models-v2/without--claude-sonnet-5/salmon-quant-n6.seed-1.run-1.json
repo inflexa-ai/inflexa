@@ -1,0 +1,811 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "salmon-quant-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:14:23.175Z",
+  "elapsedMs": 161794,
+  "outcome": "plan_submitted",
+  "planId": "pln-82016b6d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Import Salmon quantifications to gene-level counts with tximport",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "quant.sf NumReads are non-integer (Salmon's probabilistic assignment) — DESeq2 requires the tximport->DESeqDataSetFromTximport path, which handles this via count-to-integer rounding with average-transcript-length offsets; do not round NumReads manually before this",
+          "Confirm tx2gene.csv's transcript IDs match the Name column of quant.sf (same versioning, e.g. with/without Ensembl version suffix) before mapping, or the transcript-to-gene join will silently drop rows"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "tximport",
+          "DESeq2",
+          "readr"
+        ],
+        "question": "How do the 12 per-sample Salmon quant.sf files (6 AD lesional, 6 control) summarize to a gene-level count matrix using the supplied transcript-to-gene map?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "data_preparation",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "A gene x sample count matrix (genes as rows using the gene column from tx2gene.csv, 12 sample columns) is produced",
+          "tximport is run with type='salmon' and the tx2gene.csv two-column map, using countsFromAbundance='lengthScaledTPM' or default counts+average transcript length offset suitable for DESeq2",
+          "Sample metadata (condition: AD lesional vs control) from metadata.csv is joined and matches the 12 samples by name",
+          "Output matrix and a DESeqDataSet object (or saved counts+offsets) are written to disk for downstream steps",
+          "Total library size and number of genes with nonzero counts are reported as a sanity check"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "QC and normalization check of the gene-level count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Single batch per data context, so no batch correction is applied; do not introduce one without evidence of batch structure"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Do the 12 samples (6 AD lesional, 6 control) show acceptable library size, gene detection, and separation by condition prior to differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Library size and detected-gene-count per sample reported",
+          "PCA or MDS plot on variance-stabilized (vst or rlog) counts colored by condition",
+          "Sample-sample correlation heatmap to flag outliers or mislabeling",
+          "Any sample flagged as an outlier is reported with justification, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression: AD lesional vs control (DESeq2 Wald test, apeglm shrinkage)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group is modest for RNA-seq power; report this explicitly rather than overclaiming completeness of the DE gene list",
+          "Do not filter genes by fold change before the DESeq2 test itself — only after, for reporting a bounded DE gene set"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~condition on the 12-sample gene-level DESeqDataSet from T1S1, testing AD lesional vs control (unpaired, single batch as noted in data context)",
+          "Independent filtering left on; results extracted at alpha=0.05 with Benjamini-Hochberg FDR",
+          "log2FoldChange shrunk with apeglm (lfcShrink, type='apeglm') for the AD-vs-control contrast",
+          "Full results table (gene ID, gene symbol if resolvable via tx2gene, baseMean, log2FoldChange, shrunk LFC, pvalue, padj) exported",
+          "Number of genes at padj<0.05 and |shrunk log2FC|>1 reported explicitly as the DE gene set used downstream",
+          "Volcano plot (EnhancedVolcano) and MA plot produced"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of AD lesional vs control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways-human GMT here is a fixed 2026.07.10 snapshot and MSigDB Hallmark is Hallmark-only (no C2/C5 etc.) — enrichment coverage is bounded by these two collections, not the full MSigDB catalog"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which WikiPathways and MSigDB Hallmark gene sets are enriched among genes differentially expressed between AD lesional and control skin?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis (or GSEA on the full ranked gene list by DESeq2 test statistic) run separately against the human WikiPathways GMT and the MSigDB Hallmark human GMT confirmed present in the reference store",
+          "Gene symbols from the DE table matched to gene set member symbols (HGNC); report the match rate and any genes dropped for symbol mismatch",
+          "Enriched terms reported with adjusted p-value (BH) and normalized enrichment score (if GSEA) or odds ratio (if ORA)",
+          "If enrichment yields no significant terms at FDR<0.25 (GSEA convention) or FDR<0.05 (ORA), that null result is reported as such, not reframed as a hit list"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Immune cell composition comparison between AD lesional and control skin",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group limits statistical power for per-cell-type comparisons; treat results as exploratory, not confirmatory",
+          "Deconvolution signature matrices are not skin-specific; interpret cell-type shifts qualitatively alongside the DE and pathway results rather than as a definitive cell count"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "quantiseqr",
+          "xCell"
+        ],
+        "question": "Does inferred immune cell composition differ between AD lesional (n=6) and control (n=6) skin samples, consistent with the Th2/inflammatory infiltrate expected in atopic dermatitis?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "immune_deconvolution",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Bulk immune deconvolution run on the gene-level TPM/normalized expression matrix (from T1S1/T1S2) using at least one of the installed deconvolution methods (quanTIseq via quantiseqr, xCell, or immunedeconv wrapper)",
+          "Per-sample estimated fractions or enrichment scores for immune cell types reported for all 12 samples",
+          "Group-level comparison (AD lesional vs control) via non-parametric test (e.g., Wilcoxon rank-sum, n=6 per group) per cell type, with unadjusted and BH-adjusted p-values",
+          "Caveat stated that xCell/quanTIseq were built primarily for tumor microenvironment / blood-derived reference profiles, and skin-resident immune populations (e.g., resident Th2 cells, Langerhans cells) may be imperfectly captured"
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: Salmon-to-gene DE + pathway/immune analysis",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The delivered data is per-sample Salmon quant.sf files (transcript-level, non-integer NumReads/TPM) plus a tx2gene map, not a gene-level count matrix — so the first mandatory step is importing and summarizing to gene-level counts with tximport (lengthScaledTPM-aware summarization feeding DESeq2's recommended tximport->DESeqDataSet path, per Soneson/Love/Robinson 2015, F1000Research, and Love/Huber/Anders 2014 DESeq2 method). With 6 treated (AD lesional) vs 6 control skin samples, unpaired, single batch, DESeq2's Wald test on the negative-binomial GLM with apeglm shrinkage (Zhu/Ibrahim/Love 2019, Bioinformatics) is appropriate and both tximport and DESeq2/apeglm are installed. After the DE gene list is produced, two downstream tracks make it useful: (1) functional interpretation via pathway enrichment using the human WikiPathways and MSigDB Hallmark gene sets confirmed present in refs, since AD lesional skin is expected to show barrier/keratinization and Th2/inflammatory pathway shifts; (2) since AD is an inflammatory skin disease, an immune-deconvolution / immune-signature step on the same gene-level expression matrix is warranted (immunedeconv, quantiseqr, xCell packages are installed) to characterize immune infiltrate differences between lesional and control skin, which is standard translational context for this disease. No count matrix, genome annotation, or AD-specific normal-expression reference beyond the pathway/ID-mapping refs already confirmed was found in the ref store; steps are scoped to what tximport/DESeq2/enrichment/immune-profiling tooling and the confirmed WikiPathways-human and MSigDB-Hallmark-human GMTs can support."
+  },
+  "usage": {
+    "inputTokens": 2660444,
+    "outputTokens": 7377,
+    "cacheCreationInputTokens": 140901,
+    "cacheReadInputTokens": 2519063,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01274uEKqb3FL5fZJnFwHZQE",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "DESeq2",
+          "pandas"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01VYQomV4ruAADYuRrX3GWSy",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GENCODE human annotation gtf"
+      },
+      "outcome": "ok",
+      "durationMs": 36
+    },
+    {
+      "toolUseId": "toolu_011s8gpGaWmXYKeokKx8aKgE",
+      "name": "list_available_refs",
+      "input": {
+        "query": "enrichment-agent hallmark gene sets human MSigDB"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01JF5ZjBQjuAUnPgVVTyKvG4",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01EhFVXLay9BXpH1GxngCE2C",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 35
+    },
+    {
+      "toolUseId": "toolu_015Z2BKm7EmuR2mKpsZWnJRz",
+      "name": "list_available_refs",
+      "input": {
+        "query": "skin AD atopic dermatitis normal expression baseline"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01SVQFcipsQSer9PMXGGZgGA",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport salmon DESeq2 gene-level differential expression RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 563
+    },
+    {
+      "toolUseId": "toolu_01QKVpChWXqnhCHdd6z6GF6w",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "tximport transcript quantification differential expression analysis",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 663
+    },
+    {
+      "toolUseId": "toolu_01HYN4zLojr5qUsGPPTXG7et",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "atopic dermatitis lesional skin transcriptome differentially expressed genes",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1083
+    },
+    {
+      "toolUseId": "toolu_01YT3G57s73oSbkEoQCzm6Qj",
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune signature skin"
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    },
+    {
+      "toolUseId": "toolu_01S4y5xReazxH2LWwciVn4Ar",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "tximport",
+        "query": "import salmon quant.sf files with tx2gene mapping to gene-level counts"
+      },
+      "outcome": "ok",
+      "durationMs": 319
+    },
+    {
+      "toolUseId": "toolu_01KkzPZwusTH8dYZWqiJR2ec",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "DESeqDataSetFromTximport differential expression two group unpaired"
+      },
+      "outcome": "ok",
+      "durationMs": 403
+    },
+    {
+      "toolUseId": "toolu_01YM8ySXoSDnNeHeQA5xDQ4r",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeqDataSetFromTximport tximport txi gene-level import salmon quant.sf tx2gene"
+      },
+      "outcome": "ok",
+      "durationMs": 998
+    },
+    {
+      "toolUseId": "toolu_01VTK7q7paUELkgyTRiCpZUS",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human uniprot Ensembl HGNC symbol mapping"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_019TeCBDN5xrLXZri1N357Mj",
+      "name": "list_available_refs",
+      "input": {
+        "path": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 7
+    },
+    {
+      "toolUseId": "toolu_01PTUy435eE7HndtnoM2X5NJ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01JfJQetDHYSVY854xARPdbx",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01PzH9ZRVfJuEo4bJVam46MR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01LUvntHfAbcbK9XdfJv1rSL",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome pathways human gmt"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01NUKADgYGZHh8zaDBas4wWX",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01CQYWiqn6Ua3a1p1jUMuhHP",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01YDpq3LasE1xMKg5GrYz1Lp",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ihw",
+          "apeglm",
+          "IHW"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01Jnt7iNQyG9jkFTFUmGAmYq",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01P5hpz77g8JFt7pLNuP7qRY",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "msigdbr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_013MxA6pjnZqcLvwtj9dAW4k",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm shrinkage log fold change DESeq2 lfcShrink recommended",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 466
+    },
+    {
+      "toolUseId": "toolu_017ngC7SBs8KoSMfNnG4rmpw",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "apeglm approximate posterior estimation shrinkage RNA-seq",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 977
+    },
+    {
+      "toolUseId": "toolu_01CiFgAv2Axz8nJjuJwB891A",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "30395178"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      },
+      "outcome": "ok",
+      "durationMs": 671
+    },
+    {
+      "toolUseId": "toolu_012EsR7C4HJ4nWzq87wU5o6r",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Soneson Love tximport transcript-level estimates improve gene-level analyses",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 740
+    },
+    {
+      "toolUseId": "toolu_01SYT8whcL89RF589C6eXDEK",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26925227"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 0
+      },
+      "outcome": "ok",
+      "durationMs": 697
+    },
+    {
+      "toolUseId": "toolu_01RQj4BizLLVu1nDQGQzfycL",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "xCell",
+          "immune-profiling",
+          "quantiseqr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01PZ2nXdKBnSfKn9dYFYR4Zc",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "STRINGdb",
+          "igraph",
+          "network"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_017pPSGvfCaKPEQDbp6qQ8zQ",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "atopic dermatitis Th2 skewed skin gene expression profile IL13 IL4 CCL17 CCL18 biomarkers",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 471
+    },
+    {
+      "toolUseId": "toolu_01UuvfqGwN2dXjsxw3TXAu9i",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "atopic dermatitis Th2 gene expression skin biomarkers CCL17 CCL18",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1010
+    },
+    {
+      "toolUseId": "toolu_01BbnVPr7ph1oPoJNBkNpLG4",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential gene expression negative binomial two group unpaired design",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 227
+    },
+    {
+      "toolUseId": "toolu_0187sC3efW4A5acTf8eqjVBm",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders moderated estimation fold change dispersion RNA-seq DESeq2",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 488
+    },
+    {
+      "toolUseId": "toolu_01M2zGF6xYjxDAFFVNtBacnJ",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 0
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01Pqbst7EMkoGhuDegnWhUqs",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 moderated estimation fold change dispersion RNA-seq",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 9028
+    },
+    {
+      "toolUseId": "toolu_01CcGZECGsW2fLhDtZDVnR8c",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "STRINGdb",
+          "networkD3"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01FFfGa9S3bc8w2YHb9LJUUh",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tidyr",
+          "readr",
+          "dplyr",
+          "openxlsx2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_019LbP16wKVEmMFfkAWjxXzG",
+      "name": "search_github_repos",
+      "input": {
+        "query": "tximport DESeq2 salmon quant.sf gene-level differential expression pipeline",
+        "language": "R",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 475
+    },
+    {
+      "toolUseId": "toolu_01HK2KjaUUrpUvNfKNsCBFck",
+      "name": "search_github_repos",
+      "input": {
+        "query": "salmon tximport DESeq2 RNAseq pipeline",
+        "limit": 5
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01PHsX9qcPdzDCpk7hG4DxoK",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: Salmon-to-gene DE + pathway/immune analysis",
+          "analytical_narrative": "The delivered data is per-sample Salmon quant.sf files (transcript-level, non-integer NumReads/TPM) plus a tx2gene map, not a gene-level count matrix — so the first mandatory step is importing and summarizing to gene-level counts with tximport (lengthScaledTPM-aware summarization feeding DESeq2's recommended tximport->DESeqDataSet path, per Soneson/Love/Robinson 2015, F1000Research, and Love/Huber/Anders 2014 DESeq2 method). With 6 treated (AD lesional) vs 6 control skin samples, unpaired, single batch, DESeq2's Wald test on the negative-binomial GLM with apeglm shrinkage (Zhu/Ibrahim/Love 2019, Bioinformatics) is appropriate and both tximport and DESeq2/apeglm are installed. After the DE gene list is produced, two downstream tracks make it useful: (1) functional interpretation via pathway enrichment using the human WikiPathways and MSigDB Hallmark gene sets confirmed present in refs, since AD lesional skin is expected to show barrier/keratinization and Th2/inflammatory pathway shifts; (2) since AD is an inflammatory skin disease, an immune-deconvolution / immune-signature step on the same gene-level expression matrix is warranted (immunedeconv, quantiseqr, xCell packages are installed) to characterize immune infiltrate differences between lesional and control skin, which is standard translational context for this disease. No count matrix, genome annotation, or AD-specific normal-expression reference beyond the pathway/ID-mapping refs already confirmed was found in the ref store; steps are scoped to what tximport/DESeq2/enrichment/immune-profiling tooling and the confirmed WikiPathways-human and MSigDB-Hallmark-human GMTs can support.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Import Salmon quantifications to gene-level counts with tximport",
+              "track": "T1",
+              "step_type": "data_preparation",
+              "question": "How do the 12 per-sample Salmon quant.sf files (6 AD lesional, 6 control) summarize to a gene-level count matrix using the supplied transcript-to-gene map?",
+              "acceptance_criteria": [
+                "A gene x sample count matrix (genes as rows using the gene column from tx2gene.csv, 12 sample columns) is produced",
+                "tximport is run with type='salmon' and the tx2gene.csv two-column map, using countsFromAbundance='lengthScaledTPM' or default counts+average transcript length offset suitable for DESeq2",
+                "Sample metadata (condition: AD lesional vs control) from metadata.csv is joined and matches the 12 samples by name",
+                "Output matrix and a DESeqDataSet object (or saved counts+offsets) are written to disk for downstream steps",
+                "Total library size and number of genes with nonzero counts are reported as a sanity check"
+              ],
+              "packages": [
+                "tximport",
+                "DESeq2",
+                "readr"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "quant.sf NumReads are non-integer (Salmon's probabilistic assignment) — DESeq2 requires the tximport->DESeqDataSetFromTximport path, which handles this via count-to-integer rounding with average-transcript-length offsets; do not round NumReads manually before this",
+                "Confirm tx2gene.csv's transcript IDs match the Name column of quant.sf (same versioning, e.g. with/without Ensembl version suffix) before mapping, or the transcript-to-gene join will silently drop rows"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "QC and normalization check of the gene-level count matrix",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Do the 12 samples (6 AD lesional, 6 control) show acceptable library size, gene detection, and separation by condition prior to differential testing?",
+              "acceptance_criteria": [
+                "Library size and detected-gene-count per sample reported",
+                "PCA or MDS plot on variance-stabilized (vst or rlog) counts colored by condition",
+                "Sample-sample correlation heatmap to flag outliers or mislabeling",
+                "Any sample flagged as an outlier is reported with justification, not silently dropped"
+              ],
+              "packages": [
+                "DESeq2",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Single batch per data context, so no batch correction is applied; do not introduce one without evidence of batch structure"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Differential expression: AD lesional vs control (DESeq2 Wald test, apeglm shrinkage)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between AD lesional (n=6) and control (n=6) skin samples?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~condition on the 12-sample gene-level DESeqDataSet from T1S1, testing AD lesional vs control (unpaired, single batch as noted in data context)",
+                "Independent filtering left on; results extracted at alpha=0.05 with Benjamini-Hochberg FDR",
+                "log2FoldChange shrunk with apeglm (lfcShrink, type='apeglm') for the AD-vs-control contrast",
+                "Full results table (gene ID, gene symbol if resolvable via tx2gene, baseMean, log2FoldChange, shrunk LFC, pvalue, padj) exported",
+                "Number of genes at padj<0.05 and |shrunk log2FC|>1 reported explicitly as the DE gene set used downstream",
+                "Volcano plot (EnhancedVolcano) and MA plot produced"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=6 per group is modest for RNA-seq power; report this explicitly rather than overclaiming completeness of the DE gene list",
+                "Do not filter genes by fold change before the DESeq2 test itself — only after, for reporting a bounded DE gene set"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of AD lesional vs control DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways and MSigDB Hallmark gene sets are enriched among genes differentially expressed between AD lesional and control skin?",
+              "acceptance_criteria": [
+                "Over-representation analysis (or GSEA on the full ranked gene list by DESeq2 test statistic) run separately against the human WikiPathways GMT and the MSigDB Hallmark human GMT confirmed present in the reference store",
+                "Gene symbols from the DE table matched to gene set member symbols (HGNC); report the match rate and any genes dropped for symbol mismatch",
+                "Enriched terms reported with adjusted p-value (BH) and normalized enrichment score (if GSEA) or odds ratio (if ORA)",
+                "If enrichment yields no significant terms at FDR<0.25 (GSEA convention) or FDR<0.05 (ORA), that null result is reported as such, not reframed as a hit list"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "WikiPathways-human GMT here is a fixed 2026.07.10 snapshot and MSigDB Hallmark is Hallmark-only (no C2/C5 etc.) — enrichment coverage is bounded by these two collections, not the full MSigDB catalog"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Immune cell composition comparison between AD lesional and control skin",
+              "track": "T3",
+              "step_type": "immune_deconvolution",
+              "question": "Does inferred immune cell composition differ between AD lesional (n=6) and control (n=6) skin samples, consistent with the Th2/inflammatory infiltrate expected in atopic dermatitis?",
+              "acceptance_criteria": [
+                "Bulk immune deconvolution run on the gene-level TPM/normalized expression matrix (from T1S1/T1S2) using at least one of the installed deconvolution methods (quanTIseq via quantiseqr, xCell, or immunedeconv wrapper)",
+                "Per-sample estimated fractions or enrichment scores for immune cell types reported for all 12 samples",
+                "Group-level comparison (AD lesional vs control) via non-parametric test (e.g., Wilcoxon rank-sum, n=6 per group) per cell type, with unadjusted and BH-adjusted p-values",
+                "Caveat stated that xCell/quanTIseq were built primarily for tumor microenvironment / blood-derived reference profiles, and skin-resident immune populations (e.g., resident Th2 cells, Langerhans cells) may be imperfectly captured"
+              ],
+              "packages": [
+                "immunedeconv",
+                "quantiseqr",
+                "xCell"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "caveats": [
+                "n=6 per group limits statistical power for per-cell-type comparisons; treat results as exploratory, not confirmatory",
+                "Deconvolution signature matrices are not skin-specific; interpret cell-type shifts qualitatively alongside the DE and pathway results rather than as a definitive cell count"
+              ]
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 57
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

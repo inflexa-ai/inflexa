@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: it audits sex/age balance and collinearity before fitting, uses DESeq2 Wald with ~ sex + age_centred + condition, control explicitly set as reference, size factors inside the model, a justified ≥10-in-≥6 filter, BH at 0.05 with apeglm on the condition coefficient, and refuses to relax thresholds. QC includes PCA colored by condition, sex and age, sample distances, library sizes, and a stated no-removal/leave-one-out policy, but omits the XIST/Y-linked sex check from the reference. Enrichment was not asked for; it is included with a named collection and version, size window, and full ranked list, though the ranking metric is left as an either/or and the GSEA adds unrequested scope. Reporting names methods, versions, design, thresholds, gene counts and power caveats explicitly."
+}

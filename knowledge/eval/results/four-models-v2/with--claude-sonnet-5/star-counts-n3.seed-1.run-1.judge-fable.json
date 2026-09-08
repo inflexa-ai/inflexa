@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as raw integer counts fed directly to DESeqDataSetFromMatrix with median-of-ratios normalization inside the model, explicitly rejects tximport/length correction, applies a minimal justified filter (>=10 counts in >=3 samples), sets control as the explicit reference with a named treated-vs-control contrast, uses BH at alpha 0.05 with apeglm shrinkage, and states the n=3 power limitation. QC is well specified (blind VST PCA, distance heatmap, library sizes) but only flags an outlier without stating what action follows. Enrichment was not requested; the plan adds it anyway, though the fgsea specification is sound (full ranked list on the Wald statistic, versioned collections, 15-500 size window, BH per collection). The report step names method, versions, design, thresholds, tested/DE counts, diagnostics, and caveats."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats the QuantSeq counts as length-independent, feeds raw counts into DESeq2 Wald with median-of-ratios inside the model, ~condition with control as reference, BH at 0.05, apeglm shrinkage, and states the low-power caveat and that TPM/FPKM do not apply. QC (library sizes, PCA, distance heatmap, flag-not-drop outlier policy) precedes the test. The low-count filter uses the generic full-length floor (>=10 in 3 samples) rather than the lower floor appropriate for a 3' tag library, though it is reported. The stricter DE call applies a |shrunken LFC| >= 1 cut post hoc instead of an lfcThreshold in the test. Enrichment, though not requested, is reasonably specified (Wald-stat ranked full list, tested-gene universe for ORA, named versioned collection, ID match fraction) but omits a gene-set size window."
+}

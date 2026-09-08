@@ -1,0 +1,532 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:46:15.517Z",
+  "elapsedMs": 112730,
+  "outcome": "plan_submitted",
+  "planId": "pln-8788c4ef",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Filter, VST-transform, and QC the 12000-gene count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 samples, PCA loadings are unstable and PC1 may reflect a single sample rather than the condition — report the per-sample PC scores, not just the variance percentages",
+          "If Salmon output was length-corrected, the values are not true counts and DESeq2's negative-binomial assumptions are approximate; state this rather than glossing over it",
+          "A near-zero number of genes surviving filterByExpr would indicate the matrix is not raw counts at all — check and report before proceeding"
+        ],
+        "context": "Inputs are /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/counts/counts.csv (12000 genes x 7 columns: gene identifier column plus 6 sample columns) and /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample identifier and condition). Design is 3 treated vs 3 control, unpaired, single batch, raw gene-level counts from Salmon. The data profile does NOT record whether Salmon length correction was applied, so the step must inspect the values rather than assume. This step produces the single expression matrix that both the WGCNA network step and the DE step consume, so orientation and sample ordering must be locked down here.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "After low-count filtering and variance-stabilizing transformation, how many of the 12,000 genes remain, and is the treated-vs-control split the leading axis of variation across the 6 liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 varianceStabilizingTransformation with blind=TRUE — do not use rlog (unnecessary here) and do not use a design-aware blind=FALSE transform for the clustering matrix",
+          "Use edgeR::filterByExpr with the condition group vector; do not invent an arbitrary CPM cutoff",
+          "Do not drop or impute any sample — n=6 is the entire dataset",
+          "Preserve gene identifiers exactly as they appear in the first column of counts.csv; do not strip version suffixes without recording the original",
+          "Write outputs as plain CSV so downstream steps can read them without a modality-specific object"
+        ],
+        "description": "Read counts and metadata, verify that the 6 metadata sample identifiers match the 6 count-matrix column names exactly (report any mismatch and stop rather than reordering silently), record the two actual condition level names as they appear in metadata.csv, check whether counts are integers (non-integer values indicate length-corrected Salmon output — round to nearest integer and state this in the output), filter genes with edgeR::filterByExpr using the condition group vector, build a DESeq2 DESeqDataSet with design ~condition, and apply varianceStabilizingTransformation with blind=TRUE. Emit: the VST matrix (genes x 6 samples) as CSV, the filtered raw count matrix as CSV, a table of per-sample library sizes and detected-gene counts, a sample-sample Spearman and Pearson correlation matrix, a hierarchical clustering dendrogram of samples, and a PCA of the VST matrix with percent variance per PC and samples coloured by condition. Report in text how many genes passed filtering out of 12,000 and whether PC1 separates the two conditions.",
+        "acceptance_criteria": [
+          "Sample identifiers in metadata.csv are confirmed to match count matrix columns; the two condition level names are reported verbatim as they appear in the file",
+          "Number of genes retained after filterByExpr is reported explicitly against the starting 12,000",
+          "VST matrix written with exactly 6 sample columns and the retained gene count as rows",
+          "Per-sample library sizes, sample-sample correlation matrix, sample dendrogram, and condition-coloured PCA with percent variance per PC are all produced",
+          "Integer status of the input counts is explicitly checked and reported, with rounding applied and stated if values are non-integer",
+          "blind=TRUE is used for the VST so the condition design does not leak into the transform used for clustering"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "WGCNA co-expression modules on the VST matrix",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WGCNA is not validated below ~15 samples; with 6 the module structure may largely restate the treated-vs-control contrast. State this as the primary caveat of the whole analysis, not a footnote",
+          "If pickSoftThreshold never reaches R^2 0.8 at any power, that is the expected outcome at this sample size — report it and use the floor value rather than forcing a spurious selection",
+          "A grey fraction above roughly 50% means little coherent structure was found; report that honestly instead of interpreting the small residual modules",
+          "Do not interpret module counts as a biological finding — the number of modules at n=6 is largely a function of the cut parameters"
+        ],
+        "context": "Consumes the VST matrix from T1S1 (retained genes x 6 samples). This is the core module-detection step. The critical constraint is that WGCNA's own documentation warns against networks built from fewer than ~15 samples; with 6 samples a gene-gene correlation has about 4 residual degrees of freedom and any pair of genes that separates the two groups will correlate near +/-1. The step must therefore build the network with the most robust settings available and report the instability rather than presenting modules as established.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "fastcluster",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "What co-expression modules do the retained genes form across the 6 liver samples, how large are they, and what fraction of genes remains unassigned (grey)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use corType='bicor' with maxPOutliers=0.05 — plain Pearson is dominated by single-sample leverage at n=6",
+          "Use networkType='signed hybrid' and TOMType='signed' so anticorrelated genes are not merged into one module",
+          "minModuleSize=30, mergeCutHeight=0.25, deepSplit=2",
+          "Do not filter genes to a top-variance subset before building the network unless the retained gene count exceeds 15,000 — with 12,000 starting genes this is not needed, and variance pre-filtering at n=6 selects for the group contrast",
+          "Report the grey fraction prominently; do not quietly exclude grey from summary counts"
+        ],
+        "description": "Run WGCNA on the transposed VST matrix (samples x genes). Use goodSamplesGenes to confirm no gene or sample fails; use pickSoftThreshold over powers 1-20 with networkType='signed hybrid' and report the scale-free topology fit R^2 curve. Because the fit curve is uninformative at n=6, select the power as the smallest value reaching R^2 >= 0.8 but floor it at the WGCNA-recommended default for small signed-hybrid networks (power 12) and state which rule decided the final value. Build modules with blockwiseModules using corType='bicor' with maxPOutliers=0.05, networkType='signed hybrid', TOMType='signed', minModuleSize=30, mergeCutHeight=0.25, deepSplit=2, numericLabels=TRUE, and a single block (the matrix is small enough). Output: gene-to-module assignment table, module size table including the grey module, module eigengenes (MEs) matrix (modules x 6 samples), the module eigengene dendrogram and adjacency heatmap, and the gene dendrogram with module colour bands. Report the number of non-grey modules and the percentage of genes assigned to grey.",
+        "acceptance_criteria": [
+          "Soft-threshold power selection is reported with the fit R^2 curve and an explicit statement of which rule (R^2 threshold vs small-n floor) set the final power",
+          "Module assignment table covers every gene in the input VST matrix, with the grey module explicitly included and its percentage reported",
+          "Module eigengene matrix has one row per module and exactly 6 sample columns",
+          "bicor with maxPOutliers=0.05 and signed-hybrid network type are used, not default Pearson unsigned",
+          "Gene dendrogram with module colours and module eigengene correlation heatmap are produced",
+          "The report states the sample count (n=6) and that this is below the size WGCNA is validated for"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Module-treatment association with exact permutation and leave-one-out stability",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A module eigengene can correlate perfectly with treatment purely because the module was constructed from the correlation structure the treatment contrast imposes — this is circularity, and the leave-one-out result is the only guard against it here",
+          "Leave-one-out at n=6 means re-clustering on 5 samples, which is even less stable than the full run; low Jaccard scores are expected and are informative about the fragility, not a bug",
+          "Do not present the strongest module as a validated treatment-responsive program — it is a hypothesis requiring an independent cohort"
+        ],
+        "context": "Consumes the module eigengenes and gene-module assignments from T1S2 and the condition labels from T1S1. This step answers the second half of the research question — which modules track treatment. With 3 vs 3 there are only choose(6,3)=20 label assignments, 10 distinct up to sign, so the smallest attainable exact permutation p-value is 0.1 even for a perfect separation. No module can reach conventional significance. The step must report that floor rather than quoting an unadjusted parametric p-value that looks significant.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "fastcluster",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Which module eigengenes differ between the treated and control liver samples, and do those modules survive dropping any single sample?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use exact enumeration of the 3/3 label permutations — do not use a random permutation sampler and do not report an asymptotic t-test p-value as the primary statistic",
+          "Do not declare any module 'significantly' associated with treatment; report effect size (correlation, mean difference) with the permutation p and its floor",
+          "Leave-one-out runs must reuse the identical WGCNA parameters from T1S2 (bicor, signed hybrid, same power, minModuleSize=30, mergeCutHeight=0.25)",
+          "Rank modules by effect size and stability jointly, not by p-value"
+        ],
+        "description": "For each module eigengene from T1S2: (a) compute the correlation between the eigengene and the binary treatment indicator, and the difference in mean eigengene value between the two condition groups named in T1S1; (b) compute an exact permutation p-value by enumerating all 20 assignments of 3 treated / 3 control labels across the 6 samples and ranking the observed statistic — report explicitly that the minimum attainable p is 0.1 (or 0.05 one-sided depending on the enumeration used) and that no result can clear FDR 0.05 at this n; (c) apply BH correction across modules for completeness while stating it is uninformative at this floor; (d) assess stability by re-running the T1S2 WGCNA pipeline six times, each time leaving one sample out, and quantifying for each original module the fraction of its genes that stay co-assigned in the leave-one-out run (use a Jaccard index against the best-matching leave-one-out module, and WGCNA's modulePreservation Zsummary if it runs on 5 samples — if it does not converge, report the Jaccard result alone); (e) compute module membership (kME) for genes in the top treatment-associated modules and export the top 30 hub genes per such module by kME. Produce a table ranking modules by absolute eigengene-treatment correlation alongside their leave-one-out stability, and a heatmap of module eigengenes across the 6 samples annotated by condition.",
+        "acceptance_criteria": [
+          "Every module from T1S2 appears in the association table with its eigengene-treatment correlation, group mean difference, exact permutation p, and BH-adjusted p",
+          "The exact permutation p-value floor imposed by 3-vs-3 (p_min = 0.1 two-sided over 10 distinct splits) is stated explicitly in the output text",
+          "Leave-one-sample-out re-clustering is run for all 6 hold-outs, with a per-module Jaccard stability score reported against the full-data modules",
+          "Top 30 hub genes by kME are exported for each module whose eigengene-treatment correlation exceeds 0.8 in absolute value",
+          "A module eigengene heatmap across all 6 samples, annotated with the actual condition labels, is produced",
+          "Modules with high treatment correlation but low leave-one-out stability are flagged as single-sample-driven"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "DESeq2 treated-vs-control differential expression as a reference contrast",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group gives DESeq2 poor dispersion estimation; fold-change estimates are noisy even after shrinkage and the FDR<0.05 list may legitimately be empty",
+          "A strong DE-gene overlap in the treatment-tracking modules is the expected outcome at this sample size and should be reported as a limitation of the module analysis, not as mutual confirmation"
+        ],
+        "context": "Consumes the filtered raw count matrix and condition labels from T1S1, and the module assignments and module-treatment ranking from T1S3. Its purpose is not to answer the research question directly but to give the module results a reference point: with n=6, a module that tracks treatment may be nothing more than the DE genes clustered together. Quantifying that overlap is what distinguishes a genuine co-expression program from a repackaged contrast.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano"
+        ],
+        "question": "Which individual genes are differentially expressed between the treated and control liver samples, and how much do the treatment-tracking modules simply restate that gene list?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use DESeq2 with design ~condition and apeglm shrinkage for the log2 fold-change; do not use ashr or normal shrinkage without stating why",
+          "Background universe for the Fisher test is the retained gene set from T1S1, not all 12,000 input genes and not all human genes",
+          "Do not lower the FDR threshold below 0.1 to produce a longer gene list; if the list is empty, report an empty list"
+        ],
+        "description": "Run DESeq2 on the filtered raw counts with design ~condition, using the two condition level names recorded in T1S1 and setting control as the reference level. Extract results for the treated-vs-control contrast, apply apeglm log2 fold-change shrinkage, and apply BH FDR. Report the number of genes at FDR<0.05 and at FDR<0.1, an MA plot, a volcano plot, and the ranked results table. Then, for each module from T1S2, compute the enrichment of DE genes (FDR<0.1) within the module by Fisher's exact test against the retained-gene background, and report the overlap for the modules that T1S3 ranked as treatment-tracking. State plainly whether those modules are DE-gene-driven.",
+        "acceptance_criteria": [
+          "DESeq2 results table with shrunken log2FC and BH-adjusted p-values for all retained genes is produced, with the reference level explicitly reported as the control condition",
+          "Counts of genes at FDR<0.05 and FDR<0.1 are reported; if zero, that is stated as the result rather than the threshold being relaxed to manufacture hits",
+          "MA plot and volcano plot are produced",
+          "Per-module Fisher's exact enrichment of FDR<0.1 DE genes against the retained-gene background is tabulated for every module",
+          "An explicit statement of whether the top treatment-tracking modules from T1S3 are dominated by DE genes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Functional annotation of treatment-tracking modules",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Modules derived from 6 samples may be statistically arbitrary; a coherent enrichment result does not retroactively validate the module, and this must be said in the interpretation",
+          "GO BP sets are nested, so significant hits arrive in correlated blocks — collapse redundant parent/child terms before reporting a count of enriched processes",
+          "If the treatment-tracking modules are largely DE genes (per T1S4), their enrichment is effectively the enrichment of the DE list, not of an independent co-expression program"
+        ],
+        "context": "Consumes the gene-to-module assignments from T1S2, the module-treatment ranking and stability scores from T1S3, and the retained gene universe from T1S1. Human liver tissue under drug treatment makes xenobiotic metabolism, bile acid metabolism, fatty acid metabolism, and inflammatory response the a priori interesting hallmark sets, but the test must be run over the full collections rather than only those. Required reference data: human hallmark gene sets and human GO biological process gene sets, both keyed on HGNC symbols; a human protein/gene identifier mapping resource is needed if the gene identifiers in counts.csv are Ensembl IDs rather than symbols.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "dplyr",
+          "data.table"
+        ],
+        "question": "What biological processes are over-represented in the modules whose eigengenes track treatment, and do liver-relevant xenobiotic, bile acid, or fatty acid programs appear?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T1S4"
+        ],
+        "constraints": [
+          "Background universe must be the retained expressed genes from T1S1 — never the full genome and never all sets in the collection",
+          "Use the human (Homo sapiens) gene set collections; the mouse and rat resources staged alongside them must not be used on this human liver dataset",
+          "Report unadjusted p alongside BH q; do not filter the output to q<0.05 only, since small modules at this sample size rarely clear correction",
+          "Do not run enrichment on the grey module as if it were a biological module; report it separately if at all"
+        ],
+        "description": "For every non-grey module, and in detail for the modules T1S3 ranked as treatment-tracking, run hypergeometric over-representation analysis against human hallmark gene sets and human GO biological process gene sets, using the T1S1 retained gene set as the background universe. First resolve identifier space: if the counts.csv gene identifiers are not HGNC symbols, map them to symbols using the staged human identifier mapping resource and report the mapping success rate and how many module genes were lost. Apply BH correction within each collection separately. Produce, per module, a table of enriched sets with set size, overlap size, odds ratio, raw p and BH q, and a dot plot of the top sets for the treatment-tracking modules. Cross-check explicitly whether any of HALLMARK_XENOBIOTIC_METABOLISM, HALLMARK_BILE_ACID_METABOLISM, HALLMARK_FATTY_ACID_METABOLISM, or HALLMARK_INFLAMMATORY_RESPONSE appear, and report their q-values whether or not they are significant.",
+        "acceptance_criteria": [
+          "Identifier space of counts.csv gene IDs is determined and reported; if mapping was required, the mapping rate and the number of unmapped module genes are stated",
+          "Over-representation results are produced for every non-grey module against both human hallmark and human GO BP collections, with the retained gene set as background",
+          "BH correction applied within each gene-set collection separately, with q-values reported",
+          "The four named liver-relevant hallmark sets are reported with their q-values regardless of significance",
+          "Dot plots of top enriched sets are produced for the treatment-tracking modules identified in T1S3",
+          "If the hallmark or GO reference is unavailable at run time, the step reports the absence explicitly and still emits the module gene lists so annotation can be done later"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment co-expression modules (n=6)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks for co-expression modules across samples and which modules track treatment. The hard constraint is the design: 6 samples (3 treated vs 3 control), 12,000 genes, single batch, unpaired, raw gene-level Salmon counts. Six samples is far below the ~15-20 minimum normally required for a stable WGCNA network — with n=6 a Pearson correlation between two genes has ~4 residual df, and any pair of genes that simply separates treated from control will correlate near +/-1. The dominant 'module' structure recovered from 6 samples is therefore largely a restatement of the two-group contrast plus noise, and every downstream statement must carry that caveat rather than presenting modules as validated gene programs. The plan is built to make that limitation measurable rather than hidden.\n\nT1S1 prepares the matrix once: read counts.csv (12000 x 7, first column gene IDs) and metadata.csv (6 x 2, sample + condition), verify sample-name concordance and orientation, drop low-count genes with edgeR filterByExpr on the condition design, apply DESeq2 VST (blind=TRUE so the design does not leak into the transform used for clustering), and emit both the VST matrix and a sample-level QC readout (library sizes, sample-sample correlation heatmap, PCA) to establish whether the treated/control split is even the leading axis of variation. Salmon length correction status is unrecorded in the profile, so the step checks for non-integer values and rounds with an explicit note rather than assuming.\n\nT1S2 builds the co-expression network with WGCNA on the VST matrix, using signed-hybrid networks and biweight midcorrelation (robust to the single-sample outliers that dominate small n), a soft-threshold power chosen from the scale-free fit but floored at the WGCNA-recommended value for n<20 since the fit curve is uninformative at this size, and blockwiseModules with a minimum module size of 30 and merge height 0.25. It reports module count, sizes, eigengenes, and the grey (unassigned) fraction — a large grey fraction is itself the honest answer that structure is weak.\n\nT1S3 tests which module eigengenes track treatment. With 3 vs 3 the only defensible tests are non-parametric-adjacent and exact: eigengene-trait correlation with a permutation p-value over all 10 possible 3/3 label assignments (which bounds the smallest achievable p at 0.1, so the step must report that floor explicitly rather than quoting a nominal t-test p), plus module preservation/robustness by leave-one-sample-out re-clustering to see which modules survive dropping any single sample. This separates modules that reflect a reproducible program from modules driven by one array.\n\nT1S4 runs the conventional two-group differential expression (DESeq2 Wald, apeglm shrinkage, BH FDR) so the module results have a reference point: if the treatment-associated modules are simply the DE genes re-packaged, the overlap statistics will say so.\n\nT2S1 annotates the treatment-tracking modules functionally with hypergeometric over-representation against human hallmark and GO BP gene sets staged locally, using the filtered expressed genes as background — the correct universe, not all of MSigDB. Liver tissue makes xenobiotic metabolism, bile acid, and fatty acid hallmark sets the priors worth checking explicitly. If the gene identifiers in counts.csv are Ensembl rather than HGNC symbols, the step maps them via the staged human UniProt ID mapping and reports the mapping rate.\n\nEvery step is sized for a 12000 x 6 matrix, which is small; nothing here needs more than a few GB."
+  },
+  "usage": {
+    "inputTokens": 93089,
+    "outputTokens": 8385,
+    "cacheCreationInputTokens": 74103,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Hf37wdu3PGaHjKdqXbt54W",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "pyWGCNA",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "dynamicTreeCut",
+          "fastcluster",
+          "flashClust",
+          "decoupler",
+          "gseapy",
+          "clusterProfiler",
+          "pydeseq2",
+          "statsmodels"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01A9ca9tS7pfdC3H511GJJR3",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_017qjT8VyDEqHto17cUM2T7y",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment co-expression modules (n=6)",
+          "analytical_narrative": "The question asks for co-expression modules across samples and which modules track treatment. The hard constraint is the design: 6 samples (3 treated vs 3 control), 12,000 genes, single batch, unpaired, raw gene-level Salmon counts. Six samples is far below the ~15-20 minimum normally required for a stable WGCNA network — with n=6 a Pearson correlation between two genes has ~4 residual df, and any pair of genes that simply separates treated from control will correlate near +/-1. The dominant 'module' structure recovered from 6 samples is therefore largely a restatement of the two-group contrast plus noise, and every downstream statement must carry that caveat rather than presenting modules as validated gene programs. The plan is built to make that limitation measurable rather than hidden.\n\nT1S1 prepares the matrix once: read counts.csv (12000 x 7, first column gene IDs) and metadata.csv (6 x 2, sample + condition), verify sample-name concordance and orientation, drop low-count genes with edgeR filterByExpr on the condition design, apply DESeq2 VST (blind=TRUE so the design does not leak into the transform used for clustering), and emit both the VST matrix and a sample-level QC readout (library sizes, sample-sample correlation heatmap, PCA) to establish whether the treated/control split is even the leading axis of variation. Salmon length correction status is unrecorded in the profile, so the step checks for non-integer values and rounds with an explicit note rather than assuming.\n\nT1S2 builds the co-expression network with WGCNA on the VST matrix, using signed-hybrid networks and biweight midcorrelation (robust to the single-sample outliers that dominate small n), a soft-threshold power chosen from the scale-free fit but floored at the WGCNA-recommended value for n<20 since the fit curve is uninformative at this size, and blockwiseModules with a minimum module size of 30 and merge height 0.25. It reports module count, sizes, eigengenes, and the grey (unassigned) fraction — a large grey fraction is itself the honest answer that structure is weak.\n\nT1S3 tests which module eigengenes track treatment. With 3 vs 3 the only defensible tests are non-parametric-adjacent and exact: eigengene-trait correlation with a permutation p-value over all 10 possible 3/3 label assignments (which bounds the smallest achievable p at 0.1, so the step must report that floor explicitly rather than quoting a nominal t-test p), plus module preservation/robustness by leave-one-sample-out re-clustering to see which modules survive dropping any single sample. This separates modules that reflect a reproducible program from modules driven by one array.\n\nT1S4 runs the conventional two-group differential expression (DESeq2 Wald, apeglm shrinkage, BH FDR) so the module results have a reference point: if the treatment-associated modules are simply the DE genes re-packaged, the overlap statistics will say so.\n\nT2S1 annotates the treatment-tracking modules functionally with hypergeometric over-representation against human hallmark and GO BP gene sets staged locally, using the filtered expressed genes as background — the correct universe, not all of MSigDB. Liver tissue makes xenobiotic metabolism, bile acid, and fatty acid hallmark sets the priors worth checking explicitly. If the gene identifiers in counts.csv are Ensembl rather than HGNC symbols, the step maps them via the staged human UniProt ID mapping and reports the mapping rate.\n\nEvery step is sized for a 12000 x 6 matrix, which is small; nothing here needs more than a few GB.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Filter, VST-transform, and QC the 12000-gene count matrix",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After low-count filtering and variance-stabilizing transformation, how many of the 12,000 genes remain, and is the treated-vs-control split the leading axis of variation across the 6 liver samples?",
+              "context": "Inputs are /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/counts/counts.csv (12000 genes x 7 columns: gene identifier column plus 6 sample columns) and /eval-four-models-v2-without-coexpression-too-few-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample identifier and condition). Design is 3 treated vs 3 control, unpaired, single batch, raw gene-level counts from Salmon. The data profile does NOT record whether Salmon length correction was applied, so the step must inspect the values rather than assume. This step produces the single expression matrix that both the WGCNA network step and the DE step consume, so orientation and sample ordering must be locked down here.",
+              "description": "Read counts and metadata, verify that the 6 metadata sample identifiers match the 6 count-matrix column names exactly (report any mismatch and stop rather than reordering silently), record the two actual condition level names as they appear in metadata.csv, check whether counts are integers (non-integer values indicate length-corrected Salmon output — round to nearest integer and state this in the output), filter genes with edgeR::filterByExpr using the condition group vector, build a DESeq2 DESeqDataSet with design ~condition, and apply varianceStabilizingTransformation with blind=TRUE. Emit: the VST matrix (genes x 6 samples) as CSV, the filtered raw count matrix as CSV, a table of per-sample library sizes and detected-gene counts, a sample-sample Spearman and Pearson correlation matrix, a hierarchical clustering dendrogram of samples, and a PCA of the VST matrix with percent variance per PC and samples coloured by condition. Report in text how many genes passed filtering out of 12,000 and whether PC1 separates the two conditions.",
+              "acceptance_criteria": [
+                "Sample identifiers in metadata.csv are confirmed to match count matrix columns; the two condition level names are reported verbatim as they appear in the file",
+                "Number of genes retained after filterByExpr is reported explicitly against the starting 12,000",
+                "VST matrix written with exactly 6 sample columns and the retained gene count as rows",
+                "Per-sample library sizes, sample-sample correlation matrix, sample dendrogram, and condition-coloured PCA with percent variance per PC are all produced",
+                "Integer status of the input counts is explicitly checked and reported, with rounding applied and stated if values are non-integer",
+                "blind=TRUE is used for the VST so the condition design does not leak into the transform used for clustering"
+              ],
+              "constraints": [
+                "Use DESeq2 varianceStabilizingTransformation with blind=TRUE — do not use rlog (unnecessary here) and do not use a design-aware blind=FALSE transform for the clustering matrix",
+                "Use edgeR::filterByExpr with the condition group vector; do not invent an arbitrary CPM cutoff",
+                "Do not drop or impute any sample — n=6 is the entire dataset",
+                "Preserve gene identifiers exactly as they appear in the first column of counts.csv; do not strip version suffixes without recording the original",
+                "Write outputs as plain CSV so downstream steps can read them without a modality-specific object"
+              ],
+              "caveats": [
+                "With 6 samples, PCA loadings are unstable and PC1 may reflect a single sample rather than the condition — report the per-sample PC scores, not just the variance percentages",
+                "If Salmon output was length-corrected, the values are not true counts and DESeq2's negative-binomial assumptions are approximate; state this rather than glossing over it",
+                "A near-zero number of genes surviving filterByExpr would indicate the matrix is not raw counts at all — check and report before proceeding"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "WGCNA co-expression modules on the VST matrix",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What co-expression modules do the retained genes form across the 6 liver samples, how large are they, and what fraction of genes remains unassigned (grey)?",
+              "context": "Consumes the VST matrix from T1S1 (retained genes x 6 samples). This is the core module-detection step. The critical constraint is that WGCNA's own documentation warns against networks built from fewer than ~15 samples; with 6 samples a gene-gene correlation has about 4 residual degrees of freedom and any pair of genes that separates the two groups will correlate near +/-1. The step must therefore build the network with the most robust settings available and report the instability rather than presenting modules as established.",
+              "description": "Run WGCNA on the transposed VST matrix (samples x genes). Use goodSamplesGenes to confirm no gene or sample fails; use pickSoftThreshold over powers 1-20 with networkType='signed hybrid' and report the scale-free topology fit R^2 curve. Because the fit curve is uninformative at n=6, select the power as the smallest value reaching R^2 >= 0.8 but floor it at the WGCNA-recommended default for small signed-hybrid networks (power 12) and state which rule decided the final value. Build modules with blockwiseModules using corType='bicor' with maxPOutliers=0.05, networkType='signed hybrid', TOMType='signed', minModuleSize=30, mergeCutHeight=0.25, deepSplit=2, numericLabels=TRUE, and a single block (the matrix is small enough). Output: gene-to-module assignment table, module size table including the grey module, module eigengenes (MEs) matrix (modules x 6 samples), the module eigengene dendrogram and adjacency heatmap, and the gene dendrogram with module colour bands. Report the number of non-grey modules and the percentage of genes assigned to grey.",
+              "acceptance_criteria": [
+                "Soft-threshold power selection is reported with the fit R^2 curve and an explicit statement of which rule (R^2 threshold vs small-n floor) set the final power",
+                "Module assignment table covers every gene in the input VST matrix, with the grey module explicitly included and its percentage reported",
+                "Module eigengene matrix has one row per module and exactly 6 sample columns",
+                "bicor with maxPOutliers=0.05 and signed-hybrid network type are used, not default Pearson unsigned",
+                "Gene dendrogram with module colours and module eigengene correlation heatmap are produced",
+                "The report states the sample count (n=6) and that this is below the size WGCNA is validated for"
+              ],
+              "constraints": [
+                "Use corType='bicor' with maxPOutliers=0.05 — plain Pearson is dominated by single-sample leverage at n=6",
+                "Use networkType='signed hybrid' and TOMType='signed' so anticorrelated genes are not merged into one module",
+                "minModuleSize=30, mergeCutHeight=0.25, deepSplit=2",
+                "Do not filter genes to a top-variance subset before building the network unless the retained gene count exceeds 15,000 — with 12,000 starting genes this is not needed, and variance pre-filtering at n=6 selects for the group contrast",
+                "Report the grey fraction prominently; do not quietly exclude grey from summary counts"
+              ],
+              "caveats": [
+                "WGCNA is not validated below ~15 samples; with 6 the module structure may largely restate the treated-vs-control contrast. State this as the primary caveat of the whole analysis, not a footnote",
+                "If pickSoftThreshold never reaches R^2 0.8 at any power, that is the expected outcome at this sample size — report it and use the floor value rather than forcing a spurious selection",
+                "A grey fraction above roughly 50% means little coherent structure was found; report that honestly instead of interpreting the small residual modules",
+                "Do not interpret module counts as a biological finding — the number of modules at n=6 is largely a function of the cut parameters"
+              ],
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "fastcluster",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Module-treatment association with exact permutation and leave-one-out stability",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which module eigengenes differ between the treated and control liver samples, and do those modules survive dropping any single sample?",
+              "context": "Consumes the module eigengenes and gene-module assignments from T1S2 and the condition labels from T1S1. This step answers the second half of the research question — which modules track treatment. With 3 vs 3 there are only choose(6,3)=20 label assignments, 10 distinct up to sign, so the smallest attainable exact permutation p-value is 0.1 even for a perfect separation. No module can reach conventional significance. The step must report that floor rather than quoting an unadjusted parametric p-value that looks significant.",
+              "description": "For each module eigengene from T1S2: (a) compute the correlation between the eigengene and the binary treatment indicator, and the difference in mean eigengene value between the two condition groups named in T1S1; (b) compute an exact permutation p-value by enumerating all 20 assignments of 3 treated / 3 control labels across the 6 samples and ranking the observed statistic — report explicitly that the minimum attainable p is 0.1 (or 0.05 one-sided depending on the enumeration used) and that no result can clear FDR 0.05 at this n; (c) apply BH correction across modules for completeness while stating it is uninformative at this floor; (d) assess stability by re-running the T1S2 WGCNA pipeline six times, each time leaving one sample out, and quantifying for each original module the fraction of its genes that stay co-assigned in the leave-one-out run (use a Jaccard index against the best-matching leave-one-out module, and WGCNA's modulePreservation Zsummary if it runs on 5 samples — if it does not converge, report the Jaccard result alone); (e) compute module membership (kME) for genes in the top treatment-associated modules and export the top 30 hub genes per such module by kME. Produce a table ranking modules by absolute eigengene-treatment correlation alongside their leave-one-out stability, and a heatmap of module eigengenes across the 6 samples annotated by condition.",
+              "acceptance_criteria": [
+                "Every module from T1S2 appears in the association table with its eigengene-treatment correlation, group mean difference, exact permutation p, and BH-adjusted p",
+                "The exact permutation p-value floor imposed by 3-vs-3 (p_min = 0.1 two-sided over 10 distinct splits) is stated explicitly in the output text",
+                "Leave-one-sample-out re-clustering is run for all 6 hold-outs, with a per-module Jaccard stability score reported against the full-data modules",
+                "Top 30 hub genes by kME are exported for each module whose eigengene-treatment correlation exceeds 0.8 in absolute value",
+                "A module eigengene heatmap across all 6 samples, annotated with the actual condition labels, is produced",
+                "Modules with high treatment correlation but low leave-one-out stability are flagged as single-sample-driven"
+              ],
+              "constraints": [
+                "Use exact enumeration of the 3/3 label permutations — do not use a random permutation sampler and do not report an asymptotic t-test p-value as the primary statistic",
+                "Do not declare any module 'significantly' associated with treatment; report effect size (correlation, mean difference) with the permutation p and its floor",
+                "Leave-one-out runs must reuse the identical WGCNA parameters from T1S2 (bicor, signed hybrid, same power, minModuleSize=30, mergeCutHeight=0.25)",
+                "Rank modules by effect size and stability jointly, not by p-value"
+              ],
+              "caveats": [
+                "A module eigengene can correlate perfectly with treatment purely because the module was constructed from the correlation structure the treatment contrast imposes — this is circularity, and the leave-one-out result is the only guard against it here",
+                "Leave-one-out at n=6 means re-clustering on 5 samples, which is even less stable than the full run; low Jaccard scores are expected and are informative about the fragility, not a bug",
+                "Do not present the strongest module as a validated treatment-responsive program — it is a hypothesis requiring an independent cohort"
+              ],
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "fastcluster",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "DESeq2 treated-vs-control differential expression as a reference contrast",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which individual genes are differentially expressed between the treated and control liver samples, and how much do the treatment-tracking modules simply restate that gene list?",
+              "context": "Consumes the filtered raw count matrix and condition labels from T1S1, and the module assignments and module-treatment ranking from T1S3. Its purpose is not to answer the research question directly but to give the module results a reference point: with n=6, a module that tracks treatment may be nothing more than the DE genes clustered together. Quantifying that overlap is what distinguishes a genuine co-expression program from a repackaged contrast.",
+              "description": "Run DESeq2 on the filtered raw counts with design ~condition, using the two condition level names recorded in T1S1 and setting control as the reference level. Extract results for the treated-vs-control contrast, apply apeglm log2 fold-change shrinkage, and apply BH FDR. Report the number of genes at FDR<0.05 and at FDR<0.1, an MA plot, a volcano plot, and the ranked results table. Then, for each module from T1S2, compute the enrichment of DE genes (FDR<0.1) within the module by Fisher's exact test against the retained-gene background, and report the overlap for the modules that T1S3 ranked as treatment-tracking. State plainly whether those modules are DE-gene-driven.",
+              "acceptance_criteria": [
+                "DESeq2 results table with shrunken log2FC and BH-adjusted p-values for all retained genes is produced, with the reference level explicitly reported as the control condition",
+                "Counts of genes at FDR<0.05 and FDR<0.1 are reported; if zero, that is stated as the result rather than the threshold being relaxed to manufacture hits",
+                "MA plot and volcano plot are produced",
+                "Per-module Fisher's exact enrichment of FDR<0.1 DE genes against the retained-gene background is tabulated for every module",
+                "An explicit statement of whether the top treatment-tracking modules from T1S3 are dominated by DE genes"
+              ],
+              "constraints": [
+                "Use DESeq2 with design ~condition and apeglm shrinkage for the log2 fold-change; do not use ashr or normal shrinkage without stating why",
+                "Background universe for the Fisher test is the retained gene set from T1S1, not all 12,000 input genes and not all human genes",
+                "Do not lower the FDR threshold below 0.1 to produce a longer gene list; if the list is empty, report an empty list"
+              ],
+              "caveats": [
+                "n=3 per group gives DESeq2 poor dispersion estimation; fold-change estimates are noisy even after shrinkage and the FDR<0.05 list may legitimately be empty",
+                "A strong DE-gene overlap in the treatment-tracking modules is the expected outcome at this sample size and should be reported as a limitation of the module analysis, not as mutual confirmation"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Functional annotation of treatment-tracking modules",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What biological processes are over-represented in the modules whose eigengenes track treatment, and do liver-relevant xenobiotic, bile acid, or fatty acid programs appear?",
+              "context": "Consumes the gene-to-module assignments from T1S2, the module-treatment ranking and stability scores from T1S3, and the retained gene universe from T1S1. Human liver tissue under drug treatment makes xenobiotic metabolism, bile acid metabolism, fatty acid metabolism, and inflammatory response the a priori interesting hallmark sets, but the test must be run over the full collections rather than only those. Required reference data: human hallmark gene sets and human GO biological process gene sets, both keyed on HGNC symbols; a human protein/gene identifier mapping resource is needed if the gene identifiers in counts.csv are Ensembl IDs rather than symbols.",
+              "description": "For every non-grey module, and in detail for the modules T1S3 ranked as treatment-tracking, run hypergeometric over-representation analysis against human hallmark gene sets and human GO biological process gene sets, using the T1S1 retained gene set as the background universe. First resolve identifier space: if the counts.csv gene identifiers are not HGNC symbols, map them to symbols using the staged human identifier mapping resource and report the mapping success rate and how many module genes were lost. Apply BH correction within each collection separately. Produce, per module, a table of enriched sets with set size, overlap size, odds ratio, raw p and BH q, and a dot plot of the top sets for the treatment-tracking modules. Cross-check explicitly whether any of HALLMARK_XENOBIOTIC_METABOLISM, HALLMARK_BILE_ACID_METABOLISM, HALLMARK_FATTY_ACID_METABOLISM, or HALLMARK_INFLAMMATORY_RESPONSE appear, and report their q-values whether or not they are significant.",
+              "acceptance_criteria": [
+                "Identifier space of counts.csv gene IDs is determined and reported; if mapping was required, the mapping rate and the number of unmapped module genes are stated",
+                "Over-representation results are produced for every non-grey module against both human hallmark and human GO BP collections, with the retained gene set as background",
+                "BH correction applied within each gene-set collection separately, with q-values reported",
+                "The four named liver-relevant hallmark sets are reported with their q-values regardless of significance",
+                "Dot plots of top enriched sets are produced for the treatment-tracking modules identified in T1S3",
+                "If the hallmark or GO reference is unavailable at run time, the step reports the absence explicitly and still emits the module gene lists so annotation can be done later"
+              ],
+              "constraints": [
+                "Background universe must be the retained expressed genes from T1S1 — never the full genome and never all sets in the collection",
+                "Use the human (Homo sapiens) gene set collections; the mouse and rat resources staged alongside them must not be used on this human liver dataset",
+                "Report unadjusted p alongside BH q; do not filter the output to q<0.05 only, since small modules at this sample size rarely clear correction",
+                "Do not run enrichment on the grey module as if it were a biological module; report it separately if at all"
+              ],
+              "caveats": [
+                "Modules derived from 6 samples may be statistically arbitrary; a coherent enrichment result does not retroactively validate the module, and this must be said in the interpretation",
+                "GO BP sets are nested, so significant hits arrive in correlated blocks — collapse redundant parent/child terms before reporting a count of enriched processes",
+                "If the treatment-tracking modules are largely DE genes (per T1S4), their enrichment is effectively the enrichment of the DE list, not of an independent co-expression program"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "dplyr",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "n_tested_genes_T1S2": 9402,
+  "n_mapped_to_real_identifier": 3403,
+  "n_unmapped_placeholder": 5999,
+  "mapped_share": 0.36194426717719635,
+  "n_duplicate_symbol_ids": 0,
+  "n_duplicate_entrez_ids": 0,
+  "notes": "gene column in symbol-keyed list is the T1S6-mapped HGNC symbol for mapped genes, else the original GENE##### placeholder ID (guaranteed not to match any real pathway gene set). entrez-keyed list is the same but with the T1S6-mapped Entrez Gene ID as string, for use against the Entrez-keyed WikiPathways GMT."
+}

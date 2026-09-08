@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on substance: variancePartition on voom log-CPM with condition and sex as random effects and centered age fixed, then a DESeq2 Wald test with ~ condition + sex + age_centered, explicit reference level and named contrast, median-of-ratios inside the model, BH at 0.05 with apeglm shrinkage, and a minimal >=10-in->=6 pre-filter that defers to independent filtering. It falls short of the reference in that the partition is scheduled after the DE fit and its result never feeds the design (no rule that a near-zero term may leave the model), there is no tabulation of sex and age by group to report balance, and the caveat that fractions from twelve samples are noisy is absent. The report section is otherwise complete (method, versions, design, thresholds, n_tested, n_de, NA accounting, sessionInfo) though it carries some boilerplate fields (collection version, annotation release) irrelevant to a plan with no enrichment. Enrichment is correctly omitted."
+}

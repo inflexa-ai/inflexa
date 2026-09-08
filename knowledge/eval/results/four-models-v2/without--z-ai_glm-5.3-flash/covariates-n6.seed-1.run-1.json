@@ -1,0 +1,292 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "covariates-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:11:33.504Z",
+  "elapsedMs": 99108,
+  "outcome": "plan_submitted",
+  "planId": "pln-3dac5d2e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DE with sex and age covariates",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group leaves ~8 residual df with the full design — wide confidence intervals are expected and must not be over-interpreted",
+          "If age (or sex) turns out to be near-perfectly aligned with condition, the full model is unidentifiable; report the degeneracy and fall back to the partially adjusted design, documenting the choice",
+          "DESeq2 requires integer counts; if Salmon counts are fractional, round and state it"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which genes differ between treated and control human adipose samples, after adjusting for sex and (non-matched) age, when the two groups are unpaired with 6 samples each?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not use the 'without-covariates' design as the primary model — the primary contrast is the full ~ sex + age + condition design",
+          "No batch term: the profile records a single batch, verify this rather than assuming a batch effect",
+          "All outputs must identify the exact design formula used"
+        ],
+        "description": "Differential expression of 6 treated vs 6 control human adipose samples (12000 genes, Salmon gene-level counts in counts.csv; metadata.csv carries condition, sex, age). Ref data needed: none beyond the input files. Steps: (1) load counts (12 samples x 12000 genes; first column gene identifiers — verify whether symbols or Ensembl and record which), check sample name consistency between counts.csv and metadata.csv, library sizes, and verify the single-batch claim; (2) QC on variance-stabilized counts: PCA, sample-to-sample distances, flag outliers; (3) assess covariate structure BEFORE modeling: condition x sex cross-tab, condition-vs-age correlation/imbalance (the user states groups are not age-matched) — quantify how much age and sex co-vary with treatment, since heavy confounding limits what adjustment can recover; (4) DESeq2 with design ~ sex + age + condition (age as centered continuous covariate, sex as factor), estimate dispersions, fit, contrast treated vs control, BH multiple-testing correction, apply apeglm LFC shrinkage; counts from Salmon may be fractional — coerce to integer and note it; (5) outputs: full results table, shrunken-LFC table, volcano plot, MA plot, PCA plot, and a short covariate-structure report (imbalance quantified, residual df noted given n=12 and 3-covariate design).",
+        "acceptance_criteria": [
+          "A full DESeq2 results table (gene, baseMean, log2FC treated-vs-control, lfcSE, stat, pvalue, padj) written to CSV plus a shrunk-LFC table",
+          "PCA and sample-distance QC figures with sample labels, retained in outputs",
+          "A covariate-structure report: condition-by-sex cross-tab, condition-vs-age correlation, dispersion and residual-outlier summary",
+          "Counts of genes at padj < 0.05 and padj < 0.1 with directional split"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Covariate sensitivity analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "caveats": [
+          "With age unmatched across groups, the condition-only model can produce spuriously 'significant' genes; label the reduced-model DE list as covariate-confounded, not as the answer",
+          "Do not present the reduced-model lists as validation of the full model — the full model is the primary result"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do the treated-vs-control DE calls survive when sex and age are dropped from the design, and which genes are only 'significant' because of the age/sex imbalance between groups?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Reuse the fitted full model from T1S1 rather than refitting where possible",
+          "Compare on the treated-vs-control contrast only",
+          "Report effect-size concordance, not just significance overlap"
+        ],
+        "description": "Assess how much the sex and age adjustment changes the answer, given the groups are not age-matched. Refit the same count matrix under reduced designs: (a) ~ condition (unadjusted), (b) ~ sex + condition, (c) ~ age + condition, alongside the primary ~ sex + age + condition model from T1S1. For each design, extract the treated-vs-control contrast at the same padj thresholds, compute DE-gene overlap (upset or simple counts), and Spearman correlation of the Wald statistics and log2FCs across all tested genes. Classify each significant gene from the primary model as robust (significant in all designs with same direction) or covariate-sensitive (significant only in the unadjusted or partially adjusted model — i.e. a candidate age- or sex-driven artifact). Where power permits, also report which single covariate accounts for the largest change (drop-one comparison). No reference data needed.",
+        "acceptance_criteria": [
+          "One summary table with DE gene counts (padj thresholds) per model design",
+          "Spearman correlation of Wald statistics and LFCs between full and reduced models",
+          "A two-list output: genes robust across all designs vs genes significant only after dropping covariates, annotated with which covariate drives the difference",
+          "An explicit power/confounding caveat for the reduced designs where age imbalance is large"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of adjusted DE result",
+        "agent": "enrichment-agent",
+        "track": "biological-interpretation",
+        "status": "pending",
+        "caveats": [
+          "With n=12 and ~8 residual df, individual genes are underpowered; pathway-level signal can be real even when few genes pass FDR — report the ranking regardless of how many single genes are significant",
+          "Adipose-relevant sets (lipid metabolism, adipogenesis, insulin signaling) are expected to dominate; comment on whether the direction of NES is consistent with the shrunken LFCs of member genes"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "data.table"
+        ],
+        "question": "Which biological pathways are enriched among genes shifted by treatment in adipose, ranked by the sex+age-adjusted differential-expression signal?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the primary (covariate-adjusted) ranking for fgsea; the sensitivity rankings from T1S2 may be run as a secondary comparison only if time permits",
+          "Gene sets must be human (HGNC symbols) — do not substitute the rat or mouse WikiPathways files staged alongside them",
+          "If the GMT or mapping resource is absent at run time, report the gene-level results table as the deliverable and state which resource was missing — do not block"
+        ],
+        "description": "Biological interpretation of the covariate-adjusted DE result. Ref data needed: human pathway gene sets — the staged WikiPathways Homo sapiens GMT (HGNC symbols) under /mnt/refs is provisioned for this; confirm presence before relying on it. Steps: (1) determine the identifier space of counts.csv; if Ensembl gene IDs, map to HGNC symbols via the staged UniProt human id-mapping table (Ensembl column 19 -> UniProt -> gene name) and report mapping coverage; if symbols, verify overlap against the GMT; (2) preranked GSEA with fgsea on the full gene ranking by the sex+age-adjusted Wald statistic (and, in parallel, the shrunken LFC ranking) against the WikiPathways human sets; (3) over-representation analysis (fgsea or clusterProfiler/enrichplot equivalent offline via org.Hs.eg.db if needed) on the padj < 0.05 gene set as a thresholded complement; (4) report top pathways with NES, padj, and leading-edge gene counts, flagging any pathway whose signal is carried by sex-specific genes (e.g. X/Y-linked) rather than treatment biology.",
+        "acceptance_criteria": [
+          "A ranked fgsea pathway table (pathway, NES, padj) from the covariate-adjusted ranking",
+          "An ORA table for the padj < 0.05 gene set",
+          "Confirmation of the identifier space used, with mapping counts if conversion was required",
+          "Clear labeling that the ranking derives from the sex+age-adjusted model"
+        ]
+      }
+    ],
+    "title": "Adipose treated-vs-control DE adjusted for sex and age",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is gene-level Salmon counts for 12 human adipose samples (12000 genes x 12 samples plus an identifier column), 6 treated vs 6 control, unpaired, single batch, with sex (F/M) and age (years) per sample. The research question is a straightforward two-group contrast, but the design constraints matter: groups are not matched on age, and both sex and age differ across subjects, so an unadjusted comparison risks attributing sex- or age-driven expression differences to treatment. The plan therefore (1) fits a DESeq2 model with design ~ sex + age + condition as the primary analysis, after quantifying how imbalanced the covariates actually are between groups (with only 12 samples and 3 covariates, residual df are ~8-9, so adjustment is affordable but must be justified); (2) runs a sensitivity analysis comparing the covariate-adjusted model against the unadjusted and single-covariate models, so the report can distinguish genes whose treatment signal is robust from genes that only appear significant because of the age/sex imbalance; and (3) interprets the adjusted result at the pathway level using the staged WikiPathways human GMT via preranked fgsea on the adjusted Wald statistics, which uses the full ranking rather than a significance threshold and is appropriate for this small n. Counts are Salmon gene-level; the profile does not record whether length correction was applied, which is a caveat to state in outputs but does not change the DE model choice. Identifier space of the count matrix is verified in the first step and harmonized before enrichment using the staged UniProt human id-mapping table if the IDs are Ensembl."
+  },
+  "usage": {
+    "inputTokens": 31174,
+    "outputTokens": 4165,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1849
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_e2618bb8b16740b39ce66fd0",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-10T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A full DESeq2 results table (gene, baseMean, log2FC treated-vs-control, lfcSE, stat, pvalue, padj) written to CSV plus a shrunk-LFC table",
+                "PCA and sample-distance QC figures with sample labels, retained in outputs",
+                "A covariate-structure report: condition-by-sex cross-tab, condition-vs-age correlation, dispersion and residual-outlier summary",
+                "Counts of genes at padj < 0.05 and padj < 0.1 with directional split"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Do not use the 'without-covariates' design as the primary model — the primary contrast is the full ~ sex + age + condition design",
+                "No batch term: the profile records a single batch, verify this rather than assuming a batch effect",
+                "All outputs must identify the exact design formula used"
+              ],
+              "caveats": [
+                "n=6 per group leaves ~8 residual df with the full design — wide confidence intervals are expected and must not be over-interpreted",
+                "If age (or sex) turns out to be near-perfectly aligned with condition, the full model is unidentifiable; report the degeneracy and fall back to the partially adjusted design, documenting the choice",
+                "DESeq2 requires integer counts; if Salmon counts are fractional, round and state it"
+              ],
+              "depends_on": [],
+              "description": "Differential expression of 6 treated vs 6 control human adipose samples (12000 genes, Salmon gene-level counts in counts.csv; metadata.csv carries condition, sex, age). Ref data needed: none beyond the input files. Steps: (1) load counts (12 samples x 12000 genes; first column gene identifiers — verify whether symbols or Ensembl and record which), check sample name consistency between counts.csv and metadata.csv, library sizes, and verify the single-batch claim; (2) QC on variance-stabilized counts: PCA, sample-to-sample distances, flag outliers; (3) assess covariate structure BEFORE modeling: condition x sex cross-tab, condition-vs-age correlation/imbalance (the user states groups are not age-matched) — quantify how much age and sex co-vary with treatment, since heavy confounding limits what adjustment can recover; (4) DESeq2 with design ~ sex + age + condition (age as centered continuous covariate, sex as factor), estimate dispersions, fit, contrast treated vs control, BH multiple-testing correction, apply apeglm LFC shrinkage; counts from Salmon may be fractional — coerce to integer and note it; (5) outputs: full results table, shrunken-LFC table, volcano plot, MA plot, PCA plot, and a short covariate-structure report (imbalance quantified, residual df noted given n=12 and 3-covariate design).",
+              "id": "T1S1",
+              "name": "DE with sex and age covariates",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "question": "Which genes differ between treated and control human adipose samples, after adjusting for sex and (non-matched) age, when the two groups are unpaired with 6 samples each?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "One summary table with DE gene counts (padj thresholds) per model design",
+                "Spearman correlation of Wald statistics and LFCs between full and reduced models",
+                "A two-list output: genes robust across all designs vs genes significant only after dropping covariates, annotated with which covariate drives the difference",
+                "An explicit power/confounding caveat for the reduced designs where age imbalance is large"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Reuse the fitted full model from T1S1 rather than refitting where possible",
+                "Compare on the treated-vs-control contrast only",
+                "Report effect-size concordance, not just significance overlap"
+              ],
+              "caveats": [
+                "With age unmatched across groups, the condition-only model can produce spuriously 'significant' genes; label the reduced-model DE list as covariate-confounded, not as the answer",
+                "Do not present the reduced-model lists as validation of the full model — the full model is the primary result"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Assess how much the sex and age adjustment changes the answer, given the groups are not age-matched. Refit the same count matrix under reduced designs: (a) ~ condition (unadjusted), (b) ~ sex + condition, (c) ~ age + condition, alongside the primary ~ sex + age + condition model from T1S1. For each design, extract the treated-vs-control contrast at the same padj thresholds, compute DE-gene overlap (upset or simple counts), and Spearman correlation of the Wald statistics and log2FCs across all tested genes. Classify each significant gene from the primary model as robust (significant in all designs with same direction) or covariate-sensitive (significant only in the unadjusted or partially adjusted model — i.e. a candidate age- or sex-driven artifact). Where power permits, also report which single covariate accounts for the largest change (drop-one comparison). No reference data needed.",
+              "id": "T1S2",
+              "name": "Covariate sensitivity analysis",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "data.table"
+              ],
+              "question": "Do the treated-vs-control DE calls survive when sex and age are dropped from the design, and which genes are only 'significant' because of the age/sex imbalance between groups?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "A ranked fgsea pathway table (pathway, NES, padj) from the covariate-adjusted ranking",
+                "An ORA table for the padj < 0.05 gene set",
+                "Confirmation of the identifier space used, with mapping counts if conversion was required",
+                "Clear labeling that the ranking derives from the sex+age-adjusted model"
+              ],
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Use the primary (covariate-adjusted) ranking for fgsea; the sensitivity rankings from T1S2 may be run as a secondary comparison only if time permits",
+                "Gene sets must be human (HGNC symbols) — do not substitute the rat or mouse WikiPathways files staged alongside them",
+                "If the GMT or mapping resource is absent at run time, report the gene-level results table as the deliverable and state which resource was missing — do not block"
+              ],
+              "caveats": [
+                "With n=12 and ~8 residual df, individual genes are underpowered; pathway-level signal can be real even when few genes pass FDR — report the ranking regardless of how many single genes are significant",
+                "Adipose-relevant sets (lipid metabolism, adipogenesis, insulin signaling) are expected to dominate; comment on whether the direction of NES is consistent with the shrunken LFCs of member genes"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Biological interpretation of the covariate-adjusted DE result. Ref data needed: human pathway gene sets — the staged WikiPathways Homo sapiens GMT (HGNC symbols) under /mnt/refs is provisioned for this; confirm presence before relying on it. Steps: (1) determine the identifier space of counts.csv; if Ensembl gene IDs, map to HGNC symbols via the staged UniProt human id-mapping table (Ensembl column 19 -> UniProt -> gene name) and report mapping coverage; if symbols, verify overlap against the GMT; (2) preranked GSEA with fgsea on the full gene ranking by the sex+age-adjusted Wald statistic (and, in parallel, the shrunken LFC ranking) against the WikiPathways human sets; (3) over-representation analysis (fgsea or clusterProfiler/enrichplot equivalent offline via org.Hs.eg.db if needed) on the padj < 0.05 gene set as a thresholded complement; (4) report top pathways with NES, padj, and leading-edge gene counts, flagging any pathway whose signal is carried by sex-specific genes (e.g. X/Y-linked) rather than treatment biology.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of adjusted DE result",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "data.table"
+              ],
+              "question": "Which biological pathways are enriched among genes shifted by treatment in adipose, ranked by the sex+age-adjusted differential-expression signal?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "biological-interpretation"
+            }
+          ],
+          "title": "Adipose treated-vs-control DE adjusted for sex and age",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The dataset is gene-level Salmon counts for 12 human adipose samples (12000 genes x 12 samples plus an identifier column), 6 treated vs 6 control, unpaired, single batch, with sex (F/M) and age (years) per sample. The research question is a straightforward two-group contrast, but the design constraints matter: groups are not matched on age, and both sex and age differ across subjects, so an unadjusted comparison risks attributing sex- or age-driven expression differences to treatment. The plan therefore (1) fits a DESeq2 model with design ~ sex + age + condition as the primary analysis, after quantifying how imbalanced the covariates actually are between groups (with only 12 samples and 3 covariates, residual df are ~8-9, so adjustment is affordable but must be justified); (2) runs a sensitivity analysis comparing the covariate-adjusted model against the unadjusted and single-covariate models, so the report can distinguish genes whose treatment signal is robust from genes that only appear significant because of the age/sex imbalance; and (3) interprets the adjusted result at the pathway level using the staged WikiPathways human GMT via preranked fgsea on the adjusted Wald statistics, which uses the full ranking rather than a significance threshold and is appropriate for this small n. Counts are Salmon gene-level; the profile does not record whether length correction was applied, which is a caveat to state in outputs but does not change the DE model choice. Identifier space of the count matrix is verified in the first step and harmonized before enrichment using the staged UniProt human id-mapping table if the IDs are Ensembl."
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 105
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

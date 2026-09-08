@@ -1,0 +1,154 @@
+{
+  "pvalue_histogram": {
+    "n_pvalues": 9782,
+    "ks_stat_tail_uniform_p_gt_0.5": 0.016218533914433397,
+    "ks_p_tail_uniform_p_gt_0.5": 0.20406538737345659,
+    "bins": [
+      {
+        "bin_low": 0.0,
+        "bin_high": 0.05,
+        "n_genes": 1533
+      },
+      {
+        "bin_low": 0.05,
+        "bin_high": 0.1,
+        "n_genes": 470
+      },
+      {
+        "bin_low": 0.1,
+        "bin_high": 0.15000000000000002,
+        "n_genes": 426
+      },
+      {
+        "bin_low": 0.15000000000000002,
+        "bin_high": 0.2,
+        "n_genes": 422
+      },
+      {
+        "bin_low": 0.2,
+        "bin_high": 0.25,
+        "n_genes": 435
+      },
+      {
+        "bin_low": 0.25,
+        "bin_high": 0.30000000000000004,
+        "n_genes": 453
+      },
+      {
+        "bin_low": 0.30000000000000004,
+        "bin_high": 0.35000000000000003,
+        "n_genes": 430
+      },
+      {
+        "bin_low": 0.35000000000000003,
+        "bin_high": 0.4,
+        "n_genes": 449
+      },
+      {
+        "bin_low": 0.4,
+        "bin_high": 0.45,
+        "n_genes": 435
+      },
+      {
+        "bin_low": 0.45,
+        "bin_high": 0.5,
+        "n_genes": 413
+      },
+      {
+        "bin_low": 0.5,
+        "bin_high": 0.55,
+        "n_genes": 468
+      },
+      {
+        "bin_low": 0.55,
+        "bin_high": 0.6000000000000001,
+        "n_genes": 458
+      },
+      {
+        "bin_low": 0.6000000000000001,
+        "bin_high": 0.65,
+        "n_genes": 414
+      },
+      {
+        "bin_low": 0.65,
+        "bin_high": 0.7000000000000001,
+        "n_genes": 387
+      },
+      {
+        "bin_low": 0.7000000000000001,
+        "bin_high": 0.75,
+        "n_genes": 433
+      },
+      {
+        "bin_low": 0.75,
+        "bin_high": 0.8,
+        "n_genes": 399
+      },
+      {
+        "bin_low": 0.8,
+        "bin_high": 0.8500000000000001,
+        "n_genes": 458
+      },
+      {
+        "bin_low": 0.8500000000000001,
+        "bin_high": 0.9,
+        "n_genes": 447
+      },
+      {
+        "bin_low": 0.9,
+        "bin_high": 0.9500000000000001,
+        "n_genes": 396
+      },
+      {
+        "bin_low": 0.9500000000000001,
+        "bin_high": 1.0,
+        "n_genes": 456
+      }
+    ]
+  },
+  "gene_length_bias_qc": {
+    "n_genes_matched_to_length_table": 9782,
+    "n_genes_unmatched": 0,
+    "spearman_length_vs_abs_shrunken_log2fc": {
+      "rho": 4.409509440066505e-05,
+      "p": 0.996520736765952
+    },
+    "spearman_length_vs_neg_log10_padj": {
+      "rho": -0.0012338176917381252,
+      "p": 0.9047842331768465
+    },
+    "median_length_significant_genes": 2028.0,
+    "median_length_nonsignificant_genes": 1986.0,
+    "mannwhitney_significant_vs_nonsignificant_length": {
+      "stat": 3894890.5,
+      "p": 0.9807680523579274
+    }
+  },
+  "gene_id_composition": [
+    {
+      "gene_set": "all_prefiltered",
+      "n_total": 9782,
+      "n_named_symbol": 3541,
+      "n_placeholder_id": 6241,
+      "pct_placeholder": 63.8
+    },
+    {
+      "gene_set": "tested_after_independent_filtering",
+      "n_total": 9402,
+      "n_named_symbol": 3403,
+      "n_placeholder_id": 5999,
+      "pct_placeholder": 63.8
+    },
+    {
+      "gene_set": "significant_padj_lt_0.05",
+      "n_total": 875,
+      "n_named_symbol": 408,
+      "n_placeholder_id": 467,
+      "pct_placeholder": 53.4
+    }
+  ],
+  "gene_id_enrichment_test": {
+    "fisher_odds_ratio_placeholder_vs_named_in_significant": 0.6196855549884451,
+    "fisher_p_placeholder_vs_named_in_significant": 3.2504111449151117e-11
+  }
+}

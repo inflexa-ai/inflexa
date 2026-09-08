@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the 2x2 design correctly: a PyDESeq2 interaction model (~genotype + treatment + genotype:treatment) with explicit WT/vehicle references, a Wald test on the interaction coefficient, and the two within-genotype simple effects via explicit contrast vectors, all in Python with size factors estimated inside the model and a minimal, justified pre-filter. QC is blind VST/PCA/distances/library sizes coloured by all factors with a flag-not-drop policy carried forward; BH at alpha 0.05 within contrast, shrinkage with an explicit substitution rule if ashr-style shrinkage cannot take a contrast, and lfcThreshold in-test rather than post hoc. Minor gaps: no explicit fallback (combined group factor or stop) if the installed PyDESeq2 cannot express the interaction formula itself, and the optional enrichment step, while it names a versioned human collection, the tested-gene universe, the Wald ranking metric and a seed, omits a gene-set size window. The report specification is complete with versions, seeds, thresholds, counts and the three stated limitations."
+}

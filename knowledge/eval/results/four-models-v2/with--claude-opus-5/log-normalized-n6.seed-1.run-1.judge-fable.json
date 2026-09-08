@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: it rejects DESeq2/edgeR/voom because only log2(TPM+1) values exist, runs a value-range check before the model, and applies limma-trend (eBayes trend=TRUE, robust=TRUE) directly on the delivered matrix with no re-normalization, no second log, and no pseudo-count conversion. QC precedes the test with PCA/MDS on top 500 genes, distance heatmap, per-sample distributions coloured by condition, and a flag-not-remove outlier policy carried into a with/without sensitivity report. The design (~0 + condition, control as reference, treated - control contrast) is explicit, BH at 0.05 is stated, and any FC threshold is tested via treat() rather than post hoc; enrichment is correctly omitted as unasked. The filter floor is justified as label-independent and sample-count based but its actual value is left to be read from the distribution, a minor vagueness; the report lists method, versions, design, thresholds, n_tested, n_de, sessionInfo and the design caveats."
+}

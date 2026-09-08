@@ -1,0 +1,186 @@
+{
+  "template": "tpl-deseq2-two-group@1.1.0",
+  "method": "DESeq2 Wald test",
+  "import": {
+    "state": "integer_counts",
+    "mode": "gene_counts_without_length_offset",
+    "counts_from_abundance": "no",
+    "length_offset": false,
+    "tx2gene": null,
+    "files": [
+      {
+        "sample": null,
+        "path": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+        "sha256": "033a807098f0b05daa4792f5c695e4a6a21f3048d700c09ad77b7f49a10f60ac"
+      }
+    ]
+  },
+  "contrast": {
+    "factor": "condition",
+    "test": "treated",
+    "reference": "control"
+  },
+  "design": "~condition",
+  "n_samples": 12,
+  "group_sizes": {
+    "control": 6,
+    "treated": 6
+  },
+  "n_genes_input": 12000,
+  "n_genes_after_filter": 9782,
+  "n_genes_tested": 9402,
+  "n_significant": 875,
+  "n_up": 513,
+  "n_down": 362,
+  "alpha": 0.05,
+  "lfc_threshold": 0,
+  "lfc_shrink": "apeglm",
+  "min_count": 10,
+  "min_samples": 6,
+  "size_factors": {
+    "sample_01": 0.2835,
+    "sample_02": 0.7549,
+    "sample_03": 1.1026,
+    "sample_04": 1.8498,
+    "sample_05": 1.0492,
+    "sample_06": 1.3677,
+    "sample_07": 1.4034,
+    "sample_08": 0.976,
+    "sample_09": 1.509,
+    "sample_10": 0.9342,
+    "sample_11": 1.2009,
+    "sample_12": 1.0311
+  },
+  "na_padj": {
+    "n_cooks_outlier_na_pvalue": 0,
+    "n_independent_filtering_low_mean": 380,
+    "cooks_outlier_by_sample": {
+      "sample_01": 0,
+      "sample_02": 0,
+      "sample_03": 0,
+      "sample_04": 0,
+      "sample_05": 0,
+      "sample_06": 0,
+      "sample_07": 0,
+      "sample_08": 0,
+      "sample_09": 0,
+      "sample_10": 0,
+      "sample_11": 0,
+      "sample_12": 0
+    }
+  },
+  "shallow_sample_decision": {
+    "sample": "sample_01",
+    "decision": "kept",
+    "rationale": "T1S1 found sample_01 at 0.26x median library depth (size factor 0.29, lowest of the cohort) but correctly placed on the control side of PC1 with no condition misassignment; its low depth widens its per-gene dispersion/CI contribution via the size factor rather than biasing fold changes systematically. Per plan policy, depth alone is not a removal criterion. This step additionally checked whether sample_01 disproportionately drives Cook's-outlier NA calls (see cooks_outlier_by_sample); a diffuse attribution across samples supports keeping it, a concentration in sample_01 alone would be evidence to revisit."
+  },
+  "length_bias_diagnostic": {
+    "max_abs_pearson_r": 0.0176,
+    "sample_with_max_abs_r": "sample_07",
+    "per_sample": [
+      {
+        "sample": "sample_01",
+        "n_genes": 9782,
+        "pearson_r": -0.0106524909016026,
+        "pearson_p": 0.292126029781115,
+        "spearman_rho": -0.00734797262712121,
+        "spearman_p": 0.467433787689791
+      },
+      {
+        "sample": "sample_02",
+        "n_genes": 9782,
+        "pearson_r": -0.0121558363717453,
+        "pearson_p": 0.229304822247745,
+        "spearman_rho": -0.0162364303546713,
+        "spearman_p": 0.108329196064934
+      },
+      {
+        "sample": "sample_03",
+        "n_genes": 9782,
+        "pearson_r": 0.00659796573966531,
+        "pearson_p": 0.514085849964334,
+        "spearman_rho": 0.0031865452277058,
+        "spearman_p": 0.752668589472011
+      },
+      {
+        "sample": "sample_04",
+        "n_genes": 9782,
+        "pearson_r": 0.00436426383821421,
+        "pearson_p": 0.666039414725799,
+        "spearman_rho": 0.00221277353787137,
+        "spearman_p": 0.826786807525481
+      },
+      {
+        "sample": "sample_05",
+        "n_genes": 9782,
+        "pearson_r": 0.00405684179884012,
+        "pearson_p": 0.688281544532773,
+        "spearman_rho": -0.00404428908693954,
+        "spearman_p": 0.689195655770529
+      },
+      {
+        "sample": "sample_06",
+        "n_genes": 9782,
+        "pearson_r": 0.0109948866550709,
+        "pearson_p": 0.276890068213875,
+        "spearman_rho": 0.0120859054439766,
+        "spearman_p": 0.231995145520833
+      },
+      {
+        "sample": "sample_07",
+        "n_genes": 9782,
+        "pearson_r": -0.0176414764729749,
+        "pearson_p": 0.0810327027426684,
+        "spearman_rho": -0.00874807522394347,
+        "spearman_p": 0.386969876441221
+      },
+      {
+        "sample": "sample_08",
+        "n_genes": 9782,
+        "pearson_r": 0.00758556071683695,
+        "pearson_p": 0.453160053177925,
+        "spearman_rho": 0.00396462111801642,
+        "spearman_p": 0.695007753977506
+      },
+      {
+        "sample": "sample_09",
+        "n_genes": 9782,
+        "pearson_r": 0.00900377244163563,
+        "pearson_p": 0.373244003606253,
+        "spearman_rho": 0.00719887511832141,
+        "spearman_p": 0.476516957332927
+      },
+      {
+        "sample": "sample_10",
+        "n_genes": 9782,
+        "pearson_r": 0.00803201164766431,
+        "pearson_p": 0.427015377797319,
+        "spearman_rho": 0.00780069267390923,
+        "spearman_p": 0.440450439030631
+      },
+      {
+        "sample": "sample_11",
+        "n_genes": 9782,
+        "pearson_r": 0.00485927102343645,
+        "pearson_p": 0.630841526563767,
+        "spearman_rho": 0.00381146186140822,
+        "spearman_p": 0.706231574992879
+      },
+      {
+        "sample": "sample_12",
+        "n_genes": 9782,
+        "pearson_r": -0.0120788768637631,
+        "pearson_p": 0.232266777046346,
+        "spearman_rho": -0.00726332552792694,
+        "spearman_p": 0.472578757357319
+      }
+    ]
+  },
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "DESeq2": "1.52.0",
+    "tximport": null,
+    "apeglm": "1.34.0",
+    "ashr": "2.2.63"
+  }
+}

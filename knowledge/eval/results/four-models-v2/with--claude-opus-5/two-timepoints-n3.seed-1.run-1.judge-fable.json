@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan treats the design correctly as a 2x2 factorial, fits ~condition + time + condition:time with time as a two-level factor (explicitly rejecting time_hours), tests the interaction coefficient by Wald as the primary result, and reports the two simple effects with ashr shrinkage and an edgeR QL F-test as a robustness check. Reference levels, the filter (>=10 counts in >=3 samples, tied to the smallest group), in-model median-of-ratios normalization, BH at 0.05 with independent filtering, and lfcThreshold-in-test rather than post hoc are all stated. QC is blind VST PCA plus distance heatmap coloured by condition and time with library sizes and a flag-only policy; the downstream handling of a flagged outlier beyond Cook's flagging is only lightly specified. Enrichment is correctly omitted with a stated reason, and the report record covers method, versions, design, contrasts, thresholds, counts, power and length-offset caveats, and sessionInfo."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald with ~condition on raw counts fits the 6v6 unpaired single-batch design, and the shallow sample is handled well: library size, size factor, Cook's, PCA/distance inspection, kept by default with an explicit leave-one-out sensitivity rather than silent removal. Size-factor normalization is stated inside the model. Weaknesses: the low-count prefilter has no stated threshold or justification; apeglm is listed as a package but LFC shrinkage is never stated as applied and BH is not named; the reference level is only implied by 'treated-vs-control'. Enrichment is strong (full Wald-stat ranking for fgsea, named Hallmark 2026.1 GMT, ORA universe explicitly restricted to tested genes) but lacks a stated set-size window; the report specifies versions and thresholds but not the counts of tested/significant genes."
+}

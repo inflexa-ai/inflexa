@@ -1,0 +1,758 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:45:03.154Z",
+  "elapsedMs": 131065,
+  "outcome": "plan_submitted",
+  "planId": "pln-57ad739f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalize counts, flag low-library sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Given the 12000x13 Salmon gene-count matrix and the 12-sample (6 anti-PD-1 vs 6 isotype control) metadata table, what is the normalized (CPM/TMM) expression matrix to feed into deconvolution, and how should sample_01 (library size ~4x below median) be handled?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and sample IDs are matched/reconciled between the two files (13 count columns vs 12 metadata rows reconciled, extra column identified e.g. gene ID column)",
+          "Library size per sample is reported; sample_01 is explicitly flagged as an outlier with its fold-deviation from the median quantified",
+          "A TMM- or median-of-ratios-normalized log-CPM matrix is produced and saved for downstream steps",
+          "A decision is recorded on whether sample_01 is retained (with a documented caveat) or excluded, plus a sensitivity flag for downstream steps to run both ways if retained"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "mMCPcounter murine immune/stromal deconvolution",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "mMCPcounter",
+          "edgeR"
+        ],
+        "question": "Using the mMCPcounter method (16 flow-cytometry-validated murine immune and stromal cell populations, self-contained marker set, no external reference file needed), what is the per-sample abundance score for each cell population across all 12 tumor samples, and how do treated vs control samples differ?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "mMCPcounter runs successfully on the normalized mouse gene-symbol matrix from T1S1 and returns a cell-type x sample score matrix covering all 16 populations for all 12 samples",
+          "Output table includes sample_01 with its score reported alongside the QC flag from T1S1",
+          "Per-cell-type treated-vs-control comparison (anti-PD-1 vs isotype control, unpaired, n=6/6) is run using a nonparametric test (Wilcoxon rank-sum) with BH-adjusted p-values across the 16 populations",
+          "Results reported both including and excluding sample_01 to show sensitivity to the low-library-size sample"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Orthogonal PanglaoDB marker-based ssGSEA cross-check",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA"
+        ],
+        "question": "As an independent cross-check of the mMCPcounter estimates, what per-sample enrichment scores do mouse-filtered PanglaoDB immune/stromal cell-type marker sets yield via ssGSEA on the same normalized expression matrix, and do they agree in direction with mMCPcounter for the anti-PD-1 vs control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "PanglaoDB marker table is filtered to the mouse ('Mm') species column and converted into per-cell-type gene sets covering major immune/stromal lineages (T cell, NK, B cell, macrophage/monocyte, DC, neutrophil, fibroblast, endothelial) matched where possible to mMCPcounter's populations",
+          "ssGSEA (via GSVA) produces a cell-type x sample enrichment score matrix for all 12 samples using the same normalized matrix as T2S1",
+          "Treated vs control comparison per cell type uses Wilcoxon rank-sum with BH correction, reported alongside T2S1's results for the matched cell types to assess concordance",
+          "Any cell type where ssGSEA and mMCPcounter disagree in direction of the treatment effect is explicitly flagged as inconsistent rather than reconciled by narrative"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Compositional summary and treatment-effect statistics",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "vegan",
+          "ComplexHeatmap",
+          "ggpubr",
+          "pheatmap"
+        ],
+        "question": "Integrating the mMCPcounter and PanglaoDB-ssGSEA composition estimates across all 12 samples, what is the overall immune/stromal landscape of each sample, and does composition differ significantly between the 6 anti-PD-1 and 6 isotype-control tumors, either cell-type-by-cell-type or as a whole compositional profile?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "acceptance_criteria": [
+          "A per-sample stacked-composition visualization and a cell-type x sample heatmap are produced for both estimator outputs",
+          "A multivariate compositional test (PERMANOVA on Bray-Curtis or Euclidean distance of the scaled composition matrix, treated vs control) is run in addition to the per-cell-type univariate tests from T2S1/T2S2",
+          "A PCA of the composition matrix is produced with samples colored by condition and sample_01 marked distinctly",
+          "Final summary table lists, per cell type: mMCPcounter effect direction/significance, ssGSEA effect direction/significance, and whether they agree, with explicit statement that n=6/6 unpaired is modestly powered and that sample_01's low library size is a documented caveat on its individual estimates",
+          "No claim of a significant treatment effect is made for a cell type unless it is significant after BH correction in at least the primary (mMCPcounter) estimator"
+        ]
+      }
+    ],
+    "title": "Mouse TME immune/stromal composition, anti-PD-1 vs control",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The input is a bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 samples, mouse gene symbols) subcutaneous tumor dataset comparing 6 anti-PD-1-treated vs 6 isotype-control mice, unpaired, single batch. Sample sample_01 has a library size ~4x below the median, which is a real QC concern for count-based deconvolution and differential testing alike. There is no reference single-cell atlas, LM22-style human signature matrix, or mouse-specific deconvolution package matrix staged directly as a reference file, but the sandbox carries several validated bulk-deconvolution tools that ship their own reference marker sets internally: mMCPcounter (16 mouse immune/stromal populations, validated by flow cytometry per Petitprez et al. 2020, Genome Medicine) and MCPcounter/ConsensusTME/quantiseqr/EPIC (human-oriented, requiring ortholog mapping and weaker for mouse). Because mMCPcounter is purpose-built and flow-validated for murine tumor tissue and needs no external reference file, it is the primary method. A PanglaoDB marker-based ssGSEA/UCell scoring pass (using the staged PanglaoDB mouse markers) is added as an orthogonal, marker-set-based cross-check that does not depend on the mMCPcounter internal model, since a second, independent estimation approach is standard practice for composition claims that will inform a treatment-effect conclusion. The plan proceeds: (1) load/QC counts and metadata, normalize (CPM/TMM), flag sample_01 explicitly rather than silently dropping it, and run mMCPcounter to get per-sample cell-type abundance scores for all 12 samples; (2) run an independent marker-signature scoring pass (ssGSEA via GSVA, using PanglaoDB mouse immune/stromal markers) as an orthogonal validation of composition estimates; (3) statistically compare treated vs control per cell type (Wilcoxon rank-sum given n=6/6, with BH correction across cell types), report effect sizes and a sensitivity check with/without sample_01; (4) produce a compositional summary (stacked bars, heatmap, PCA/PERMANOVA on the composition matrix) integrating both estimators to characterize overall immune/stromal landscape shift under anti-PD-1."
+  },
+  "usage": {
+    "inputTokens": 2667948,
+    "outputTokens": 7471,
+    "cacheCreationInputTokens": 139508,
+    "cacheReadInputTokens": 2527972,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01CePX2MoQnu8mLRLCff4k6m",
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse immune cell signature deconvolution"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01TSZbaJsTnmkRwDA4ojNVq6",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "MCPcounter",
+          "BisqueRNA",
+          "GSVA",
+          "decoupleR",
+          "ConsensusTME",
+          "mMCPcounter",
+          "quantiseqr",
+          "xCell",
+          "xCell2",
+          "EPIC"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01TBbbhhBGoamPzb2hMUXMfS",
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01Y6Kb1DzViWs7bkhL72zWfi",
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_0191b9E1c6A6EQZv4sYf6rbj",
+      "name": "list_available_refs",
+      "input": {
+        "query": "mMCP-counter mouse marker",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01HU2acH2bD7Yy1wZFbrYMdG",
+      "name": "list_available_refs",
+      "input": {
+        "query": "immgen",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_014qzCfg1rBWkiEcphTNau7A",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression",
+        "limit": 100
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01Qr4g7eC84YTnRFf4Nx8YVa",
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression",
+        "limit": 100
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_014UWKFDcEgpr7mJM1cfeyWR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution mouse gene set marker signature",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01BvB6dCoAF1rjZ7rNt4ZPp6",
+      "name": "list_available_refs",
+      "input": {
+        "category": "cell-typing",
+        "limit": 100,
+        "path": "managed"
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_011JFGBL6xoSgzY5jnuD33VK",
+      "name": "list_available_refs",
+      "input": {
+        "query": "user",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_01AY46uVUkLrBk4q9duwhEdo",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/panglaodb-markers"
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01A3qTJRYPQicXP1HgKF5Smp",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "mMCP-counter mouse tumor microenvironment immune cell deconvolution bulk RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 470
+    },
+    {
+      "toolUseId": "toolu_016vgmyKGFdEdMsU5oYstTMA",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "mMCP-counter murine transcriptomic immune cell abundance",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 911
+    },
+    {
+      "toolUseId": "toolu_01TLHxB842ubtjS15Gv5A2f2",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "33023656"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 681
+    },
+    {
+      "toolUseId": "toolu_016T2KnuXbhyRhi3XxG3H9AQ",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "this is a placeholder, not used"
+      },
+      "outcome": "error",
+      "durationMs": 1658
+    },
+    {
+      "toolUseId": "toolu_01K71EBN1wjXunSgGtGowbXv",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "immunedeconv",
+        "query": "mouse deconvolution mMCPcounter method species mouse"
+      },
+      "outcome": "error",
+      "durationMs": 1657
+    },
+    {
+      "toolUseId": "toolu_01MkBQWajhkD9rbXhg96xQAG",
+      "name": "search_github_repos",
+      "input": {
+        "query": "mMCPcounter mouse immune deconvolution",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 307
+    },
+    {
+      "toolUseId": "toolu_013W6QFWw9dyo1eFGquxXyoy",
+      "name": "search_github_repos",
+      "input": {
+        "query": "mMCPcounter",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 307
+    },
+    {
+      "toolUseId": "toolu_01A8GXq75Av8vGyVshn1LuhB",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "immunedeconv R package mouse gene expression tumor microenvironment quantiseq mMCPcounter",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 226
+    },
+    {
+      "toolUseId": "toolu_015eNRKR3RvdrHSCruUVVWvz",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "anti-PD-1 tumor microenvironment mouse RNA-seq immune deconvolution checkpoint blockade",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1070
+    },
+    {
+      "toolUseId": "toolu_01HpBRra8DkH7RgcD4urwPee",
+      "name": "list_available_refs",
+      "input": {
+        "query": "immunedeconv method table species",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01EKmuB6fLdP1SePKuv3T4D1",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "preprocessCore",
+          "sva",
+          "GSVA",
+          "singscore",
+          "UCell",
+          "AnnotationDbi",
+          "org.Mm.eg.db",
+          "limma",
+          "edgeR",
+          "PCAtools",
+          "ComplexHeatmap",
+          "pheatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_018PiG3DUgecThk28N2cprRK",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb-immunologic-mouse c7",
+        "limit": 10
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01WfzFVPQ42JMuUZbVpMgc1w",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "library size normalization outlier sample RNA-seq bulk deconvolution downweight",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 928
+    },
+    {
+      "toolUseId": "toolu_01UwSmF9JwQWUCfrQ3jqis7y",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "rnanorm",
+          "pydeseq2",
+          "DESeq2",
+          "clusterProfiler",
+          "fgsea",
+          "reactome2py"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_018fxd3MmSRaNAz1KD1HgPGW",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mixOmics",
+          "vegan",
+          "gtools",
+          "ggpubr",
+          "rstatix"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_015U9BQJAAbJ831SFCpWRycT",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ConsensusClusterPlus",
+          "seqinr",
+          "sp"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_015srSMZtABDHmg8QJxezesF",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "mMCP-counter mouse tumor immune stromal cell deconvolution checkpoint blockade",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8908
+    },
+    {
+      "toolUseId": "toolu_01JF6KTFYYNnPrv76U57EF9T",
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "anti-PD-1 mouse subcutaneous tumor RNA-seq",
+        "organism": "Mus musculus",
+        "datasetType": "gse",
+        "limit": "5"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01G5C3fwAp8YrJKEoHJVXLN7",
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "anti-PD-1 mouse subcutaneous tumor RNA-seq",
+        "organism": "Mus musculus",
+        "datasetType": "gse",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 778
+    },
+    {
+      "toolUseId": "toolu_01JhWGnQfhiZFBhq3YWVACJF",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "mMCPcounter immunedeconv PanglaoDB mouse marker gene signature score tumor",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 245
+    },
+    {
+      "toolUseId": "toolu_01AWBeAj8wfPioEN13x36wvA",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ssGSEA singscore cell type signature score bulk RNA-seq tumor microenvironment mouse",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 487
+    },
+    {
+      "toolUseId": "toolu_019h4178FE2GS94Hp5q3W9ia",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "33023656"
+        ],
+        "maxAuthors": 1,
+        "maxMeshTerms": 1
+      },
+      "outcome": "ok",
+      "durationMs": 662
+    },
+    {
+      "toolUseId": "toolu_019QXN1nJ4aSNMQCTZgh8iDP",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "PanglaoDB marker genes cell type score bulk RNA-seq deconvolution",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8852
+    },
+    {
+      "toolUseId": "toolu_01PKbzFkqQSN9hUHJCrk9Yks",
+      "name": "search_arxiv",
+      "input": {
+        "query": "bulk RNA-seq immune cell deconvolution mouse tumor microenvironment",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 569
+    },
+    {
+      "toolUseId": "toolu_01GwZ9o15DQPw357uLBqMBqe",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomaRt",
+          "immunedeconv",
+          "ggpubr",
+          "car",
+          "coin"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01EzpZdsUZDtV8dQH3LHbrFK",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "mMCPcounter",
+          "quantiseqr",
+          "EPIC",
+          "xCell2",
+          "MCPcounter",
+          "ConsensusTME"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_016ZYVVfdhV35QrfdGtdS47q",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "msigdbr",
+          "ImmuCellAI",
+          "PanglaoDB"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01MvF2kUYtZzuTuWARYDy4bz",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "DESeqDataSet"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01WQpPrYWTvUTM3zbs8RzM53",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "mMCP-counter validation flow cytometry 16 populations mouse tumor",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 559
+    },
+    {
+      "toolUseId": "toolu_01DoRat2rEcKMP9YcLuFn1hb",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "33023656"
+        ],
+        "maxAuthors": 0,
+        "maxMeshTerms": 0
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01RYUh1CtU6pgtW2J96kruzW",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Mouse TME immune/stromal composition, anti-PD-1 vs control",
+          "analytical_narrative": "The input is a bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 samples, mouse gene symbols) subcutaneous tumor dataset comparing 6 anti-PD-1-treated vs 6 isotype-control mice, unpaired, single batch. Sample sample_01 has a library size ~4x below the median, which is a real QC concern for count-based deconvolution and differential testing alike. There is no reference single-cell atlas, LM22-style human signature matrix, or mouse-specific deconvolution package matrix staged directly as a reference file, but the sandbox carries several validated bulk-deconvolution tools that ship their own reference marker sets internally: mMCPcounter (16 mouse immune/stromal populations, validated by flow cytometry per Petitprez et al. 2020, Genome Medicine) and MCPcounter/ConsensusTME/quantiseqr/EPIC (human-oriented, requiring ortholog mapping and weaker for mouse). Because mMCPcounter is purpose-built and flow-validated for murine tumor tissue and needs no external reference file, it is the primary method. A PanglaoDB marker-based ssGSEA/UCell scoring pass (using the staged PanglaoDB mouse markers) is added as an orthogonal, marker-set-based cross-check that does not depend on the mMCPcounter internal model, since a second, independent estimation approach is standard practice for composition claims that will inform a treatment-effect conclusion. The plan proceeds: (1) load/QC counts and metadata, normalize (CPM/TMM), flag sample_01 explicitly rather than silently dropping it, and run mMCPcounter to get per-sample cell-type abundance scores for all 12 samples; (2) run an independent marker-signature scoring pass (ssGSEA via GSVA, using PanglaoDB mouse immune/stromal markers) as an orthogonal validation of composition estimates; (3) statistically compare treated vs control per cell type (Wilcoxon rank-sum given n=6/6, with BH correction across cell types), report effect sizes and a sensitivity check with/without sample_01; (4) produce a compositional summary (stacked bars, heatmap, PCA/PERMANOVA on the composition matrix) integrating both estimators to characterize overall immune/stromal landscape shift under anti-PD-1.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalize counts, flag low-library sample",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Given the 12000x13 Salmon gene-count matrix and the 12-sample (6 anti-PD-1 vs 6 isotype control) metadata table, what is the normalized (CPM/TMM) expression matrix to feed into deconvolution, and how should sample_01 (library size ~4x below median) be handled?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and sample IDs are matched/reconciled between the two files (13 count columns vs 12 metadata rows reconciled, extra column identified e.g. gene ID column)",
+                "Library size per sample is reported; sample_01 is explicitly flagged as an outlier with its fold-deviation from the median quantified",
+                "A TMM- or median-of-ratios-normalized log-CPM matrix is produced and saved for downstream steps",
+                "A decision is recorded on whether sample_01 is retained (with a documented caveat) or excluded, plus a sensitivity flag for downstream steps to run both ways if retained"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "mMCPcounter murine immune/stromal deconvolution",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Using the mMCPcounter method (16 flow-cytometry-validated murine immune and stromal cell populations, self-contained marker set, no external reference file needed), what is the per-sample abundance score for each cell population across all 12 tumor samples, and how do treated vs control samples differ?",
+              "acceptance_criteria": [
+                "mMCPcounter runs successfully on the normalized mouse gene-symbol matrix from T1S1 and returns a cell-type x sample score matrix covering all 16 populations for all 12 samples",
+                "Output table includes sample_01 with its score reported alongside the QC flag from T1S1",
+                "Per-cell-type treated-vs-control comparison (anti-PD-1 vs isotype control, unpaired, n=6/6) is run using a nonparametric test (Wilcoxon rank-sum) with BH-adjusted p-values across the 16 populations",
+                "Results reported both including and excluding sample_01 to show sensitivity to the low-library-size sample"
+              ],
+              "packages": [
+                "mMCPcounter",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Orthogonal PanglaoDB marker-based ssGSEA cross-check",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "As an independent cross-check of the mMCPcounter estimates, what per-sample enrichment scores do mouse-filtered PanglaoDB immune/stromal cell-type marker sets yield via ssGSEA on the same normalized expression matrix, and do they agree in direction with mMCPcounter for the anti-PD-1 vs control contrast?",
+              "acceptance_criteria": [
+                "PanglaoDB marker table is filtered to the mouse ('Mm') species column and converted into per-cell-type gene sets covering major immune/stromal lineages (T cell, NK, B cell, macrophage/monocyte, DC, neutrophil, fibroblast, endothelial) matched where possible to mMCPcounter's populations",
+                "ssGSEA (via GSVA) produces a cell-type x sample enrichment score matrix for all 12 samples using the same normalized matrix as T2S1",
+                "Treated vs control comparison per cell type uses Wilcoxon rank-sum with BH correction, reported alongside T2S1's results for the matched cell types to assess concordance",
+                "Any cell type where ssGSEA and mMCPcounter disagree in direction of the treatment effect is explicitly flagged as inconsistent rather than reconciled by narrative"
+              ],
+              "packages": [
+                "GSVA"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Compositional summary and treatment-effect statistics",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Integrating the mMCPcounter and PanglaoDB-ssGSEA composition estimates across all 12 samples, what is the overall immune/stromal landscape of each sample, and does composition differ significantly between the 6 anti-PD-1 and 6 isotype-control tumors, either cell-type-by-cell-type or as a whole compositional profile?",
+              "acceptance_criteria": [
+                "A per-sample stacked-composition visualization and a cell-type x sample heatmap are produced for both estimator outputs",
+                "A multivariate compositional test (PERMANOVA on Bray-Curtis or Euclidean distance of the scaled composition matrix, treated vs control) is run in addition to the per-cell-type univariate tests from T2S1/T2S2",
+                "A PCA of the composition matrix is produced with samples colored by condition and sample_01 marked distinctly",
+                "Final summary table lists, per cell type: mMCPcounter effect direction/significance, ssGSEA effect direction/significance, and whether they agree, with explicit statement that n=6/6 unpaired is modestly powered and that sample_01's low library size is a documented caveat on its individual estimates",
+                "No claim of a significant treatment effect is made for a cell type unless it is significant after BH correction in at least the primary (mMCPcounter) estimator"
+              ],
+              "packages": [
+                "vegan",
+                "ComplexHeatmap",
+                "ggpubr",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 61
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

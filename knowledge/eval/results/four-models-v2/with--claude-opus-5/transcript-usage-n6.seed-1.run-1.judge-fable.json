@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 2,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 1
+  },
+  "rationale": "The planner reached the correct outcome: it recognised that gene-level Salmon counts carry no isoform information, refused to fit a gene-level model, and asked for the per-sample quant.sf (or transcript matrix) plus a transcript-to-gene map, naming DRIMSeq, DEXSeq+stageR, satuRn, or IsoformSwitchAnalyzeR as the methods to use once data arrive; it did not ask for the annotation version. Because no plan was submitted, nothing is stated about sample-structure QC or a policy for the shallow sample_01, transcript/proportion filtering (dmFilter), tximport scaling (scaledTPM/dtuScaledTPM), the design and contrast, the two-stage FDR at a stated alpha, or the report contents, so those criteria score at or near zero on what is stated. Enrichment is not warranted for a DTU question and was correctly not proposed."
+}

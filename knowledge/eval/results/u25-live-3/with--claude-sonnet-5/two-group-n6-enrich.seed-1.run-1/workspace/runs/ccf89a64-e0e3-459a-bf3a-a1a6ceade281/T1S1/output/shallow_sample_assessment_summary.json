@@ -1,0 +1,23 @@
+{
+  "shallow_sample": "sample_01",
+  "assessment": {
+    "sample": "sample_01",
+    "condition": "control",
+    "library_size": "420347",
+    "group_median_library_size_excl_self": 1635227.0,
+    "library_size_ratio_to_group_median": 0.2570572770630622,
+    "detected_genes": "10918",
+    "group_median_detected_genes_excl_self": 11621.0,
+    "mean_within_group_distance_excl_shallow": 84.35361857617741,
+    "mean_distance_shallow_to_own_group": 95.39965820700061,
+    "distance_inflation_ratio_own_group": 1.1309492090235327,
+    "mean_distance_shallow_to_other_group": 103.97799800346992,
+    "shallow_PC1": -18.3658008175052,
+    "shallow_PC2": 20.5570264951758,
+    "own_group_mean_PC1_excl_shallow": -16.924705801920002,
+    "own_group_mean_PC2_excl_shallow": -4.284070978049062,
+    "own_group_PC2_range_excl_shallow": 2.62515006189928,
+    "shallow_PC2_deviation_from_own_group_mean": 24.841097473224863,
+    "PC1_sign_matches_own_condition": true
+  }
+}

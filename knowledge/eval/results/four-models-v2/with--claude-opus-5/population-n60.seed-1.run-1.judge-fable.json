@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 10
+  },
+  "rationale": "The plan chooses limma-voom with a fixed-effects ~condition design, explicit control reference, filterByExpr on the group factor, TMM inside voom, BH at 0.05, and answers the effect-size half properly with treat() at lfc=1 plus a 1.5-fold sensitivity check and CIs beside every logFC, matching the reference closely. QC covers PCA, distance heatmap and library sizes with a stated outlier policy but omits the sex check against XIST/Y-linked genes and any search for hidden structure that the reference expects in a 120-sample cohort. The plan explicitly declines enrichment, whereas the reference treats a ranked camera/fgsea on Hallmark as part of a correct answer, so that criterion scores low. The report specification is thorough, naming versions, design, thresholds, counts, seed and the three key caveats; the claim that NB models are unsuitable at this size is overstated but does not change the correct method choice."
+}

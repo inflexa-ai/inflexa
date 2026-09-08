@@ -1,0 +1,908 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:40:52.960Z",
+  "elapsedMs": 184894,
+  "outcome": "plan_submitted",
+  "planId": "pln-4d17e62a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and metadata concordance check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not assume sample order in counts.csv matches metadata.csv row order — join explicitly on sample ID",
+          "A 12000-gene count matrix is smaller than typical whole-genome (usually ~20-60k) — confirm this is a filtered/subset gene set and note it rather than silently treating it as genome-wide"
+        ],
+        "context": "Gene-level salmon counts (12000 genes x 16 samples) with a 4-column sample metadata table (genotype, treatment, condition, presumably sample id). Length-correction status of the salmon counts is unconfirmed by the profile, so treat as raw counts and let DESeq2's own size-factor normalization handle library-size differences; do not apply an extra TPM/FPKM step.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 16 brain RNA-seq samples in counts.csv match the 2x2 genotype (WT/KO) x treatment (vehicle/drug) design in metadata.csv, with 4 replicates per cell, and are library sizes/count distributions sound before modeling?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns match metadata.csv rows exactly (16 samples)",
+          "Cross-tabulation of genotype x treatment confirms 4x4 balanced design",
+          "Library size, gene detection rate, and PCA/sample-correlation summaries are reported per sample",
+          "Any outlier or mislabeled sample is flagged explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 interaction-model differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=4 per cell (16 total), power to detect interaction effects (typically smaller than main effects) is limited — report this explicitly rather than overstating significance",
+          "Do not read a non-significant interaction term as 'no difference' without noting the power limitation"
+        ],
+        "context": "This is the core test for 'does the drug act differently in KO than WT' — the interaction coefficient directly answers it. Four replicates per cell is a modest but workable n for DESeq2's negative-binomial dispersion shrinkage.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Using design ~genotype + treatment + genotype:treatment, which genes show a statistically significant genotype-dependent drug effect (interaction term genotypeKO.treatmentdrug), and how does this compare to the additive-only model via likelihood ratio test?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeqDataSet built from raw counts and metadata with design = ~genotype + treatment + genotype:treatment, WT and vehicle set as reference levels",
+          "Wald test result table for the interaction coefficient reported with log2FoldChange, lfcSE, padj at FDR 0.05",
+          "LRT comparing full model against reduced model ~genotype + treatment reported as a second line of evidence for interaction genes",
+          "Independent filtering and outlier (Cook's distance) diagnostics from DESeq2 are reported, not suppressed",
+          "Number of genes with significant interaction reported explicitly, including the case where it is zero"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Simple-effects contrasts: drug vs vehicle within each genotype",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene significant in one simple contrast but not the other is not proof of a significant interaction (classic 'difference in significance is not a significant difference') — cross-reference against T1S2's interaction results before making that claim"
+        ],
+        "context": "This step gives directional interpretability to the interaction result: genes with significant interaction can be genotype-specific responders, opposite-direction responders, or magnitude-different responders. It complements, not replaces, the interaction test in T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2"
+        ],
+        "question": "Within WT, which genes change with drug vs vehicle, and within KO, which genes change with drug vs vehicle — and how much do these two gene sets and their fold-change directions overlap or diverge?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 Wald contrasts computed for drug-vs-vehicle within WT and within KO separately (using the interaction model's coefficients, not two independent re-fits, to preserve pooled dispersion estimates)",
+          "Shrunken log2FoldChanges (apeglm or ashr) reported for both contrasts",
+          "Venn/overlap of significant genes (FDR 0.05) between the two contrasts reported with counts",
+          "Concordance of fold-change direction and magnitude for the overlapping genes reported (e.g., correlation of log2FC)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the genotype-dependent drug response gene set",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Confirm gene identifier space (symbol vs Ensembl vs Entrez) in counts.csv before joining to the GMT file — mismatched ID spaces silently produce zero overlaps"
+        ],
+        "context": "Gene-set input from the interaction DE analysis. WikiPathways human GMT (HGNC symbols) is confirmed present at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt and matches organism (Homo sapiens). If gene symbols in counts.csv are Ensembl IDs rather than symbols, map via the human UniProt ID-mapping table also present in the reference store before running enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways are over-represented among genes showing a significant genotype x treatment interaction (from T1S2), using human WikiPathways gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run separately on the interaction-significant gene set (from T1S2) and, if that set is empty or very small, on the top-ranked genes by interaction-term p-value with this fallback stated explicitly",
+          "Uses the human WikiPathways GMT gene sets confirmed present in the reference store, matched to gene symbols from the count matrix",
+          "Enrichment results reported with adjusted p-values (FDR), pathway name, gene set size, and overlap genes",
+          "If no pathway reaches significance, this null result is reported plainly rather than cherry-picking nominal p-values"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "TF activity inference on the interaction signature",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Regulon-based TF activity inference on a 12000-gene, 16-sample bulk dataset gives exploratory hypotheses, not confirmed TF regulation — state this framing in the output"
+        ],
+        "context": "DoRothEA human regulons (/mnt/refs/managed/dorothea-human/current/dorothea_hs.rda) and CollecTRI human regulons (/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv) are confirmed present and organism-matched. This step adds a regulator-level mechanistic layer on top of the gene-level interaction result from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler"
+        ],
+        "question": "Which transcription factors show inferred activity shifts consistent with the genotype-dependent drug response (interaction gene set / ranked interaction statistic)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "TF activity scores computed from the interaction-term test statistics (from T1S2) using the human CollecTRI or DoRothEA (confidence A-C) regulon network confirmed present in the reference store",
+          "Top TFs ranked by absolute activity score reported with their regulon size and the direction of inferred activity change",
+          "Method (e.g., univariate linear model / consensus scoring via decoupler) and regulon confidence filter used are stated explicitly",
+          "If the interaction gene/statistic set is too small for stable regulon coverage, this limitation is reported rather than presenting unstable scores as reliable"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Brain-tissue expression context for top interaction genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "GTEx and HPA are human population reference atlases, not this study's species-matched control tissue if the underlying model organism is actually mouse/rat (Data Context labels organism as Homo sapiens, so this is consistent) — if downstream inspection reveals the counts are actually a rodent gene ID space, this step's HPA/GTEx join will fail silently on ID mismatch and must be reported, not skipped"
+        ],
+        "context": "GTEx v8 median-TPM-by-tissue GCT and HPA proteinatlas.tsv.zip are confirmed present, both human, both organism-matched. Use to sanity-check that interaction hits are genes with plausible brain expression rather than artifacts of a 12000-gene subset matrix.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "For the genes driving the genotype x treatment interaction, what is their normal brain-tissue expression level and specificity in human reference expression atlases, to flag which hits are plausible in a brain context versus likely noise from lowly/non-expressed genes?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 4
+        },
+        "step_type": "annotation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Top interaction genes (from T1S2, e.g. top 50 by adjusted p-value or all FDR<0.05 genes) annotated with GTEx v8 brain-tissue median TPM and Human Protein Atlas tissue-specificity category",
+          "Genes with negligible brain expression in the reference atlases are flagged as likely low-confidence/noise-driven hits given the study's own brain tissue and 12000-gene count matrix",
+          "Output is a single annotated table joined by gene symbol/Ensembl ID, not a re-analysis of the atlases themselves"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Integrated synthesis: does the drug act differently in KO vs WT?",
+        "agent": "statistical-modeling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "Must not present enrichment or TF-activity nominal findings as confirmatory if the underlying interaction gene set was small or the interaction test itself was non-significant"
+        ],
+        "context": "Final integration step drawing only on the outputs of prior steps in this plan; no new statistical testing is performed here beyond summarization/cross-referencing.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "Combining the interaction test, the simple-effects contrasts, pathway enrichment, and TF activity results, what is the evidence-graded answer to whether the drug's transcriptional effect differs by genotype, and what are the specific genes/pathways/regulators driving any such difference?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1",
+          "T2S2",
+          "T3S1"
+        ],
+        "acceptance_criteria": [
+          "States the number and identity of statistically significant interaction genes (FDR<0.05) from T1S2 as the primary evidence, with the LRT result as corroboration",
+          "Explicitly separates 'interaction is statistically supported' from 'simple effects differ' — does not conflate the two",
+          "Reports pathway (T2S1) and TF-activity (T2S2) results only as mechanistic annotation of the interaction gene set, not as independent proof of genotype-dependence",
+          "States the power limitation of n=4/cell for interaction detection and whether the null result (if obtained) should be read as 'no difference' or 'underpowered to detect a difference'",
+          "No causal or mechanistic claim beyond what the DE/enrichment/TF results directly support"
+        ]
+      }
+    ],
+    "title": "2x2 genotype x drug interaction DE + pathway analysis",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The research question — does the drug act differently in KO vs WT — is fundamentally a statistical interaction question (genotype x treatment), not a pair of separate contrasts. The data is a 2x2 factorial bulk RNA-seq design (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw salmon counts). The plan therefore centers on DESeq2 with a full interaction-term design (~genotype + treatment + genotype:treatment): (1) QC/normalization of raw counts and sample-metadata concordance, (2) a DESeq2 model fit with the interaction term, testing the interaction coefficient itself (the genotype-dependence-of-drug-effect question) via Wald test on the interaction coefficient and an LRT against the additive (no-interaction) reduced model, (3) as a complement, the two simple effects (drug-vs-vehicle within WT; drug-vs-vehicle within KO) so genes with a significant interaction can be interpreted directionally, (4) functional enrichment of the interaction gene set against human WikiPathways gene sets (organism matches — Homo sapiens tissue:brain data), and (5) a summary contrasting whether the drug's mechanism converges or diverges across genotype, grounded in the actual DE results. No public reference cohort search was productive (PubMed/Semantic Scholar/arXiv/GitHub searches for factorial-design RNA-seq or DESeq2-interaction papers returned nothing usable beyond the canonical DESeq2 method paper — used only to confirm the statistical approach, not as an external validation dataset) so the plan relies entirely on the study's own 16 samples plus the DESeq2 canonical method and organism-matched WikiPathways human pathway sets confirmed present in the reference store. DoRothEA human TF regulons and CollecTRI are also present and used for a TF-activity-inference step on the interaction signature, since transcriptional-regulator shifts are a natural mechanistic complement to a gene-level interaction result in this 2x2 design. GTEx/HPA brain-expression references are available and used to annotate the brain-relevance/specificity of the top interaction hits, since tissue is brain."
+  },
+  "usage": {
+    "inputTokens": 2353407,
+    "outputTokens": 8914,
+    "cacheCreationInputTokens": 140568,
+    "cacheReadInputTokens": 2212347,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01MaSzZWmJyf84VfCcEuvkuQ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse gene annotation ensembl"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01FcdmBudkzwfdyuc22RwSk8",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways",
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_018VJpCVfP5FaV2rNAHXyDBt",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01M8KUDbFNXX3WexmunY34Wp",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_015tuBMvw7o1W4HxtownDUbk",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01GbmZUw9KbR73ACqLdiTBMw",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01L6tUu96sFqnByGFicHnnGH",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01Kmx5gWFau3pZVYyqT5UCeK",
+      "name": "list_available_refs",
+      "input": {
+        "query": "brain tissue mouse rat expression"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01Jf7UtEfDYxYbw16JnSzdRN",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01YCT6QTA5T9wR9qBNWg2KDi",
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression"
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    },
+    {
+      "toolUseId": "toolu_016tdcLQzmAz2bT6BPPVwj23",
+      "name": "list_available_refs",
+      "input": {
+        "query": "mouse ko phenotype"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_017AurRF4bssdQSxrgXxyrGN",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 36
+    },
+    {
+      "toolUseId": "toolu_01SbX9Evosxvdp6MxNpSyv3y",
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway-activity progeny"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01MVNeppqfBGir6WNp8KrDSQ",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01UCJzLwSQ6SFYXZPkrReehD",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "tximport",
+          "biomaRt",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_01KkD3mP2VHrRd1i76UFEgPh",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Mm.eg.db",
+          "org.Rn.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01NM9Aq9fVnKQwWSraE5iCd1",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 interaction term genotype treatment factorial design differential expression",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 747
+    },
+    {
+      "toolUseId": "toolu_01GDQhqULzvtthTeeDp1HMKD",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq 2x2 factorial design interaction effect DESeq2",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 500
+    },
+    {
+      "toolUseId": "toolu_014GYYuJogj9wvxNUBYtfoA3",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "interaction term differential expression genotype drug treatment RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 515
+    },
+    {
+      "toolUseId": "toolu_015LzNcVcNw3BC1h2MKQhqgD",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 likelihood ratio test interaction design",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 516
+    },
+    {
+      "toolUseId": "toolu_01FRVafJjRgZ5to4ppJDwygb",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 761
+    },
+    {
+      "toolUseId": "toolu_01QReBotoWrxyXfS7wVmqgfd",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene expression drug response knockout wild type interaction design mouse brain",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 942
+    },
+    {
+      "toolUseId": "toolu_01MqaytUQJeHqpcWUmAP6zcY",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 interaction term 2x2 factorial design differential expression genotype treatment",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8995
+    },
+    {
+      "toolUseId": "toolu_01GTkUyTqPzhQLkSfMYVsCHB",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "25516281"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1017
+    },
+    {
+      "toolUseId": "toolu_01NMoP9erNtFEqYtbTP2aJy2",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx brain"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01Gyo2DfAeWui9h62ghpky7M",
+      "name": "list_available_packages",
+      "input": {
+        "query": "wgcna"
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_014aDYUTRfEKKYVyuqJ9sHte",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy",
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01Rm6tfGYgywcnkRRduBNiEv",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 interaction term genotype drug treatment factorial design",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9046
+    },
+    {
+      "toolUseId": "toolu_01ChPgVcJZ69eakYXTwa2Tp6",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 interaction term genotype drug treatment factorial design",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9289
+    },
+    {
+      "toolUseId": "toolu_01KbY3BezK8aTuDHHAgb2oz7",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/thelovelab/deseq2",
+        "query": "interaction term design formula genotype treatment results contrast LRT reduced model"
+      },
+      "outcome": "ok",
+      "durationMs": 378
+    },
+    {
+      "toolUseId": "toolu_019huaVVioMd2wZ4ys1VnqK7",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "DESeq2",
+        "query": "interaction term design formula genotype treatment results contrast LRT reduced model"
+      },
+      "outcome": "ok",
+      "durationMs": 305
+    },
+    {
+      "toolUseId": "toolu_017yVWF8E2FBELjAVYKSZh8x",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc_html",
+        "query": "DESeq2 interaction term design formula genotype treatment results contrast LRT reduced model"
+      },
+      "outcome": "ok",
+      "durationMs": 1004
+    },
+    {
+      "toolUseId": "toolu_01UvsZHUT4G2CAz3aTAkRPrX",
+      "name": "search_arxiv",
+      "input": {
+        "query": "factorial design interaction effect RNA-seq negative binomial genotype treatment",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 908
+    },
+    {
+      "toolUseId": "toolu_01C6CARMJEnDuUC5L6ijhhHq",
+      "name": "search_github_repos",
+      "input": {
+        "query": "DESeq2 2x2 factorial design interaction genotype treatment workflow",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 355
+    },
+    {
+      "toolUseId": "toolu_01RXDRv3GZVjrcFJX45Gmxo9",
+      "name": "search_github_repos",
+      "input": {
+        "query": "RNA-seq factorial DESeq2 pipeline interaction contrast",
+        "language": "r",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 252
+    },
+    {
+      "toolUseId": "toolu_014f4HCEBtaVa3kzdBhrTjDD",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 differential expression factorial design interaction wald test",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8867
+    },
+    {
+      "toolUseId": "toolu_019bTmHqHS4HWiQPaDMH4vFh",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gene expression response drug knockout genotype interaction differential",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9524
+    },
+    {
+      "toolUseId": "toolu_01JgRoKxb2LReqXEXAbeVhzA",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "two by two factorial RNA-seq design analysis genotype treatment",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 12337
+    },
+    {
+      "toolUseId": "toolu_019Fvy1xagpBDv8TgHd8Bj6y",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "interaction analysis best practices gene expression multifactor design HISAT",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 495
+    },
+    {
+      "toolUseId": "toolu_018XqnqJ8CSnGmg3iw6cBNZw",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression analysis best practices tutorial",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 270
+    },
+    {
+      "toolUseId": "toolu_01WAUJ5G27ZiTougtNsN52Ky",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq gene-level differential expression using DESeq2",
+        "maxResults": 5
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01VTwLM2pkBhePydqq2xUs91",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "2x2 genotype x drug interaction DE + pathway analysis",
+          "analytical_narrative": "The research question — does the drug act differently in KO vs WT — is fundamentally a statistical interaction question (genotype x treatment), not a pair of separate contrasts. The data is a 2x2 factorial bulk RNA-seq design (WT/KO x vehicle/drug, n=4/cell, 16 samples, 12000 genes, raw salmon counts). The plan therefore centers on DESeq2 with a full interaction-term design (~genotype + treatment + genotype:treatment): (1) QC/normalization of raw counts and sample-metadata concordance, (2) a DESeq2 model fit with the interaction term, testing the interaction coefficient itself (the genotype-dependence-of-drug-effect question) via Wald test on the interaction coefficient and an LRT against the additive (no-interaction) reduced model, (3) as a complement, the two simple effects (drug-vs-vehicle within WT; drug-vs-vehicle within KO) so genes with a significant interaction can be interpreted directionally, (4) functional enrichment of the interaction gene set against human WikiPathways gene sets (organism matches — Homo sapiens tissue:brain data), and (5) a summary contrasting whether the drug's mechanism converges or diverges across genotype, grounded in the actual DE results. No public reference cohort search was productive (PubMed/Semantic Scholar/arXiv/GitHub searches for factorial-design RNA-seq or DESeq2-interaction papers returned nothing usable beyond the canonical DESeq2 method paper — used only to confirm the statistical approach, not as an external validation dataset) so the plan relies entirely on the study's own 16 samples plus the DESeq2 canonical method and organism-matched WikiPathways human pathway sets confirmed present in the reference store. DoRothEA human TF regulons and CollecTRI are also present and used for a TF-activity-inference step on the interaction signature, since transcriptional-regulator shifts are a natural mechanistic complement to a gene-level interaction result in this 2x2 design. GTEx/HPA brain-expression references are available and used to annotate the brain-relevance/specificity of the top interaction hits, since tissue is brain.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and metadata concordance check",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 16 brain RNA-seq samples in counts.csv match the 2x2 genotype (WT/KO) x treatment (vehicle/drug) design in metadata.csv, with 4 replicates per cell, and are library sizes/count distributions sound before modeling?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns match metadata.csv rows exactly (16 samples)",
+                "Cross-tabulation of genotype x treatment confirms 4x4 balanced design",
+                "Library size, gene detection rate, and PCA/sample-correlation summaries are reported per sample",
+                "Any outlier or mislabeled sample is flagged explicitly, not silently dropped"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Gene-level salmon counts (12000 genes x 16 samples) with a 4-column sample metadata table (genotype, treatment, condition, presumably sample id). Length-correction status of the salmon counts is unconfirmed by the profile, so treat as raw counts and let DESeq2's own size-factor normalization handle library-size differences; do not apply an extra TPM/FPKM step.",
+              "caveats": [
+                "Do not assume sample order in counts.csv matches metadata.csv row order — join explicitly on sample ID",
+                "A 12000-gene count matrix is smaller than typical whole-genome (usually ~20-60k) — confirm this is a filtered/subset gene set and note it rather than silently treating it as genome-wide"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 interaction-model differential expression",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Using design ~genotype + treatment + genotype:treatment, which genes show a statistically significant genotype-dependent drug effect (interaction term genotypeKO.treatmentdrug), and how does this compare to the additive-only model via likelihood ratio test?",
+              "acceptance_criteria": [
+                "DESeqDataSet built from raw counts and metadata with design = ~genotype + treatment + genotype:treatment, WT and vehicle set as reference levels",
+                "Wald test result table for the interaction coefficient reported with log2FoldChange, lfcSE, padj at FDR 0.05",
+                "LRT comparing full model against reduced model ~genotype + treatment reported as a second line of evidence for interaction genes",
+                "Independent filtering and outlier (Cook's distance) diagnostics from DESeq2 are reported, not suppressed",
+                "Number of genes with significant interaction reported explicitly, including the case where it is zero"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "This is the core test for 'does the drug act differently in KO than WT' — the interaction coefficient directly answers it. Four replicates per cell is a modest but workable n for DESeq2's negative-binomial dispersion shrinkage.",
+              "caveats": [
+                "With n=4 per cell (16 total), power to detect interaction effects (typically smaller than main effects) is limited — report this explicitly rather than overstating significance",
+                "Do not read a non-significant interaction term as 'no difference' without noting the power limitation"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Simple-effects contrasts: drug vs vehicle within each genotype",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Within WT, which genes change with drug vs vehicle, and within KO, which genes change with drug vs vehicle — and how much do these two gene sets and their fold-change directions overlap or diverge?",
+              "acceptance_criteria": [
+                "DESeq2 Wald contrasts computed for drug-vs-vehicle within WT and within KO separately (using the interaction model's coefficients, not two independent re-fits, to preserve pooled dispersion estimates)",
+                "Shrunken log2FoldChanges (apeglm or ashr) reported for both contrasts",
+                "Venn/overlap of significant genes (FDR 0.05) between the two contrasts reported with counts",
+                "Concordance of fold-change direction and magnitude for the overlapping genes reported (e.g., correlation of log2FC)"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "This step gives directional interpretability to the interaction result: genes with significant interaction can be genotype-specific responders, opposite-direction responders, or magnitude-different responders. It complements, not replaces, the interaction test in T1S2.",
+              "caveats": [
+                "A gene significant in one simple contrast but not the other is not proof of a significant interaction (classic 'difference in significance is not a significant difference') — cross-reference against T1S2's interaction results before making that claim"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the genotype-dependent drug response gene set",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are over-represented among genes showing a significant genotype x treatment interaction (from T1S2), using human WikiPathways gene sets?",
+              "acceptance_criteria": [
+                "Enrichment run separately on the interaction-significant gene set (from T1S2) and, if that set is empty or very small, on the top-ranked genes by interaction-term p-value with this fallback stated explicitly",
+                "Uses the human WikiPathways GMT gene sets confirmed present in the reference store, matched to gene symbols from the count matrix",
+                "Enrichment results reported with adjusted p-values (FDR), pathway name, gene set size, and overlap genes",
+                "If no pathway reaches significance, this null result is reported plainly rather than cherry-picking nominal p-values"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Gene-set input from the interaction DE analysis. WikiPathways human GMT (HGNC symbols) is confirmed present at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt and matches organism (Homo sapiens). If gene symbols in counts.csv are Ensembl IDs rather than symbols, map via the human UniProt ID-mapping table also present in the reference store before running enrichment.",
+              "caveats": [
+                "Confirm gene identifier space (symbol vs Ensembl vs Entrez) in counts.csv before joining to the GMT file — mismatched ID spaces silently produce zero overlaps"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "TF activity inference on the interaction signature",
+              "track": "T2",
+              "step_type": "network_analysis",
+              "question": "Which transcription factors show inferred activity shifts consistent with the genotype-dependent drug response (interaction gene set / ranked interaction statistic)?",
+              "acceptance_criteria": [
+                "TF activity scores computed from the interaction-term test statistics (from T1S2) using the human CollecTRI or DoRothEA (confidence A-C) regulon network confirmed present in the reference store",
+                "Top TFs ranked by absolute activity score reported with their regulon size and the direction of inferred activity change",
+                "Method (e.g., univariate linear model / consensus scoring via decoupler) and regulon confidence filter used are stated explicitly",
+                "If the interaction gene/statistic set is too small for stable regulon coverage, this limitation is reported rather than presenting unstable scores as reliable"
+              ],
+              "packages": [
+                "decoupler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "DoRothEA human regulons (/mnt/refs/managed/dorothea-human/current/dorothea_hs.rda) and CollecTRI human regulons (/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv) are confirmed present and organism-matched. This step adds a regulator-level mechanistic layer on top of the gene-level interaction result from T1S2.",
+              "caveats": [
+                "Regulon-based TF activity inference on a 12000-gene, 16-sample bulk dataset gives exploratory hypotheses, not confirmed TF regulation — state this framing in the output"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Brain-tissue expression context for top interaction genes",
+              "track": "T3",
+              "step_type": "annotation",
+              "question": "For the genes driving the genotype x treatment interaction, what is their normal brain-tissue expression level and specificity in human reference expression atlases, to flag which hits are plausible in a brain context versus likely noise from lowly/non-expressed genes?",
+              "acceptance_criteria": [
+                "Top interaction genes (from T1S2, e.g. top 50 by adjusted p-value or all FDR<0.05 genes) annotated with GTEx v8 brain-tissue median TPM and Human Protein Atlas tissue-specificity category",
+                "Genes with negligible brain expression in the reference atlases are flagged as likely low-confidence/noise-driven hits given the study's own brain tissue and 12000-gene count matrix",
+                "Output is a single annotated table joined by gene symbol/Ensembl ID, not a re-analysis of the atlases themselves"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "GTEx v8 median-TPM-by-tissue GCT and HPA proteinatlas.tsv.zip are confirmed present, both human, both organism-matched. Use to sanity-check that interaction hits are genes with plausible brain expression rather than artifacts of a 12000-gene subset matrix.",
+              "caveats": [
+                "GTEx and HPA are human population reference atlases, not this study's species-matched control tissue if the underlying model organism is actually mouse/rat (Data Context labels organism as Homo sapiens, so this is consistent) — if downstream inspection reveals the counts are actually a rodent gene ID space, this step's HPA/GTEx join will fail silently on ID mismatch and must be reported, not skipped"
+              ]
+            },
+            {
+              "id": "T4S1",
+              "name": "Integrated synthesis: does the drug act differently in KO vs WT?",
+              "track": "T4",
+              "step_type": "synthesis",
+              "question": "Combining the interaction test, the simple-effects contrasts, pathway enrichment, and TF activity results, what is the evidence-graded answer to whether the drug's transcriptional effect differs by genotype, and what are the specific genes/pathways/regulators driving any such difference?",
+              "acceptance_criteria": [
+                "States the number and identity of statistically significant interaction genes (FDR<0.05) from T1S2 as the primary evidence, with the LRT result as corroboration",
+                "Explicitly separates 'interaction is statistically supported' from 'simple effects differ' — does not conflate the two",
+                "Reports pathway (T2S1) and TF-activity (T2S2) results only as mechanistic annotation of the interaction gene set, not as independent proof of genotype-dependence",
+                "States the power limitation of n=4/cell for interaction detection and whether the null result (if obtained) should be read as 'no difference' or 'underpowered to detect a difference'",
+                "No causal or mechanistic claim beyond what the DE/enrichment/TF results directly support"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1",
+                "T2S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "Final integration step drawing only on the outputs of prior steps in this plan; no new statistical testing is performed here beyond summarization/cross-referencing.",
+              "caveats": [
+                "Must not present enrichment or TF-activity nominal findings as confirmatory if the underlying interaction gene set was small or the interaction test itself was non-significant"
+              ]
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 63
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

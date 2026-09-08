@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald with ~condition on raw Salmon counts fits the unpaired 6v6 single-batch design, and the shallow sample is retained for the primary fit with a stated verdict plus a clean sensitivity re-run, which matches the reference policy. QC covers library sizes, PCA, distance heatmap and a quantified sample_01 check, though coloring by condition is not stated. The low-count filter is described only as 'near-zero counts' with no threshold, normalization is implied via DESeq2 size factors rather than stated as a step, the reference level for the contrast is not named, and the |LFC| >= 1 cut is applied post hoc rather than via lfcThreshold. Enrichment is strong: mouse Hallmark MH 2026.1 in MGI symbols, symbol-overlap rate reported, Wald-stat ranking on the full list, BH on pathways, size window 10-500 (slightly wider than the 15 lower bound), and an explicit refusal to substitute a human set."
+}

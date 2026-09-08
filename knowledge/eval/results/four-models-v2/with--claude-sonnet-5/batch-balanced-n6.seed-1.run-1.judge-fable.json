@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core design: balanced batch enters as a covariate in ~batch + condition, counts are not pre-adjusted, DESeq2 median-of-ratios normalization is inside the model, control is the explicit reference, the contrast is named, and apeglm shrinkage with BH at alpha 0.05 and independent filtering is stated. QC includes blind VST PCA colored by both batch and condition, sample distances, and library sizes, but no stated policy for handling an outlier or shallow sample found at that stage. Enrichment was not asked and the reference treats it as unwarranted; the plan adds it anyway, though the GSEA specification itself is sound (full ranked list, Wald statistic metric, named collections with versions, 15-500 size window), with Reactome only pinned as 'current'. The report specification covers method, versions, design, thresholds, tested and DE gene counts, diagnostics, and caveats."
+}

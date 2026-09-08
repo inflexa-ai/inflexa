@@ -1,0 +1,245 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "mouse-two-group-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:27:40.183Z",
+  "elapsedMs": 84527,
+  "outcome": "plan_submitted",
+  "planId": "pln-17dfe52f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC + DESeq2 DE, HFD vs chow",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which genes differ between high-fat diet and chow in the 12 mouse liver samples (6 vs 6), and is sample_01 — library size ~4x below median — a distorting outlier or a benign low-depth sample?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load counts.csv (12,000 genes x 12 samples, mouse gene symbols, raw Salmon gene-level counts) and metadata.csv (condition column, 6 treated vs 6 control). QC: library sizes with sample_01 flagged, gene detection per sample, PCA/hierarchical clustering on variance-stabilised counts to check for latent structure beyond the single stated batch. Pre-filter genes with near-zero counts across all samples. Fit DESeq2 with design ~ condition (HFD vs chow), Wald test, BH FDR across all tested genes, and apeglm-shrunk log2 fold changes. Outputs: full DE results table, volcano plot, PCA, sample-distance heatmap, VST matrix, and an explicit verdict on sample_01 (its size factor, whether it clusters with its condition, and its influence on dispersion). Resources are modest: a 12,000 x 12 integer matrix fits easily in a few GB.",
+        "acceptance_criteria": [
+          "DE results table covers every tested gene with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj",
+          "Library-size and PCA plots produced; sample_01 depth discrepancy quantified numerically",
+          "DE gene counts reported at FDR < 0.05 and at FDR < 0.05 & |shrunken LFC| >= 1, separately for up and down",
+          "Verdict on sample_01 stated: retained or excluded for the primary call, with the reason"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Sensitivity DE excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "Do the HFD-vs-chow gene calls survive when the shallow sample (sample_01) is dropped, and which specific hits depend on it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Re-run the identical DESeq2 pipeline (same pre-filter, same design ~ condition) on the 11 remaining samples (5 vs 6, dropping whichever condition group contains sample_01). Reconcile the two fits: sign and shrunken-LFC concordance for all tested genes, Spearman correlation of Wald statistics, overlap and disagreement among DE gene sets (FDR < 0.05), and a per-gene sensitivity label on the union of hits: robust (significant in both), sample_01-dependent (significant only in one), or flipped direction. Output the second results table, an upset/venn comparison, and a reconciled gene table that downstream enrichment consumes.",
+        "acceptance_criteria": [
+          "Second DE table for the 11-sample fit with the same columns as T1S1",
+          "Spearman correlation of statistics and count of direction flips reported",
+          "Union DE gene set labelled robust vs sample_01-dependent per gene",
+          "Reconciled table written with the same gene-key column as the counts matrix for downstream joins"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark + WikiPathways FGSEA",
+        "agent": "enrichment-agent",
+        "track": "pathway-enrichment",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which MSigDB hallmark pathways are enriched among genes changing between HFD and chow, and do those pathway calls survive exclusion of sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "description": "Run fgsea on the ranked DE statistics (Wald stat, ties broken by p-value) from T1S1 (primary) and T1S2 (sensitivity), against the staged MSigDB mouse hallmark gene sets (2026.1 MGI symbols GMT) as the primary collection and the staged WikiPathways Mus musculus GMT as a secondary, mechanism-level readout. First intersect the 12,000 count-matrix gene symbols with each GMT's member symbols and report the match rate and unmatched set sizes — low overlap means the enrichment is bounded by annotation, not biology. Limit gene-set size to 10-500, compute BH-adjusted pathway p-values, extract leading-edge genes per significant set, and produce a pathway-level comparison of full vs sample_01-excluded rankings (NES shift, significance flips). Report hallmark pathways up and down in HFD with direction, NES, padj, and their sensitivity label; if the mouse hallmark GMT or the WikiPathways GMT is absent at run time, run the collection that is present and state which is missing rather than substituting a human set.",
+        "acceptance_criteria": [
+          "Symbol-overlap statistics between counts matrix and each GMT reported before enrichment",
+          "FGSEA results for hallmark with NES, pvalue, padj, size, and leading-edge genes per set",
+          "Primary (12-sample) and sensitivity (11-sample) enrichment tables compared; per-pathway sensitivity label assigned",
+          "Final report lists hallmark pathways with consistent direction in both fits, and flags any pathway significant in only one"
+        ]
+      }
+    ],
+    "title": "HFD vs chow liver DE + hallmark FGSEA",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12,000 mouse gene-symbol counts x 12 liver samples (6 high-fat diet vs 6 chow, unpaired, single batch) plus a 12-row condition table, with one flagged sample (sample_01) whose library size sits ~4x below the median. The question — which genes and which hallmark pathways change — decomposes into (1) a rigorous two-group differential-expression analysis with QC that quantifies whether the shallow sample is a technical outlier or merely a low-depth outlier that DESeq2's size factors and negative-binomial model can absorb, (2) a sensitivity re-run excluding sample_01 so every DE call carries a 'depends on the shallow sample / does not' label, and (3) gene-set enrichment on the ranked DE statistics against the staged MSigDB mouse hallmark GMT (2026.1), with WikiPathways mouse as a secondary readout, run on both the full and the sample_01-excluded rankings so pathway conclusions inherit the same sensitivity label. DESeq2 is installed (R 1.52.0) and is the standard tool for raw Salmon gene-level counts of this size; apeglm-shrunk fold changes guard against the small-n inflation of unshrunken LFCs; fgsea (1.38.0) handles the 50-set hallmark collection in seconds."
+  },
+  "usage": {
+    "inputTokens": 66200,
+    "outputTokens": 3790,
+    "cacheReadInputTokens": 32256,
+    "reasoningTokens": 2162
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_65d9cfff309c4a778561201c",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 68
+    },
+    {
+      "toolUseId": "call_0bb9084f72464deeb509621c",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "title": "HFD vs chow liver DE + hallmark FGSEA",
+          "analytical_narrative": "The dataset is 12,000 mouse gene-symbol counts x 12 liver samples (6 high-fat diet vs 6 chow, unpaired, single batch) plus a 12-row condition table, with one flagged sample (sample_01) whose library size sits ~4x below the median. The question — which genes and which hallmark pathways change — decomposes into (1) a rigorous two-group differential-expression analysis with QC that quantifies whether the shallow sample is a technical outlier or merely a low-depth outlier that DESeq2's size factors and negative-binomial model can absorb, (2) a sensitivity re-run excluding sample_01 so every DE call carries a 'depends on the shallow sample / does not' label, and (3) gene-set enrichment on the ranked DE statistics against the staged MSigDB mouse hallmark GMT (2026.1), with WikiPathways mouse as a secondary readout, run on both the full and the sample_01-excluded rankings so pathway conclusions inherit the same sensitivity label. DESeq2 is installed (R 1.52.0) and is the standard tool for raw Salmon gene-level counts of this size; apeglm-shrunk fold changes guard against the small-n inflation of unshrunken LFCs; fgsea (1.38.0) handles the 50-set hallmark collection in seconds.",
+          "created_at": "2026-07-10T12:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC + DESeq2 DE, HFD vs chow",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "Which genes differ between high-fat diet and chow in the 12 mouse liver samples (6 vs 6), and is sample_01 — library size ~4x below median — a distorting outlier or a benign low-depth sample?",
+              "description": "Load counts.csv (12,000 genes x 12 samples, mouse gene symbols, raw Salmon gene-level counts) and metadata.csv (condition column, 6 treated vs 6 control). QC: library sizes with sample_01 flagged, gene detection per sample, PCA/hierarchical clustering on variance-stabilised counts to check for latent structure beyond the single stated batch. Pre-filter genes with near-zero counts across all samples. Fit DESeq2 with design ~ condition (HFD vs chow), Wald test, BH FDR across all tested genes, and apeglm-shrunk log2 fold changes. Outputs: full DE results table, volcano plot, PCA, sample-distance heatmap, VST matrix, and an explicit verdict on sample_01 (its size factor, whether it clusters with its condition, and its influence on dispersion). Resources are modest: a 12,000 x 12 integer matrix fits easily in a few GB.",
+              "acceptance_criteria": [
+                "DE results table covers every tested gene with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj",
+                "Library-size and PCA plots produced; sample_01 depth discrepancy quantified numerically",
+                "DE gene counts reported at FDR < 0.05 and at FDR < 0.05 & |shrunken LFC| >= 1, separately for up and down",
+                "Verdict on sample_01 stated: retained or excluded for the primary call, with the reason"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Sensitivity DE excluding sample_01",
+              "track": "differential-expression",
+              "step_type": "analysis",
+              "question": "Do the HFD-vs-chow gene calls survive when the shallow sample (sample_01) is dropped, and which specific hits depend on it?",
+              "description": "Re-run the identical DESeq2 pipeline (same pre-filter, same design ~ condition) on the 11 remaining samples (5 vs 6, dropping whichever condition group contains sample_01). Reconcile the two fits: sign and shrunken-LFC concordance for all tested genes, Spearman correlation of Wald statistics, overlap and disagreement among DE gene sets (FDR < 0.05), and a per-gene sensitivity label on the union of hits: robust (significant in both), sample_01-dependent (significant only in one), or flipped direction. Output the second results table, an upset/venn comparison, and a reconciled gene table that downstream enrichment consumes.",
+              "acceptance_criteria": [
+                "Second DE table for the 11-sample fit with the same columns as T1S1",
+                "Spearman correlation of statistics and count of direction flips reported",
+                "Union DE gene set labelled robust vs sample_01-dependent per gene",
+                "Reconciled table written with the same gene-key column as the counts matrix for downstream joins"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark + WikiPathways FGSEA",
+              "track": "pathway-enrichment",
+              "step_type": "analysis",
+              "question": "Which MSigDB hallmark pathways are enriched among genes changing between HFD and chow, and do those pathway calls survive exclusion of sample_01?",
+              "description": "Run fgsea on the ranked DE statistics (Wald stat, ties broken by p-value) from T1S1 (primary) and T1S2 (sensitivity), against the staged MSigDB mouse hallmark gene sets (2026.1 MGI symbols GMT) as the primary collection and the staged WikiPathways Mus musculus GMT as a secondary, mechanism-level readout. First intersect the 12,000 count-matrix gene symbols with each GMT's member symbols and report the match rate and unmatched set sizes — low overlap means the enrichment is bounded by annotation, not biology. Limit gene-set size to 10-500, compute BH-adjusted pathway p-values, extract leading-edge genes per significant set, and produce a pathway-level comparison of full vs sample_01-excluded rankings (NES shift, significance flips). Report hallmark pathways up and down in HFD with direction, NES, padj, and their sensitivity label; if the mouse hallmark GMT or the WikiPathways GMT is absent at run time, run the collection that is present and state which is missing rather than substituting a human set.",
+              "acceptance_criteria": [
+                "Symbol-overlap statistics between counts matrix and each GMT reported before enrichment",
+                "FGSEA results for hallmark with NES, pvalue, padj, size, and leading-edge genes per set",
+                "Primary (12-sample) and sensitivity (11-sample) enrichment tables compared; per-pathway sensitivity label assigned",
+                "Final report lists hallmark pathways with consistent direction in both fits, and flags any pathway significant in only one"
+              ],
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

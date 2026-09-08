@@ -1,0 +1,65 @@
+{
+  "template": "tpl-deseq2-two-group@1.1.0",
+  "method": "DESeq2 Wald test",
+  "import": {
+    "state": "integer_counts",
+    "mode": "gene_counts_without_length_offset",
+    "counts_from_abundance": "no",
+    "length_offset": false,
+    "tx2gene": null,
+    "files": [
+      {
+        "sample": null,
+        "path": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+        "sha256": "033a807098f0b05daa4792f5c695e4a6a21f3048d700c09ad77b7f49a10f60ac"
+      }
+    ]
+  },
+  "contrast": {
+    "factor": "condition",
+    "test": "treated",
+    "reference": "control"
+  },
+  "design": "~condition",
+  "n_samples": 12,
+  "group_sizes": {
+    "control": 6,
+    "treated": 6
+  },
+  "n_genes_input": 12000,
+  "n_genes_after_filter": 9782,
+  "n_genes_tested": 9402,
+  "n_significant": 875,
+  "n_up": 513,
+  "n_down": 362,
+  "alpha": 0.05,
+  "lfc_threshold": 0,
+  "lfc_shrink": "apeglm",
+  "min_count": 10,
+  "min_samples": 6,
+  "n_cooks_outlier_na": 0,
+  "n_independent_filter_na": 380,
+  "independent_filter_threshold_mean_count": 11.3457326625144,
+  "shallow_sample_disposition": "sample_01 (control, lowest depth: size factor 0.29, library size 420347) was KEPT in this DE step, per the T1S1 QC verdict: it sits just below the automated 4x low-depth cutoff (0.257 vs 0.25 ratio-to-median), groups correctly with the control arm on PC1, and its distance-matrix behavior places it closer to controls than to treated samples; DESeq2 median-of-ratios normalization (its size factor) accounts for its lower depth rather than the sample being excluded.",
+  "size_factors": {
+    "sample_01": 0.2835,
+    "sample_02": 0.7549,
+    "sample_03": 1.1026,
+    "sample_04": 1.8498,
+    "sample_05": 1.0492,
+    "sample_06": 1.3677,
+    "sample_07": 1.4034,
+    "sample_08": 0.976,
+    "sample_09": 1.509,
+    "sample_10": 0.9342,
+    "sample_11": 1.2009,
+    "sample_12": 1.0311
+  },
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "DESeq2": "1.52.0",
+    "tximport": null,
+    "apeglm": "1.34.0",
+    "ashr": "2.2.63"
+  }
+}

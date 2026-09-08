@@ -1,0 +1,367 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "interaction-2x2-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:45:38.765Z",
+  "elapsedMs": 50089,
+  "outcome": "plan_submitted",
+  "planId": "pln-73e081eb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts and metadata, QC and sample-level overview",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1-factorial-de",
+        "status": "pending",
+        "context": "Counts file is 12000 genes x 17 columns (gene ID + 16 samples, salmon-derived gene-level counts; upstream transcript-length bias correction status unknown). Metadata is 16 samples x 4 columns with genotype (WT/KO), treatment (vehicle/drug), and combined condition. Human brain tissue.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13",
+          "readr==2.2.0"
+        ],
+        "question": "Are the 16 samples (WT/KO x vehicle/drug, 4 replicates each) correctly paired between counts and metadata, and do the data show gross outliers or batch structure before testing genotype-dependent drug effects?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Read /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/counts/counts.csv (12000 genes x 16 samples; first column is the gene identifier) and /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows: genotype, treatment, condition). Verify sample alignment, filter low-abundance genes (e.g. CPM > 1 in at least 4 samples), compute library-size summaries, normalize (VST or rlog), and build PCA/MDS colored by genotype and by treatment to flag outliers and confirm the 2x2 structure. Save the filtered count matrix and transformed matrix for downstream steps.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv and metadata.csv match 1:1 after alignment",
+          "Filtered gene count and per-sample library sizes reported",
+          "PCA/MDS plots labeled by genotype (WT/KO) and treatment (vehicle/drug) saved, with any outlier flagged",
+          "Normalized transformed matrix saved for downstream plotting"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 factorial model with genotype:treatment interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1-factorial-de",
+        "status": "pending",
+        "context": "Human bulk RNA-seq, 12000 genes, 2x2 design (genotype WT/KO x treatment vehicle/drug), 4 replicates per cell, counts from salmon as delivered.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "ggplot2==4.0.3",
+          "EnhancedVolcano==1.30.0"
+        ],
+        "question": "Does the drug's transcriptional effect differ between KO and WT (genotype:treatment interaction), and what are the drug effects within each genotype and the genotype effects within each treatment?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Fit DESeq2 with design ~ genotype + treatment + genotype:treatment on the filtered counts (12000 genes, 16 samples, n=4 per cell). Extract five result sets: (1) the genotype:treatment interaction coefficient — the direct answer to whether the drug acts differently in KO; (2) drug effect in WT (treatment coefficient); (3) drug effect in KO (sum of treatment and interaction coefficients, e.g. via results(dds, name=...) or contrast of coefficient sums with an LFC shrink-free estimate); (4) KO vs WT under vehicle (genotype coefficient); (5) KO vs WT under drug (genotype + interaction). Apply BH FDR correction per contrast, save each as CSV with log2FC, SE, stat, pvalue, padj, and produce a volcano plot for the interaction term. Report dispersion-fit diagnostics.",
+        "acceptance_criteria": [
+          "Dispersion fit diagnostics reported (no failed genes; dispersion outliers flagged)",
+          "results_ko_ko_interaction.csv, results_drug_effect_in_WT.csv, results_drug_effect_in_KO.csv, results_KO_vs_WT_vehicle.csv, results_KO_vs_WT_drug.csv written with log2FC, SE, stat, pvalue, padj",
+          "Numbers of significant genes (padj < 0.05) per contrast reported, including the primary interaction contrast",
+          "Volcano plot for the interaction term saved"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "limma-voom sensitivity analysis and method concordance",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1-factorial-de",
+        "status": "pending",
+        "context": "Salmon gene-level counts; upstream length-correction status unknown, so a second estimation approach guards against method-specific artifacts. Human, 12000 genes, 16 samples.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR==4.10.3",
+          "limma==3.68.5",
+          "ggplot2==4.0.3",
+          "data.table==1.18.4"
+        ],
+        "question": "Do the genotype:treatment interaction calls and effect sizes from a second count-based method (limma-voom) agree with DESeq2, given the small per-cell sample size (n=4)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run the same ~ genotype + treatment + genotype:treatment design with edgeR TMM normalization and limma-voom (eBayes) as a sensitivity check against the DESeq2 primary model. Extract the same five contrasts. Report correlation of interaction-term log2FCs and statistics between methods, concordance of significant calls (padj < 0.05) for the interaction term, and list any top genes where the two methods disagree in sign.",
+        "acceptance_criteria": [
+          "limma-voom interaction and within-genotype drug-effect results saved as CSVs",
+          "Correlation of interaction-term statistics between DESeq2 and limma-voom reported",
+          "Overlap of padj<0.05 gene sets between the two methods reported; discordances listed",
+          "Any conflict in the direction/sign of the interaction for top genes explicitly noted"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the interaction signal (fgsea, WikiPathways human)",
+        "agent": "enrichment-agent",
+        "track": "T2-pathway",
+        "status": "pending",
+        "context": "Interaction and genotype-specific drug-effect statistics come from the DESeq2 factorial fit (T1S2); the human WikiPathways GMT is provisioned under /mnt/refs/managed/wikipathways-human/ (HGNC symbols). Tissue is human brain.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "data.table==1.18.4",
+          "ggplot2==4.0.3",
+          "GSEABase==1.74.0"
+        ],
+        "question": "Which human WikiPathways show a genotype-dependent drug response (interaction ranking), and how do drug-affected pathways in WT compare with those in KO?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Using fgsea with the provisioned human WikiPathways GMT (HGNC gene symbols), test gene sets against three ranked lists derived from T1S2: (1) genes ranked by the genotype:treatment interaction Wald statistic (pathways where the drug response differs between genotypes), (2) genes ranked by drug effect within WT, (3) genes ranked by drug effect within KO. If the counts file uses Ensembl rather than HGNC IDs, map IDs to symbols with the provisioned human UniProt ID-mapping table before ranking. Run fgsea with minSize 10, maxSize 500, BH-adjusted padj over at least 1000 permutations. Compare pathway NES between WT and KO drug-effect rankings to name the biological processes driving any genotype-dependent response.",
+        "acceptance_criteria": [
+          "fgsea results tables (pathway, NES, padj) saved for the interaction ranking and both genotype-specific rankings",
+          "GMT symbol-to-gene match rate reported; if < 60% of counts map to HGNC symbols, IDs are mapped first (e.g. via the provisioned UniProt human ID mapping) and the mapping count reported",
+          "Top enriched and depleted pathways per ranking (padj < 0.05) listed",
+          "If the human WikiPathways GMT is absent from the reference store, the step reports the gap and returns the gene-level results without pathway annotation rather than failing"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Integrate gene- and pathway-level results into a final report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2-pathway",
+        "status": "pending",
+        "context": "All upstream artifacts: DESeq2 and limma-voom contrast tables (T1S2, T1S3) and fgsea pathway tables (T2S1) for the human 2x2 brain dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "ComplexHeatmap==2.28.0",
+          "ggplot2==4.0.3",
+          "data.table==1.18.4"
+        ],
+        "question": "Which genes and pathways constitute the genotype-dependent drug response, and how strong and how reproducible (across DESeq2 and limma-voom) is that response in this 16-sample 2x2 brain dataset?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "description": "Combine T1S2 and T1S3 into a single annotated interaction-gene table (DESeq2 and limma-voom log2FC/padj side by side), add top pathway annotations from T2S1, and produce: (a) a heatmap of the top interaction genes (VST values) annotated by genotype and treatment, (b) a ranked summary table of the strongest genotype-dependent drug responses with both methods' statistics, and (c) a plain-language summary answering the question 'does the drug act differently in KO than in WT?', including explicit statement of the n=4-per-cell power limitation and whether the interaction signal is method-concordant.",
+        "acceptance_criteria": [
+          "Final table of interaction genes (padj < 0.05 in DESeq2, with limma-voom concordance flag) saved",
+          "Heatmap of interaction gene expression across the 16 samples with genotype/treatment annotations saved",
+          "Concise answer to the research question with effect sizes, directions, and a one-line caveat on n=4 per cell power",
+          "Cross-references to concordant pathway-level findings from T2S1 included"
+        ]
+      }
+    ],
+    "title": "2x2 factorial DE: genotype-dependent drug response in brain RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is whether the drug's transcriptional effect differs between KO and WT — that is the genotype:treatment interaction in a 2x2 factorial design (WT/KO x vehicle/drug, 4 replicates per cell, 16 human brain samples, 12000 genes). The plan first QC's the salmon-derived gene-level counts and metadata (16 samples must align between counts.csv and metadata.csv), then fits a factorial DESeq2 model (~ genotype + treatment + genotype:treatment) whose interaction term directly answers the research question, alongside the within-genotype drug effects and within-treatment genotype effects as contrasts of the same model. Because n=4 per cell limits power and no single count model is definitive, limma-voom is run on the identical design as a sensitivity check and concordance between methods is reported. Gene-level interaction hits are then ranked and tested against the provisioned human WikiPathways GMT with fgsea to place the genotype-dependent response in pathway context, and everything is integrated into a final report of interaction genes, concordance, and pathway-level interpretation. The folder/run name mentions 'without interaction' models, but the stated research question is explicitly the interaction, so the interaction term is the primary estimand; main-effect contrasts are reported as context."
+  },
+  "usage": {
+    "inputTokens": 64283,
+    "outputTokens": 4595,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1899
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_968f37fbfafe409fa8de133f",
+      "name": "submit_plan",
+      "input": {
+        "plan": "title</arg_key><arg_value>2x2 factorial DE: genotype-dependent drug response in brain RNA-seq"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_43d6029e301544d191497878",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-15T12:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv and metadata.csv match 1:1 after alignment",
+                "Filtered gene count and per-sample library sizes reported",
+                "PCA/MDS plots labeled by genotype (WT/KO) and treatment (vehicle/drug) saved, with any outlier flagged",
+                "Normalized transformed matrix saved for downstream plotting"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Counts file is 12000 genes x 17 columns (gene ID + 16 samples, salmon-derived gene-level counts; upstream transcript-length bias correction status unknown). Metadata is 16 samples x 4 columns with genotype (WT/KO), treatment (vehicle/drug), and combined condition. Human brain tissue.",
+              "depends_on": [],
+              "description": "Read /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/counts/counts.csv (12000 genes x 16 samples; first column is the gene identifier) and /eval-four-models-v2-without-interaction-2x2-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows: genotype, treatment, condition). Verify sample alignment, filter low-abundance genes (e.g. CPM > 1 in at least 4 samples), compute library-size summaries, normalize (VST or rlog), and build PCA/MDS colored by genotype and by treatment to flag outliers and confirm the 2x2 structure. Save the filtered count matrix and transformed matrix for downstream steps.",
+              "id": "T1S1",
+              "name": "Load counts and metadata, QC and sample-level overview",
+              "packages": [
+                "DESeq2==1.52.0",
+                "ggplot2==4.0.3",
+                "pheatmap==1.0.13",
+                "readr==2.2.0"
+              ],
+              "question": "Are the 16 samples (WT/KO x vehicle/drug, 4 replicates each) correctly paired between counts and metadata, and do the data show gross outliers or batch structure before testing genotype-dependent drug effects?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1-factorial-de"
+            },
+            {
+              "acceptance_criteria": [
+                "Dispersion fit diagnostics reported (no failed genes; dispersion outliers flagged)",
+                "results_ko_ko_interaction.csv, results_drug_effect_in_WT.csv, results_drug_effect_in_KO.csv, results_KO_vs_WT_vehicle.csv, results_KO_vs_WT_drug.csv written with log2FC, SE, stat, pvalue, padj",
+                "Numbers of significant genes (padj < 0.05) per contrast reported, including the primary interaction contrast",
+                "Volcano plot for the interaction term saved"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Human bulk RNA-seq, 12000 genes, 2x2 design (genotype WT/KO x treatment vehicle/drug), 4 replicates per cell, counts from salmon as delivered.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 with design ~ genotype + treatment + genotype:treatment on the filtered counts (12000 genes, 16 samples, n=4 per cell). Extract five result sets: (1) the genotype:treatment interaction coefficient — the direct answer to whether the drug acts differently in KO; (2) drug effect in WT (treatment coefficient); (3) drug effect in KO (sum of treatment and interaction coefficients, e.g. via results(dds, name=...) or contrast of coefficient sums with an LFC shrink-free estimate); (4) KO vs WT under vehicle (genotype coefficient); (5) KO vs WT under drug (genotype + interaction). Apply BH FDR correction per contrast, save each as CSV with log2FC, SE, stat, pvalue, padj, and produce a volcano plot for the interaction term. Report dispersion-fit diagnostics.",
+              "id": "T1S2",
+              "name": "DESeq2 factorial model with genotype:treatment interaction",
+              "packages": [
+                "DESeq2==1.52.0",
+                "ggplot2==4.0.3",
+                "EnhancedVolcano==1.30.0"
+              ],
+              "question": "Does the drug's transcriptional effect differ between KO and WT (genotype:treatment interaction), and what are the drug effects within each genotype and the genotype effects within each treatment?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1-factorial-de"
+            },
+            {
+              "acceptance_criteria": [
+                "limma-voom interaction and within-genotype drug-effect results saved as CSVs",
+                "Correlation of interaction-term statistics between DESeq2 and limma-voom reported",
+                "Overlap of padj<0.05 gene sets between the two methods reported; discordances listed",
+                "Any conflict in the direction/sign of the interaction for top genes explicitly noted"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Salmon gene-level counts; upstream length-correction status unknown, so a second estimation approach guards against method-specific artifacts. Human, 12000 genes, 16 samples.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Run the same ~ genotype + treatment + genotype:treatment design with edgeR TMM normalization and limma-voom (eBayes) as a sensitivity check against the DESeq2 primary model. Extract the same five contrasts. Report correlation of interaction-term log2FCs and statistics between methods, concordance of significant calls (padj < 0.05) for the interaction term, and list any top genes where the two methods disagree in sign.",
+              "id": "T1S3",
+              "name": "limma-voom sensitivity analysis and method concordance",
+              "packages": [
+                "edgeR==4.10.3",
+                "limma==3.68.5",
+                "ggplot2==4.0.3",
+                "data.table==1.18.4"
+              ],
+              "question": "Do the genotype:treatment interaction calls and effect sizes from a second count-based method (limma-voom) agree with DESeq2, given the small per-cell sample size (n=4)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1-factorial-de"
+            },
+            {
+              "acceptance_criteria": [
+                "fgsea results tables (pathway, NES, padj) saved for the interaction ranking and both genotype-specific rankings",
+                "GMT symbol-to-gene match rate reported; if < 60% of counts map to HGNC symbols, IDs are mapped first (e.g. via the provisioned UniProt human ID mapping) and the mapping count reported",
+                "Top enriched and depleted pathways per ranking (padj < 0.05) listed",
+                "If the human WikiPathways GMT is absent from the reference store, the step reports the gap and returns the gene-level results without pathway annotation rather than failing"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Interaction and genotype-specific drug-effect statistics come from the DESeq2 factorial fit (T1S2); the human WikiPathways GMT is provisioned under /mnt/refs/managed/wikipathways-human/ (HGNC symbols). Tissue is human brain.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Using fgsea with the provisioned human WikiPathways GMT (HGNC gene symbols), test gene sets against three ranked lists derived from T1S2: (1) genes ranked by the genotype:treatment interaction Wald statistic (pathways where the drug response differs between genotypes), (2) genes ranked by drug effect within WT, (3) genes ranked by drug effect within KO. If the counts file uses Ensembl rather than HGNC IDs, map IDs to symbols with the provisioned human UniProt ID-mapping table before ranking. Run fgsea with minSize 10, maxSize 500, BH-adjusted padj over at least 1000 permutations. Compare pathway NES between WT and KO drug-effect rankings to name the biological processes driving any genotype-dependent response.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the interaction signal (fgsea, WikiPathways human)",
+              "packages": [
+                "fgsea==1.38.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3",
+                "GSEABase==1.74.0"
+              ],
+              "question": "Which human WikiPathways show a genotype-dependent drug response (interaction ranking), and how do drug-affected pathways in WT compare with those in KO?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2-pathway"
+            },
+            {
+              "acceptance_criteria": [
+                "Final table of interaction genes (padj < 0.05 in DESeq2, with limma-voom concordance flag) saved",
+                "Heatmap of interaction gene expression across the 16 samples with genotype/treatment annotations saved",
+                "Concise answer to the research question with effect sizes, directions, and a one-line caveat on n=4 per cell power",
+                "Cross-references to concordant pathway-level findings from T2S1 included"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "All upstream artifacts: DESeq2 and limma-voom contrast tables (T1S2, T1S3) and fgsea pathway tables (T2S1) for the human 2x2 brain dataset.",
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "description": "Combine T1S2 and T1S3 into a single annotated interaction-gene table (DESeq2 and limma-voom log2FC/padj side by side), add top pathway annotations from T2S1, and produce: (a) a heatmap of the top interaction genes (VST values) annotated by genotype and treatment, (b) a ranked summary table of the strongest genotype-dependent drug responses with both methods' statistics, and (c) a plain-language summary answering the question 'does the drug act differently in KO than in WT?', including explicit statement of the n=4-per-cell power limitation and whether the interaction signal is method-concordant.",
+              "id": "T2S2",
+              "name": "Integrate gene- and pathway-level results into a final report",
+              "packages": [
+                "ComplexHeatmap==2.28.0",
+                "ggplot2==4.0.3",
+                "data.table==1.18.4"
+              ],
+              "question": "Which genes and pathways constitute the genotype-dependent drug response, and how strong and how reproducible (across DESeq2 and limma-voom) is that response in this 16-sample 2x2 brain dataset?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2-pathway"
+            }
+          ],
+          "title": "2x2 factorial DE: genotype-dependent drug response in brain RNA-seq",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The question is whether the drug's transcriptional effect differs between KO and WT — that is the genotype:treatment interaction in a 2x2 factorial design (WT/KO x vehicle/drug, 4 replicates per cell, 16 human brain samples, 12000 genes). The plan first QC's the salmon-derived gene-level counts and metadata (16 samples must align between counts.csv and metadata.csv), then fits a factorial DESeq2 model (~ genotype + treatment + genotype:treatment) whose interaction term directly answers the research question, alongside the within-genotype drug effects and within-treatment genotype effects as contrasts of the same model. Because n=4 per cell limits power and no single count model is definitive, limma-voom is run on the identical design as a sensitivity check and concordance between methods is reported. Gene-level interaction hits are then ranked and tested against the provisioned human WikiPathways GMT with fgsea to place the genotype-dependent response in pathway context, and everything is integrated into a final report of interaction genes, concordance, and pathway-level interpretation. The folder/run name mentions 'without interaction' models, but the stated research question is explicitly the interaction, so the interaction term is the primary estimand; main-effect contrasts are reported as context."
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 54
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

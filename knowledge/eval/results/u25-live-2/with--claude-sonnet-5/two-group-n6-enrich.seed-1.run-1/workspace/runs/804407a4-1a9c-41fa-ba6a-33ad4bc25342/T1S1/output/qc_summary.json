@@ -1,0 +1,46 @@
+{
+  "template": "tpl-qc-eda@1.0.0",
+  "method": "Sample structure QC: vst(blind = TRUE), PCA, sample distances, library sizes",
+  "design": "~ 1",
+  "inputs": {
+    "counts": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+    "metadata": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/data/inputs/local/metadata.csv"
+  },
+  "condition_column": "condition",
+  "batch_column": null,
+  "n_samples": 12,
+  "n_genes": 12000,
+  "group_sizes": {
+    "control": 6,
+    "treated": 6
+  },
+  "median_library_size": 1614280,
+  "low_depth_ratio": 4,
+  "n_low_depth_samples": 0,
+  "low_depth_samples": [],
+  "n_top_genes_pca": 500,
+  "percent_variance": {
+    "PC1": 55.06,
+    "PC2": 8.23
+  },
+  "size_factors": {
+    "sample_01": 0.2877,
+    "sample_02": 0.7591,
+    "sample_03": 1.1037,
+    "sample_04": 1.8545,
+    "sample_05": 1.0483,
+    "sample_06": 1.3725,
+    "sample_07": 1.3993,
+    "sample_08": 0.9732,
+    "sample_09": 1.5034,
+    "sample_10": 0.9302,
+    "sample_11": 1.1967,
+    "sample_12": 1.0279
+  },
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "DESeq2": "1.52.0",
+    "ggplot2": "4.0.3",
+    "pheatmap": "1.0.13"
+  }
+}

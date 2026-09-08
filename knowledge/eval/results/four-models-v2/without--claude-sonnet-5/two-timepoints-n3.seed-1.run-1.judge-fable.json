@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes a 2x2 factorial rather than a time course, fits ~condition+time+condition:time in DESeq2, tests the interaction coefficient and adds simple treatment effects per time point, and keeps raw counts with internal median-of-ratios normalization; it does not, however, explicitly state that time is a two-level factor rather than time_hours, nor name the reference levels. QC is present (library sizes, PCA, dispersion) but PCA follows model fitting, sample distances and coloring are unstated, and outlier handling is only 'flag'. BH at 0.05 is stated but no fold change shrinkage (ashr/lfcShrink) is mentioned for reported effects. Enrichment is added despite not being warranted, with an undecided ORA-vs-GSEA method, no explicit universe and no size window, though the collection and version are named. The report covers thresholds, gene counts and the small-n caveat but omits package versions."
+}

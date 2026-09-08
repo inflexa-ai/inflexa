@@ -1,0 +1,261 @@
+{
+  "schema": "inflexa.decision_record/0.1",
+  "template": {
+    "id": "tpl-deseq2-two-group",
+    "version": "1.1.0",
+    "label": "DESeq2 two-group differential expression with apeglm shrinkage",
+    "method": {
+      "id": "M-0001",
+      "label": "DESeq2 Wald test with apeglm log fold change shrinkage"
+    }
+  },
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "rendered_at": "2026-09-07T16:17:09.625Z",
+  "slots": [
+    {
+      "name": "import_state",
+      "value": "integer_counts",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        26
+      ]
+    },
+    {
+      "name": "counts_path",
+      "value": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        28
+      ]
+    },
+    {
+      "name": "counts_from_abundance",
+      "value": "no",
+      "source": "default",
+      "adaptable": true,
+      "default_source": "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor",
+      "lines": [
+        43
+      ]
+    },
+    {
+      "name": "length_offset",
+      "value": true,
+      "source": "default",
+      "adaptable": true,
+      "default_source": "doi:10.12688/f1000research.7563.2",
+      "lines": [
+        44
+      ]
+    },
+    {
+      "name": "metadata_path",
+      "value": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/data/inputs/local/metadata.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        45
+      ]
+    },
+    {
+      "name": "sample_id_column",
+      "value": "sample",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        46
+      ]
+    },
+    {
+      "name": "condition_column",
+      "value": "condition",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        47
+      ]
+    },
+    {
+      "name": "reference_level",
+      "value": "control",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        48
+      ]
+    },
+    {
+      "name": "test_level",
+      "value": "treated",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        49
+      ]
+    },
+    {
+      "name": "design",
+      "value": "~ condition",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        50
+      ]
+    },
+    {
+      "name": "min_count",
+      "value": 10,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        51
+      ]
+    },
+    {
+      "name": "min_samples",
+      "value": 6,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        53
+      ]
+    },
+    {
+      "name": "alpha",
+      "value": 0.05,
+      "source": "default",
+      "adaptable": false,
+      "default_source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing",
+      "lines": [
+        56
+      ]
+    },
+    {
+      "name": "lfc_shrink",
+      "value": "apeglm",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        57
+      ]
+    },
+    {
+      "name": "lfc_threshold",
+      "value": 0,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        58
+      ]
+    },
+    {
+      "name": "n_top_genes_pca",
+      "value": 500,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        59
+      ]
+    },
+    {
+      "name": "output_prefix",
+      "value": "de_treated_vs_control",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        60
+      ]
+    }
+  ],
+  "environment": {
+    "match": "exact",
+    "pins": [
+      {
+        "name": "DESeq2",
+        "track": "bioconductor",
+        "version": "1.52.0",
+        "farm": "1.52.0",
+        "status": "exact"
+      },
+      {
+        "name": "apeglm",
+        "track": "bioconductor",
+        "version": "1.34.0",
+        "farm": "1.34.0",
+        "status": "exact"
+      },
+      {
+        "name": "tximport",
+        "track": "bioconductor",
+        "version": "1.40.0",
+        "farm": "1.40.0",
+        "status": "exact"
+      },
+      {
+        "name": "ashr",
+        "track": "cran",
+        "version": "2.2-63",
+        "farm": "2.2-63",
+        "status": "exact"
+      },
+      {
+        "name": "ggplot2",
+        "track": "cran",
+        "version": "4.0.3",
+        "farm": "4.0.3",
+        "status": "exact"
+      },
+      {
+        "name": "pheatmap",
+        "track": "cran",
+        "version": "1.0.13",
+        "farm": "1.0.13",
+        "status": "exact"
+      },
+      {
+        "name": "jsonlite",
+        "track": "cran",
+        "version": "2.0.0",
+        "farm": "2.0.0",
+        "status": "exact"
+      }
+    ]
+  },
+  "syntax": {
+    "status": "ok"
+  },
+  "citations": [
+    {
+      "doi": "10.1186/s13059-014-0550-8",
+      "title": "Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2",
+      "year": 2014,
+      "direction": "supports"
+    },
+    {
+      "title": "Analyzing RNA-seq data with DESeq2 (the DESeq2 vignette)",
+      "year": 2026,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1093/bioinformatics/bty895",
+      "title": "Heavy-tailed prior distributions for sequence count data: removing the noise and preserving large differences",
+      "year": 2019,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.12688/f1000research.7035.1",
+      "title": "RNA-Seq workflow: gene-level exploratory analysis and differential expression",
+      "year": 2015,
+      "direction": "supports"
+    }
+  ],
+  "unvetted_edits": [],
+  "script_path": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T1S2/scripts/tpl-deseq2-two-group.R",
+  "bound_slots": [],
+  "settings_overrides": []
+}

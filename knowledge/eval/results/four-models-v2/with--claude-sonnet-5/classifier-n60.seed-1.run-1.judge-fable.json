@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The core answer is right: a glmnet penalized logistic regression with nested cross-validation, filtering and scaling inside training folds, AUC with a CI from out-of-fold predictions, and per-fold gene stability. But it does not state stratified folds, a final refit on all 120 samples with coefficients and selection frequencies, the need for external validation, or the batch/depth-confounding caveat, and it is internally inconsistent by feeding the classifier a matrix already filtered by filterByExpr grouped on condition across all samples. The DE and three-collection enrichment tracks are not what the question asks and were not warranted; they are competently specified (TMM, filterByExpr, explicit control reference, BH at 0.05, ranking metric, versions, size window) but add scope without adding to the classifier answer. QC is adequate for a single-batch design with a stated outlier policy, and the report step covers versions, seeds, and thresholds but omits the external-validation and confounding cautions the reference requires."
+}

@@ -1,0 +1,362 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "salmon-quant-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:35:22.873Z",
+  "elapsedMs": 72031,
+  "outcome": "plan_submitted",
+  "planId": "pln-400e0ce9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "tximport gene-level counts + QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Non-integer NumReads are expected, not an error — the length-offset route handles them.",
+          "With n=6 per group a single outlier materially shifts the DE result; flag it rather than silently dropping it, and do not remove any sample without saying so explicitly in the output.",
+          "tx2gene may map multiple transcripts to one gene and may contain transcripts absent from quant.sf; both are normal and should be counted, not treated as failures."
+        ],
+        "context": "Bulk RNA-seq of human skin (taxon 9606), atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. The data profile explicitly flags that inputs are per-sample Salmon quant.sf with non-integer NumReads and that no gene-level count matrix was delivered — this step is what produces one. tximport 1.40.0 and DESeq2 1.52.0 are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "tximport",
+          "DESeq2",
+          "readr",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 12 Salmon quant.sf directories aggregate cleanly to a gene-level count matrix via tx2gene.csv, and do the 6 atopic dermatitis lesional and 6 control skin samples separate on unsupervised structure without an obvious outlier?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "data_preparation",
+        "depends_on": [],
+        "constraints": [
+          "Use tximport with the provided tx2gene.csv; do not attempt to fetch or rebuild an annotation from the network — the sandbox has none.",
+          "Do NOT round or truncate the non-integer Salmon NumReads. Pass the tximport object to DESeqDataSetFromTximport so the average-transcript-length offset is used; that is the documented, correct handling.",
+          "Sample-to-directory matching must be driven by the sample column of metadata.csv, and the script must assert that all 12 samples resolve to an existing quant.sf and that column order of the count matrix equals row order of the sample table.",
+          "Set the control condition as the reference level of the condition factor explicitly, so downstream log2 fold changes are lesional-relative-to-control.",
+          "Report the transcript ID match rate between quant.sf and tx2gene; abort loudly if fewer than 90% of transcripts map."
+        ],
+        "description": "Import the per-sample Salmon quantifications into a gene-level DESeq2 object and assess sample quality before any testing. Read /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition) and use it to locate one quant.sf per sample under /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/quant/<sample>/quant.sf. Load tx2gene.csv (30,147 rows; columns `transcript`, `gene`) and run tximport(type='salmon', tx2gene=...) with the default countsFromAbundance='no' so that the estimated counts AND the average transcript-length matrix are both returned. Verify transcript ID versioning matches between quant.sf Name column and the tx2gene transcript column; if one side carries Ensembl version suffixes and the other does not, strip the suffix on both sides and report how many of the 30,147 transcripts matched. Build a DESeqDataSetFromTximport with design ~condition, setting the control level as the reference. Emit: the gene-level counts matrix (CSV), the DESeqDataSet (RDS), a per-sample QC table (library size / total assigned counts, number of genes with count>0, fraction of counts in top 50 genes), a VST PCA plot coloured by condition, a sample-sample Spearman correlation heatmap, and a written note on whether any sample looks like an outlier and whether PC1 tracks condition.",
+        "acceptance_criteria": [
+          "A gene-level counts matrix exists with 12 columns, one per metadata sample, and a plausible gene count (thousands to ~20k rows) after tx2gene aggregation.",
+          "The transcript ID match rate between quant.sf Name and tx2gene transcript is reported and exceeds 90%.",
+          "A DESeqDataSet RDS exists with design ~condition and the control level set as reference.",
+          "Per-sample QC table, VST PCA plot and sample correlation heatmap are written, with a stated verdict on outliers and on whether condition separates on the first two PCs."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group is adequate for a strong tissue-level contrast but underpowered for small effects; do not present borderline genes as established.",
+          "Unpaired design means inter-individual variation is absorbed into the dispersion estimate — if the PCA in T1S1 showed subject-driven structure, note that power is reduced.",
+          "A DE count in the tens of thousands or in the single digits both indicate an upstream problem (misassigned conditions, failed tx2gene mapping) rather than biology; check before interpreting."
+        ],
+        "context": "Continues directly from the gene-level DESeqDataSet built in T1S1. Design is a simple unpaired two-group comparison: 6 atopic dermatitis lesional skin vs 6 control skin, single batch, no other covariates recorded in metadata.csv, so ~condition is the full model. Skin AD lesional signatures are typically strong (large numbers of DE genes, keratinocyte and Th2/Th17 immune genes), which makes an implausibly small or implausibly total-genome DE count a signal that something upstream is wrong.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "readr"
+        ],
+        "question": "Which genes are differentially expressed in atopic dermatitis lesional skin relative to control skin across the 6 vs 6 unpaired samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Test the contrast as lesional versus control so positive log2FoldChange means higher in lesional skin.",
+          "Report BH-adjusted p-values from DESeq2's independent filtering; state the alpha used and the independent-filtering threshold DESeq2 chose.",
+          "Use apeglm shrinkage for the reported/plotted effect sizes but keep the unshrunken log2FoldChange in the table as well — do not compute significance from the shrunken values.",
+          "Do not add a fold-change cutoff to the significance definition; report padj<0.05 as primary and flag |LFC|>1 as an additional annotation column.",
+          "Report the Ensembl-to-symbol mapping rate and retain unmapped genes in the output table."
+        ],
+        "description": "Run the primary differential expression test on the DESeqDataSet from T1S1. Pre-filter to genes with a minimal count in at least the smaller group size (e.g. rowSums(counts >= 10) >= 6) to reduce testing burden, then DESeq() with the default negative-binomial Wald test on design ~condition. Extract results for the lesional-vs-control contrast with alpha=0.05 and BH adjustment, and separately compute apeglm-shrunken log2 fold changes for ranking and visualisation. Produce: (a) the full results table for every tested gene with baseMean, raw and shrunken log2FoldChange, lfcSE, stat, pvalue, padj, sorted by padj; (b) the significant subset at padj<0.05 with a secondary column marking |shrunken LFC|>1; (c) counts of up- and down-regulated genes at those thresholds; (d) a volcano plot and an MA plot; (e) a heatmap of VST-transformed values for the top 50 genes by padj with samples annotated by condition; (f) the raw p-value histogram as a sanity check on the null. Map Ensembl gene IDs to HGNC symbols using the installed human annotation database, keeping the original ID as the key and reporting the mapping rate; unmapped IDs stay in the table with an NA symbol rather than being dropped.",
+        "acceptance_criteria": [
+          "A full results table covering all tested genes and a significant subset at padj<0.05 are written, with up/down counts stated.",
+          "The pre-filtering rule and the number of genes retained versus tested are reported.",
+          "Volcano, MA, top-50 VST heatmap and p-value histogram plots exist.",
+          "Gene symbol annotation is present with a reported mapping rate, and unmapped IDs are retained with NA.",
+          "The p-value histogram is described in the output — a uniform-with-left-spike shape is expected; anything else is flagged."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of the AD lesional signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Enrichment is interpretive and does not change the DE answer — if this step fails entirely, the T1S2 table still answers the research question.",
+          "Skin biopsies are a mixture of keratinocytes, fibroblasts and infiltrating immune cells; an enriched immune pathway may reflect a shift in cell composition rather than a change in per-cell transcription, and should be stated that way.",
+          "Overlapping GO sets produce blocks of correlated hits — do not present them as independent findings."
+        ],
+        "context": "Purely interpretive layer on the ranked gene list produced by T1S2; the input at this point is a generic gene-level table, not a count object. The environment stages MSigDB 2026.1 human hallmark (50 sets) and human GO BP (7,538 sets) as symbol GMTs, plus human WikiPathways; msigdbr is NOT installed, so gene sets must be read from the staged GMT files rather than fetched from a package or the network. clusterProfiler 4.20.0 and fgsea 1.38.0 are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "GSEABase",
+          "enrichplot",
+          "ggplot2",
+          "readr",
+          "org.Hs.eg.db"
+        ],
+        "question": "Which biological processes and hallmark programmes are coordinately altered in atopic dermatitis lesional skin relative to control, given the DESeq2 ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Read gene sets from GMT files staged in the environment's reference store — msigdbr is not installed and there is no network access, so do not attempt to download collections.",
+          "Use the human collections; confirm organism before use and do not substitute mouse sets.",
+          "Use the genes that passed T1S2 pre-filtering as the ORA background universe, not the full annotation.",
+          "Map gene identifiers to the symbol space of the GMTs and report the fraction of ranked genes that matched a gene set.",
+          "Report BH-adjusted p-values; do not report nominal-p-only pathway hits as findings.",
+          "Collapse redundant GO BP parent/child hits before stating how many processes are enriched."
+        ],
+        "description": "Take the DESeq2 results table from T1S2 and characterise it functionally. Run (a) GSEA on the full gene ranking — rank by the apeglm-shrunken log2 fold change, or by -log10(pvalue)*sign(LFC) if shrunken values are unavailable — over human hallmark gene sets and GO Biological Process sets, and (b) over-representation analysis of the padj<0.05 up- and down-regulated sets separately, using all genes that survived pre-filtering in T1S2 as the background universe, not the whole genome. Required reference data: human hallmark gene sets and human GO Biological Process gene sets as symbol-keyed gene-set collections — resolve them from the environment's reference store and confirm the organism is human before use. Output ranked enrichment tables with NES, p-value and BH-adjusted p-value, a dot plot of the top pathways per direction, and a short written summary of which programmes move up and which move down. GO BP sets are a nested hierarchy, so collapse or cluster redundant parent/child hits before reporting a headline count.",
+        "acceptance_criteria": [
+          "GSEA results over human hallmark and GO BP sets exist with NES and adjusted p-values, ranked.",
+          "Separate ORA results for up- and down-regulated significant genes exist, using the filtered-gene background.",
+          "The gene-identifier match rate against the gene-set symbol space is reported.",
+          "A dot plot of top enriched pathways and a written up/down summary are produced.",
+          "If a required gene-set collection is absent from the reference store at run time, the step says so explicitly and reports enrichment for whichever human collections are present rather than silently substituting another organism."
+        ]
+      }
+    ],
+    "title": "AD lesional vs control: tximport + DESeq2 DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The inputs are per-sample Salmon quantification directories (quant.sf, 30,147 transcript rows x 5 columns each) plus a transcript-to-gene map (tx2gene.csv, 30,147 x 2) and a 12-row sample table with a single `condition` column — 6 atopic dermatitis lesional skin vs 6 control, unpaired, single batch. No gene-level count matrix was delivered, so the analysis must start by building one. Step T1S1 uses tximport with countsFromAbundance='lengthScaledTPM' semantics via the standard DESeqDataSetFromTximport route: tximport returns non-integer estimated counts plus an average transcript-length offset per gene, and DESeq2 consumes that offset directly, which is the correct handling of the non-integer NumReads flagged in the data profile — rounding them would discard the length correction. T1S1 also runs the QC that decides whether the DE result is trustworthy at n=6 per group: library sizes, mapping-rate proxy, VST PCA and sample-sample correlation, to see whether condition separates samples and whether any sample is an outlier. T1S2 runs the actual contrast, lesional vs control, with independent filtering, BH FDR and apeglm LFC shrinkage for ranking; the design is a simple two-group unpaired one (~condition) since the profile records a single batch and no covariates. T1S3 takes the resulting ranked gene list — a generic table at that point, not a count object — to the enrichment agent for GSEA on the full shrunken-LFC ranking plus ORA on the significant set, against the human hallmark and GO gene sets staged in this environment. Enrichment is interpretive: if it fails or returns nothing, the DE table from T1S2 still answers the research question. Nothing about drugs, biomarkers, outcomes or safety appears in the question or the data, so no translational steps are planned."
+  },
+  "usage": {
+    "inputTokens": 93405,
+    "outputTokens": 5260,
+    "cacheCreationInputTokens": 74419,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01V1zDtppWApqyP3HaE8AAN8",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tximport",
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "readr",
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "fgsea",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ComplexHeatmap",
+          "msigdbr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01NQmRkohryL4tgYnwPbKG1t",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_01FJMCPiXJK18jgoTS6Qk849",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control: tximport + DESeq2 DE",
+          "analytical_narrative": "The inputs are per-sample Salmon quantification directories (quant.sf, 30,147 transcript rows x 5 columns each) plus a transcript-to-gene map (tx2gene.csv, 30,147 x 2) and a 12-row sample table with a single `condition` column — 6 atopic dermatitis lesional skin vs 6 control, unpaired, single batch. No gene-level count matrix was delivered, so the analysis must start by building one. Step T1S1 uses tximport with countsFromAbundance='lengthScaledTPM' semantics via the standard DESeqDataSetFromTximport route: tximport returns non-integer estimated counts plus an average transcript-length offset per gene, and DESeq2 consumes that offset directly, which is the correct handling of the non-integer NumReads flagged in the data profile — rounding them would discard the length correction. T1S1 also runs the QC that decides whether the DE result is trustworthy at n=6 per group: library sizes, mapping-rate proxy, VST PCA and sample-sample correlation, to see whether condition separates samples and whether any sample is an outlier. T1S2 runs the actual contrast, lesional vs control, with independent filtering, BH FDR and apeglm LFC shrinkage for ranking; the design is a simple two-group unpaired one (~condition) since the profile records a single batch and no covariates. T1S3 takes the resulting ranked gene list — a generic table at that point, not a count object — to the enrichment agent for GSEA on the full shrunken-LFC ranking plus ORA on the significant set, against the human hallmark and GO gene sets staged in this environment. Enrichment is interpretive: if it fails or returns nothing, the DE table from T1S2 still answers the research question. Nothing about drugs, biomarkers, outcomes or safety appears in the question or the data, so no translational steps are planned.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "tximport gene-level counts + QC",
+              "track": "T1",
+              "step_type": "data_preparation",
+              "question": "Do the 12 Salmon quant.sf directories aggregate cleanly to a gene-level count matrix via tx2gene.csv, and do the 6 atopic dermatitis lesional and 6 control skin samples separate on unsupervised structure without an obvious outlier?",
+              "description": "Import the per-sample Salmon quantifications into a gene-level DESeq2 object and assess sample quality before any testing. Read /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition) and use it to locate one quant.sf per sample under /eval-four-models-v2-without-salmon-quant-n6-s1-1/data/inputs/quant/<sample>/quant.sf. Load tx2gene.csv (30,147 rows; columns `transcript`, `gene`) and run tximport(type='salmon', tx2gene=...) with the default countsFromAbundance='no' so that the estimated counts AND the average transcript-length matrix are both returned. Verify transcript ID versioning matches between quant.sf Name column and the tx2gene transcript column; if one side carries Ensembl version suffixes and the other does not, strip the suffix on both sides and report how many of the 30,147 transcripts matched. Build a DESeqDataSetFromTximport with design ~condition, setting the control level as the reference. Emit: the gene-level counts matrix (CSV), the DESeqDataSet (RDS), a per-sample QC table (library size / total assigned counts, number of genes with count>0, fraction of counts in top 50 genes), a VST PCA plot coloured by condition, a sample-sample Spearman correlation heatmap, and a written note on whether any sample looks like an outlier and whether PC1 tracks condition.",
+              "question_context": null,
+              "context": "Bulk RNA-seq of human skin (taxon 9606), atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. The data profile explicitly flags that inputs are per-sample Salmon quant.sf with non-integer NumReads and that no gene-level count matrix was delivered — this step is what produces one. tximport 1.40.0 and DESeq2 1.52.0 are installed.",
+              "constraints": [
+                "Use tximport with the provided tx2gene.csv; do not attempt to fetch or rebuild an annotation from the network — the sandbox has none.",
+                "Do NOT round or truncate the non-integer Salmon NumReads. Pass the tximport object to DESeqDataSetFromTximport so the average-transcript-length offset is used; that is the documented, correct handling.",
+                "Sample-to-directory matching must be driven by the sample column of metadata.csv, and the script must assert that all 12 samples resolve to an existing quant.sf and that column order of the count matrix equals row order of the sample table.",
+                "Set the control condition as the reference level of the condition factor explicitly, so downstream log2 fold changes are lesional-relative-to-control.",
+                "Report the transcript ID match rate between quant.sf and tx2gene; abort loudly if fewer than 90% of transcripts map."
+              ],
+              "acceptance_criteria": [
+                "A gene-level counts matrix exists with 12 columns, one per metadata sample, and a plausible gene count (thousands to ~20k rows) after tx2gene aggregation.",
+                "The transcript ID match rate between quant.sf Name and tx2gene transcript is reported and exceeds 90%.",
+                "A DESeqDataSet RDS exists with design ~condition and the control level set as reference.",
+                "Per-sample QC table, VST PCA plot and sample correlation heatmap are written, with a stated verdict on outliers and on whether condition separates on the first two PCs."
+              ],
+              "caveats": [
+                "Non-integer NumReads are expected, not an error — the length-offset route handles them.",
+                "With n=6 per group a single outlier materially shifts the DE result; flag it rather than silently dropping it, and do not remove any sample without saying so explicitly in the output.",
+                "tx2gene may map multiple transcripts to one gene and may contain transcripts absent from quant.sf; both are normal and should be counted, not treated as failures."
+              ],
+              "packages": [
+                "tximport",
+                "DESeq2",
+                "readr",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, lesional vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed in atopic dermatitis lesional skin relative to control skin across the 6 vs 6 unpaired samples?",
+              "description": "Run the primary differential expression test on the DESeqDataSet from T1S1. Pre-filter to genes with a minimal count in at least the smaller group size (e.g. rowSums(counts >= 10) >= 6) to reduce testing burden, then DESeq() with the default negative-binomial Wald test on design ~condition. Extract results for the lesional-vs-control contrast with alpha=0.05 and BH adjustment, and separately compute apeglm-shrunken log2 fold changes for ranking and visualisation. Produce: (a) the full results table for every tested gene with baseMean, raw and shrunken log2FoldChange, lfcSE, stat, pvalue, padj, sorted by padj; (b) the significant subset at padj<0.05 with a secondary column marking |shrunken LFC|>1; (c) counts of up- and down-regulated genes at those thresholds; (d) a volcano plot and an MA plot; (e) a heatmap of VST-transformed values for the top 50 genes by padj with samples annotated by condition; (f) the raw p-value histogram as a sanity check on the null. Map Ensembl gene IDs to HGNC symbols using the installed human annotation database, keeping the original ID as the key and reporting the mapping rate; unmapped IDs stay in the table with an NA symbol rather than being dropped.",
+              "context": "Continues directly from the gene-level DESeqDataSet built in T1S1. Design is a simple unpaired two-group comparison: 6 atopic dermatitis lesional skin vs 6 control skin, single batch, no other covariates recorded in metadata.csv, so ~condition is the full model. Skin AD lesional signatures are typically strong (large numbers of DE genes, keratinocyte and Th2/Th17 immune genes), which makes an implausibly small or implausibly total-genome DE count a signal that something upstream is wrong.",
+              "constraints": [
+                "Test the contrast as lesional versus control so positive log2FoldChange means higher in lesional skin.",
+                "Report BH-adjusted p-values from DESeq2's independent filtering; state the alpha used and the independent-filtering threshold DESeq2 chose.",
+                "Use apeglm shrinkage for the reported/plotted effect sizes but keep the unshrunken log2FoldChange in the table as well — do not compute significance from the shrunken values.",
+                "Do not add a fold-change cutoff to the significance definition; report padj<0.05 as primary and flag |LFC|>1 as an additional annotation column.",
+                "Report the Ensembl-to-symbol mapping rate and retain unmapped genes in the output table."
+              ],
+              "acceptance_criteria": [
+                "A full results table covering all tested genes and a significant subset at padj<0.05 are written, with up/down counts stated.",
+                "The pre-filtering rule and the number of genes retained versus tested are reported.",
+                "Volcano, MA, top-50 VST heatmap and p-value histogram plots exist.",
+                "Gene symbol annotation is present with a reported mapping rate, and unmapped IDs are retained with NA.",
+                "The p-value histogram is described in the output — a uniform-with-left-spike shape is expected; anything else is flagged."
+              ],
+              "caveats": [
+                "n=6 per group is adequate for a strong tissue-level contrast but underpowered for small effects; do not present borderline genes as established.",
+                "Unpaired design means inter-individual variation is absorbed into the dispersion estimate — if the PCA in T1S1 showed subject-driven structure, note that power is reduced.",
+                "A DE count in the tens of thousands or in the single digits both indicate an upstream problem (misassigned conditions, failed tx2gene mapping) rather than biology; check before interpreting."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of the AD lesional signature",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark programmes are coordinately altered in atopic dermatitis lesional skin relative to control, given the DESeq2 ranking?",
+              "description": "Take the DESeq2 results table from T1S2 and characterise it functionally. Run (a) GSEA on the full gene ranking — rank by the apeglm-shrunken log2 fold change, or by -log10(pvalue)*sign(LFC) if shrunken values are unavailable — over human hallmark gene sets and GO Biological Process sets, and (b) over-representation analysis of the padj<0.05 up- and down-regulated sets separately, using all genes that survived pre-filtering in T1S2 as the background universe, not the whole genome. Required reference data: human hallmark gene sets and human GO Biological Process gene sets as symbol-keyed gene-set collections — resolve them from the environment's reference store and confirm the organism is human before use. Output ranked enrichment tables with NES, p-value and BH-adjusted p-value, a dot plot of the top pathways per direction, and a short written summary of which programmes move up and which move down. GO BP sets are a nested hierarchy, so collapse or cluster redundant parent/child hits before reporting a headline count.",
+              "context": "Purely interpretive layer on the ranked gene list produced by T1S2; the input at this point is a generic gene-level table, not a count object. The environment stages MSigDB 2026.1 human hallmark (50 sets) and human GO BP (7,538 sets) as symbol GMTs, plus human WikiPathways; msigdbr is NOT installed, so gene sets must be read from the staged GMT files rather than fetched from a package or the network. clusterProfiler 4.20.0 and fgsea 1.38.0 are installed.",
+              "constraints": [
+                "Read gene sets from GMT files staged in the environment's reference store — msigdbr is not installed and there is no network access, so do not attempt to download collections.",
+                "Use the human collections; confirm organism before use and do not substitute mouse sets.",
+                "Use the genes that passed T1S2 pre-filtering as the ORA background universe, not the full annotation.",
+                "Map gene identifiers to the symbol space of the GMTs and report the fraction of ranked genes that matched a gene set.",
+                "Report BH-adjusted p-values; do not report nominal-p-only pathway hits as findings.",
+                "Collapse redundant GO BP parent/child hits before stating how many processes are enriched."
+              ],
+              "acceptance_criteria": [
+                "GSEA results over human hallmark and GO BP sets exist with NES and adjusted p-values, ranked.",
+                "Separate ORA results for up- and down-regulated significant genes exist, using the filtered-gene background.",
+                "The gene-identifier match rate against the gene-set symbol space is reported.",
+                "A dot plot of top enriched pathways and a written up/down summary are produced.",
+                "If a required gene-set collection is absent from the reference store at run time, the step says so explicitly and reports enrichment for whichever human collections are present rather than silently substituting another organism."
+              ],
+              "caveats": [
+                "Enrichment is interpretive and does not change the DE answer — if this step fails entirely, the T1S2 table still answers the research question.",
+                "Skin biopsies are a mixture of keratinocytes, fibroblasts and infiltrating immune cells; an enriched immune pathway may reflect a shift in cell composition rather than a change in per-cell transcription, and should be stated that way.",
+                "Overlapping GO sets produce blocks of correlated hits — do not present them as independent findings."
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "GSEABase",
+                "enrichplot",
+                "ggplot2",
+                "readr",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 61
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

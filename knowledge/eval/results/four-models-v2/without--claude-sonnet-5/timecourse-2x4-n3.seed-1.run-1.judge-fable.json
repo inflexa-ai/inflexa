@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 9,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly frames the question as a condition:time interaction and specifies the DESeq2 LRT with explicit full (~condition + time + condition:time) and reduced (~condition + time) formulas on raw counts with 3 replicates per cell, and its low-count filter (>=10 in at least 3 samples, the smallest group) is minimal and justified. QC includes library size and PCA/distance checks but does not state coloring by condition/time or a policy for handling an outlier or shallow sample. Normalization is never named (size factors are implied by DESeq2 but not stated), the reference level is not declared, and no fold-change shrinkage or explicit per-time-point fold changes are specified for the interaction hits; BH at 0.05 is stated. Enrichment names WikiPathways and a tested-gene universe but omits collection version and a gene-set size window, and the reporting lacks package versions and design caveats."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core WGCNA choices: signed network on blind-vst values after filterByExpr, soft power as the lowest reaching fit 0.8 with the curve reported, TOM dynamic tree cut with minModuleSize 30 and mergeCutHeight 0.25, eigengene correlation against the binary condition with BH across the module-by-trait tests, and kME hubs. It departs from the reference by running the network on all filterByExpr-retained genes rather than the top ~5000 variable genes, by ranking hubs on kME alone without gene significance, and by never stating the alpha at which a module is called trait-associated. QC is thorough for a single-batch design with an explicit outlier policy decided before the network, and normalization is correctly confined to DESeq2 size factors inside vst with a stated reason for using raw counts. The main gap is the explicit refusal to run any enrichment: the reference treats Hallmark ORA of trait-related modules with the network genes as universe as part of a correct answer, so the omission costs heavily on that criterion and slightly on report completeness."
+}

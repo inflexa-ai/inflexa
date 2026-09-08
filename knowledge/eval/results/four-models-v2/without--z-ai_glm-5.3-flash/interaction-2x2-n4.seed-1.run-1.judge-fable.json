@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly identifies the genotype:treatment interaction as the primary estimand, fits the full factorial DESeq2 model with within-genotype simple effects and a limma-voom/TMM sensitivity check, and keeps normalization inside the count models. QC includes library sizes and PCA/MDS colored by both factors, but only says outliers are 'flagged' without a policy; the CPM>1 in >=4 samples filter is tied to the smallest cell. The design formula and contrasts are explicit, though reference levels are never set and the KO drug-effect contrast description is muddled. BH at 0.05 is stated per contrast, but the plan explicitly avoids LFC shrinkage for reported effects and uses no lfcThreshold, so effect sizes are unshrunken. Enrichment was not asked for; it is nonetheless well specified (full ranked Wald stat, named WikiPathways human GMT, size window 10-500) but lacks a collection version. The final report covers methods, versions, thresholds, significant-gene counts, concordance, and the n=4 power caveat."
+}

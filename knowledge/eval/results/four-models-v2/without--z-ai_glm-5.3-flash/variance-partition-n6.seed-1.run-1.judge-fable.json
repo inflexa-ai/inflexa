@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan follows the reference structure: variancePartition on filtered log2-CPM/VST values (not raw counts), then DESeq2 ~ sex + age + condition with apeglm and BH at 0.05, plus an edgeR QL sensitivity check and an explicit n=12 noise caveat. Weaknesses: the partition formula is stated as all fixed effects (~ condition + sex + age) rather than the random-effect form variancePartition expects for categorical terms, voom weights are not mentioned, no explicit tabulation of sex/age balance by group, no reference level or age centering stated, and the |log2FC|>1 set is a post hoc threshold rather than an lfcThreshold test. The outlier policy is only 'detect', software versions are not promised, and the optional fgsea step names the collection and version but not a set-size window, and was not requested."
+}

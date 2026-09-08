@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly refuses to refit the count model, uses all 12000 tested genes in a pre-ranked gseapy.prerank run against a named, versioned local Hallmark GMT (h.all.v2026.1.Hs), states a deterministic tie rule, and reports NES and FDR with both 0.25 and 0.05 thresholds. It falls short of the reference on the GSEA settings: the ranking metric is hedged (product of log2FC and -log10 p 'or' the Wald stat, even though the stat column is listed as present), there is no rule for missing p-values, and the set size window (15-500), permutation count (>=1000), and fixed seed are never specified. The report omits the leading edge per set and package versions. The shallow sample_01 is acknowledged as an upstream caveat but sample QC and the DE-model criteria are only implicitly handled by deferring to the existing results rather than being stated."
+}

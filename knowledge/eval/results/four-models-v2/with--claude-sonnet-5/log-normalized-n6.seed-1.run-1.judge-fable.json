@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses count models and fits limma-trend (eBayes trend=TRUE, robust=TRUE) directly on the delivered log2(TPM+1) values with an explicit value-range check and no re-normalization, matching the reference. QC (PCA/MDS on 500 variable genes, distance heatmap, detected genes) precedes the test, though the outlier handling is only 'flag' rather than a stated policy, and the low-expression filter floor is described but not quantified. The design (~0+condition, named treated-control contrast) and BH at 0.05 via topTable are explicit; the 'reference level' language is slightly mismatched with the cell-means parameterization. Enrichment was not requested or warranted; the plan adds camera on a versioned WikiPathways collection but gives no set-size window and an odd justification, so it earns partial credit rather than the full score for correct omission. The report step is complete, naming method, versions, design, thresholds, n tested/DE, session info, and the core's stated transform."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The primary analysis is correct for the design: DESeq2 with ~ subject + condition, the treated-vs-control coefficient, apeglm shrinkage, BH at 0.05, independent filtering, and per-subject consistency diagnostics. The limma-voom check is flawed as written, since it puts subject in the fixed design and also blocks on subject via duplicateCorrelation, which is redundant and leaves nothing for the correlation to estimate. QC covers library sizes, VST PCA, and sample distances but the outlier policy is only 'flag', without a stated exclusion rule or coloring by condition/subject. Normalization is implicit for DESeq2 and only stated as TMM for voom; the count filter is stated and justified though slightly garbled. Enrichment names the collection and version, uses the full ranked list with the ranking metric stated, and reports mapping rate, but omits a gene-set size window; the report elements and caveats are otherwise well specified."
+}

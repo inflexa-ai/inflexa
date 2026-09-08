@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald on raw counts for a 6 vs 6 unpaired single-batch design, blind-VST PCA and distance heatmap with sample_01 kept, inspected, and its library size reported, removal only with a stated reason. The pre-filter (>=10 counts in >=6 samples) is minimal and tied to group size, median-of-ratios size factors are estimated inside the model, the ~condition formula with explicit reference level and HFD-vs-chow contrast is stated, and apeglm shrinkage with BH at 0.05 and independent filtering is specified; the only slight ambiguity is a listed 'test_against_threshold' constraint without an actual lfcThreshold value. Enrichment uses fgsea on the full Wald-stat-ranked list against the mouse Hallmark (MH 2026.1) collection with a 15-500 size window and mapped-share reporting, avoiding the human-set-on-mouse-symbols error. The report specifies method, versions, design, thresholds, n_tested, n_de, diagnostics, and the length-offset and sample_01 caveats."
+}

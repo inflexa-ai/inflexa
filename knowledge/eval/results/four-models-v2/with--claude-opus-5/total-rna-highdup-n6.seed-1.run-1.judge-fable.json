@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every substantive point: DESeq2 Wald on ~condition with control as explicit reference and contrast (condition, treated, control), apeglm shrinkage, BH at 0.05 with independent filtering, a minimal filter of >=10 counts in >=6 samples, and edgeR QL as a robustness check with the intersection rather than the union reported. It correctly refuses duplicate removal without UMIs, explains that duplication tracks expression in total-RNA libraries, keeps sample_01 with its depth reported, and adds mitochondrial and rRNA-biotype share to QC while honestly stating intronic share is not recoverable from a gene table. The one gap against the reference is that it never states a policy on whether rRNA/mitochondrial genes are removed from the matrix before normalization if their share is large and uneven; otherwise QC, normalization inside the model, and the report (versions, thresholds, tested/significant counts, design caveats) are complete and dataset-specific."
+}

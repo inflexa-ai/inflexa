@@ -1,0 +1,631 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "rsem-counts-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:34:53.971Z",
+  "elapsedMs": 376620,
+  "outcome": "plan_submitted",
+  "planId": "pln-ed3fd53a",
+  "plan": {
+    "steps": [
+      {
+        "id": "qc-sample-mapping-library-sizes",
+        "name": "QC: sample mapping and library sizes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "bulk-rna-seq",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Do the 12 samples in the count matrix map cleanly to the metadata, and how shallow is sample_01 relative to the rest?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "description": "Load counts.csv (12000 gene rows; first column gene id, 12 sample columns) and metadata.csv (12 rows with condition). Verify orientation and that the 12 sample columns map 1:1 to the 12 metadata rows; confirm 6 treated and 6 control. Report per-sample library sizes and state the sample_01 shallow-sample caveat numerically (fold difference to median). Apply low-count gene filtering (edgeR filterByExpr by group) and report the surviving gene count. No batch variable exists (single batch as staged); no normalization or DE at this step.",
+        "acceptance_criteria": [
+          "12/12 sample columns map to metadata rows; 6 treated and 6 control confirmed",
+          "per-sample library sizes reported; sample_01 fold-difference to median stated numerically",
+          "low-count filter applied; surviving gene count reported"
+        ]
+      },
+      {
+        "id": "de-treated-vs-control",
+        "name": "Differential expression: treated vs control (edgeR QL, rounded-count DESeq2 concordance)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "bulk-rna-seq",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2"
+        ],
+        "question": "Which genes differ between treated and control, at FDR<0.05, with direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "differential-expression",
+        "depends_on": [
+          "qc-sample-mapping-library-sizes"
+        ],
+        "description": "Primary differential expression on the filtered gene set: edgeR DGEList, TMM normalization, robust quasi-likelihood fit (glmQLFit robust=TRUE), glmQLFTest contrast treated vs control, BH FDR. edgeR natively accepts the non-integer RSEM expected counts, so no rounding in the primary run. A secondary DESeq2 run on rounded RSEM counts (vignette-sanctioned handling) provides a concordance check; report logFC rank concordance between the two fits. Output a ranked results table for all tested genes (logFC, logCPM, PValue, FDR) with FDR<0.05 flagged and up/down direction stated per significant gene. Flag genes whose significance depends on sample_01 for the downstream sensitivity step.",
+        "acceptance_criteria": [
+          "results table with logFC, logCPM, PValue, FDR for every tested gene; BH applied",
+          "number of genes FDR<0.05 reported; up/down direction stated for each significant gene",
+          "non-integer input accepted without rounding in the primary edgeR run",
+          "logFC rank concordance reported against the secondary rounded-count DESeq2 run"
+        ]
+      },
+      {
+        "id": "sensitivity-excluding-shallow-sample",
+        "name": "Sensitivity: rerun excluding shallow sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "bulk-rna-seq",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "Which of the significant genes keep their call when the 4x-shallow sample_01 is dropped?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "sensitivity",
+        "depends_on": [
+          "de-treated-vs-control"
+        ],
+        "description": "Rerun the identical robust QL pipeline with sample_01 removed (n=5 in its condition) and compare against the primary run: logFC rank concordance (full-rank, all tested genes), gainers (significant in the primary fit only when sample_01 is present) and losers (significant in the sensitivity fit only when sample_01 is removed). Write sensitivity_report.csv with per-gene primary logFC, sensitivity logFC, both FDRs, and a direction-consistency flag (logFC signs agree and primary FDR<0.05). Flag hits whose significance depends on the shallow sample.",
+        "acceptance_criteria": [
+          "logFC rank concordance reported between primary and sensitivity runs",
+          "gainers and losers with per-gene logFC/FDR; sensitivity gainers listed in the report",
+          "per-gene direction-consistency flag in sensitivity_report.csv; hits depending on the shallow sample flagged"
+        ]
+      },
+      {
+        "id": "consensus-gene-report",
+        "name": "Consensus gene list and summary report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "bulk-rna-seq",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR"
+        ],
+        "question": "What is the final ranked gene list, tiered by how much the shallow sample affects each call?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "reporting",
+        "depends_on": [
+          "sensitivity-excluding-shallow-sample"
+        ],
+        "description": "Consolidate: headline answer set = genes with primary FDR<0.05 (edgeR QL, full 12-sample fit); robust set = those staying direction-consistent after dropping sample_01. Write summary_report.md: significant genes with up/down direction and confidence tier (robust vs shallow-dependent), the power caveat that sample_01 (4x shallow) contributes less statistical power and may distort ranking, and the caveat that effective lengths were not delivered so TPM cannot be recomputed (expected counts alone are sufficient for DE testing).",
+        "acceptance_criteria": [
+          "final ranked gene list with per-gene confidence tier (robust vs shallow-dependent) and up/down direction",
+          "summary_report.md includes the power caveat on sample_01 and the length-correction caveat",
+          "consensus files de_results_treated_vs_control.csv and sensitivity_report.csv written"
+        ]
+      },
+      {
+        "id": "pathway-enrichment",
+        "name": "Pathway enrichment triage of the robust set (human WikiPathways)",
+        "agent": "enrichment-agent",
+        "track": "bulk-rna-seq",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea"
+        ],
+        "question": "Which human pathways are over-represented among the up- and down-regulated genes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "consensus-gene-report"
+        ],
+        "description": "Triage the robust gene set (and separately the up- and down-regulated subsets) by over-representation using the staged human WikiPathways GMT, with background = all tested genes. Report enriched pathways to aid biological interpretation of the gene list.",
+        "acceptance_criteria": [
+          "over-representation test run with background = all tested genes, split by up/down direction",
+          "enriched human WikiPathways pathways reported for up- and down-regulated genes",
+          "pathway triage written into summary_report.md or an adjacent enrichment section"
+        ]
+      }
+    ],
+    "title": "Differential expression: treated vs control colon (RSEM expected counts, 6v6)",
+    "created_at": "2026-07-22T00:00:00Z",
+    "analytical_narrative": "The request is a two-group differential expression analysis on human colon bulk RNA-seq: 6 treated vs 6 control, unpaired, single batch. Two features of the delivered data drive the method choice. First, the counts are RSEM gene-level expected counts and are non-integer; the per-sample genes.results files with effective lengths were not delivered, so TPM cannot be recomputed and tximport cannot be applied at full fidelity. The primary method is therefore edgeR quasi-likelihood (edgeR natively accepts non-integer counts) with TMM normalization and robust=TRUE, the standard robust pipeline for small two-group designs. A secondary DESeq2 run on rounded RSEM counts (the DESeq2-vignette-sanctioned handling of RSEM expected counts) provides a concordance check, and the headline gene list is reported with that concordance in view. Second, sample_01 has a library size ~4x below the median. Unequal library sizes are exactly what TMM/DESeq2 size-factor normalization corrects for, so sample_01 stays in the primary analysis; but a shallow library has reduced statistical power and can distort ranking, so a sensitivity run excluding sample_01 determines which hits depend on the shallow sample, and a confidence tier (robust vs shallow-dependent) accompanies the final gene list."
+  },
+  "usage": {
+    "inputTokens": 151319,
+    "outputTokens": 11753,
+    "cacheReadInputTokens": 121600,
+    "reasoningTokens": 4317
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_76ecbfaeb0ba433e909d1e26",
+      "name": "submit_plan",
+      "input": {
+        "plan": "REQUEST: Identify genes differentially expressed between 6 treated and 6 control colon samples from RSEM gene-level expected counts (12000 genes x 12 samples, single batch, unpaired). Special handling needed for: (1) RSEM expected counts are non-integer, so the DE framework must either accept them natively (edgeR) or use the vignette-sanctioned rounding for DESeq2; (2) sample_01's library size is ~4x below the median — it stays in the primary analysis (unequal library sizes are what normalization corrects for) but a sensitivity run without it determines which hits depend on the shallow sample.\n\nGROUNDING (from staged dataset + method literature):\n- RSEM expected counts, 6v6, single batch, unpaired: quasi-likelihood F-test with TMM normalization and robust=TRUE (edgeR) is the primary method; it natively accepts non-integer counts. DESeq2 on rounded RSEM counts is the secondary/consensus method (DESeq2 vignette explicitly recommends rounding RSEM estimated counts).\n- No effective-length files were delivered, so TPM cannot be recomputed; expected counts alone are sufficient for DE testing. Report this as a caveat, not a blocker.\n- Headline answer set: FDR<0.05 genes from the primary fit; robust set = those that stay significant after dropping sample_01.\n\nOUTPUT (files in the run directory):\n- de_results_treated_vs_control.csv — ranked table (gene, logFC, logCPM, PValue, FDR) for every filtered gene; genes FDR<0.05 flagged.\n- sensitivity_report.csv — for each gene: primary logFC, sensitivity logFC, both FDRs, direction-consistency flag (rule: logFC signs agree and primary FDR<0.05).\n- summary_report.md — the answer: significant genes with direction, confidence tiering (robust vs shallow-dependent), power caveat on sample_01, and the length-correction caveat."
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_8da9543c39bd4e5199515c35",
+      "name": "submit_plan",
+      "input": {
+        "plan": "parameters:\n- request: 'Identify genes differentially expressed between 6 treated and 6 control human colon samples. RSEM gene-level expected counts (12000 genes x 12 samples), single batch, unpaired. sample_01 library size ~4x below median; counts are non-integer.'\n- data_files: 'counts.csv (12000x13; rows genes, first column gene id, columns samples), metadata.csv (12x2; one row per sample with condition)'\n- responses: []\n- model_rules: []\n\nsteps:\n- step: qc-sample-mapping-library-sizes\n  agent: bulk-rna-seq\n  description: 'Load counts.csv and metadata.csv; verify orientation (12000 gene rows, first column gene id) and that the 12 sample columns map 1:1 to the 12 metadata rows by condition (6 treated, 6 control). Report library sizes per sample and confirm the sample_01 shallow-sample caveat by stating its fold difference to the median. Apply low-count gene filtering (edgeR filterByExpr by group) and report how many genes survive for testing. No batch variable exists; single batch as staged. No normalization or DE at this step.'\n  resources:\n    cpu: 2\n    memory: 8\n    estimated_runtime: 'short'\n    can_run_parallel: false\n  params:\n    count_orientation: 'rows_genes_cols_samples'\n    id_column: 'first'\n    filter: 'filterByExpr'\n  acceptance:\n    - '12/12 sample columns map to metadata rows; 6 treated and 6 control confirmed'\n    - 'per-sample library sizes reported; sample_01 fold-difference to median stated numerically'\n    - 'low-count filter applied; surviving gene count reported'\n\n- step: de-treated-vs-control\n  agent: bulk-rna-seq\n  depends_on: [qc-sample-mapping-library-sizes]\n  description: 'Primary differential expression on the filtered gene set: edgeR DGEList, TMM normalization, robust quasi-likelihood glmQLFit (robust=TRUE), glmQLFTest contrast treated vs control, BH FDR. edgeR natively accepts the non-integer RSEM expected counts, so no rounding in the primary run. Output ranked results table for all tested genes with logFC, logCPM, PValue, FDR; flag FDR<0.05. Flag genes whose significance depends on sample_01 for the downstream sensitivity step.'\n  resources:\n    cpu: 2\n    memory: 8\n    estimated_runtime: 'short'\n    can_run_parallel: false\n  params:\n    normalization: 'TMM'\n    test: 'glmQLFTest'\n    robust: true\n    fdr: 'BH'\n    fdr_threshold: 0.05\n  model_checks:\n    - check: 'plotQLDisp dispersion trend inspected after glmQLFit'\n      when: 'after robust QL fit'\n      escalation: 'if dispersion trend shows poor fit, keep robust=TRUE but report dispersion caveat in summary'\n  acceptance:\n    - 'results table with logFC, logCPM, PValue, FDR for every tested gene; BH applied'\n    - 'number of genes FDR<0.05 reported; up/down direction stated for each significant gene'\n    - 'non-integer input accepted without rounding in the primary run'\n\n- step: sensitivity-excluding-shallow-sample\n  agent: bulk-rna-seq\n  depends_on: [de-treated-vs-control]\n  description: 'Rerun the identical robust QL pipeline with sample_01 removed from the design (n=5 treated or control depending on its condition) and compare against the primary run: logFC rank concordance (full-rank, all tested genes), gainers (primary FDR<0.05 only when sample_01 present) and losers (sensitivity FDR<0.05 only when removed). Build the sensitivity_report.csv with per-gene primary logFC, sensitivity logFC, both FDRs, and direction-consistency flag (logFC signs agree and primary FDR<0.05). Flag hits whose significance depends on the shallow sample.'\n  resources:\n    cpu: 2\n    memory: 8\n    estimated_runtime: 'short'\n    can_run_parallel: false\n  params:\n    excluded_sample: 'sample_01'\n    fdr_threshold: 0.05\n  acceptance:\n    - 'logFC rank concordance reported between primary and sensitivity runs'\n    - 'gainers and losers (sensitivity gainers) with per-gene logFC/FDR; sensitivity gainers listed in the report'\n    - 'per-gene direction-consistency flag in sensitivity_report.csv; hits depending on the shallow sample flagged'\n\n- step: consensus-gene-report\n  agent: bulk-rna-seq\n  depends_on: [sensitivity-excluding-shallow-sample]\n  refs: ['wikipathways-human']\n  description: 'Consolidate: headline answer set = genes with primary FDR<0.05 (edgeR QL, full 12-sample fit); robust set = those staying direction-consistent after dropping sample_01. Write summary_report.md: significant genes with up/down direction and confidence tier (robust vs shallow-dependent), power caveat that sample_01 (4x shallow) contributes less statistical power and may not represent treatment effect if it distorts ranking, and the caveat that effective lengths were not delivered so TPM cannot be recomputed (expected counts alone are sufficient for DE testing). Triage of the robust set by over-representation using the staged human wikipathways GMT, reporting pathways enriched among up- and down-regulated genes to aid biological interpretation of the gene list.'\n  resources:\n    cpu: 2\n    memory: 8\n    estimated_runtime: 'short'\n    can_run_parallel: false\n  params:\n    fdr_threshold: 0.05\n    direction_consistency_rule: 'logFC signs agree and primary FDR<0.05'\n    enrichment_test: 'over-representation'\n    enrichment_background: 'all tested genes'\n  acceptance:\n    - 'final ranked gene list with per-gene confidence tier (robust vs shallow-dependent) and up/down direction'\n    - 'summary_report.md includes power caveat on sample_01 and the length-correction caveat'\n    - 'enriched human pathways reported for up- and down-regulated sets with background = all tested genes'\n    - 'consensus files de_results_treated_vs_control.csv and sensitivity_report.csv written'"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_3ced0ba42ba349fdb726d555",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "model": "bulk-rna-seq",
+          "check_args": {
+            "request": "Differential expression between 6 treated and 6 control human colon samples; RSEM gene-level expected counts, non-integer; single batch, unpaired; sample_01 library size 4x below median.",
+            "data_files": "/eval-four-models-v2-without-rsem-counts-n6-s1-1/data/inputs/counts/counts.csv and /eval-four-models-v2-without-rsem-counts-n6-s1-1/data/inputs/metadata/metadata.csv",
+            "responses": [],
+            "model_rules": []
+          }
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_87cf27dd9a414d50932ac7bd",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-22T00:00:00Z",
+          "title": "Differential expression: treated vs control colon (RSEM expected counts, 6v6)",
+          "analytical_narrative": "The request is a straightforward two-group differential expression analysis on human colon bulk RNA-seq: 6 treated vs 6 control, unpaired, single batch. Two features of the delivered data drive the method choice. First, the counts are RSEM gene-level expected counts and are non-integer; the per-sample genes.results files with effective lengths were not delivered, so TPM cannot be recomputed and tximport cannot be applied at full fidelity. The primary method should therefore be edgeR quasi-likelihood (edgeR natively accepts non-integer counts) with TMM normalization and robust=TRUE, which is the standard robust pipeline for small two-group designs. A secondary DESeq2 run on rounded RSEM counts (the DESeq2-vignette-sanctioned handling of RSEM expected counts) provides a concordance check, and only the intersection-facing consensus list is reported as the headline answer. Second, sample_01 has a library size ~4x below the median. Unequal library sizes are exactly what TMM/DESeq2 size-factor normalization corrects for, so sample_01 stays in the primary analysis; but a shallow library has reduced statistical power and can distort ranking, so a sensitivity run excluding sample_01 determines which hits depend on the shallow sample and tiering of confidence (robust vs shallow-dependent) accompanies the final gene list.",
+          "steps": [
+            {
+              "step": "qc-sample-mapping-library-sizes",
+              "agent": "bulk-rna-seq",
+              "description": "Load counts.csv (12000 rows x 13 cols: first column gene id, 12 sample columns) and metadata.csv (12 rows x 2 cols with condition). Verify orientation and that the 12 sample columns map 1:1 to the 12 metadata rows; confirm 6 treated and 6 control. Report per-sample library sizes and confirm the sample_01 shallow-sample caveat numerically (fold difference to median). Apply low-count gene filtering (edgeR filterByExpr by group) and report the surviving gene count. No batch variable exists (single batch as staged); no normalization or DE at this step.",
+              "resources": {
+                "cpu": 2,
+                "memory_gb": 8,
+                "estimated_runtime": "short",
+                "can_run_parallel": false
+              },
+              "params": {
+                "count_orientation": "rows_genes_cols_samples",
+                "id_column": "first",
+                "filter": "filterByExpr"
+              },
+              "acceptance": [
+                "12/12 sample columns map to metadata rows; 6 treated and 6 control confirmed",
+                "per-sample library sizes reported; sample_01 fold-difference to median stated numerically",
+                "low-count filter applied; surviving gene count reported"
+              ]
+            },
+            {
+              "step": "de-treated-vs-control",
+              "agent": "bulk-rna-seq",
+              "depends_on": [
+                "qc-sample-mapping-library-sizes"
+              ],
+              "description": "Primary differential expression on the filtered gene set: edgeR DGEList, TMM normalization, robust quasi-likelihood fit (glmQLFit robust=TRUE), glmQLFTest contrast treated vs control, BH FDR. edgeR natively accepts the non-integer RSEM expected counts, so no rounding in the primary run. Output a ranked results table for all tested genes (logFC, logCPM, PValue, FDR) with FDR<0.05 flagged and up/down direction stated per significant gene. Report logFC rank concordance against the secondary DESeq2 run as a concordance metric, and flag genes whose significance depends on sample_01 for the downstream sensitivity step.",
+              "resources": {
+                "cpu": 2,
+                "memory_gb": 8,
+                "estimated_runtime": "short",
+                "can_run_parallel": false
+              },
+              "params": {
+                "normalization": "TMM",
+                "test": "glmQLFTest",
+                "robust": true,
+                "fdr": "BH",
+                "fdr_threshold": 0.05
+              },
+              "model_checks": [
+                {
+                  "check": "plotQLDisp dispersion trend inspected after robust QL fit",
+                  "when": "after glmQLFit robust=TRUE",
+                  "escalation": "if dispersion trend shows poor fit, keep robust=TRUE but report a dispersion caveat in the summary"
+                }
+              ],
+              "acceptance": [
+                "results table with logFC, logCPM, PValue, FDR for every tested gene; BH applied",
+                "number of genes FDR<0.05 reported; up/down direction stated for each significant gene",
+                "non-integer input accepted without rounding in the primary run"
+              ]
+            },
+            {
+              "step": "sensitivity-excluding-shallow-sample",
+              "agent": "bulk-rna-seq",
+              "depends_on": [
+                "de-treated-vs-control"
+              ],
+              "description": "Rerun the identical robust QL pipeline with sample_01 removed (n=5 in its condition) and compare against the primary run: logFC rank concordance (full-rank, all tested genes), gainers (significant in the primary fit only when sample_01 is present) and losers (significant in the sensitivity fit only when sample_01 is removed). Write sensitivity_report.csv with per-gene primary logFC, sensitivity logFC, both FDRs, and a direction-consistency flag (logFC signs agree and primary FDR<0.05). Flag hits whose significance depends on the shallow sample.",
+              "resources": {
+                "cpu": 2,
+                "memory_gb": 8,
+                "estimated_runtime": "short",
+                "can_run_parallel": false
+              },
+              "params": {
+                "excluded_sample": "sample_01",
+                "fdr_threshold": 0.05
+              },
+              "acceptance": [
+                "logFC rank concordance reported between primary and sensitivity runs",
+                "gainers and losers with per-gene logFC/FDR; sensitivity gainers listed in the report",
+                "per-gene direction-consistency flag in sensitivity_report.csv; hits depending on the shallow sample flagged"
+              ]
+            },
+            {
+              "step": "consensus-gene-report",
+              "agent": "bulk-rna-seq",
+              "depends_on": [
+                "sensitivity-excluding-shallow-sample"
+              ],
+              "refs": [
+                "wikipathways-human"
+              ],
+              "description": "Consolidate: headline answer set = genes with primary FDR<0.05 (edgeR QL, full 12-sample fit); robust set = those staying direction-consistent after dropping sample_01. Write summary_report.md: significant genes with up/down direction and confidence tier (robust vs shallow-dependent), the power caveat that sample_01 (4x shallow) contributes less statistical power and may distort ranking, and the caveat that effective lengths were not delivered so TPM cannot be recomputed (expected counts alone are sufficient for DE testing). Triage of the robust set by over-representation using the staged human WikiPathways GMT, reporting pathways enriched among up- and down-regulated genes with background = all tested genes.",
+              "resources": {
+                "cpu": 2,
+                "memory_gb": 8,
+                "estimated_runtime": "short",
+                "can_run_parallel": false
+              },
+              "params": {
+                "fdr_threshold": 0.05,
+                "direction_consistency_rule": "logFC signs agree and primary FDR<0.05",
+                "enrichment_test": "over-representation",
+                "enrichment_background": "all tested genes"
+              },
+              "acceptance": [
+                "final ranked gene list with per-gene confidence tier (robust vs shallow-dependent) and up/down direction",
+                "summary_report.md includes power caveat on sample_01 and the length-correction caveat",
+                "enriched human pathways reported for up- and down-regulated sets with background = all tested genes",
+                "consensus files de_results_treated_vs_control.csv and sensitivity_report.csv written"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "call_aa9a2c75b7644797863e49d3",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The request is a two-group differential expression analysis on human colon bulk RNA-seq: 6 treated vs 6 control, unpaired, single batch. Two features of the delivered data drive the method choice. First, the counts are RSEM gene-level expected counts and are non-integer; the per-sample genes.results files with effective lengths were not delivered, so TPM cannot be recomputed and tximport cannot be applied at full fidelity. The primary method is therefore edgeR quasi-likelihood (edgeR natively accepts non-integer counts) with TMM normalization and robust=TRUE, the standard robust pipeline for small two-group designs. A secondary DESeq2 run on rounded RSEM counts (the DESeq2-vignette-sanctioned handling of RSEM expected counts) provides a concordance check, and the headline gene list is reported with that concordance in view. Second, sample_01 has a library size ~4x below the median. Unequal library sizes are exactly what TMM/DESeq2 size-factor normalization corrects for, so sample_01 stays in the primary analysis; but a shallow library has reduced statistical power and can distort ranking, so a sensitivity run excluding sample_01 determines which hits depend on the shallow sample, and a confidence tier (robust vs shallow-dependent) accompanies the final gene list.",
+          "created_at": "2026-07-22T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "12/12 sample columns map to metadata rows; 6 treated and 6 control confirmed",
+                "per-sample library sizes reported; sample_01 fold-difference to median stated numerically",
+                "low-count filter applied; surviving gene count reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "description": "Load counts.csv (12000 gene rows; first column gene id, 12 sample columns) and metadata.csv (12 rows with condition). Verify orientation and that the 12 sample columns map 1:1 to the 12 metadata rows; confirm 6 treated and 6 control. Report per-sample library sizes and state the sample_01 shallow-sample caveat numerically (fold difference to median). Apply low-count gene filtering (edgeR filterByExpr by group) and report the surviving gene count. No batch variable exists (single batch as staged); no normalization or DE at this step.",
+              "id": "qc-sample-mapping-library-sizes",
+              "name": "QC: sample mapping and library sizes",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "Do the 12 samples in the count matrix map cleanly to the metadata, and how shallow is sample_01 relative to the rest?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "qc",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "results table with logFC, logCPM, PValue, FDR for every tested gene; BH applied",
+                "number of genes FDR<0.05 reported; up/down direction stated for each significant gene",
+                "non-integer input accepted without rounding in the primary edgeR run",
+                "logFC rank concordance reported against the secondary rounded-count DESeq2 run"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "qc-sample-mapping-library-sizes"
+              ],
+              "description": "Primary differential expression on the filtered gene set: edgeR DGEList, TMM normalization, robust quasi-likelihood fit (glmQLFit robust=TRUE), glmQLFTest contrast treated vs control, BH FDR. edgeR natively accepts the non-integer RSEM expected counts, so no rounding in the primary run. A secondary DESeq2 run on rounded RSEM counts (vignette-sanctioned handling) provides a concordance check; report logFC rank concordance between the two fits. Output a ranked results table for all tested genes (logFC, logCPM, PValue, FDR) with FDR<0.05 flagged and up/down direction stated per significant gene. Flag genes whose significance depends on sample_01 for the downstream sensitivity step.",
+              "id": "de-treated-vs-control",
+              "name": "Differential expression: treated vs control (edgeR QL, rounded-count DESeq2 concordance)",
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "question": "Which genes differ between treated and control, at FDR<0.05, with direction?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "differential-expression",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "logFC rank concordance reported between primary and sensitivity runs",
+                "gainers and losers with per-gene logFC/FDR; sensitivity gainers listed in the report",
+                "per-gene direction-consistency flag in sensitivity_report.csv; hits depending on the shallow sample flagged"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "de-treated-vs-control"
+              ],
+              "description": "Rerun the identical robust QL pipeline with sample_01 removed (n=5 in its condition) and compare against the primary run: logFC rank concordance (full-rank, all tested genes), gainers (significant in the primary fit only when sample_01 is present) and losers (significant in the sensitivity fit only when sample_01 is removed). Write sensitivity_report.csv with per-gene primary logFC, sensitivity logFC, both FDRs, and a direction-consistency flag (logFC signs agree and primary FDR<0.05). Flag hits whose significance depends on the shallow sample.",
+              "id": "sensitivity-excluding-shallow-sample",
+              "name": "Sensitivity: rerun excluding shallow sample_01",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "Which of the significant genes keep their call when the 4x-shallow sample_01 is dropped?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "sensitivity",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "final ranked gene list with per-gene confidence tier (robust vs shallow-dependent) and up/down direction",
+                "summary_report.md includes the power caveat on sample_01 and the length-correction caveat",
+                "enriched human pathways reported for up- and down-regulated sets with background = all tested genes",
+                "consensus files de_results_treated_vs_control.csv and sensitivity_report.csv written"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "sensitivity-excluding-shallow-sample"
+              ],
+              "description": "Consolidate: headline answer set = genes with primary FDR<0.05 (edgeR QL, full 12-sample fit); robust set = those staying direction-consistent after dropping sample_01. Write summary_report.md: significant genes with up/down direction and confidence tier (robust vs shallow-dependent), the power caveat that sample_01 (4x shallow) contributes less statistical power and may distort ranking, and the caveat that effective lengths were not delivered so TPM cannot be recomputed (expected counts alone are sufficient for DE testing).",
+              "id": "consensus-gene-report",
+              "name": "Consensus gene list and summary report",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "What is the final ranked gene list, tiered by how much the shallow sample affects each call?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "reporting",
+              "track": "bulk-rna-seq",
+              "refs": [
+                "wikipathways-human"
+              ]
+            },
+            {
+              "acceptance_criteria": [
+                "over-rerepresentation test run with background = all tested genes, split by up/down direction",
+                "enriched human WikiPathways pathways reported for up- and down-regulated genes",
+                "pathway triage written into summary_report.md or an adjacent enrichment section"
+              ],
+              "agent": "enrichment-agent",
+              "depends_on": [
+                "consensus-gene-report"
+              ],
+              "description": "Triage the robust gene set (and separately the up- and down-regulated subsets) by over-representation using the staged human WikiPathways GMT, with background = all tested genes. Report enriched pathways to aid biological interpretation of the gene list.",
+              "id": "pathway-enrichment",
+              "name": "Pathway enrichment triage of the robust set (human WikiPathways)",
+              "packages": [
+                "fgsea"
+              ],
+              "question": "Which human pathways are over-represented among the up- and down-regulated genes?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "enrichment",
+              "track": "bulk-rna-seq",
+              "refs": [
+                "wikipathways-human"
+              ]
+            }
+          ],
+          "title": "Differential expression: treated vs control colon (RSEM expected counts, 6v6)"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_a83fb8e3cf1b43e2b982f2bb",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The request is a two-group differential expression analysis on human colon bulk RNA-seq: 6 treated vs 6 control, unpaired, single batch. Two features of the delivered data drive the method choice. First, the counts are RSEM gene-level expected counts and are non-integer; the per-sample genes.results files with effective lengths were not delivered, so TPM cannot be recomputed and tximport cannot be applied at full fidelity. The primary method is therefore edgeR quasi-likelihood (edgeR natively accepts non-integer counts) with TMM normalization and robust=TRUE, the standard robust pipeline for small two-group designs. A secondary DESeq2 run on rounded RSEM counts (the DESeq2-vignette-sanctioned handling of RSEM expected counts) provides a concordance check, and the headline gene list is reported with that concordance in view. Second, sample_01 has a library size ~4x below the median. Unequal library sizes are exactly what TMM/DESeq2 size-factor normalization corrects for, so sample_01 stays in the primary analysis; but a shallow library has reduced statistical power and can distort ranking, so a sensitivity run excluding sample_01 determines which hits depend on the shallow sample, and a confidence tier (robust vs shallow-dependent) accompanies the final gene list.",
+          "created_at": "2026-07-22T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "12/12 sample columns map to metadata rows; 6 treated and 6 control confirmed",
+                "per-sample library sizes reported; sample_01 fold-difference to median stated numerically",
+                "low-count filter applied; surviving gene count reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [],
+              "description": "Load counts.csv (12000 gene rows; first column gene id, 12 sample columns) and metadata.csv (12 rows with condition). Verify orientation and that the 12 sample columns map 1:1 to the 12 metadata rows; confirm 6 treated and 6 control. Report per-sample library sizes and state the sample_01 shallow-sample caveat numerically (fold difference to median). Apply low-count gene filtering (edgeR filterByExpr by group) and report the surviving gene count. No batch variable exists (single batch as staged); no normalization or DE at this step.",
+              "id": "qc-sample-mapping-library-sizes",
+              "name": "QC: sample mapping and library sizes",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "Do the 12 samples in the count matrix map cleanly to the metadata, and how shallow is sample_01 relative to the rest?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "qc",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "results table with logFC, logCPM, PValue, FDR for every tested gene; BH applied",
+                "number of genes FDR<0.05 reported; up/down direction stated for each significant gene",
+                "non-integer input accepted without rounding in the primary edgeR run",
+                "logFC rank concordance reported against the secondary rounded-count DESeq2 run"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "qc-sample-mapping-library-sizes"
+              ],
+              "description": "Primary differential expression on the filtered gene set: edgeR DGEList, TMM normalization, robust quasi-likelihood fit (glmQLFit robust=TRUE), glmQLFTest contrast treated vs control, BH FDR. edgeR natively accepts the non-integer RSEM expected counts, so no rounding in the primary run. A secondary DESeq2 run on rounded RSEM counts (vignette-sanctioned handling) provides a concordance check; report logFC rank concordance between the two fits. Output a ranked results table for all tested genes (logFC, logCPM, PValue, FDR) with FDR<0.05 flagged and up/down direction stated per significant gene. Flag genes whose significance depends on sample_01 for the downstream sensitivity step.",
+              "id": "de-treated-vs-control",
+              "name": "Differential expression: treated vs control (edgeR QL, rounded-count DESeq2 concordance)",
+              "packages": [
+                "edgeR",
+                "DESeq2"
+              ],
+              "question": "Which genes differ between treated and control, at FDR<0.05, with direction?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "differential-expression",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "logFC rank concordance reported between primary and sensitivity runs",
+                "gainers and losers with per-gene logFC/FDR; sensitivity gainers listed in the report",
+                "per-gene direction-consistency flag in sensitivity_report.csv; hits depending on the shallow sample flagged"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "de-treated-vs-control"
+              ],
+              "description": "Rerun the identical robust QL pipeline with sample_01 removed (n=5 in its condition) and compare against the primary run: logFC rank concordance (full-rank, all tested genes), gainers (significant in the primary fit only when sample_01 is present) and losers (significant in the sensitivity fit only when sample_01 is removed). Write sensitivity_report.csv with per-gene primary logFC, sensitivity logFC, both FDRs, and a direction-consistency flag (logFC signs agree and primary FDR<0.05). Flag hits whose significance depends on the shallow sample.",
+              "id": "sensitivity-excluding-shallow-sample",
+              "name": "Sensitivity: rerun excluding shallow sample_01",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "Which of the significant genes keep their call when the 4x-shallow sample_01 is dropped?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "step_type": "sensitivity",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "final ranked gene list with per-gene confidence tier (robust vs shallow-dependent) and up/down direction",
+                "summary_report.md includes the power caveat on sample_01 and the length-correction caveat",
+                "consensus files de_results_treated_vs_control.csv and sensitivity_report.csv written"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "depends_on": [
+                "sensitivity-excluding-shallow-sample"
+              ],
+              "description": "Consolidate: headline answer set = genes with primary FDR<0.05 (edgeR QL, full 12-sample fit); robust set = those staying direction-consistent after dropping sample_01. Write summary_report.md: significant genes with up/down direction and confidence tier (robust vs shallow-dependent), the power caveat that sample_01 (4x shallow) contributes less statistical power and may distort ranking, and the caveat that effective lengths were not delivered so TPM cannot be recomputed (expected counts alone are sufficient for DE testing).",
+              "id": "consensus-gene-report",
+              "name": "Consensus gene list and summary report",
+              "packages": [
+                "edgeR"
+              ],
+              "question": "What is the final ranked gene list, tiered by how much the shallow sample affects each call?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "refs": [
+                "wikipathways-human"
+              ],
+              "step_type": "reporting",
+              "track": "bulk-rna-seq"
+            },
+            {
+              "acceptance_criteria": [
+                "over-representation test run with background = all tested genes, split by up/down direction",
+                "enriched human WikiPathways pathways reported for up- and down-regulated genes",
+                "pathway triage written into summary_report.md or an adjacent enrichment section"
+              ],
+              "agent": "enrichment-agent",
+              "depends_on": [
+                "consensus-gene-report"
+              ],
+              "description": "Triage the robust gene set (and separately the up- and down-regulated subsets) by over-representation using the staged human WikiPathways GMT, with background = all tested genes. Report enriched pathways to aid biological interpretation of the gene list.",
+              "id": "pathway-enrichment",
+              "name": "Pathway enrichment triage of the robust set (human WikiPathways)",
+              "packages": [
+                "fgsea"
+              ],
+              "question": "Which human pathways are over-represented among the up- and down-regulated genes?",
+              "resources": {
+                "memoryGb": 8,
+                "cpu": 2,
+                "estimatedRuntime": "short",
+                "canRunParallel": false
+              },
+              "refs": [
+                "wikipathways-human"
+              ],
+              "step_type": "enrichment",
+              "track": "bulk-rna-seq"
+            }
+          ],
+          "title": "Differential expression: treated vs control colon (RSEM expected counts, 6v6)"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

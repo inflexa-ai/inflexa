@@ -1,0 +1,42 @@
+{
+  "template": "tpl-annotation-map@1.0.0",
+  "method": "AnnotationDbi mapIds on the organism package",
+  "input": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+  "gene_column": "gene",
+  "organism": "human",
+  "organism_package": "org.Hs.eg.db",
+  "organism_package_version": "3.23.1",
+  "entrez_source_date": "2026-Mar18",
+  "ensembl_source_date": "2025-Sep03",
+  "input_space": "symbol",
+  "input_space_setting": "symbol",
+  "pattern_share": {
+    "ensembl": 0,
+    "entrez": 0,
+    "symbol": 1
+  },
+  "n_rows": 12000,
+  "n_input": 12000,
+  "n_duplicate_rows": 0,
+  "n_mapped": 4384,
+  "mapped_share": 0.3653,
+  "n_unmapped": 7616,
+  "unmapped_share": 0.6347,
+  "n_multi": 274,
+  "n_multi_by_space": {
+    "entrez_id": 3,
+    "ensembl_id": 272
+  },
+  "multi_map_rule": "first",
+  "alias_fallback": true,
+  "n_alias_mapped": 4,
+  "strip_ensembl_version": true,
+  "key_space": "entrez_id",
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "AnnotationDbi": "1.74.0",
+    "org_package": "3.23.1",
+    "ggplot2": "4.0.3",
+    "jsonlite": "2.0.0"
+  }
+}

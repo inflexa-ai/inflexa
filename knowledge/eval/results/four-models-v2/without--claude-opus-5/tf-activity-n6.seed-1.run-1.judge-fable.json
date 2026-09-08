@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: a negative-binomial Wald model on raw counts with ~condition and the vehicle reference level, the full unfiltered Wald statistic vector fed to decoupler ulm with a signed CollecTRI regulon, a five-target minimum, BH over regulators, a second estimator, and a per-sample activity matrix on vst counts (tested by Mann-Whitney/t-test rather than limma, a minor deviation). QC is present with PCA and a correlation heatmap but the outlier policy is limited to flagging. Normalization is never named as size factors or TMM inside the model; it is only implied by using pydeseq2 on raw counts, so that criterion is scored down. The pathway GSEA step is properly preranked with an explicit universe and size window, but neither the CollecTRI nor the WikiPathways version is stated, and the report otherwise covers method, versions, thresholds, counts and the inference-not-measurement caveat."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: a single ~condition model on all twelve samples with control as explicit reference, an LRT against ~1 for the omnibus question, two named Wald contrasts vs control from the same fit, ashr shrinkage of the pairwise fold changes only, and BH at 0.05 within each contrast, with a minimal justified pre-filter and internal median-of-ratios normalization. QC is specified (blind VST, PCA, distances, library sizes, colored by condition) but the outlier/shallow-sample policy is only 'flag', not a stated decision rule. The claim that apeglm cannot be used is factually wrong (treated_x vs control with control as reference is a single coefficient), though ashr is an acceptable choice. Enrichment was not asked; it is included and is well specified for the pairwise contrasts (metric, collections with versions, size window, per-contrast tables), but ranking by the unsigned LRT statistic for preranked GSEA is not a valid directional ranking, which lowers that score."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with median-of-ratios inside the model, a minimal justified filter (>=10 in >=3, smallest group), explicit ~condition with control as reference, BH at 0.05 with apeglm shrinkage, and a clearly stated low-power caveat at n=3. QC includes blind VST, PCA, and a distance heatmap with outlier flagging, though no library-size check or explicit outlier-handling policy is stated. Enrichment correctly acknowledges no zebrafish curated collection, maps one-to-one orthologs via a named tool with versions and dropped share reported, and runs fgsea on Hallmark with the Wald statistic, full ranked list and 15-500 window; however Step 3 and Step 4 contain contradictory, mid-draft text about a zebrafish WikiPathways arm that is then retracted, which muddies the final design. The report is thorough but the Ensembl release number is never named, only the identifier space."
+}

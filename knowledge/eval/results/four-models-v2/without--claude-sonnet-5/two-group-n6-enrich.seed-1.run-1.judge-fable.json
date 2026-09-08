@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 Wald on raw Salmon counts with median-of-ratios normalization fits the 6v6 unpaired single-batch design, and the QC step is thorough: library sizes, VST PCA/clustering with sample_01 marked by condition, detection rate, and an explicit documented retain/drop rule with a leave-one-out sensitivity run. Weaknesses: the design formula, reference level, and contrast are never written out; the low-count filter is left as 'e.g., independent filtering / minimum count'; apeglm is listed as a package but shrinkage is never stated, and the |log2FC|>1 cutoff is applied post hoc rather than as lfcThreshold in the test. Enrichment correctly uses a preranked fgsea on the full list with the DESeq2 stat, but hedges on the ranking metric, omits the gene-set size window, and gives no MSigDB version; the report likewise omits software versions."
+}

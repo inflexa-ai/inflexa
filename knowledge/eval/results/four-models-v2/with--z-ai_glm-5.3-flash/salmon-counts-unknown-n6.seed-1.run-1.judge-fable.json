@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses tximport on the gene table, fits DESeq2 Wald (and edgeR QL as a check) on the counts as delivered with no length offset, and states in both the plan and the report that the offset is lost and isoform-use changes can appear as gene-level DE. It falls short of the reference by not explicitly requesting the quant.sf directories or the average-transcript-length table and not stating the tximport path that would follow if they arrive; the integer check is present but does not say what is reported or done if Salmon's non-integer counts are found. QC is blind, condition-colored, and includes PCA and distances, though the outlier policy is limited to flagging. Filter, in-model normalization, explicit ~condition with control as reference, BH at 0.05 with apeglm shrinkage, correct omission of enrichment, and a full report header with versions, counts, and caveats are all clearly stated."
+}

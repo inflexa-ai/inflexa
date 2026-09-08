@@ -1,0 +1,9 @@
+{
+  "n_genes_full_table": 9782,
+  "n_genes_significant": 875,
+  "n_significant_up": 513,
+  "n_significant_down": 362,
+  "n_significant_mapped": 408,
+  "n_significant_placeholder": 467,
+  "n_enrichment_significant_sets_all_collections": 211
+}

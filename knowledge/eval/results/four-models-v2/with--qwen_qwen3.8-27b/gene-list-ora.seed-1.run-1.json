@@ -1,0 +1,909 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "gene-list-ora",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T08:54:01.754Z",
+  "elapsedMs": 360820,
+  "outcome": "plan_submitted",
+  "planId": "pln-a21ae681",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC of delivered counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default.",
+          "Do not re-run the DESeq2 model or modify de_results.csv; the QC output documents the inherited results, it is not a new test."
+        ],
+        "context": "Inputs: /eval-four-models-v2-with-gene-list-ora-s1-1/data/inputs/counts/counts.csv (gene-level Salmon counts, 12000 genes x 12 samples; length-correction state not recorded) and /eval-four-models-v2-with-gene-list-ora-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column: treated = atopic dermatitis lesional, control; 6 per group, unpaired, single batch). The DE table de_results.csv was already computed from exactly these counts - this step does NOT re-fit the DE model. Its purpose is to verify the sample structure that the inherited DE results rest on, in particular the flagged low-depth sample_01 (library size ~4x below the median, per the data profile).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the delivered counts (12000 genes x 12 samples; atopic dermatitis lesional [treated] n=6 vs control n=6) support the delivered DESeq2 treated-vs-control results table, and where does sample_01 - the sample whose library size is about 4x below the median - sit relative to its group?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)"
+        ],
+        "description": "Blind-VST PCA and sample-distance structure of the 12 delivered Salmon count samples, colored by condition, with sample_01 reported beside the others; documents that the DE table is inherited from this sample set.",
+        "acceptance_criteria": [
+          "Blind-VST PCA on the top 500 variable genes and a Euclidean sample-distance heatmap are produced, each colored by condition.",
+          "sample_01's library size and detected-gene count are reported beside the other 11 samples, and its position on the PCA and distance heatmap is described.",
+          "No sample is silently removed; any removal is stated with a reason (default is keep).",
+          "The step records that the DE results table is inherited from this sample set (including sample_01) and will be used as delivered."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report.",
+          "The Reactome gene-sets file staged in the reference store covers every Reactome species in one file; restrict it to the human sets using the co-staged pathway index before testing, and state the release as staged.",
+          "If a supplementary collection is missing at run time, skip that pass and report its absence - the GO-BP primary answer does not depend on it."
+        ],
+        "context": "Input: /eval-four-models-v2-with-gene-list-ora-s1-1/data/inputs/results/de_results.csv - DESeq2 results table of the treated vs control contrast (12000 genes x 8 columns: gene, base_mean, log2FoldChange, lfcSE, stat, pvalue, padj, ...). Contrast: treated = atopic dermatitis lesional, control = normal skin; reference level control; positive log2FC = higher in treated/lesional. Verify this sign convention against the table headers and state it in the output.\n\nSignificant list: genes with padj < 0.05. The research question is not directional, so the primary list pools the up- and down-regulated significant genes (stated pooling); up-only and down-only lists are run as secondary sensitivity checks.\n\nUniverse: all 12000 tested genes present in de_results.csv (not the whole genome). Term size window 15-500 genes, applied after intersecting each GO term with the tested genes.\n\nIdentifier mapping: map the gene column to Entrez IDs with org.Hs.eg.db (release 3.23.1, installed); report the share of tested and significant genes that did not map, and drop many-to-many mappings with a stated count. Never mix identifier spaces between list and universe.\n\nPrimary test: GO biological process over-representation (clusterProfiler::enrichGO, ont = 'BP') with the tested-genes universe; Benjamini-Hochberg multiple testing; then reduce the significant terms to representative terms with rrvgo semantic similarity and report the representative terms with the full term table as supplement.\n\nMandatory branch: if fewer than 50 genes pass padj < 0.05, do NOT run ORA on that list; instead report the list size and run a ranked test (fgsea) over the full 12000 tested genes ranked by the DESeq2 Wald statistic (stat column) against the GO-BP sets, with BH adjustment. The Wald statistic is the chosen side of the disputed ranking-metric question: signed and scaled by the standard error.\n\nSupplementary passes (secondary; the GO-BP ORA is the primary answer): (1) MSigDB Hallmark human 2026.1; (2) Reactome human pathways from the reference store (multi-species GMT restricted to human via the co-staged pathway index; release 'current' as staged); (3) WikiPathways human release 2026.07.10; (4) the redistributable KEGG MEDICUS subset of MSigDB C2:CP 2026.1 (local copy, MSigDB license). Each collection: same universe, same size window, release stated per collection, collections never merged into one test.\n\nBias note: a significant list from count-based testing is biased toward long, highly expressed genes; the tested-genes universe removes the detection component of that bias - state this in the output. Effective transcript lengths are not among the inputs (Salmon length-correction state is unrecorded), so a length-weighted goseq-style correction is not applicable; note this limitation.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "rrvgo",
+          "org.Hs.eg.db",
+          "fgsea"
+        ],
+        "question": "Which GO biological processes are over-represented among the genes significant (padj < 0.05) in the delivered DESeq2 treated (atopic dermatitis lesional) vs control comparison?",
+        "grounding": {
+          "claims": [
+            "R-0095@492a",
+            "R-0096@6ebc",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0097@a38e",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0109@fe3e",
+            "R-0164@4176",
+            "R-0108@409f",
+            "R-0045@be9e",
+            "R-0046@a0ac",
+            "R-0054@801e",
+            "R-0047@fd9d",
+            "R-0052@620a",
+            "R-0099@0e8a",
+            "R-0110@41cb"
+          ],
+          "reason": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction per R-0095@492a",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "go_ontology",
+              "step": "enrichment",
+              "value": "BP",
+              "source": "doi:10.1016/j.xinn.2021.100141"
+            },
+            {
+              "name": "go_term_reduction",
+              "step": "enrichment",
+              "value": "rrvgo_semantic_similarity",
+              "source": "doi:10.17912/micropub.biology.000811"
+            },
+            {
+              "name": "second_collection",
+              "step": "enrichment",
+              "value": "reactome_c2_cp",
+              "source": "doi:10.1093/nar/gkz1031"
+            },
+            {
+              "name": "further_collections",
+              "step": "enrichment",
+              "value": [
+                "reactome_gmt",
+                "wikipathways"
+              ],
+              "source": "doi:10.1093/nar/gkz1031"
+            },
+            {
+              "name": "collection_release_statement",
+              "step": "enrichment",
+              "value": "release_per_collection",
+              "source": "rule:R-0165"
+            },
+            {
+              "name": "gene_set_collection",
+              "step": "enrichment",
+              "value": "msigdb_hallmark_human",
+              "source": "doi:10.1016/j.cels.2015.12.004"
+            },
+            {
+              "name": "follow_up",
+              "step": "enrichment",
+              "value": [
+                "reactome",
+                "wikipathways",
+                "go"
+              ],
+              "source": "doi:10.1038/s41596-018-0103-9"
+            },
+            {
+              "name": "kegg_policy",
+              "step": "enrichment",
+              "value": "local_copy_with_release_and_license",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "id_mapping",
+              "step": "enrichment",
+              "value": "to_entrez_with_orgdb",
+              "source": "doi:10.1016/j.xinn.2021.100141"
+            },
+            {
+              "name": "report_unmapped_share",
+              "step": "enrichment",
+              "value": true,
+              "source": "doi:10.1038/nprot.2009.97"
+            },
+            {
+              "name": "ora_min_significant_genes",
+              "step": "enrichment",
+              "value": 50,
+              "source": "doi:10.3389/fgene.2020.00654"
+            },
+            {
+              "name": "direction_handling",
+              "step": "enrichment",
+              "value": "two_lists_or_stated_pooling",
+              "source": "rule:R-0109"
+            },
+            {
+              "name": "primary_answer",
+              "step": "enrichment",
+              "value": "over_representation_test",
+              "source": "rule:R-0109"
+            },
+            {
+              "name": "input_contrast_statement",
+              "step": "enrichment",
+              "value": "reference_level_and_sign_convention",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "rank_metric_choice",
+              "step": "enrichment",
+              "value": "stated_in_plan",
+              "source": "rule:R-0108"
+            },
+            {
+              "name": "bias_note",
+              "step": "enrichment",
+              "value": "length_and_expression",
+              "source": "doi:10.1186/s13059-015-0761-7"
+            },
+            {
+              "name": "min_size",
+              "step": "enrichment",
+              "value": 15,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "max_size",
+              "step": "enrichment",
+              "value": 500,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "collapse_redundant",
+              "step": "enrichment",
+              "value": true,
+              "source": "doi:10.1101/060012"
+            },
+            {
+              "name": "rank_ties",
+              "step": "enrichment",
+              "value": "state_the_tie_rule",
+              "source": "doi:10.1186/s12859-017-1674-0"
+            },
+            {
+              "name": "collection_pin",
+              "step": "enrichment",
+              "value": "name_and_version_for_each_collection",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-ora-go@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "enrichment: go_ontology = BP (doi:10.1016/j.xinn.2021.100141)",
+          "enrichment: go_term_reduction = rrvgo_semantic_similarity (doi:10.17912/micropub.biology.000811)",
+          "enrichment: second_collection = reactome_c2_cp (doi:10.1093/nar/gkz1031)",
+          "enrichment: further_collections = reactome_gmt, wikipathways (doi:10.1093/nar/gkz1031)",
+          "enrichment: collection_release_statement = release_per_collection (rule:R-0165)",
+          "enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)",
+          "enrichment: follow_up = reactome, wikipathways, go (doi:10.1038/s41596-018-0103-9)",
+          "enrichment: kegg_policy = local_copy_with_release_and_license (doi:10.1371/journal.pcbi.1009935)",
+          "enrichment: id_mapping = to_entrez_with_orgdb (doi:10.1016/j.xinn.2021.100141)",
+          "enrichment: report_unmapped_share = true (doi:10.1038/nprot.2009.97)",
+          "enrichment: ora_min_significant_genes = 50 (doi:10.3389/fgene.2020.00654)",
+          "enrichment: direction_handling = two_lists_or_stated_pooling (rule:R-0109)",
+          "enrichment: primary_answer = over_representation_test (rule:R-0109)",
+          "enrichment: input_contrast_statement = reference_level_and_sign_convention (doi:10.1371/journal.pcbi.1009935)",
+          "enrichment: rank_metric_choice = stated_in_plan (rule:R-0108)",
+          "enrichment: bias_note = length_and_expression (doi:10.1186/s13059-015-0761-7)",
+          "enrichment: min_size = 15 (doi:10.1073/pnas.0506580102)",
+          "enrichment: max_size = 500 (doi:10.1073/pnas.0506580102)",
+          "enrichment: collapse_redundant = true (doi:10.1101/060012)",
+          "enrichment: rank_ties = state_the_tie_rule (doi:10.1186/s12859-017-1674-0)",
+          "enrichment: collection_pin = name_and_version_for_each_collection (doi:10.1371/journal.pcbi.1009935)"
+        ],
+        "description": "Significant-gene list from de_results.csv (padj < 0.05, both directions pooled), Entrez-mapped, tested for GO-BP over-representation against the 12000 tested genes as universe, with rrvgo term reduction; ranked full-list fallback if the significant list is under 50 genes; supplementary Hallmark/Reactome/WikiPathways/KEGG-MEDICUS passes with pinned releases.",
+        "acceptance_criteria": [
+          "A significant-gene list (padj < 0.05) is saved with the log2FC direction of each gene; list size and the up/down split are reported.",
+          "If the significant list has >= 50 genes: a GO-BP over-representation table (term name, term ID, gene count in list / universe, raw p, BH FDR) is produced with the 12000 tested genes as universe and the 15-500 term-size window; significant terms are reduced to representative terms by rrvgo; if no term passes FDR < 0.05, that is stated explicitly.",
+          "If the significant list has < 50 genes: the ORA on that list is not run, the list size is reported, and a ranked GO-BP test on the full 12000-gene list ranked by the DESeq2 Wald stat column is run and reported instead.",
+          "Supplementary passes (MSigDB Hallmark 2026.1, Reactome human, WikiPathways human 2026.07.10, KEGG MEDICUS via MSigDB C2:CP 2026.1) each use the same universe and size window, with the collection release stated per collection and no merging of collections.",
+          "The share of tested and significant genes that failed Entrez mapping is reported; many-to-many mappings are dropped with a stated count.",
+          "The input contrast (treated = AD lesional vs control, reference level control, positive log2FC = up in treated) is stated and verified against the table headers."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Consolidate the outputs of T1S1 and T2S1 into one report. State the primary GO-BP answer with its full provenance (database and version, list cutoff or ranking metric, universe, size window, tool and multiple-testing method), the supplementary collection results with per-collection releases, and a reproducibility record (sessionInfo, random seeds, package versions, gene-set collection versions, org.Hs.eg.db annotation release 3.23.1). The report must make clear that the DE significance is inherited (computed upstream, including the low-depth sample_01) and that the enrichment is conditional on it, and that enrichment results are method-dependent.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What must the final report state so that the GO-BP over-representation answer (and the supplementary pathway results) are reproducible and honestly framed, given that the DE table is inherited from a sample set that includes the low-depth sample_01?",
+        "grounding": {
+          "claims": [
+            "R-0051@01ca",
+            "R-0055@107a",
+            "R-0105@c4a8",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "enrichment_report",
+              "step": "report",
+              "value": [
+                "database",
+                "version",
+                "rank_metric",
+                "universe",
+                "size_window"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "enrichment_caveat",
+              "step": "report",
+              "value": "method_dependence",
+              "source": "doi:10.1093/bib/bbz158"
+            },
+            {
+              "name": "leading_edge",
+              "step": "report",
+              "value": "per_significant_set",
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)",
+          "report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)",
+          "report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+        ],
+        "description": "Single report consolidating the T1S1 sample-structure QC and the T2S1 enrichment results: primary GO-BP answer with full provenance, supplementary collection results, inherited-results caveats, and a reproducibility record.",
+        "acceptance_criteria": [
+          "For each collection tested, the report states the gene-set database name, its version/release, the list cutoff (padj < 0.05) or the ranking metric (DESeq2 Wald stat if the ranked branch ran), the universe (12000 tested genes), and the term-size window (15-500).",
+          "The report names the enrichment method(s) and states that the results are method-dependent, presenting sets as hypotheses for follow-up rather than proven findings.",
+          "For any significant set from a ranked test, the leading-edge genes are listed with their gene-level statistics.",
+          "A reproducibility record (sessionInfo, random seeds, package versions, gene-set collection versions, org.Hs.eg.db release 3.23.1) is stored with the results.",
+          "The report carries the inherited caveats: sample_01's low library size, the unrecorded Salmon length-correction state, and the length/expression bias of a significance-threshold list."
+        ]
+      }
+    ],
+    "title": "GO-BP over-representation of significant AD skin DE genes",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question asks which GO biological processes are over-represented among the genes significant in the delivered DESeq2 treated-vs-control table (atopic dermatitis lesional [treated] vs control skin, 6+6, unpaired, single batch). The plan consumes de_results.csv as delivered and does not re-fit the DE model. Because the raw Salmon counts (12000 genes x 12 samples) are also delivered and the profile flags sample_01 with a library size ~4x below the median, T1S1 first verifies the sample structure the inherited DE table rests on (blind-VST PCA, distance heatmap, keep-and-report policy for sample_01). T2S1 then defines the significant list (padj < 0.05, pooled both directions with stated reason), maps identifiers to Entrez via org.Hs.eg.db 3.23.1, and runs GO-BP over-representation with the 12000 tested genes as the universe, term-size window 15-500, Benjamini-Hochberg correction, and rrvgo term reduction; if fewer than 50 genes pass the threshold it switches to a ranked test on the full list (DESeq2 Wald statistic) per the low-power rule. Supplementary Hallmark/Reactome/WikiPathways/KEGG-MEDICUS passes follow the standard procedure with pinned releases. T1S3 consolidates everything into a report with full provenance, method-dependence caveats, and a reproducibility record."
+  },
+  "usage": {
+    "inputTokens": 220062,
+    "outputTokens": 23090,
+    "cacheReadInputTokens": 175744,
+    "reasoningTokens": 15973
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_621d277938ce4f17a6d77d3c",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "gene_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 72
+    },
+    {
+      "toolUseId": "call_f29b9dc0c31b4abaad2361e9",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 78
+    },
+    {
+      "toolUseId": "call_4ec582bf404b478789ce900c",
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "gene_list",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST sample-structure QC (PCA on top variable genes, sample distance heatmap)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "go_ontology",
+                "value": "BP"
+              },
+              {
+                "name": "go_term_reduction",
+                "value": "rrvgo_semantic_similarity"
+              },
+              {
+                "name": "universe",
+                "value": "tested genes (all 12000 rows of de_results.csv), not whole genome"
+              },
+              {
+                "name": "ora_min_significant_genes",
+                "value": "50"
+              },
+              {
+                "name": "direction_handling",
+                "value": "stated pooling: all padj<0.05 genes, both directions; up/down lists as secondary check"
+              },
+              {
+                "name": "primary_answer",
+                "value": "over_representation_test"
+              },
+              {
+                "name": "id_mapping",
+                "value": "to_entrez_with_orgdb (org.Hs.eg.db 3.23.1)"
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": "true"
+              },
+              {
+                "name": "min_size",
+                "value": "15"
+              },
+              {
+                "name": "max_size",
+                "value": "500"
+              },
+              {
+                "name": "rank_metric",
+                "value": "DESeq2 Wald statistic (stat column) if the ranked fallback branch runs"
+              },
+              {
+                "name": "contrast",
+                "value": "treated (AD lesional) vs control, positive log2FC = up in treated"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Enrichment report with provenance, method-dependence caveat, leading edges, reproducibility record",
+            "parameters": [
+              {
+                "name": "enrichment_report",
+                "value": "database, version, rank_metric, universe, size_window"
+              },
+              {
+                "name": "enrichment_caveat",
+                "value": "method_dependence"
+              },
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "sessionInfo, seed, package versions, collection version, annotation release"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "call_791639b341bd43559db8d9ad",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"GO-BP over-representation of significant AD skin DE genes\", \"analytical_narrative\": \"The research question asks which GO biological processes are over-represented among the genes significant in the delivered DESeq2 treated-vs-control table (atopic dermatitis lesional [treated] vs control skin, 6+6, unpaired, single batch). The plan consumes de_results.csv as delivered and does not re-fit the DE model. Because the raw Salmon counts (12000 genes x 12 samples) are also delivered and the profile flags sample_01 with a library size ~4x below the median, T1S1 first verifies the sample structure the inherited DE table rests on (blind-VST PCA, distance heatmap, keep-and-report policy for sample_01). T2S1 then defines the significant list (padj < 0.05, pooled both directions with stated reason), maps identifiers to Entrez via org.Hs.eg.db 3.23.1, and runs GO-BP over-representation with the 12000 tested genes as the universe, term-size window 15-500, Benjamini-Hochberg correction, and rrvgo term reduction; if fewer than 50 genes pass the threshold it switches to a ranked test on the full list (DESeq2 Wald statistic) per the low-power rule. Supplementary Hallmark/Reactome/WikiPathways/KEGG-MEDICUS passes follow the standard procedure with pinned releases. T1S3 consolidates everything into a report with full provenance, method-dependence caveats, and a reproducibility record.\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"created_at\": \"2026-09-07T12:00:00Z\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC of delivered counts\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Do the delivered counts (12000 genes x 12 samples; atopic dermatitis lesional [treated] n=6 vs control n=6) support the delivered DESeq2 treated-vs-control results table, and where does sample_01 - the sample whose library size is about 4x below the median - sit relative to its group?\", \"description\": \"Blind-VST PCA and sample-distance structure of the 12 delivered Salmon count samples, colored by condition, with sample_01 reported beside the others; documents that the DE table is inherited from this sample set.\", \"context\": \"Inputs: /eval-four-models-v2-with-gene-list-ora-s1-1/data/inputs/counts/counts.csv (gene-level Salmon counts, 12000 genes x 12 samples; length-correction state not recorded) and /eval-four-models-v2-with-gene-list-ora-s1-1/data/inputs/metadata/metadata.csv (12 rows, condition column: treated = atopic dermatitis lesional, control; 6 per group, unpaired, single batch). The DE table de_results.csv was already computed from exactly these counts - this step does NOT re-fit the DE model. Its purpose is to verify the sample structure that the inherited DE results rest on, in particular the flagged low-depth sample_01 (library size ~4x below the median, per the data profile).\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"qc_sample_structure: low_depth_policy = keep_inspect_report (doi:10.1186/s13059-016-0881-8)\"], \"caveats\": [\"If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default.\", \"Do not re-run the DESeq2 model or modify de_results.csv; the QC output documents the inherited results, it is not a new test.\"], \"acceptance_criteria\": [\"Blind-VST PCA on the top 500 variable genes and a Euclidean sample-distance heatmap are produced, each colored by condition.\", \"sample_01's library size and detected-gene count are reported beside the other 11 samples, and its position on the PCA and distance heatmap is described.\", \"No sample is silently removed; any removal is stated with a reason (default is keep).\", \"The step records that the DE results table is inherited from this sample set (including sample_01) and will be used as delivered.\"], \"packages\": [\"DESeq2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\", \"R-0008@440d\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}, {\"step\": \"qc_sample_structure\", \"name\": \"low_depth_policy\", \"value\": \"keep_inspect_report\", \"source\": \"doi:10.1186/s13059-016-0881-8\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}}, {\"id\": \"T2S1\", \"name\": \"GO over-representation with clusterProfiler enrichGO and rrvgo term reduction\", \"track\": \"T2\", \"step_type\": \"enrichment\", \"agent\": \"enrichment-agent\", \"question\": \"Which GO biological processes are over-represented among the genes significant (padj < 0.05) in the delivered DESeq2 treated (atopic dermatitis lesional) vs control comparison?\", \"description\": \"Significant-gene list from de_results.csv (padj < 0.05, both directions pooled), Entrez-mapped, tested for GO-BP over-representation against the 12000 tested genes as universe, with rrvgo term reduction; ranked full-list fallback if the significant list is under 50 genes; supplementary Hallmark/Reactome/WikiPathways/KEGG-MEDICUS passes with pinned releases.\", \"context\": \"Input: /eval-four-models-v2-with-gene-list-ora-s1-1/data/inputs/results/de_results.csv - DESeq2 results table of the treated vs control contrast (12000 genes x 8 columns: gene, base_mean, log2FoldChange, lfcSE, stat, pvalue, padj, ...). Contrast: treated = atopic dermatitis lesional, control = normal skin; reference level control; positive log2FC = higher in treated/lesional. Verify this sign convention against the table headers and state it in the output.\\n\\nSignificant list: genes with padj < 0.05. The research question is not directional, so the primary list pools the up- and down-regulated significant genes (stated pooling); up-only and down-only lists are run as secondary sensitivity checks.\\n\\nUniverse: all 12000 tested genes present in de_results.csv (not the whole genome). Term size window 15-500 genes, applied after intersecting each GO term with the tested genes.\\n\\nIdentifier mapping: map the gene column to Entrez IDs with org.Hs.eg.db (release 3.23.1, installed); report the share of tested and significant genes that did not map, and drop many-to-many mappings with a stated count. Never mix identifier spaces between list and universe.\\n\\nPrimary test: GO biological process over-representation (clusterProfiler::enrichGO, ont = 'BP') with the tested-genes universe; Benjamini-Hochberg multiple testing; then reduce the significant terms to representative terms with rrvgo semantic similarity and report the representative terms with the full term table as supplement.\\n\\nMandatory branch: if fewer than 50 genes pass padj < 0.05, do NOT run ORA on that list; instead report the list size and run a ranked test (fgsea) over the full 12000 tested genes ranked by the DESeq2 Wald statistic (stat column) against the GO-BP sets, with BH adjustment. The Wald statistic is the chosen side of the disputed ranking-metric question: signed and scaled by the standard error.\\n\\nSupplementary passes (secondary; the GO-BP ORA is the primary answer): (1) MSigDB Hallmark human 2026.1; (2) Reactome human pathways from the reference store (multi-species GMT restricted to human via the co-staged pathway index; release 'current' as staged); (3) WikiPathways human release 2026.07.10; (4) the redistributable KEGG MEDICUS subset of MSigDB C2:CP 2026.1 (local copy, MSigDB license). Each collection: same universe, same size window, release stated per collection, collections never merged into one test.\\n\\nBias note: a significant list from count-based testing is biased toward long, highly expressed genes; the tested-genes universe removes the detection component of that bias - state this in the output. Effective transcript lengths are not among the inputs (Salmon length-correction state is unrecorded), so a length-weighted goseq-style correction is not applicable; note this limitation.\", \"constraints\": [\"enrichment: go_ontology = BP (doi:10.1016/j.xinn.2021.100141)\", \"enrichment: go_term_reduction = rrvgo_semantic_similarity (doi:10.17912/micropub.biology.000811)\", \"enrichment: second_collection = reactome_c2_cp (doi:10.1093/nar/gkz1031)\", \"enrichment: further_collections = reactome_gmt, wikipathways (doi:10.1093/nar/gkz1031)\", \"enrichment: collection_release_statement = release_per_collection (rule:R-0165)\", \"enrichment: gene_set_collection = msigdb_hallmark_human (doi:10.1016/j.cels.2015.12.004)\", \"enrichment: follow_up = reactome, wikipathways, go (doi:10.1038/s41596-018-0103-9)\", \"enrichment: kegg_policy = local_copy_with_release_and_license (doi:10.1371/journal.pcbi.1009935)\", \"enrichment: id_mapping = to_entrez_with_orgdb (doi:10.1016/j.xinn.2021.100141)\", \"enrichment: report_unmapped_share = true (doi:10.1038/nprot.2009.97)\", \"enrichment: ora_min_significant_genes = 50 (doi:10.3389/fgene.2020.00654)\", \"enrichment: direction_handling = two_lists_or_stated_pooling (rule:R-0109)\", \"enrichment: primary_answer = over_representation_test (rule:R-0109)\", \"enrichment: input_contrast_statement = reference_level_and_sign_convention (doi:10.1371/journal.pcbi.1009935)\", \"enrichment: rank_metric_choice = stated_in_plan (rule:R-0108)\", \"enrichment: bias_note = length_and_expression (doi:10.1186/s13059-015-0761-7)\", \"enrichment: min_size = 15 (doi:10.1073/pnas.0506580102)\", \"enrichment: max_size = 500 (doi:10.1073/pnas.0506580102)\", \"enrichment: collapse_redundant = true (doi:10.1101/060012)\", \"enrichment: rank_ties = state_the_tie_rule (doi:10.1186/s12859-017-1674-0)\", \"enrichment: collection_pin = name_and_version_for_each_collection (doi:10.1371/journal.pcbi.1009935)\"], \"caveats\": [\"If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report.\", \"The Reactome gene-sets file staged in the reference store covers every Reactome species in one file; restrict it to the human sets using the co-staged pathway index before testing, and state the release as staged.\", \"If a supplementary collection is missing at run time, skip that pass and report its absence - the GO-BP primary answer does not depend on it.\"], \"acceptance_criteria\": [\"A significant-gene list (padj < 0.05) is saved with the log2FC direction of each gene; list size and the up/down split are reported.\", \"If the significant list has >= 50 genes: a GO-BP over-representation table (term name, term ID, gene count in list / universe, raw p, BH FDR) is produced with the 12000 tested genes as universe and the 15-500 term-size window; significant terms are reduced to representative terms by rrvgo; if no term passes FDR < 0.05, that is stated explicitly.\", \"If the significant list has < 50 genes: the ORA on that list is not run, the list size is reported, and a ranked GO-BP test on the full 12000-gene list ranked by the DESeq2 Wald stat column is run and reported instead.\", \"Supplementary passes (MSigDB Hallmark 2026.1, Reactome human, WikiPathways human 2026.07.10, KEGG MEDICUS via MSigDB C2:CP 2026.1) each use the same universe and size window, with the collection release stated per collection and no merging of collections.\", \"The share of tested and significant genes that failed Entrez mapping is reported; many-to-many mappings are dropped with a stated count.\", \"The input contrast (treated = AD lesional vs control, reference level control, positive log2FC = up in treated) is stated and verified against the table headers.\"], \"packages\": [\"clusterProfiler\", \"rrvgo\", \"org.Hs.eg.db\", \"fgsea\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0095@492a\", \"R-0096@6ebc\", \"R-0098@d01b\", \"R-0165@e456\", \"R-0107@976c\", \"R-0048@500d\", \"R-0097@a38e\", \"R-0101@06c8\", \"R-0103@93aa\", \"R-0109@fe3e\", \"R-0164@4176\", \"R-0108@409f\", \"R-0045@be9e\", \"R-0046@a0ac\", \"R-0054@801e\", \"R-0047@fd9d\", \"R-0052@620a\", \"R-0099@0e8a\", \"R-0110@41cb\"], \"template\": \"tpl-ora-go@1.0.0\", \"settings\": [{\"step\": \"enrichment\", \"name\": \"go_ontology\", \"value\": \"BP\", \"source\": \"doi:10.1016/j.xinn.2021.100141\"}, {\"step\": \"enrichment\", \"name\": \"go_term_reduction\", \"value\": \"rrvgo_semantic_similarity\", \"source\": \"doi:10.17912/micropub.biology.000811\"}, {\"step\": \"enrichment\", \"name\": \"second_collection\", \"value\": \"reactome_c2_cp\", \"source\": \"doi:10.1093/nar/gkz1031\"}, {\"step\": \"enrichment\", \"name\": \"further_collections\", \"value\": [\"reactome_gmt\", \"wikipathways\"], \"source\": \"doi:10.1093/nar/gkz1031\"}, {\"step\": \"enrichment\", \"name\": \"collection_release_statement\", \"value\": \"release_per_collection\", \"source\": \"rule:R-0165\"}, {\"step\": \"enrichment\", \"name\": \"gene_set_collection\", \"value\": \"msigdb_hallmark_human\", \"source\": \"doi:10.1016/j.cels.2015.12.004\"}, {\"step\": \"enrichment\", \"name\": \"follow_up\", \"value\": [\"reactome\", \"wikipathways\", \"go\"], \"source\": \"doi:10.1038/s41596-018-0103-9\"}, {\"step\": \"enrichment\", \"name\": \"kegg_policy\", \"value\": \"local_copy_with_release_and_license\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"enrichment\", \"name\": \"id_mapping\", \"value\": \"to_entrez_with_orgdb\", \"source\": \"doi:10.1016/j.xinn.2021.100141\"}, {\"step\": \"enrichment\", \"name\": \"report_unmapped_share\", \"value\": true, \"source\": \"doi:10.1038/nprot.2009.97\"}, {\"step\": \"enrichment\", \"name\": \"ora_min_significant_genes\", \"value\": 50, \"source\": \"doi:10.3389/fgene.2020.00654\"}, {\"step\": \"enrichment\", \"name\": \"direction_handling\", \"value\": \"two_lists_or_stated_pooling\", \"source\": \"rule:R-0109\"}, {\"step\": \"enrichment\", \"name\": \"primary_answer\", \"value\": \"over_representation_test\", \"source\": \"rule:R-0109\"}, {\"step\": \"enrichment\", \"name\": \"input_contrast_statement\", \"value\": \"reference_level_and_sign_convention\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"enrichment\", \"name\": \"rank_metric_choice\", \"value\": \"stated_in_plan\", \"source\": \"rule:R-0108\"}, {\"step\": \"enrichment\", \"name\": \"bias_note\", \"value\": \"length_and_expression\", \"source\": \"doi:10.1186/s13059-015-0761-7\"}, {\"step\": \"enrichment\", \"name\": \"min_size\", \"value\": 15, \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"enrichment\", \"name\": \"max_size\", \"value\": 500, \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"enrichment\", \"name\": \"collapse_redundant\", \"value\": true, \"source\": \"doi:10.1101/060012\"}, {\"step\": \"enrichment\", \"name\": \"rank_ties\", \"value\": \"state_the_tie_rule\", \"source\": \"doi:10.1186/s12859-017-1674-0\"}, {\"step\": \"enrichment\", \"name\": \"collection_pin\", \"value\": \"name_and_version_for_each_collection\", \"source\": \"doi:10.1371/journal.pcbi.1009935\"}], \"reason\": \"GO over-representation with clusterProfiler enrichGO and rrvgo term reduction per R-0095@492a\"}}, {\"id\": \"T1S3\", \"name\": \"Report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What must the final report state so that the GO-BP over-representation answer (and the supplementary pathway results) are reproducible and honestly framed, given that the DE table is inherited from a sample set that includes the low-depth sample_01?\", \"description\": \"Single report consolidating the T1S1 sample-structure QC and the T2S1 enrichment results: primary GO-BP answer with full provenance, supplementary collection results, inherited-results caveats, and a reproducibility record.\", \"context\": \"Consolidate the outputs of T1S1 and T2S1 into one report. State the primary GO-BP answer with its full provenance (database and version, list cutoff or ranking metric, universe, size window, tool and multiple-testing method), the supplementary collection results with per-collection releases, and a reproducibility record (sessionInfo, random seeds, package versions, gene-set collection versions, org.Hs.eg.db annotation release 3.23.1). The report must make clear that the DE significance is inherited (computed upstream, including the low-depth sample_01) and that the enrichment is conditional on it, and that enrichment results are method-dependent.\", \"constraints\": [\"report: enrichment_report = database, version, rank_metric, universe, size_window (doi:10.1371/journal.pcbi.1009935)\", \"report: enrichment_caveat = method_dependence (doi:10.1093/bib/bbz158)\", \"report: leading_edge = per_significant_set (doi:10.1073/pnas.0506580102)\", \"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\"], \"caveats\": [], \"acceptance_criteria\": [\"For each collection tested, the report states the gene-set database name, its version/release, the list cutoff (padj < 0.05) or the ranking metric (DESeq2 Wald stat if the ranked branch ran), the universe (12000 tested genes), and the term-size window (15-500).\", \"The report names the enrichment method(s) and states that the results are method-dependent, presenting sets as hypotheses for follow-up rather than proven findings.\", \"For any significant set from a ranked test, the leading-edge genes are listed with their gene-level statistics.\", \"A reproducibility record (sessionInfo, random seeds, package versions, gene-set collection versions, org.Hs.eg.db release 3.23.1) is stored with the results.\", \"The report carries the inherited caveats: sample_01's low library size, the unrecorded Salmon length-correction state, and the length/expression bias of a significance-threshold list.\"], \"packages\": [], \"depends_on\": [\"T2S1\"], \"resources\": {\"cpu\": 1, \"memoryGb\": 2}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0051@01ca\", \"R-0055@107a\", \"R-0105@c4a8\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"enrichment_report\", \"value\": [\"database\", \"version\", \"rank_metric\", \"universe\", \"size_window\"], \"source\": \"doi:10.1371/journal.pcbi.1009935\"}, {\"step\": \"report\", \"name\": \"enrichment_caveat\", \"value\": \"method_dependence\", \"source\": \"doi:10.1093/bib/bbz158\"}, {\"step\": \"report\", \"name\": \"leading_edge\", \"value\": \"per_significant_set\", \"source\": \"doi:10.1073/pnas.0506580102\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 61
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "gene_list",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ],
+          "enrichment_input": "gene_list"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0032"
+            },
+            "template": "tpl-ora-go@1.0.0",
+            "rules": [
+              "R-0095@492a",
+              "R-0096@6ebc",
+              "R-0098@d01b",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0109@fe3e",
+              "R-0164@4176",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0054@801e",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0099@0e8a",
+              "R-0110@41cb"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0095@492a"
+          },
+          {
+            "id": "R-0096@6ebc"
+          },
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0109@fe3e"
+          },
+          {
+            "id": "R-0164@4176"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0054@801e"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0099@0e8a"
+          },
+          {
+            "id": "R-0110@41cb"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 37726,
+      "elapsedMs": 39
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "gene_list",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind VST sample-structure QC (PCA on top variable genes, sample distance heatmap)",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "go_ontology",
+                "value": "BP"
+              },
+              {
+                "name": "go_term_reduction",
+                "value": "rrvgo_semantic_similarity"
+              },
+              {
+                "name": "universe",
+                "value": "tested genes (all 12000 rows of de_results.csv), not whole genome"
+              },
+              {
+                "name": "ora_min_significant_genes",
+                "value": "50"
+              },
+              {
+                "name": "direction_handling",
+                "value": "stated pooling: all padj<0.05 genes, both directions; up/down lists as secondary check"
+              },
+              {
+                "name": "primary_answer",
+                "value": "over_representation_test"
+              },
+              {
+                "name": "id_mapping",
+                "value": "to_entrez_with_orgdb (org.Hs.eg.db 3.23.1)"
+              },
+              {
+                "name": "report_unmapped_share",
+                "value": "true"
+              },
+              {
+                "name": "min_size",
+                "value": "15"
+              },
+              {
+                "name": "max_size",
+                "value": "500"
+              },
+              {
+                "name": "rank_metric",
+                "value": "DESeq2 Wald statistic (stat column) if the ranked fallback branch runs"
+              },
+              {
+                "name": "contrast",
+                "value": "treated (AD lesional) vs control, positive log2FC = up in treated"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Enrichment report with provenance, method-dependence caveat, leading edges, reproducibility record",
+            "parameters": [
+              {
+                "name": "enrichment_report",
+                "value": "database, version, rank_metric, universe, size_window"
+              },
+              {
+                "name": "enrichment_caveat",
+                "value": "method_dependence"
+              },
+              {
+                "name": "leading_edge",
+                "value": "per_significant_set"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "sessionInfo, seed, package versions, collection version, annotation release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 26
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

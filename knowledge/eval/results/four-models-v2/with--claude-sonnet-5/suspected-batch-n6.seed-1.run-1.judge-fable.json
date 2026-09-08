@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core decision: raw counts into DESeq2 with svaseq surrogate variables as covariates (~SV1..SVk + condition), condition as the factor of interest, no ComBat or adjusted matrix, number of SVs from the estimator, and an explicit confounding check before proceeding. It falls short by not first asking the analyst for the unrecorded variable (extraction date, lane) and by checking SV correlation only against the PCA cluster rather than explicitly verifying no SV tracks condition; the null model is not stated. Normalization is left implicit (DESeq2 size factors never named, and svaseq is said to run on 'normalized counts' without saying how). QC, filtering, contrasts, BH/apeglm, and report content are explicit and correct; the fgsea step is well specified (full list, Wald stat, named collections with versions, 15-500 window) though enrichment was not requested."
+}

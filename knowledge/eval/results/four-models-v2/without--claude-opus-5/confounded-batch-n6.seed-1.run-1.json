@@ -1,0 +1,428 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "confounded-batch-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T22:57:18.671Z",
+  "elapsedMs": 89444,
+  "outcome": "plan_submitted",
+  "planId": "pln-6e11f5a9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and confounding diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A clean two-cluster PCA here is NOT evidence of a treatment effect; it is exactly what a pure batch effect also produces",
+          "n=6 per group makes formal tests of library-size difference underpowered; treat them as descriptive"
+        ],
+        "context": "The data profile states processing batch is perfectly confounded with condition. This step makes that quantitative rather than asserted, and provides the QC facts (library size skew, PC1 alignment, outlier samples) that the triage step T1S3 needs.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pheatmap",
+          "ggplot2",
+          "matrixStats"
+        ],
+        "question": "How much of the treated (batch B2) vs control (batch B1) separation in the 12-sample lung count matrix is attributable to technical/library structure, and is the ~condition+batch design matrix in fact rank-deficient?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Use the raw counts as delivered; do not apply any length or TPM correction — the profile does not record whether salmon length correction was applied, so state that as an assumption and do not silently assume otherwise",
+          "Do not attempt ComBat, removeBatchEffect, or SVA-based correction here or anywhere: with batch identical to condition these remove the effect of interest, and any 'corrected' matrix would be misleading",
+          "Filter genes to those with a minimum count in at least 6 samples (the smallest group size) before VST/PCA, and report how many of the 12,000 genes survive",
+          "Report descriptive statistics only — no claim that any QC difference is 'due to' treatment"
+        ],
+        "description": "Load /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples) and /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition, batch). Verify sample IDs match one-to-one and in order. Tabulate condition x batch to confirm the 6/6 perfect confounding (B1 = all controls, B2 = all treated). Explicitly build model.matrix(~ condition + batch) and report its rank versus its column count, showing the batch term is not estimable — this is the formal evidence for the caveat that carries through the whole run. Then run standard QC on raw counts: per-sample library size, detected-gene count, and their difference between B1 and B2 (a large systematic library-size or complexity gap is the fingerprint of a processing-batch effect rather than a treatment effect); VST/rlog transform, PCA (report PC1/PC2 variance explained and whether PC1 aligns with the confounded condition/batch axis), sample-sample Spearman correlation heatmap and hierarchical clustering; per-sample outlier check. Report also the within-group dispersion in B1 versus B2 — unequal within-group spread across the two processing batches is itself technical evidence.",
+        "acceptance_criteria": [
+          "Condition x batch contingency table printed, confirming 6 control/B1 and 6 treated/B2 with zero off-diagonal samples",
+          "Rank of model.matrix(~condition+batch) reported alongside its column count, with an explicit statement that the batch coefficient is not estimable",
+          "Per-sample library size and detected-gene counts reported, with the B1 vs B2 difference summarised (median and range, plus a Wilcoxon p as descriptive only)",
+          "PCA on VST counts saved with PC1/PC2 variance explained and the loading of the condition/batch axis on PC1 stated numerically",
+          "Sample correlation heatmap and dendrogram saved; any sample separating from its own group flagged by name",
+          "A written QC summary that states the confounding cannot be removed and names it as the limiting factor of the run"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 treated-vs-control contrast (confounded)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group DESeq2 dispersion estimates are usable but not precise; shrunken LFCs are the safer ranking",
+          "A very large significant-gene count (e.g. thousands of the 12,000) is more consistent with a global technical shift than with a targeted pharmacological response — say so if observed"
+        ],
+        "context": "This is the only contrast the design supports. It is worth running because the ranked statistic is still the best available starting point and because the shape of the result (how many genes, how coherent, how stable) is itself evidence about whether a real treatment effect is plausibly present.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "edgeR",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which of the 12,000 genes differ between the 6 treated (batch B2) and 6 control (batch B1) lung samples, recognising that the estimated effect is the inseparable sum of treatment and processing batch?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Design must be ~ condition alone; do NOT write ~ condition + batch (rank-deficient) and do NOT drop or subset samples to break the confounding",
+          "Use raw integer counts as DESeq2 input — no pre-normalised, batch-corrected, or TPM values",
+          "Use BH FDR; report padj, never raw p, as the significance criterion",
+          "Do not describe any gene as 'treatment-responsive', 'induced by treatment', or 'a treatment biomarker' — the permitted phrasing is 'differs between treated/B2 and control/B1'"
+        ],
+        "description": "Fit DESeq2 on the raw counts with design ~ condition only (the batch term is not estimable; T1S1 shows this formally), contrast treated vs control, using the gene filter from T1S1. Report the full results table with baseMean, log2FoldChange, lfcSE, stat, pvalue, and BH-adjusted padj, sorted by padj. Apply apeglm LFC shrinkage for ranking and report both shrunk and unshrunk LFCs. Call significance at padj < 0.05 and |log2FC| > 1, and also report the count at padj < 0.05 alone. Produce a volcano plot and an MA plot, plus a heatmap of the top 50 genes by padj on VST counts with samples annotated by BOTH condition and batch (the annotation bars will be identical — that visual identity is the point). Run two robustness checks: (a) refit with edgeR quasi-likelihood F-test on the same filtered matrix and report the overlap of significant gene sets between the two methods (a signature that only one method finds is fragile); (b) leave-one-sample-out — repeat the DESeq2 fit 12 times dropping one sample at a time, and record for each top gene the fraction of the 12 refits in which it stays significant, so genes driven by a single library are identifiable. Export the ranked results and a stability-annotated significant-gene table for downstream steps. Every exported table and figure caption must carry the statement that condition and processing batch are perfectly aliased and the effect cannot be attributed to treatment.",
+        "acceptance_criteria": [
+          "DESeq2 results table for treated vs control exported with all 12,000-gene-derived filtered set, including baseMean, log2FoldChange (shrunk and unshrunk), pvalue, padj",
+          "Counts of genes at padj<0.05 and at padj<0.05 & |log2FC|>1 reported explicitly",
+          "Volcano and MA plots saved; top-50 heatmap saved with both condition and batch annotation bars shown",
+          "edgeR quasi-likelihood refit run and the overlap (counts and Jaccard) with the DESeq2 significant set reported",
+          "Leave-one-sample-out stability fraction reported per significant gene, and the number of genes significant in <10/12 refits flagged as unstable",
+          "Every output table has a header comment or column, and every figure a caption, stating that condition is perfectly confounded with processing batch"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Technical-vs-biological triage of the gene list",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GC-content and transcript-length batch signatures are the classic diagnostics but require gene annotation with those attributes, which is not staged here — say so and rely on the depth/mean-trend diagnostics instead",
+          "Absence of a technical fingerprint is weak evidence: a batch effect can be gene-specific and still mimic biology"
+        ],
+        "context": "Because the primary contrast is uninterpretable as a treatment effect, the useful deliverable is a graded, honestly-labelled gene list plus a clear statement of what would make it interpretable. This step does not rescue the design; it bounds how much of the signal could plausibly be biological.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "dplyr",
+          "ggplot2",
+          "matrixStats",
+          "limma"
+        ],
+        "question": "Among the genes that separate treated/B2 from control/B1, which look like a coherent biological response and which carry the signature of a processing-batch artefact?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Present these diagnostics as heuristics that reduce, not eliminate, ambiguity — they cannot prove a gene is biological under perfect confounding",
+          "Do not construct a 'batch-corrected' expression matrix at any point",
+          "Keep the higher-confidence subset defined by pre-stated rules applied once; do not tune thresholds until a desired gene appears"
+        ],
+        "description": "Take the ranked DESeq2 results and stability annotations from T1S2 and stratify the significant genes by how batch-artefact-like they are, using diagnostics computable from the count matrix alone. Compute: (1) the correlation of each gene's normalised expression with per-sample library size and with detected-gene count across all 12 samples — genes whose apparent fold change tracks library depth are suspect; (2) the dependence of log2FC on baseMean (fit a loess/spline of LFC against mean expression and report whether there is a systematic non-zero trend, which indicates a global compositional or processing shift rather than gene-specific regulation); (3) the direction balance of significant genes (a strongly asymmetric up/down split is more consistent with a normalisation or processing shift); (4) the fraction of the 12,000 genes reaching significance, compared against what a targeted perturbation typically produces. Combine these into a per-gene flag (library-size-correlated, mean-trend-driven, single-sample-driven from T1S2 stability) and export a triaged table with a 'higher-confidence' subset (stable across leave-one-out, not library-size-correlated, off the global mean trend) and a 'likely technical' subset. Report both subset sizes. Write an explicit statement of what evidence would be needed to resolve the confounding — e.g. samples of both conditions processed in each batch, or technical replicates bridging B1 and B2 — since that, not further analysis of this matrix, is the actual fix.",
+        "acceptance_criteria": [
+          "Per-gene correlation with library size and with detected-gene count computed for all significant genes and reported",
+          "LFC-vs-baseMean trend fitted and reported, with a statement of whether a systematic global shift is present",
+          "Up/down direction balance among significant genes reported as counts and proportion",
+          "Triaged table exported with explicit 'higher-confidence' and 'likely-technical' flags per gene, and both subset sizes stated",
+          "A written statement of the specific experimental design change (condition-balanced batches or bridging replicates) required to make the contrast interpretable"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark and GO-BP enrichment on the ranked contrast",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO-BP sets are nested and share members, so significant sets will come in correlated blocks — collapse before reporting a count",
+          "Generic depth-sensitive sets (ribosomal, oxidative phosphorylation, translation) topping the list is a common signature of a library-depth artefact rather than biology"
+        ],
+        "context": "Enrichment here is diagnostic as much as descriptive: a treatment effect usually produces a few coherent, mechanistically related programs, whereas a processing-batch shift usually produces either nothing coherent or generic sets (ribosome, metabolism, stress) driven by depth. Both outcomes are informative and neither establishes causality given the confounding.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "dplyr",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Does the treated/B2-vs-control/B1 ranking concentrate in coherent biological programs (hallmark, GO biological process), as a genuine treatment effect would, or spread diffusely as a technical shift would?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "constraints": [
+          "Use human (Homo sapiens) gene set collections only — the data is human lung; a mouse or rat collection would produce confident nonsense",
+          "Rank the full filtered gene list, not only significant genes, for the GSEA arm",
+          "Do not interpret any enriched pathway as a mechanism of the treatment; the enrichment describes the confounded condition+batch contrast"
+        ],
+        "description": "Run GSEA (fgsea, or an equivalent installed ranked-list method) on the full DESeq2 ranking from T1S2, using the shrunken log2FC or the Wald stat as the ranking statistic — state which was used. Test against human hallmark gene sets and human GO biological-process gene sets; both are needed as reference data (Homo sapiens gene-symbol gene set collections — hallmark for broad states, GO-BP for mechanism-level resolution). Confirm the identifier space of the counts matrix matches the gene sets (HGNC symbols); if the counts use Ensembl or Entrez IDs, map them first using a human ID-mapping resource and report the mapping rate. Report normalised enrichment scores with BH-adjusted p, the leading-edge genes for the top sets, and, critically, a summary of concentration: the number of sets passing FDR 0.05 and whether the leading edges of the top sets overlap into a recognisable program. Repeat the enrichment restricted to the 'higher-confidence' gene subset from T1S3 as an over-representation test, and report whether the same programs survive. If either gene set collection is unavailable at run time, report which one was missing and proceed with whichever is present rather than failing the step.",
+        "acceptance_criteria": [
+          "GSEA run on the full ranked list against human hallmark sets and human GO biological-process sets, with the ranking statistic named",
+          "Identifier space of the counts matrix checked against the gene set symbols and the match/mapping rate reported",
+          "Enrichment table exported with NES, p, BH-adjusted p, set size, and leading-edge genes for sets at FDR<0.05",
+          "Over-representation test on the T1S3 higher-confidence subset run and its overlap with the full-list GSEA results reported",
+          "An explicit written judgement of whether the enrichment is coherent or diffuse, with the confounding caveat repeated in the step's summary"
+        ]
+      }
+    ],
+    "title": "Treated vs control lung RNA-seq under batch confounding",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is bulk RNA-seq gene-level counts from salmon (12,000 genes x 12 samples; counts.csv has 13 columns = gene ID + 12 samples), with metadata.csv giving condition and batch for each of 12 samples: 6 treated, 6 control. The decisive structural fact is that batch B1 contains all 6 controls and batch B2 contains all 6 treated samples — processing batch is perfectly confounded with condition. No statistical procedure can separate a treatment effect from a batch effect in this design: ~condition + batch is rank-deficient, ComBat/limma removeBatchEffect with batch = condition removes the biology along with the batch, and surrogate-variable methods with a protected condition term simply relabel the same axis. Therefore the plan does NOT promise a clean treatment signature. It produces (T1S1) a QC and confounding diagnostic that quantifies how much of the between-group separation looks like library/technical structure rather than biology, and formally demonstrates the design-matrix rank deficiency; (T1S2) the single estimable contrast — treated+B2 vs control+B1 — fitted with DESeq2 on raw counts, with results labelled throughout as a confounded condition-plus-batch effect, plus a sensitivity re-fit (edgeR quasi-likelihood, and a leave-one-sample-out stability check) so readers can see which genes are robust to individual samples rather than driven by one outlier library; (T1S3) an evidence-triage step that separates the gene list into 'more likely biological' versus 'more likely technical' strata using batch-effect-typical signatures (GC/length-correlated drift is not testable without annotation, so we use library-size correlation, expression-level dependence, and chromosome-agnostic global shift diagnostics that are computable from the counts alone); and (T2S1) hallmark and GO-BP enrichment on the ranked statistic, again explicitly caveated, so the synthesizer sees whether the top genes form a coherent biological program (weak evidence for a real treatment effect) or a diffuse technical-looking spread. Reference data needed: human hallmark and GO biological-process gene sets, both confirmed present in the environment for Homo sapiens. Every downstream artifact must carry the confounding caveat in its own output so it cannot be quoted out of context."
+  },
+  "usage": {
+    "inputTokens": 93032,
+    "outputTokens": 6215,
+    "cacheCreationInputTokens": 74046,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_011uSsdNyQHLa1ENJBkcit7x",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01MFGHi6i27MUMJdyyGRBU97",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "sva",
+          "RUVSeq",
+          "pydeseq2",
+          "decoupleR",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "apeglm",
+          "ashr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_015NjL7qQRAW6zhCL7rSzji4",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control lung RNA-seq under batch confounding",
+          "analytical_narrative": "The dataset is bulk RNA-seq gene-level counts from salmon (12,000 genes x 12 samples; counts.csv has 13 columns = gene ID + 12 samples), with metadata.csv giving condition and batch for each of 12 samples: 6 treated, 6 control. The decisive structural fact is that batch B1 contains all 6 controls and batch B2 contains all 6 treated samples — processing batch is perfectly confounded with condition. No statistical procedure can separate a treatment effect from a batch effect in this design: ~condition + batch is rank-deficient, ComBat/limma removeBatchEffect with batch = condition removes the biology along with the batch, and surrogate-variable methods with a protected condition term simply relabel the same axis. Therefore the plan does NOT promise a clean treatment signature. It produces (T1S1) a QC and confounding diagnostic that quantifies how much of the between-group separation looks like library/technical structure rather than biology, and formally demonstrates the design-matrix rank deficiency; (T1S2) the single estimable contrast — treated+B2 vs control+B1 — fitted with DESeq2 on raw counts, with results labelled throughout as a confounded condition-plus-batch effect, plus a sensitivity re-fit (edgeR quasi-likelihood, and a leave-one-sample-out stability check) so readers can see which genes are robust to individual samples rather than driven by one outlier library; (T1S3) an evidence-triage step that separates the gene list into 'more likely biological' versus 'more likely technical' strata using batch-effect-typical signatures (GC/length-correlated drift is not testable without annotation, so we use library-size correlation, expression-level dependence, and chromosome-agnostic global shift diagnostics that are computable from the counts alone); and (T2S1) hallmark and GO-BP enrichment on the ranked statistic, again explicitly caveated, so the synthesizer sees whether the top genes form a coherent biological program (weak evidence for a real treatment effect) or a diffuse technical-looking spread. Reference data needed: human hallmark and GO biological-process gene sets, both confirmed present in the environment for Homo sapiens. Every downstream artifact must carry the confounding caveat in its own output so it cannot be quoted out of context.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and confounding diagnostics",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "How much of the treated (batch B2) vs control (batch B1) separation in the 12-sample lung count matrix is attributable to technical/library structure, and is the ~condition+batch design matrix in fact rank-deficient?",
+              "description": "Load /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples) and /eval-four-models-v2-without-confounded-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition, batch). Verify sample IDs match one-to-one and in order. Tabulate condition x batch to confirm the 6/6 perfect confounding (B1 = all controls, B2 = all treated). Explicitly build model.matrix(~ condition + batch) and report its rank versus its column count, showing the batch term is not estimable — this is the formal evidence for the caveat that carries through the whole run. Then run standard QC on raw counts: per-sample library size, detected-gene count, and their difference between B1 and B2 (a large systematic library-size or complexity gap is the fingerprint of a processing-batch effect rather than a treatment effect); VST/rlog transform, PCA (report PC1/PC2 variance explained and whether PC1 aligns with the confounded condition/batch axis), sample-sample Spearman correlation heatmap and hierarchical clustering; per-sample outlier check. Report also the within-group dispersion in B1 versus B2 — unequal within-group spread across the two processing batches is itself technical evidence.",
+              "context": "The data profile states processing batch is perfectly confounded with condition. This step makes that quantitative rather than asserted, and provides the QC facts (library size skew, PC1 alignment, outlier samples) that the triage step T1S3 needs.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Condition x batch contingency table printed, confirming 6 control/B1 and 6 treated/B2 with zero off-diagonal samples",
+                "Rank of model.matrix(~condition+batch) reported alongside its column count, with an explicit statement that the batch coefficient is not estimable",
+                "Per-sample library size and detected-gene counts reported, with the B1 vs B2 difference summarised (median and range, plus a Wilcoxon p as descriptive only)",
+                "PCA on VST counts saved with PC1/PC2 variance explained and the loading of the condition/batch axis on PC1 stated numerically",
+                "Sample correlation heatmap and dendrogram saved; any sample separating from its own group flagged by name",
+                "A written QC summary that states the confounding cannot be removed and names it as the limiting factor of the run"
+              ],
+              "constraints": [
+                "Use the raw counts as delivered; do not apply any length or TPM correction — the profile does not record whether salmon length correction was applied, so state that as an assumption and do not silently assume otherwise",
+                "Do not attempt ComBat, removeBatchEffect, or SVA-based correction here or anywhere: with batch identical to condition these remove the effect of interest, and any 'corrected' matrix would be misleading",
+                "Filter genes to those with a minimum count in at least 6 samples (the smallest group size) before VST/PCA, and report how many of the 12,000 genes survive",
+                "Report descriptive statistics only — no claim that any QC difference is 'due to' treatment"
+              ],
+              "caveats": [
+                "A clean two-cluster PCA here is NOT evidence of a treatment effect; it is exactly what a pure batch effect also produces",
+                "n=6 per group makes formal tests of library-size difference underpowered; treat them as descriptive"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "pheatmap",
+                "ggplot2",
+                "matrixStats"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 treated-vs-control contrast (confounded)",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12,000 genes differ between the 6 treated (batch B2) and 6 control (batch B1) lung samples, recognising that the estimated effect is the inseparable sum of treatment and processing batch?",
+              "description": "Fit DESeq2 on the raw counts with design ~ condition only (the batch term is not estimable; T1S1 shows this formally), contrast treated vs control, using the gene filter from T1S1. Report the full results table with baseMean, log2FoldChange, lfcSE, stat, pvalue, and BH-adjusted padj, sorted by padj. Apply apeglm LFC shrinkage for ranking and report both shrunk and unshrunk LFCs. Call significance at padj < 0.05 and |log2FC| > 1, and also report the count at padj < 0.05 alone. Produce a volcano plot and an MA plot, plus a heatmap of the top 50 genes by padj on VST counts with samples annotated by BOTH condition and batch (the annotation bars will be identical — that visual identity is the point). Run two robustness checks: (a) refit with edgeR quasi-likelihood F-test on the same filtered matrix and report the overlap of significant gene sets between the two methods (a signature that only one method finds is fragile); (b) leave-one-sample-out — repeat the DESeq2 fit 12 times dropping one sample at a time, and record for each top gene the fraction of the 12 refits in which it stays significant, so genes driven by a single library are identifiable. Export the ranked results and a stability-annotated significant-gene table for downstream steps. Every exported table and figure caption must carry the statement that condition and processing batch are perfectly aliased and the effect cannot be attributed to treatment.",
+              "context": "This is the only contrast the design supports. It is worth running because the ranked statistic is still the best available starting point and because the shape of the result (how many genes, how coherent, how stable) is itself evidence about whether a real treatment effect is plausibly present.",
+              "acceptance_criteria": [
+                "DESeq2 results table for treated vs control exported with all 12,000-gene-derived filtered set, including baseMean, log2FoldChange (shrunk and unshrunk), pvalue, padj",
+                "Counts of genes at padj<0.05 and at padj<0.05 & |log2FC|>1 reported explicitly",
+                "Volcano and MA plots saved; top-50 heatmap saved with both condition and batch annotation bars shown",
+                "edgeR quasi-likelihood refit run and the overlap (counts and Jaccard) with the DESeq2 significant set reported",
+                "Leave-one-sample-out stability fraction reported per significant gene, and the number of genes significant in <10/12 refits flagged as unstable",
+                "Every output table has a header comment or column, and every figure a caption, stating that condition is perfectly confounded with processing batch"
+              ],
+              "constraints": [
+                "Design must be ~ condition alone; do NOT write ~ condition + batch (rank-deficient) and do NOT drop or subset samples to break the confounding",
+                "Use raw integer counts as DESeq2 input — no pre-normalised, batch-corrected, or TPM values",
+                "Use BH FDR; report padj, never raw p, as the significance criterion",
+                "Do not describe any gene as 'treatment-responsive', 'induced by treatment', or 'a treatment biomarker' — the permitted phrasing is 'differs between treated/B2 and control/B1'"
+              ],
+              "caveats": [
+                "With n=6 per group DESeq2 dispersion estimates are usable but not precise; shrunken LFCs are the safer ranking",
+                "A very large significant-gene count (e.g. thousands of the 12,000) is more consistent with a global technical shift than with a targeted pharmacological response — say so if observed"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "edgeR",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Technical-vs-biological triage of the gene list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Among the genes that separate treated/B2 from control/B1, which look like a coherent biological response and which carry the signature of a processing-batch artefact?",
+              "description": "Take the ranked DESeq2 results and stability annotations from T1S2 and stratify the significant genes by how batch-artefact-like they are, using diagnostics computable from the count matrix alone. Compute: (1) the correlation of each gene's normalised expression with per-sample library size and with detected-gene count across all 12 samples — genes whose apparent fold change tracks library depth are suspect; (2) the dependence of log2FC on baseMean (fit a loess/spline of LFC against mean expression and report whether there is a systematic non-zero trend, which indicates a global compositional or processing shift rather than gene-specific regulation); (3) the direction balance of significant genes (a strongly asymmetric up/down split is more consistent with a normalisation or processing shift); (4) the fraction of the 12,000 genes reaching significance, compared against what a targeted perturbation typically produces. Combine these into a per-gene flag (library-size-correlated, mean-trend-driven, single-sample-driven from T1S2 stability) and export a triaged table with a 'higher-confidence' subset (stable across leave-one-out, not library-size-correlated, off the global mean trend) and a 'likely technical' subset. Report both subset sizes. Write an explicit statement of what evidence would be needed to resolve the confounding — e.g. samples of both conditions processed in each batch, or technical replicates bridging B1 and B2 — since that, not further analysis of this matrix, is the actual fix.",
+              "context": "Because the primary contrast is uninterpretable as a treatment effect, the useful deliverable is a graded, honestly-labelled gene list plus a clear statement of what would make it interpretable. This step does not rescue the design; it bounds how much of the signal could plausibly be biological.",
+              "acceptance_criteria": [
+                "Per-gene correlation with library size and with detected-gene count computed for all significant genes and reported",
+                "LFC-vs-baseMean trend fitted and reported, with a statement of whether a systematic global shift is present",
+                "Up/down direction balance among significant genes reported as counts and proportion",
+                "Triaged table exported with explicit 'higher-confidence' and 'likely-technical' flags per gene, and both subset sizes stated",
+                "A written statement of the specific experimental design change (condition-balanced batches or bridging replicates) required to make the contrast interpretable"
+              ],
+              "constraints": [
+                "Present these diagnostics as heuristics that reduce, not eliminate, ambiguity — they cannot prove a gene is biological under perfect confounding",
+                "Do not construct a 'batch-corrected' expression matrix at any point",
+                "Keep the higher-confidence subset defined by pre-stated rules applied once; do not tune thresholds until a desired gene appears"
+              ],
+              "caveats": [
+                "GC-content and transcript-length batch signatures are the classic diagnostics but require gene annotation with those attributes, which is not staged here — say so and rely on the depth/mean-trend diagnostics instead",
+                "Absence of a technical fingerprint is weak evidence: a batch effect can be gene-specific and still mimic biology"
+              ],
+              "packages": [
+                "DESeq2",
+                "dplyr",
+                "ggplot2",
+                "matrixStats",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark and GO-BP enrichment on the ranked contrast",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Does the treated/B2-vs-control/B1 ranking concentrate in coherent biological programs (hallmark, GO biological process), as a genuine treatment effect would, or spread diffusely as a technical shift would?",
+              "description": "Run GSEA (fgsea, or an equivalent installed ranked-list method) on the full DESeq2 ranking from T1S2, using the shrunken log2FC or the Wald stat as the ranking statistic — state which was used. Test against human hallmark gene sets and human GO biological-process gene sets; both are needed as reference data (Homo sapiens gene-symbol gene set collections — hallmark for broad states, GO-BP for mechanism-level resolution). Confirm the identifier space of the counts matrix matches the gene sets (HGNC symbols); if the counts use Ensembl or Entrez IDs, map them first using a human ID-mapping resource and report the mapping rate. Report normalised enrichment scores with BH-adjusted p, the leading-edge genes for the top sets, and, critically, a summary of concentration: the number of sets passing FDR 0.05 and whether the leading edges of the top sets overlap into a recognisable program. Repeat the enrichment restricted to the 'higher-confidence' gene subset from T1S3 as an over-representation test, and report whether the same programs survive. If either gene set collection is unavailable at run time, report which one was missing and proceed with whichever is present rather than failing the step.",
+              "context": "Enrichment here is diagnostic as much as descriptive: a treatment effect usually produces a few coherent, mechanistically related programs, whereas a processing-batch shift usually produces either nothing coherent or generic sets (ribosome, metabolism, stress) driven by depth. Both outcomes are informative and neither establishes causality given the confounding.",
+              "acceptance_criteria": [
+                "GSEA run on the full ranked list against human hallmark sets and human GO biological-process sets, with the ranking statistic named",
+                "Identifier space of the counts matrix checked against the gene set symbols and the match/mapping rate reported",
+                "Enrichment table exported with NES, p, BH-adjusted p, set size, and leading-edge genes for sets at FDR<0.05",
+                "Over-representation test on the T1S3 higher-confidence subset run and its overlap with the full-list GSEA results reported",
+                "An explicit written judgement of whether the enrichment is coherent or diffuse, with the confounding caveat repeated in the step's summary"
+              ],
+              "constraints": [
+                "Use human (Homo sapiens) gene set collections only — the data is human lung; a mouse or rat collection would produce confident nonsense",
+                "Rank the full filtered gene list, not only significant genes, for the GSEA arm",
+                "Do not interpret any enriched pathway as a mechanism of the treatment; the enrichment describes the confounded condition+batch contrast"
+              ],
+              "caveats": [
+                "GO-BP sets are nested and share members, so significant sets will come in correlated blocks — collapse before reporting a count",
+                "Generic depth-sensitive sets (ribosomal, oxidative phosphorylation, translation) topping the list is a common signature of a library-depth artefact rather than biology"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "dplyr",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

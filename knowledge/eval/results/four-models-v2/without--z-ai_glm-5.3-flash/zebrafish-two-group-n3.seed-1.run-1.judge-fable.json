@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald with ~condition, median-of-ratios size factors on raw (rounded Salmon) counts, apeglm shrinkage, and an explicit low-power caveat fit the 3v3 unpaired single-batch design. QC has PCA on VST and a distance heatmap but no library-size check, no explicit coloring, and only 'outlier check documented' rather than a policy; the low-count filter is unspecified and unjustified; the reference level is implied rather than set; and the |LFC|>=1 cut is applied post hoc instead of via lfcThreshold in the test. Enrichment correctly avoids running human sets on zebrafish symbols and states the ranking metric, universe, and a seed, but names no GO/org.Dr.eg.db or babelgene version, does not commit to one-to-one orthologs, omits a set-size window, and does not state GO's thin zebrafish coverage. The report omits the Ensembl release, the gene identifier space, and package versions."
+}

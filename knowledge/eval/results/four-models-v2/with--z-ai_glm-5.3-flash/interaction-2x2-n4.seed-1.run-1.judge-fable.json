@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats this as an interaction question: full factorial design ~ genotype + treatment + genotype:treatment, Wald test on the single interaction coefficient, with the two simple drug effects derived explicitly (main effect for WT, main + interaction for KO) and reference levels named. Normalization is median-of-ratios inside the model with no pre-scaling, the pre-filter is minimal and justified (10 counts in ≥ smallest group), BH within contrast at alpha 0.05 with independent filtering, and ashr shrinkage for reported effects. QC uses blind vst, PCA, distances and library sizes colored by both factors and flags outliers before testing, though the handling policy beyond flagging is thin; no lfc threshold value is stated despite a threshold-test policy. Enrichment is properly specified (full ranked list, stat metric, named collections with releases, 15-500 window, per contrast) and the report carries method, versions, design, thresholds, counts, and the design caveats (low interaction power, lost length offset)."
+}

@@ -1,0 +1,614 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:39:57.530Z",
+  "elapsedMs": 157931,
+  "outcome": "plan_submitted",
+  "planId": "pln-3b917e3e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and design verification of delivered log2 TPM matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 12,000-gene matrix is already a subset of a transcriptome; do not describe it as genome-wide.",
+          "Clean separation on PCA at n=6 per group can also reflect a batch or handling difference that the single-batch annotation does not capture — report the observation, do not assert the cause.",
+          "Zero-inflation in log2(TPM+1) is a floor artifact, not a biological zero; an aggressive filter can remove genuinely treatment-induced genes that are off in one group, so report how many genes fail the filter in only one group."
+        ],
+        "context": "Bulk RNA-seq, Homo sapiens, muscle tissue, treatment vs control. The core facility delivered log2(TPM+1) normalized values only; no raw or estimated counts exist. Design: 6 treated vs 6 control, unpaired, single batch. Everything downstream depends on the join being correct and on the filter being defined on the log scale rather than on counts.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Are the 12 samples in log_expr.csv (12,000 genes) consistent with the stated 6 treated vs 6 control unpaired single-batch design, are the values genuinely on a log2(TPM+1) scale, and which low-expression genes should be filtered before limma-trend?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "constraints": [
+          "Read the exact condition labels from metadata.csv and use them verbatim in all outputs and figure legends — do not invent or relabel groups.",
+          "Join expression columns to metadata sample IDs by name, not by position; abort with a clear message if the sets differ.",
+          "Do NOT exponentiate, back-transform to counts, round, or otherwise reconstruct integer counts from these values at any point.",
+          "Apply the low-expression filter on the log2(TPM+1) scale, requiring expression above the threshold in at least n=6 samples (smallest group size), and report the exact rule and the retained gene count.",
+          "Report per-sample median and IQR; state explicitly whether the delivered normalization looks adequate or whether cross-sample normalization drift is present."
+        ],
+        "description": "Load /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 genes x 12 samples, first column gene identifiers) and /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify a strict one-to-one join between metadata sample IDs and expression column names and reorder columns to match metadata; fail loudly rather than assuming positional alignment. Confirm the value scale: report min, max, median, and the fraction of exact zeros per sample; flag any negative values or a maximum above ~20 as inconsistent with log2(TPM+1). Report per-sample distribution summaries (median, IQR, boxplot) to check that the facility's normalization left the samples comparable — if sample medians differ materially, note it and report whether a quantile-normalization sensitivity run is warranted downstream. Compute sample-sample Spearman and Pearson correlation on the log scale, hierarchical clustering, and PCA (PC1-PC3) on the top ~2000 most variable genes, coloured by the actual condition labels found in metadata.csv; report whether condition separates and whether any sample is an outlier. Count missing/non-finite values per gene and per sample. Define and apply a low-expression filter appropriate to the log scale — e.g. keep genes with log2(TPM+1) above a small threshold (such as 0.5-1) in at least 6 samples (the smaller group size) — and report how many of the 12,000 genes survive. Write the filtered, column-ordered matrix plus a tidy sample table for downstream steps.",
+        "acceptance_criteria": [
+          "Metadata-to-expression join is verified one-to-one for all 12 samples and the group sizes are confirmed as 6 vs 6 using the literal condition labels from metadata.csv.",
+          "Value-scale check is reported (min/max/median, zero fraction, any negatives) with an explicit verdict on whether the matrix is consistent with log2(TPM+1).",
+          "PCA and sample-correlation clustering are produced with samples coloured by condition, and any outlier sample is named with the evidence for it.",
+          "A filtered expression matrix is written, with the filter rule stated and the number of genes retained out of 12,000 reported.",
+          "Missing/non-finite value counts are reported per gene and per sample."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: limma-trend on log2 TPM",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "logFC here is a difference of log2(TPM+1), which compresses fold changes for low-expression genes relative to a true log ratio — flag this when interpreting large logFCs at low average expression.",
+          "With 6 vs 6 the analysis is powered only for large, consistent effects; an empty or short significant list is an honest outcome, not a failed analysis.",
+          "A single outlier sample can drive a top hit at this sample size — cross-check the top genes against the per-sample values before treating any as a finding."
+        ],
+        "context": "n=6 per group, unpaired, single batch, human muscle. 12,000 input genes before filtering. limma-trend is the standard approach for log-scale normalized expression where counts are unavailable (Law et al. 2014; Phipson et al. 2016 for robust eBayes). Sample size is small, so eBayes moderation is doing real work and its parameters should be reported rather than hidden.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "pheatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which of the retained genes are differentially expressed between the treated and control muscle samples (6 vs 6), and what are their log2 fold changes and BH-adjusted p-values?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use limma with eBayes(trend=TRUE, robust=TRUE). Do NOT use DESeq2, edgeR, or voom — no counts or library sizes exist for this dataset.",
+          "Set the control group as the reference level so that positive logFC means higher in treated; state the direction convention explicitly in the output.",
+          "Use Benjamini-Hochberg FDR; report gene counts at both FDR < 0.05 and FDR < 0.10.",
+          "Write the complete results table for all tested genes, not only the significant subset.",
+          "Report the p-value histogram and state whether the null distribution looks well behaved (uniform bulk with a spike near zero) or anomalous."
+        ],
+        "description": "Run differential expression on the filtered log2(TPM+1) matrix from T1S1 using limma with empirical Bayes moderation and the mean-variance trend enabled (lmFit on a ~0 + condition or ~condition design with control as reference, then eBayes(fit, trend=TRUE, robust=TRUE)). This is the correct model class for continuous, already-normalized log-scale expression; the negative-binomial count models (DESeq2, edgeR) and voom are inapplicable because no counts or library sizes were delivered — do not use them. Extract the full topTable for the treated-vs-control contrast, sorted by adjusted p-value, with columns: gene ID, logFC (a difference of log2 TPM, directly interpretable as log2 fold change), average expression, moderated t, raw p, BH-adjusted p (FDR), and B. Report the number of genes at FDR < 0.05 and, separately, at FDR < 0.10, and how many additionally pass |logFC| > 1. Produce a volcano plot (logFC vs -log10 raw p, points at FDR < 0.05 highlighted), an MA-style plot of logFC vs average expression to check for intensity-dependent bias, a p-value histogram to check the null behaviour, and a heatmap of the top 50 genes by adjusted p-value with samples annotated by condition. Report the estimated prior degrees of freedom and prior variance from eBayes so the amount of moderation is visible. If zero genes pass FDR < 0.05, say so plainly and report the top genes by raw p-value clearly labelled as not significant after multiple-testing correction.",
+        "acceptance_criteria": [
+          "A complete differential expression table for every retained gene is written, with logFC, average expression, moderated t, raw p and BH-adjusted p, sorted by adjusted p.",
+          "The number of significant genes at FDR < 0.05 and FDR < 0.10 is reported, with the direction (up/down in treated) broken out.",
+          "Volcano, MA, p-value histogram and top-50 heatmap figures are produced with the literal condition labels from metadata.csv.",
+          "eBayes prior df and prior variance are reported, and the choice of limma-trend over count models is stated with the reason (no counts delivered).",
+          "If no gene reaches FDR < 0.05, this is stated directly rather than substituting a looser threshold as if it were the primary result."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Nonparametric and permutation robustness check",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Permutation p-values are floored at 1/462 ≈ 0.0022 — do not report anything smaller, and do not BH-adjust permutation p-values as if they had continuous resolution.",
+          "Disagreement between limma and Wilcoxon at n=6 usually reflects the rank test's low resolution, not a limma error; state this rather than treating the rank test as ground truth.",
+          "Leave-one-out instability is expected for some genes at this sample size and is diagnostic, not disqualifying on its own."
+        ],
+        "context": "n=6 per group is at the boundary where parametric moderation matters most and is also least auditable. The permutation space is small but fully enumerable (462 distinct splits), which makes an exact permutation null feasible here rather than approximate.",
+        "maxSteps": 200,
+        "packages": [
+          "scipy",
+          "numpy",
+          "pandas",
+          "statsmodels",
+          "matplotlib"
+        ],
+        "question": "Do the treated-vs-control differences found by limma-trend survive a rank-based test and an exact label-permutation null, given only 6 samples per group?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 4
+        },
+        "step_type": "statistical_validation",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the same filtered gene set and the same condition labels as T1S2 so the comparison is like-for-like.",
+          "Enumerate the distinct group relabelings exactly (462 for 6 vs 6) rather than sampling, since the space is small; state the count used.",
+          "Report the Wilcoxon power ceiling (minimum attainable p-value at 6 vs 6) before reporting its adjusted p-values, so an empty significant list is not misread.",
+          "Report the leave-one-sample-out result per top gene as a concrete count (in how many of 12 dropped-sample runs the gene stays in the top 100)."
+        ],
+        "description": "On the same filtered matrix from T1S1, run two independent robustness checks against the limma-trend result from T1S2. First, a per-gene two-sided Wilcoxon rank-sum test between the treated and control groups with BH correction — note that with 6 vs 6 the minimum achievable exact p-value is ~0.002, so no gene can reach a stringent FDR after 10k+ tests; report this power ceiling explicitly rather than presenting an empty list as a contradiction. Second, a label-permutation assessment of the limma-trend statistic: recompute the moderated t statistics over the 462 distinct group relabelings (C(12,6)/2) and report for each top gene the fraction of permutations achieving an absolute statistic at least as extreme, plus a global permutation-based estimate of how many genes at the observed FDR cut would be expected under the null. Compare rankings: Spearman correlation between the limma moderated-t ordering and the Wilcoxon statistic ordering, and the overlap of the top 100 genes from each. Also report, for the top 20 limma hits, a leave-one-sample-out sensitivity check — whether each remains in the top 100 when any single sample is dropped — to expose hits driven by one sample.",
+        "acceptance_criteria": [
+          "Wilcoxon results with BH adjustment are written for all retained genes, alongside an explicit statement of the minimum attainable p-value at this sample size.",
+          "A permutation-based null is computed over the enumerated relabelings and a per-gene permutation p-value is reported for at least the top limma hits.",
+          "Rank concordance between limma-trend and Wilcoxon is quantified (Spearman rho and top-100 overlap).",
+          "Leave-one-sample-out stability is reported for the top 20 limma hits as a count out of 12.",
+          "A plain verdict is given on whether the limma-trend hit list is robust, partly robust, or driven by individual samples."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Preranked gene set enrichment on the treated-vs-control ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment on a 12,000-gene subset has a restricted universe; sets whose members are largely absent from the matrix will be under-powered — the reported intersection size is what makes that visible.",
+          "GSEA significance does not establish that a pathway is mechanistically engaged, only that its members are coordinately shifted in the ranking.",
+          "Muscle tissue has strong structural and mitochondrial transcript dominance; a shift in these sets can reflect tissue composition or fiber-type differences rather than a direct treatment effect."
+        ],
+        "context": "With 6 vs 6, the per-gene FDR list from T1S2 may be short or empty; a preranked, whole-list enrichment borrows strength across coordinated genes and is often the more informative readout. The reference store currently holds human MSigDB hallmark, human GO BP/CC/MF, human oncogenic C6, and human WikiPathways — all HGNC symbol GMTs.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Which biological processes and hallmark states are coordinately shifted between treated and control muscle, using the full limma-trend gene ranking rather than a thresholded hit list?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the signed moderated t statistic from T1S2 as the ranking; do not rank by logFC alone and do not pre-filter to FDR-significant genes.",
+          "Restrict the gene set universe to the genes actually tested in T1S2 (the T1S1 filtered set) and report each set's post-intersection size.",
+          "Use human gene sets only (HGNC symbols); explicitly do not use the mouse or rat pathway files present in the store.",
+          "Set minimum set size 15 and maximum 500 after intersection with the tested universe.",
+          "Collapse redundant GO terms by leading-edge overlap before reporting the number of enriched processes.",
+          "If the expression matrix uses identifiers other than HGNC symbols, map them to symbols and report the mapping rate and the number of genes lost."
+        ],
+        "description": "Take the complete limma-trend result from T1S2 and build a single ranking statistic per gene — the signed moderated t statistic (sign of logFC times |t|), which uses the whole gene list and does not depend on an FDR cut. Run preranked GSEA against human gene set collections: the human hallmark collection (50 broad biological states) as the primary readout, and human GO Biological Process as the mechanism-level follow-up; WikiPathways human is available as an additional curated-pathway view. Use human resources only — the data is Homo sapiens muscle, and the mouse and rat files present in the reference store must not be used. Set a minimum gene set size of 15 and a maximum of 500 after intersecting each set with the tested gene universe (the filtered genes from T1S1, not all 12,000 and not the full transcriptome), and report the intersection size per set so under-covered sets are visible. Report normalized enrichment scores, nominal p, and BH/FDR q per set, with leading-edge genes for the significant sets. Because GO is a nested hierarchy with heavy member overlap, collapse redundant significant GO terms (by leading-edge Jaccard similarity or parent-child relation) before reporting a count of enriched processes. Given muscle tissue, note whether any enriched sets are muscle-structural or metabolic in character, but do not build a mechanistic story beyond what the enrichment supports. If the hallmark or GO resource is unavailable at run time, report the gap explicitly and proceed with whichever curated human pathway resource is present.",
+        "acceptance_criteria": [
+          "Preranked GSEA results are written for hallmark and GO BP with NES, nominal p, FDR q, set size after intersection, and leading-edge genes.",
+          "The ranking statistic used is stated and shown to cover the full tested gene set (no thresholding).",
+          "Identifier mapping rate to HGNC symbols is reported, with the count of genes that failed to map.",
+          "Redundant GO terms are collapsed and the reported count of enriched processes reflects the collapsed set.",
+          "Any reference resource that could not be found at run time is named explicitly rather than silently skipped."
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE on log2 TPM (limma-trend)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a 12,000 x 12 matrix of log2(TPM+1) values (log_expr.csv) with a 12 x 2 sample table (metadata.csv) describing 6 treated vs 6 control human muscle samples, unpaired, single batch. The critical constraint is that no counts were delivered, so the negative-binomial count models (DESeq2, edgeR) are inapplicable — feeding them exponentiated or rounded log values would fabricate a count distribution that does not exist. The correct tool for continuous, already-normalized log-scale expression is limma with empirical Bayes moderation; because log2(TPM+1) retains a mild mean-variance relationship, limma-trend (eBayes trend=TRUE) is the appropriate variant, with voom explicitly excluded since it requires counts and library sizes.\n\nStep T1S1 does QC and design verification on the delivered matrix — sample-level distributions, per-sample medians/IQR, PCA/correlation clustering by condition, missing-value and non-finite checks, detection of any log-scale violation (negatives, implausible maxima), and whether the 12 metadata rows join one-to-one with the 12 expression columns in the correct order. It also decides and documents a low-expression filter on the log scale (genes with near-zero expression across nearly all samples), since limma-trend's variance trend is distorted by a floor of zeros. T1S2 runs the actual differential expression: ~condition with control as reference, limma-trend, BH FDR, reporting log2 fold changes that are directly interpretable as differences of log2 TPM. T1S3 is a robustness check — a rank-based Wilcoxon test and an exact label-permutation null on the same filtered matrix — because n=6 per group is small and eBayes moderation makes distributional assumptions that a nonparametric check can partly audit. T2S1 then takes the ranked statistic from T1S2 into preranked GSEA against human hallmark and GO gene sets, which is a robustness-preserving readout when the per-gene FDR list is short, as it may well be at this sample size.\n\nThe plan reports honestly on power: 6 vs 6 detects only large effects, and the absence of counts removes any possibility of count-model shrinkage, so effect sizes near the noise floor should be reported as unresolved rather than negative."
+  },
+  "usage": {
+    "inputTokens": 149257,
+    "outputTokens": 13764,
+    "cacheCreationInputTokens": 86637,
+    "cacheReadInputTokens": 62584,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_018DGFfSETurjhEhpSER8Mvi",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "pydeseq2",
+          "statsmodels",
+          "gseapy",
+          "decoupler",
+          "fgsea",
+          "clusterProfiler",
+          "sva"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01E8GxbCQis4yb7aGCycu23N",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_01UJSXkvz8Z23tTkdBkkbXs4",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE on log2 TPM (limma-trend)",
+          "analytical_narrative": "The input is a 12,000 x 12 matrix of log2(TPM+1) values (log_expr.csv) with a 12 x 2 sample table (metadata.csv) describing 6 treated vs 6 control human muscle samples, unpaired, single batch. The critical constraint is that no counts were delivered, so the negative-binomial count models (DESeq2, edgeR) are inapplicable — feeding them exponentiated or rounded log values would fabricate a count distribution that does not exist. The correct tool for continuous, already-normalized log-scale expression is limma with empirical Bayes moderation; because log2(TPM+1) retains a mild mean-variance relationship, limma-trend (eBayes trend=TRUE) is the appropriate variant, with voom explicitly excluded since it requires counts and library sizes.\n\nStep T1S1 does QC and design verification on the delivered matrix — sample-level distributions, per-sample medians/IQR, PCA/correlation clustering by condition, missing-value and non-finite checks, detection of any log-scale violation (negatives, implausible maxima), and whether the 12 metadata rows join one-to-one with the 12 expression columns in the correct order. It also decides and documents a low-expression filter on the log scale (genes with near-zero expression across nearly all samples), since limma-trend's variance trend is distorted by a floor of zeros. T1S2 runs the actual differential expression: ~condition with control as reference, limma-trend, BH FDR, reporting log2 fold changes that are directly interpretable as differences of log2 TPM. T1S3 is a robustness check — a rank-based Wilcoxon test and a permutation-based FDR estimate on the same filtered matrix — because n=6 per group is small and eBayes moderation makes distributional assumptions that a nonparametric check can partly audit. T2S1 then takes the ranked statistic from T1S2 into preranked GSEA against human hallmark and GO gene sets, which is a robustness-preserving readout when the per-gene FDR list is short, as it may well be at this sample size.\n\nThe plan reports honestly on power: 6 vs 6 detects only large effects, and the absence of counts removes any possibility of count-model shrinkage, so effect sizes near the noise floor should be reported as unresolved rather than negative.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and design verification of delivered log2 TPM matrix",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Are the 12 samples in log_expr.csv (12,000 genes) consistent with the stated 6 treated vs 6 control unpaired single-batch design, are the values genuinely on a log2(TPM+1) scale, and which low-expression genes should be filtered before limma-trend?",
+              "description": "Load /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 genes x 12 samples, first column gene identifiers) and /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify a strict one-to-one join between metadata sample IDs and expression column names and reorder columns to match metadata; fail loudly rather than assuming positional alignment. Confirm the value scale: report min, max, median, and the fraction of exact zeros per sample; flag any negative values or a maximum above ~20 as inconsistent with log2(TPM+1). Report per-sample distribution summaries (median, IQR, boxplot) to check that the facility's normalization left the samples comparable — if sample medians differ materially, note it and report whether a quantile-normalization sensitivity run is warranted downstream. Compute sample-sample Spearman and Pearson correlation on the log scale, hierarchical clustering, and PCA (PC1-PC3) on the top ~2000 most variable genes, coloured by the actual condition labels found in metadata.csv; report whether condition separates and whether any sample is an outlier. Count missing/non-finite values per gene and per sample. Define and apply a low-expression filter appropriate to the log scale — e.g. keep genes with log2(TPM+1) above a small threshold (such as 0.5-1) in at least 6 samples (the smaller group size) — and report how many of the 12,000 genes survive. Write the filtered, column-ordered matrix plus a tidy sample table for downstream steps.",
+              "context": "Bulk RNA-seq, Homo sapiens, muscle tissue, treatment vs control. The core facility delivered log2(TPM+1) normalized values only; no raw or estimated counts exist. Design: 6 treated vs 6 control, unpaired, single batch. Everything downstream depends on the join being correct and on the filter being defined on the log scale rather than on counts.",
+              "constraints": [
+                "Read the exact condition labels from metadata.csv and use them verbatim in all outputs and figure legends — do not invent or relabel groups.",
+                "Join expression columns to metadata sample IDs by name, not by position; abort with a clear message if the sets differ.",
+                "Do NOT exponentiate, back-transform to counts, round, or otherwise reconstruct integer counts from these values at any point.",
+                "Apply the low-expression filter on the log2(TPM+1) scale, requiring expression above the threshold in at least n=6 samples (smallest group size), and report the exact rule and the retained gene count.",
+                "Report per-sample median and IQR; state explicitly whether the delivered normalization looks adequate or whether cross-sample normalization drift is present."
+              ],
+              "acceptance_criteria": [
+                "Metadata-to-expression join is verified one-to-one for all 12 samples and the group sizes are confirmed as 6 vs 6 using the literal condition labels from metadata.csv.",
+                "Value-scale check is reported (min/max/median, zero fraction, any negatives) with an explicit verdict on whether the matrix is consistent with log2(TPM+1).",
+                "PCA and sample-correlation clustering are produced with samples coloured by condition, and any outlier sample is named with the evidence for it.",
+                "A filtered expression matrix is written, with the filter rule stated and the number of genes retained out of 12,000 reported.",
+                "Missing/non-finite value counts are reported per gene and per sample."
+              ],
+              "caveats": [
+                "A 12,000-gene matrix is already a subset of a transcriptome; do not describe it as genome-wide.",
+                "Clean separation on PCA at n=6 per group can also reflect a batch or handling difference that the single-batch annotation does not capture — report the observation, do not assert the cause.",
+                "Zero-inflation in log2(TPM+1) is a floor artifact, not a biological zero; an aggressive filter can remove genuinely treatment-induced genes that are off in one group, so report how many genes fail the filter in only one group."
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: limma-trend on log2 TPM",
+              "question": "Which of the retained genes are differentially expressed between the treated and control muscle samples (6 vs 6), and what are their log2 fold changes and BH-adjusted p-values?",
+              "description": "Run differential expression on the filtered log2(TPM+1) matrix from T1S1 using limma with empirical Bayes moderation and the mean-variance trend enabled (lmFit on a ~0 + condition or ~condition design with control as reference, then eBayes(fit, trend=TRUE, robust=TRUE)). This is the correct model class for continuous, already-normalized log-scale expression; the negative-binomial count models (DESeq2, edgeR) and voom are inapplicable because no counts or library sizes were delivered — do not use them. Extract the full topTable for the treated-vs-control contrast, sorted by adjusted p-value, with columns: gene ID, logFC (a difference of log2 TPM, directly interpretable as log2 fold change), average expression, moderated t, raw p, BH-adjusted p (FDR), and B. Report the number of genes at FDR < 0.05 and, separately, at FDR < 0.10, and how many additionally pass |logFC| > 1. Produce a volcano plot (logFC vs -log10 raw p, points at FDR < 0.05 highlighted), an MA-style plot of logFC vs average expression to check for intensity-dependent bias, a p-value histogram to check the null behaviour, and a heatmap of the top 50 genes by adjusted p-value with samples annotated by condition. Report the estimated prior degrees of freedom and prior variance from eBayes so the amount of moderation is visible. If zero genes pass FDR < 0.05, say so plainly and report the top genes by raw p-value clearly labelled as not significant after multiple-testing correction.",
+              "context": "n=6 per group, unpaired, single batch, human muscle. 12,000 input genes before filtering. limma-trend is the standard approach for log-scale normalized expression where counts are unavailable (Law et al. 2014; Phipson et al. 2016 for robust eBayes). Sample size is small, so eBayes moderation is doing real work and its parameters should be reported rather than hidden.",
+              "constraints": [
+                "Use limma with eBayes(trend=TRUE, robust=TRUE). Do NOT use DESeq2, edgeR, or voom — no counts or library sizes exist for this dataset.",
+                "Set the control group as the reference level so that positive logFC means higher in treated; state the direction convention explicitly in the output.",
+                "Use Benjamini-Hochberg FDR; report gene counts at both FDR < 0.05 and FDR < 0.10.",
+                "Write the complete results table for all tested genes, not only the significant subset.",
+                "Report the p-value histogram and state whether the null distribution looks well behaved (uniform bulk with a spike near zero) or anomalous."
+              ],
+              "acceptance_criteria": [
+                "A complete differential expression table for every retained gene is written, with logFC, average expression, moderated t, raw p and BH-adjusted p, sorted by adjusted p.",
+                "The number of significant genes at FDR < 0.05 and FDR < 0.10 is reported, with the direction (up/down in treated) broken out.",
+                "Volcano, MA, p-value histogram and top-50 heatmap figures are produced with the literal condition labels from metadata.csv.",
+                "eBayes prior df and prior variance are reported, and the choice of limma-trend over count models is stated with the reason (no counts delivered).",
+                "If no gene reaches FDR < 0.05, this is stated directly rather than substituting a looser threshold as if it were the primary result."
+              ],
+              "caveats": [
+                "logFC here is a difference of log2(TPM+1), which compresses fold changes for low-expression genes relative to a true log ratio — flag this when interpreting large logFCs at low average expression.",
+                "With 6 vs 6 the analysis is powered only for large, consistent effects; an empty or short significant list is an honest outcome, not a failed analysis.",
+                "A single outlier sample can drive a top hit at this sample size — cross-check the top genes against the per-sample values before treating any as a finding."
+              ],
+              "packages": [
+                "limma",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Nonparametric and permutation robustness check",
+              "question": "Do the treated-vs-control differences found by limma-trend survive a rank-based test and a permutation-based null, given only 6 samples per group?",
+              "description": "On the same filtered matrix from T1S1, run two independent robustness checks against the limma-trend result from T1S2. First, a per-gene two-sided Wilcoxon rank-sum test between the treated and control groups with BH correction — note that with 6 vs 6 the minimum achievable exact p-value is ~0.002, so no gene can reach a stringent FDR after 10k+ tests; report this power ceiling explicitly rather than presenting an empty list as a contradiction. Second, a label-permutation assessment of the limma-trend statistic: recompute the moderated t statistics over all or a large random sample of the C(12,6)/2 = 462 distinct group relabelings, and report for each top gene the fraction of permutations achieving an absolute statistic at least as extreme, plus a global permutation-based estimate of how many genes at the observed FDR cut would be expected under the null. Compare rankings: Spearman correlation between the limma moderated-t ordering and the Wilcoxon statistic ordering, and the overlap of the top 100 genes from each. Also report, for the top 20 limma hits, a leave-one-sample-out sensitivity check — whether each remains in the top 100 when any single sample is dropped — to expose hits driven by one sample.",
+              "context": "n=6 per group is at the boundary where parametric moderation matters most and is also least auditable. The permutation space is small but fully enumerable (462 distinct splits), which makes an exact permutation null feasible here rather than approximate.",
+              "constraints": [
+                "Use the same filtered gene set and the same condition labels as T1S2 so the comparison is like-for-like.",
+                "Enumerate the distinct group relabelings exactly (462 for 6 vs 6) rather than sampling, since the space is small; state the count used.",
+                "Report the Wilcoxon power ceiling (minimum attainable p-value at 6 vs 6) before reporting its adjusted p-values, so an empty significant list is not misread.",
+                "Report the leave-one-sample-out result per top gene as a concrete count (in how many of 12 dropped-sample runs the gene stays in the top 100)."
+              ],
+              "acceptance_criteria": [
+                "Wilcoxon results with BH adjustment are written for all retained genes, alongside an explicit statement of the minimum attainable p-value at this sample size.",
+                "A permutation-based null is computed over the enumerated relabelings and a per-gene permutation p-value is reported for at least the top limma hits.",
+                "Rank concordance between limma-trend and Wilcoxon is quantified (Spearman rho and top-100 overlap).",
+                "Leave-one-sample-out stability is reported for the top 20 limma hits as a count out of 12.",
+                "A plain verdict is given on whether the limma-trend hit list is robust, partly robust, or driven by individual samples."
+              ],
+              "caveats": [
+                "Permutation p-values are floored at 1/462 ≈ 0.0022 — do not report anything smaller, and do not BH-adjust permutation p-values as if they had continuous resolution.",
+                "Disagreement between limma and Wilcoxon at n=6 usually reflects the rank test's low resolution, not a limma error; state this rather than treating the rank test as ground truth.",
+                "Leave-one-out instability is expected for some genes at this sample size and is diagnostic, not disqualifying on its own."
+              ],
+              "packages": [
+                "scipy",
+                "numpy",
+                "pandas",
+                "statsmodels",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked gene set enrichment on the treated-vs-control ranking",
+              "question": "Which biological processes and hallmark states are coordinately shifted between treated and control muscle, using the full limma-trend gene ranking rather than a thresholded hit list?",
+              "description": "Take the complete limma-trend result from T1S2 and build a single ranking statistic per gene — the signed moderated t statistic (sign of logFC times |t|), which uses the whole gene list and does not depend on an FDR cut. Run preranked GSEA against human gene set collections: the human hallmark collection (50 broad biological states) as the primary readout, and human GO Biological Process as the mechanism-level follow-up; WikiPathways human is available as an additional curated-pathway view. Use human resources only — the data is Homo sapiens muscle, and the mouse and rat files present in the reference store must not be used. Set a minimum gene set size of 15 and a maximum of 500 after intersecting each set with the tested gene universe (the filtered genes from T1S1, not all 12,000 and not the full transcriptome), and report the intersection size per set so under-covered sets are visible. Report normalized enrichment scores, nominal p, and BH/FDR q per set, with leading-edge genes for the significant sets. Because GO is a nested hierarchy with heavy member overlap, collapse redundant significant GO terms (by leading-edge Jaccard similarity or parent-child relation) before reporting a count of enriched processes. Given muscle tissue, note whether any enriched sets are muscle-structural or metabolic in character, but do not build a mechanistic story beyond what the enrichment supports. If the hallmark or GO resource is unavailable at run time, report the gap explicitly and proceed with whichever curated human pathway resource is present.",
+              "context": "With 6 vs 6, the per-gene FDR list from T1S2 may be short or empty; a preranked, whole-list enrichment borrows strength across coordinated genes and is often the more informative readout. Reference store currently holds human MSigDB hallmark, human GO BP/CC/MF, human oncogenic C6, and human WikiPathways — all HGNC symbol GMTs.",
+              "constraints": [
+                "Use the signed moderated t statistic from T1S2 as the ranking; do not rank by logFC alone and do not pre-filter to FDR-significant genes.",
+                "Restrict the gene set universe to the genes actually tested in T1S2 (the T1S1 filtered set) and report each set's post-intersection size.",
+                "Use human gene sets only (HGNC symbols); explicitly do not use the mouse or rat pathway files present in the store.",
+                "Set minimum set size 15 and maximum 500 after intersection with the tested universe.",
+                "Collapse redundant GO terms by leading-edge overlap before reporting the number of enriched processes.",
+                "If the expression matrix uses identifiers other than HGNC symbols, map them to symbols and report the mapping rate and the number of genes lost."
+              ],
+              "acceptance_criteria": [
+                "Preranked GSEA results are written for hallmark and GO BP with NES, nominal p, FDR q, set size after intersection, and leading-edge genes.",
+                "The ranking statistic used is stated and shown to cover the full tested gene set (no thresholding).",
+                "Identifier mapping rate to HGNC symbols is reported, with the count of genes that failed to map.",
+                "Redundant GO terms are collapsed and the reported count of enriched processes reflects the collapsed set.",
+                "Any reference resource that could not be found at run time is named explicitly rather than silently skipped."
+              ],
+              "caveats": [
+                "Enrichment on a 12,000-gene subset has a restricted universe; sets whose members are largely absent from the matrix will be under-powered — the reported intersection size is what makes that visible.",
+                "GSEA significance does not establish that a pathway is mechanistically engaged, only that its members are coordinately shifted in the ranking.",
+                "Muscle tissue has strong structural and mitochondrial transcript dominance; a shift in these sets can reflect tissue composition or fiber-type differences rather than a direct treatment effect."
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "toolu_01Y9W1nQZVQtC9rq8KEUHA5Q",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE on log2 TPM (limma-trend)",
+          "analytical_narrative": "The input is a 12,000 x 12 matrix of log2(TPM+1) values (log_expr.csv) with a 12 x 2 sample table (metadata.csv) describing 6 treated vs 6 control human muscle samples, unpaired, single batch. The critical constraint is that no counts were delivered, so the negative-binomial count models (DESeq2, edgeR) are inapplicable — feeding them exponentiated or rounded log values would fabricate a count distribution that does not exist. The correct tool for continuous, already-normalized log-scale expression is limma with empirical Bayes moderation; because log2(TPM+1) retains a mild mean-variance relationship, limma-trend (eBayes trend=TRUE) is the appropriate variant, with voom explicitly excluded since it requires counts and library sizes.\n\nStep T1S1 does QC and design verification on the delivered matrix — sample-level distributions, per-sample medians/IQR, PCA/correlation clustering by condition, missing-value and non-finite checks, detection of any log-scale violation (negatives, implausible maxima), and whether the 12 metadata rows join one-to-one with the 12 expression columns in the correct order. It also decides and documents a low-expression filter on the log scale (genes with near-zero expression across nearly all samples), since limma-trend's variance trend is distorted by a floor of zeros. T1S2 runs the actual differential expression: ~condition with control as reference, limma-trend, BH FDR, reporting log2 fold changes that are directly interpretable as differences of log2 TPM. T1S3 is a robustness check — a rank-based Wilcoxon test and an exact label-permutation null on the same filtered matrix — because n=6 per group is small and eBayes moderation makes distributional assumptions that a nonparametric check can partly audit. T2S1 then takes the ranked statistic from T1S2 into preranked GSEA against human hallmark and GO gene sets, which is a robustness-preserving readout when the per-gene FDR list is short, as it may well be at this sample size.\n\nThe plan reports honestly on power: 6 vs 6 detects only large effects, and the absence of counts removes any possibility of count-model shrinkage, so effect sizes near the noise floor should be reported as unresolved rather than negative.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and design verification of delivered log2 TPM matrix",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Are the 12 samples in log_expr.csv (12,000 genes) consistent with the stated 6 treated vs 6 control unpaired single-batch design, are the values genuinely on a log2(TPM+1) scale, and which low-expression genes should be filtered before limma-trend?",
+              "description": "Load /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 genes x 12 samples, first column gene identifiers) and /eval-four-models-v2-without-log-normalized-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample + condition). Verify a strict one-to-one join between metadata sample IDs and expression column names and reorder columns to match metadata; fail loudly rather than assuming positional alignment. Confirm the value scale: report min, max, median, and the fraction of exact zeros per sample; flag any negative values or a maximum above ~20 as inconsistent with log2(TPM+1). Report per-sample distribution summaries (median, IQR, boxplot) to check that the facility's normalization left the samples comparable — if sample medians differ materially, note it and report whether a quantile-normalization sensitivity run is warranted downstream. Compute sample-sample Spearman and Pearson correlation on the log scale, hierarchical clustering, and PCA (PC1-PC3) on the top ~2000 most variable genes, coloured by the actual condition labels found in metadata.csv; report whether condition separates and whether any sample is an outlier. Count missing/non-finite values per gene and per sample. Define and apply a low-expression filter appropriate to the log scale — e.g. keep genes with log2(TPM+1) above a small threshold (such as 0.5-1) in at least 6 samples (the smaller group size) — and report how many of the 12,000 genes survive. Write the filtered, column-ordered matrix plus a tidy sample table for downstream steps.",
+              "context": "Bulk RNA-seq, Homo sapiens, muscle tissue, treatment vs control. The core facility delivered log2(TPM+1) normalized values only; no raw or estimated counts exist. Design: 6 treated vs 6 control, unpaired, single batch. Everything downstream depends on the join being correct and on the filter being defined on the log scale rather than on counts.",
+              "constraints": [
+                "Read the exact condition labels from metadata.csv and use them verbatim in all outputs and figure legends — do not invent or relabel groups.",
+                "Join expression columns to metadata sample IDs by name, not by position; abort with a clear message if the sets differ.",
+                "Do NOT exponentiate, back-transform to counts, round, or otherwise reconstruct integer counts from these values at any point.",
+                "Apply the low-expression filter on the log2(TPM+1) scale, requiring expression above the threshold in at least n=6 samples (smallest group size), and report the exact rule and the retained gene count.",
+                "Report per-sample median and IQR; state explicitly whether the delivered normalization looks adequate or whether cross-sample normalization drift is present."
+              ],
+              "acceptance_criteria": [
+                "Metadata-to-expression join is verified one-to-one for all 12 samples and the group sizes are confirmed as 6 vs 6 using the literal condition labels from metadata.csv.",
+                "Value-scale check is reported (min/max/median, zero fraction, any negatives) with an explicit verdict on whether the matrix is consistent with log2(TPM+1).",
+                "PCA and sample-correlation clustering are produced with samples coloured by condition, and any outlier sample is named with the evidence for it.",
+                "A filtered expression matrix is written, with the filter rule stated and the number of genes retained out of 12,000 reported.",
+                "Missing/non-finite value counts are reported per gene and per sample."
+              ],
+              "caveats": [
+                "A 12,000-gene matrix is already a subset of a transcriptome; do not describe it as genome-wide.",
+                "Clean separation on PCA at n=6 per group can also reflect a batch or handling difference that the single-batch annotation does not capture — report the observation, do not assert the cause.",
+                "Zero-inflation in log2(TPM+1) is a floor artifact, not a biological zero; an aggressive filter can remove genuinely treatment-induced genes that are off in one group, so report how many genes fail the filter in only one group."
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: limma-trend on log2 TPM",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the retained genes are differentially expressed between the treated and control muscle samples (6 vs 6), and what are their log2 fold changes and BH-adjusted p-values?",
+              "description": "Run differential expression on the filtered log2(TPM+1) matrix from T1S1 using limma with empirical Bayes moderation and the mean-variance trend enabled (lmFit on a ~0 + condition or ~condition design with control as reference, then eBayes(fit, trend=TRUE, robust=TRUE)). This is the correct model class for continuous, already-normalized log-scale expression; the negative-binomial count models (DESeq2, edgeR) and voom are inapplicable because no counts or library sizes were delivered — do not use them. Extract the full topTable for the treated-vs-control contrast, sorted by adjusted p-value, with columns: gene ID, logFC (a difference of log2 TPM, directly interpretable as log2 fold change), average expression, moderated t, raw p, BH-adjusted p (FDR), and B. Report the number of genes at FDR < 0.05 and, separately, at FDR < 0.10, and how many additionally pass |logFC| > 1. Produce a volcano plot (logFC vs -log10 raw p, points at FDR < 0.05 highlighted), an MA-style plot of logFC vs average expression to check for intensity-dependent bias, a p-value histogram to check the null behaviour, and a heatmap of the top 50 genes by adjusted p-value with samples annotated by condition. Report the estimated prior degrees of freedom and prior variance from eBayes so the amount of moderation is visible. If zero genes pass FDR < 0.05, say so plainly and report the top genes by raw p-value clearly labelled as not significant after multiple-testing correction.",
+              "context": "n=6 per group, unpaired, single batch, human muscle. 12,000 input genes before filtering. limma-trend is the standard approach for log-scale normalized expression where counts are unavailable (Law et al. 2014; Phipson et al. 2016 for robust eBayes). Sample size is small, so eBayes moderation is doing real work and its parameters should be reported rather than hidden.",
+              "constraints": [
+                "Use limma with eBayes(trend=TRUE, robust=TRUE). Do NOT use DESeq2, edgeR, or voom — no counts or library sizes exist for this dataset.",
+                "Set the control group as the reference level so that positive logFC means higher in treated; state the direction convention explicitly in the output.",
+                "Use Benjamini-Hochberg FDR; report gene counts at both FDR < 0.05 and FDR < 0.10.",
+                "Write the complete results table for all tested genes, not only the significant subset.",
+                "Report the p-value histogram and state whether the null distribution looks well behaved (uniform bulk with a spike near zero) or anomalous."
+              ],
+              "acceptance_criteria": [
+                "A complete differential expression table for every retained gene is written, with logFC, average expression, moderated t, raw p and BH-adjusted p, sorted by adjusted p.",
+                "The number of significant genes at FDR < 0.05 and FDR < 0.10 is reported, with the direction (up/down in treated) broken out.",
+                "Volcano, MA, p-value histogram and top-50 heatmap figures are produced with the literal condition labels from metadata.csv.",
+                "eBayes prior df and prior variance are reported, and the choice of limma-trend over count models is stated with the reason (no counts delivered).",
+                "If no gene reaches FDR < 0.05, this is stated directly rather than substituting a looser threshold as if it were the primary result."
+              ],
+              "caveats": [
+                "logFC here is a difference of log2(TPM+1), which compresses fold changes for low-expression genes relative to a true log ratio — flag this when interpreting large logFCs at low average expression.",
+                "With 6 vs 6 the analysis is powered only for large, consistent effects; an empty or short significant list is an honest outcome, not a failed analysis.",
+                "A single outlier sample can drive a top hit at this sample size — cross-check the top genes against the per-sample values before treating any as a finding."
+              ],
+              "packages": [
+                "limma",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Nonparametric and permutation robustness check",
+              "track": "T1",
+              "step_type": "statistical_validation",
+              "question": "Do the treated-vs-control differences found by limma-trend survive a rank-based test and an exact label-permutation null, given only 6 samples per group?",
+              "description": "On the same filtered matrix from T1S1, run two independent robustness checks against the limma-trend result from T1S2. First, a per-gene two-sided Wilcoxon rank-sum test between the treated and control groups with BH correction — note that with 6 vs 6 the minimum achievable exact p-value is ~0.002, so no gene can reach a stringent FDR after 10k+ tests; report this power ceiling explicitly rather than presenting an empty list as a contradiction. Second, a label-permutation assessment of the limma-trend statistic: recompute the moderated t statistics over the 462 distinct group relabelings (C(12,6)/2) and report for each top gene the fraction of permutations achieving an absolute statistic at least as extreme, plus a global permutation-based estimate of how many genes at the observed FDR cut would be expected under the null. Compare rankings: Spearman correlation between the limma moderated-t ordering and the Wilcoxon statistic ordering, and the overlap of the top 100 genes from each. Also report, for the top 20 limma hits, a leave-one-sample-out sensitivity check — whether each remains in the top 100 when any single sample is dropped — to expose hits driven by one sample.",
+              "context": "n=6 per group is at the boundary where parametric moderation matters most and is also least auditable. The permutation space is small but fully enumerable (462 distinct splits), which makes an exact permutation null feasible here rather than approximate.",
+              "constraints": [
+                "Use the same filtered gene set and the same condition labels as T1S2 so the comparison is like-for-like.",
+                "Enumerate the distinct group relabelings exactly (462 for 6 vs 6) rather than sampling, since the space is small; state the count used.",
+                "Report the Wilcoxon power ceiling (minimum attainable p-value at 6 vs 6) before reporting its adjusted p-values, so an empty significant list is not misread.",
+                "Report the leave-one-sample-out result per top gene as a concrete count (in how many of 12 dropped-sample runs the gene stays in the top 100)."
+              ],
+              "acceptance_criteria": [
+                "Wilcoxon results with BH adjustment are written for all retained genes, alongside an explicit statement of the minimum attainable p-value at this sample size.",
+                "A permutation-based null is computed over the enumerated relabelings and a per-gene permutation p-value is reported for at least the top limma hits.",
+                "Rank concordance between limma-trend and Wilcoxon is quantified (Spearman rho and top-100 overlap).",
+                "Leave-one-sample-out stability is reported for the top 20 limma hits as a count out of 12.",
+                "A plain verdict is given on whether the limma-trend hit list is robust, partly robust, or driven by individual samples."
+              ],
+              "caveats": [
+                "Permutation p-values are floored at 1/462 ≈ 0.0022 — do not report anything smaller, and do not BH-adjust permutation p-values as if they had continuous resolution.",
+                "Disagreement between limma and Wilcoxon at n=6 usually reflects the rank test's low resolution, not a limma error; state this rather than treating the rank test as ground truth.",
+                "Leave-one-out instability is expected for some genes at this sample size and is diagnostic, not disqualifying on its own."
+              ],
+              "packages": [
+                "scipy",
+                "numpy",
+                "pandas",
+                "statsmodels",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Preranked gene set enrichment on the treated-vs-control ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and hallmark states are coordinately shifted between treated and control muscle, using the full limma-trend gene ranking rather than a thresholded hit list?",
+              "description": "Take the complete limma-trend result from T1S2 and build a single ranking statistic per gene — the signed moderated t statistic (sign of logFC times |t|), which uses the whole gene list and does not depend on an FDR cut. Run preranked GSEA against human gene set collections: the human hallmark collection (50 broad biological states) as the primary readout, and human GO Biological Process as the mechanism-level follow-up; WikiPathways human is available as an additional curated-pathway view. Use human resources only — the data is Homo sapiens muscle, and the mouse and rat files present in the reference store must not be used. Set a minimum gene set size of 15 and a maximum of 500 after intersecting each set with the tested gene universe (the filtered genes from T1S1, not all 12,000 and not the full transcriptome), and report the intersection size per set so under-covered sets are visible. Report normalized enrichment scores, nominal p, and BH/FDR q per set, with leading-edge genes for the significant sets. Because GO is a nested hierarchy with heavy member overlap, collapse redundant significant GO terms (by leading-edge Jaccard similarity or parent-child relation) before reporting a count of enriched processes. Given muscle tissue, note whether any enriched sets are muscle-structural or metabolic in character, but do not build a mechanistic story beyond what the enrichment supports. If the hallmark or GO resource is unavailable at run time, report the gap explicitly and proceed with whichever curated human pathway resource is present.",
+              "context": "With 6 vs 6, the per-gene FDR list from T1S2 may be short or empty; a preranked, whole-list enrichment borrows strength across coordinated genes and is often the more informative readout. The reference store currently holds human MSigDB hallmark, human GO BP/CC/MF, human oncogenic C6, and human WikiPathways — all HGNC symbol GMTs.",
+              "constraints": [
+                "Use the signed moderated t statistic from T1S2 as the ranking; do not rank by logFC alone and do not pre-filter to FDR-significant genes.",
+                "Restrict the gene set universe to the genes actually tested in T1S2 (the T1S1 filtered set) and report each set's post-intersection size.",
+                "Use human gene sets only (HGNC symbols); explicitly do not use the mouse or rat pathway files present in the store.",
+                "Set minimum set size 15 and maximum 500 after intersection with the tested universe.",
+                "Collapse redundant GO terms by leading-edge overlap before reporting the number of enriched processes.",
+                "If the expression matrix uses identifiers other than HGNC symbols, map them to symbols and report the mapping rate and the number of genes lost."
+              ],
+              "acceptance_criteria": [
+                "Preranked GSEA results are written for hallmark and GO BP with NES, nominal p, FDR q, set size after intersection, and leading-edge genes.",
+                "The ranking statistic used is stated and shown to cover the full tested gene set (no thresholding).",
+                "Identifier mapping rate to HGNC symbols is reported, with the count of genes that failed to map.",
+                "Redundant GO terms are collapsed and the reported count of enriched processes reflects the collapsed set.",
+                "Any reference resource that could not be found at run time is named explicitly rather than silently skipped."
+              ],
+              "caveats": [
+                "Enrichment on a 12,000-gene subset has a restricted universe; sets whose members are largely absent from the matrix will be under-powered — the reported intersection size is what makes that visible.",
+                "GSEA significance does not establish that a pathway is mechanistically engaged, only that its members are coordinately shifted in the ranking.",
+                "Muscle tissue has strong structural and mitochondrial transcript dominance; a shift in these sets can reflect tissue composition or fiber-type differences rather than a direct treatment effect."
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

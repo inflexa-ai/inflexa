@@ -1,0 +1,1514 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "paired-n5",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T08:20:39.073Z",
+  "elapsedMs": 399853,
+  "outcome": "plan_submitted",
+  "planId": "pln-5706e648",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Inputs: /eval-four-models-v2-with-paired-n5-s1-1/data/inputs/counts/counts.csv (12,000 genes x 10 samples, first column a gene ID, the 10 remaining columns the samples; raw integer counts from STAR/featureCounts) and /eval-four-models-v2-with-paired-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows: subject with 5 levels, condition with control/treated, one row per sample). Join the metadata to the count columns by sample name. Design: paired - each of the 5 subjects contributes exactly one control and one treated sample, so the within-subject pair structure is the key QC check before any test.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Does the count matrix of the 10 blood samples (5 subjects x control/treated) show the expected paired structure - each control-treated pair closer to its own pair than to samples of other subjects - with no swapped, outlier, or compositionally anomalous sample?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "Verify the paired structure: each of the 5 within-subject control-treated pairs should be among the closest sample pairs in the distance matrix; explicitly flag any sample that does not cluster with its pair (possible sample swap or identity doubt)."
+        ],
+        "description": "Blind VST sample-structure QC: PCA on the top 500 variable genes, sample distance heatmap, library sizes, and a check that the 5 within-subject pairs are the closest pairs (sample-swap / outlier screen).",
+        "acceptance_criteria": [
+          "PCA plot on the top 500 variable genes from the blind VST, colored by subject and by condition",
+          "Euclidean distance heatmap between all 10 samples, colored by subject and by condition",
+          "Per-sample library sizes reported",
+          "Explicit statement of whether the paired structure holds, or identification of the anomalous sample(s)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test with apeglm log fold change shrinkage",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With counts from an aligner and a counter, no bias model runs at the quantification, thus a sample-specific effect of the GC content and of the gene length can remain in the counts, and such an effect adds a difference between samples that the between-sample normalization does not remove. Draw the diagnostic: for each pair of samples, or for each sample against the median sample, plot the log ratio of the counts against the GC content of the genes and against the gene length, and report a trend. For a 3' tag library, the count does not depend on the gene length, thus plot the GC content only. Conditional quantile normalization (cqn) and the GC-content normalization of EDASeq are the tools of record for the correction, and both are absent from this pool. If the diagnostic shows a trend, state it in the plan and ask for cqn, or for a new quantification with a bias-aware quantifier such as Salmon with its GC bias model. If the diagnostic shows no trend, state the check and continue.",
+          "Per-gene GC content and gene length are not derivable from the reference data provisioned in this environment (no human gene-sequence or gene-annotation collection is staged, and the analysis environment has no network access). If the GC/length diagnostic therefore cannot be computed, state that fact explicitly in the output and continue with the median-of-ratios results; do not attempt network downloads and do not apply cqn/EDASeq (neither is installed).",
+          "With only 5 samples per condition cell (fewer than 7), DESeq2 flags count outliers by Cook's distance and sets the p-value and adjusted p-value of those genes to NA; report the number of flagged genes separately from the genes removed by the independent filter."
+        ],
+        "context": "Counts are raw integers from STAR/featureCounts: feed them to the count model as-is - no gene-length correction, no tximport. metadata.csv supplies subject (5 levels) and condition (control/treated) per sample. Set the reference level of condition explicitly to control (do not rely on alphabetical level order); the contrast is condition treated vs control, so a positive log2 fold change means higher expression in the treated sample. Design formula ~ subject + condition: the subject term removes between-subject variation, so the condition coefficient is the within-subject treatment effect. The pre-filter keeps genes with at least 10 counts in at least 5 samples (the smallest group size); it is minimal and the independent filtering of results() does the rest. The per-subject effect is reported by the report step, not by separate per-subject tests (one pair per subject is not testable on its own).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12,000 genes respond to treatment within each of the 5 subjects (paired within-subject contrast, treated vs control, subject as a fixed-effect blocking term)?",
+        "grounding": {
+          "claims": [
+            "R-0029@22ca",
+            "R-0002@087b",
+            "R-0147@aebe",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0064@92ec",
+            "R-0011@233b",
+            "R-0001@9a17",
+            "R-0039@968d",
+            "R-0009@310d",
+            "R-0166@bbcd",
+            "R-0083@12de",
+            "R-0010@6072",
+            "R-0037@e6d8",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter_policy",
+              "step": "filter_low_counts",
+              "value": "minimal_then_independent",
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "gc_length_bias_diagnostic",
+              "step": "normalize",
+              "value": "log_count_ratio_against_gc_and_length",
+              "source": "doi:10.1186/1471-2105-12-480"
+            },
+            {
+              "name": "gc_bias_tool_of_record",
+              "step": "normalize",
+              "value": "cqn_or_EDASeq_absent_from_pool",
+              "source": "doi:10.1093/biostatistics/kxr054"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "raw_integer_counts_no_length_correction",
+              "source": "vignette:DESeq2/1.52.0#count-matrix-input"
+            },
+            {
+              "name": "import_tool",
+              "step": "model_design",
+              "value": "none",
+              "source": "vignette:DESeq2/1.52.0#count-matrix-input"
+            },
+            {
+              "name": "design_terms",
+              "step": "differential_expression",
+              "value": [
+                "subject",
+                "condition"
+              ],
+              "source": "vignette:DESeq2/1.52.0#multi-factor-designs"
+            },
+            {
+              "name": "test",
+              "step": "differential_expression",
+              "value": "Wald",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "count_outlier_policy",
+              "step": "differential_expression",
+              "value": "flag_and_report_na",
+              "source": "vignette:DESeq2/1.52.0#approach-to-count-outliers"
+            },
+            {
+              "name": "lfc_shrink",
+              "step": "shrink_lfc",
+              "value": "apeglm",
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "independent_filtering",
+              "step": "multiple_testing",
+              "value": true,
+              "source": "doi:10.1073/pnas.0914005107"
+            },
+            {
+              "name": "pvalue_histogram",
+              "step": "multiple_testing",
+              "value": "inspect_before_adjustment",
+              "source": "doi:10.3390/ht7030023"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "lfc_threshold_policy",
+              "step": "multiple_testing",
+              "value": "test_against_threshold",
+              "source": "doi:10.1093/bioinformatics/btp053"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-blocked@1.0.0"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)",
+          "filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)",
+          "normalize: gc_length_bias_diagnostic = log_count_ratio_against_gc_and_length (doi:10.1186/1471-2105-12-480)",
+          "normalize: gc_bias_tool_of_record = cqn_or_EDASeq_absent_from_pool (doi:10.1093/biostatistics/kxr054)",
+          "normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)",
+          "model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)",
+          "model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)",
+          "model_design: import = raw_integer_counts_no_length_correction (vignette:DESeq2/1.52.0#count-matrix-input)",
+          "model_design: import_tool = none (vignette:DESeq2/1.52.0#count-matrix-input)",
+          "differential_expression: design_terms = subject, condition (vignette:DESeq2/1.52.0#multi-factor-designs)",
+          "differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)",
+          "differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)",
+          "shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)",
+          "multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)",
+          "multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)",
+          "multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)",
+          "multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)",
+          "multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)",
+          "multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)"
+        ],
+        "description": "Paired within-subject differential expression: DESeq2 negative binomial Wald test on raw integer counts with design ~ subject + condition (condition contrast treated vs control, reference control), minimal pre-filter, median-of-ratios size factors, apeglm LFC shrinkage, BH adjustment at alpha 0.05 with independent filtering.",
+        "acceptance_criteria": [
+          "Gene-level results table with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, and the apeglm-shrunken log2FoldChange",
+          "Counts of: genes passing the pre-filter, genes tested after independent filtering, genes with NA adjusted p-value from the independent filter, and genes with NA p-value from count-outlier flags",
+          "Unadjusted p-value histogram inspected before adjustment, with its shape described",
+          "Design formula, explicit reference level, and the named contrast recorded in the output; the GC/length bias diagnostic outcome stated (trend observed, or that the check could not be run)",
+          "MA plot and dispersion plot produced"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 5 within-subject pairs, statistical power is limited: the significant set is expected to contain only genes with strong within-subject effects; state this limitation in the report.",
+          "Do not present the union of the two methods as the result.",
+          "Genes whose within-subject directions are not concordant across all 5 subjects (e.g. up in 3 of 5) are listed with their concordance count, not silently dropped."
+        ],
+        "context": "Consumes the T1S2 DESeq2 results. For robustness, fit the edgeR quasi-likelihood F-test on the same raw counts with the same design ~ subject + condition and the same contrast (treated vs control), and report the overlap with the DESeq2 significant set. For the 'within each subject' aspect, compute per-subject within-subject log2 fold changes (treated vs control on size-factor-normalized counts) for the DE genes and report the fraction of the 5 subjects whose direction agrees with the overall estimate. If the count matrix uses non-symbol gene IDs, map them to official human gene symbols via the provisioned UniProt human ID-mapping reference (gene identifiers, human) and report the mapping rate.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR"
+        ],
+        "question": "What is the final set of genes responding to treatment within each subject, how consistent are their within-subject directions across the 5 subjects, and how robust is that set to a second method (edgeR quasi-likelihood F-test) on the identical paired design?",
+        "grounding": {
+          "claims": [
+            "R-0085@bb37",
+            "R-0087@3dcc",
+            "R-0042@54e1",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers this step",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "effect_columns",
+              "step": "report",
+              "value": [
+                "log2FoldChange",
+                "shrunken_log2FoldChange",
+                "lfcSE"
+              ],
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "rank_genes_by",
+              "step": "report",
+              "value": "shrunken_log2FoldChange",
+              "source": "vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking"
+            },
+            {
+              "name": "fit_diagnostics",
+              "step": "report",
+              "value": [
+                "ma_plot",
+                "dispersion_plot"
+              ],
+              "source": "vignette:DESeq2/1.52.0#ma-plot"
+            },
+            {
+              "name": "robustness",
+              "step": "report",
+              "value": "overlap_of_two_methods",
+              "source": "doi:10.1261/rna.053959.115"
+            },
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)",
+          "report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)",
+          "report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)",
+          "report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)",
+          "report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)",
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)"
+        ],
+        "description": "Final report: ranked gene table with unshrunken and apeglm-shrunken log2FC, MA and dispersion plots, per-subject direction-concordance table for the DE genes, and edgeR QL robustness overlap (intersection as the high-confidence set); reproducibility record with versions, seed, and design.",
+        "acceptance_criteria": [
+          "Gene table carrying the unshrunken log2FoldChange from the test, the shrunken log2FoldChange (apeglm), and lfcSE; genes ranked and plotted on the shrunken value",
+          "MA plot and dispersion plot placed before the gene tables, each with a statement of what it shows",
+          "DE gene counts per method (DESeq2 and edgeR QL) and the size of the intersection, with the intersection presented as the high-confidence set and the method-specific remainders listed under their method names",
+          "Per-subject within-subject fold-change table for the DE genes with a direction-concordance count out of 5 subjects per gene",
+          "Report header stating method, package versions, design formula, named contrast, threshold (adjusted p-value < 0.05), number of genes tested, number of DE genes, sessionInfo, and random seed"
+        ]
+      }
+    ],
+    "title": "Paired within-subject DE: treated vs control (blood)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is human whole-blood bulk RNA-seq: raw integer gene counts from STAR/featureCounts (counts.csv, 12,000 genes x 10 samples plus a gene-ID column) and a sample table (metadata.csv, 10 rows: subject, condition) in which each of 5 subjects contributes one control and one treated sample. The research question asks which genes respond to treatment within each subject, so the condition effect is tested with a fixed-effects paired design ~ subject + condition: the subject term absorbs between-subject variation and the condition coefficient is estimated from within-subject differences. Sample-structure QC first verifies that the paired structure actually holds in the data (each control-treated pair closer than cross-subject pairs, no swapped or outlier samples). The integer counts enter the negative binomial model as-is (no length correction, no tximport); a minimal pre-filter (>=10 counts in at least 5 samples, the smallest group size) precedes DESeq2's independent filtering, with median-of-ratios normalization inside the model, the Wald test on the condition contrast (treated vs control, reference level explicitly control), apeglm shrinkage for effect-size reporting, and Benjamini-Hochberg adjustment at alpha 0.05. The report decomposes the significant genes per subject (within-subject direction concordance) and checks robustness against an edgeR quasi-likelihood F-test on the identical design, treating the intersection as the high-confidence set. With only 5 pairs, power is limited to genes with strong within-subject effects, which the report states explicitly."
+  },
+  "usage": {
+    "inputTokens": 397633,
+    "outputTokens": 29264,
+    "cacheReadInputTokens": 324608,
+    "reasoningTokens": 15627
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_1eba33ef938d44f78c1ec8f8",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "import_state": "integer_counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none"
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    },
+    {
+      "toolUseId": "call_22c4feea9f3142ec95c4aea4",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human annotation genome gene sequence gencode ensembl",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    },
+    {
+      "toolUseId": "call_29e4b6d68d2b4c148689b35e",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "star_featurecounts",
+        "import_state": "integer_counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 5,
+        "n_per_group_max": 5,
+        "paired": true,
+        "blocking_factor": "subject",
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind variance-stabilizing transform, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "DESeq2 minimal pre-filter on raw counts",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the negative binomial model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "gc_length_bias_diagnostic",
+                "value": "log_count_ratio_against_gc_and_length"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 fixed-effect paired design ~ subject + condition",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": [
+                  "subject",
+                  "condition"
+                ]
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition treated vs control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              },
+              {
+                "name": "import_tool",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "design_terms",
+                "value": [
+                  "subject",
+                  "condition"
+                ]
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg adjustment on DESeq2 p-values with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with per-subject decomposition and edgeR QL overlap robustness check",
+            "package": "edgeR"
+          }
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "call_a9ac151ebb724f9786a95b59",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "blocking_factor": "subject",
+        "count_source": "star_featurecounts",
+        "data_state": "counts",
+        "import_state": "integer_counts",
+        "modality": "bulk_rna_seq",
+        "n_groups": 2,
+        "n_per_group_max": 5,
+        "n_per_group_min": 5,
+        "organism": "human",
+        "paired": true,
+        "question": "differential_expression",
+        "steps": [
+          {
+            "method": "DESeq2 blind variance-stabilizing transform, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "DESeq2 minimal pre-filter on raw counts",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "DESeq2 median-of-ratios size factors inside the negative binomial model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "gc_length_bias_diagnostic",
+                "value": "log_count_ratio_against_gc_and_length"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "DESeq2 fixed-effect paired design ~ subject + condition",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition treated vs control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              },
+              {
+                "name": "import_tool",
+                "value": "none"
+              }
+            ],
+            "step_type": "model_design"
+          },
+          {
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ],
+            "step_type": "shrink_lfc"
+          },
+          {
+            "method": "Benjamini-Hochberg adjustment on DESeq2 p-values with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ],
+            "step_type": "multiple_testing"
+          },
+          {
+            "method": "Report with per-subject decomposition and edgeR QL overlap robustness check",
+            "package": "edgeR",
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "call_82142d3a2c874561a774ae22",
+      "name": "knowledge_check",
+      "input": {
+        "batch": "none",
+        "blocking_factor": "subject",
+        "count_source": "star_featurecounts",
+        "data_state": "counts",
+        "import_state": "integer_counts",
+        "modality": "bulk_rna_seq",
+        "n_groups": 2,
+        "n_per_group_max": 5,
+        "n_per_group_min": 5,
+        "organism": "human",
+        "paired": true,
+        "question": "differential_expression",
+        "steps": [
+          {
+            "method": "DESeq2 blind variance-stabilizing transform, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ],
+            "step_type": "qc_sample_structure"
+          },
+          {
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ],
+            "step_type": "filter_low_counts"
+          },
+          {
+            "method": "DESeq2 median-of-ratios size factors inside the negative binomial model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "gc_length_bias_diagnostic",
+                "value": "log_count_ratio_against_gc_and_length"
+              }
+            ],
+            "step_type": "normalize"
+          },
+          {
+            "method": "DESeq2 fixed-effect paired design ~ subject + condition",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition treated vs control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              },
+              {
+                "name": "import_tool",
+                "value": "none"
+              }
+            ],
+            "step_type": "model_design"
+          },
+          {
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ],
+            "step_type": "differential_expression"
+          },
+          {
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ],
+            "step_type": "shrink_lfc"
+          },
+          {
+            "method": "Benjamini-Hochberg adjustment on DESeq2 p-values with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ],
+            "step_type": "multiple_testing"
+          },
+          {
+            "method": "Report with per-subject decomposition and edgeR QL overlap robustness check",
+            "package": "edgeR",
+            "step_type": "report"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_cd6d3240ff094a7e81c588fe",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Paired within-subject DE: treated vs control (blood)\", \"analytical_narrative\": \"The input is human whole-blood bulk RNA-seq: raw integer gene counts from STAR/featureCounts (counts.csv, 12,000 genes x 10 samples plus a gene-ID column) and a sample table (metadata.csv, 10 rows: subject, condition) in which each of 5 subjects contributes one control and one treated sample. The research question asks which genes respond to treatment within each subject, so the condition effect is tested with a fixed-effects paired design ~ subject + condition: the subject term absorbs between-subject variation and the condition coefficient is estimated from within-subject differences. Sample-structure QC first verifies that the paired structure actually holds in the data (each control-treated pair closer than cross-subject pairs, no swapped or outlier samples). The integer counts enter the negative binomial model as-is (no length correction, no tximport); a minimal pre-filter (>=10 counts in at least 5 samples, the smallest group size) precedes DESeq2's independent filtering, with median-of-ratios normalization inside the model, the Wald test on the condition contrast (treated vs control, reference level explicitly control), apeglm shrinkage for effect-size reporting, and Benjamini-Hochberg adjustment at alpha 0.05. The report decomposes the significant genes per subject (within-subject direction concordance) and checks robustness against an edgeR quasi-likelihood F-test on the identical design, treating the intersection as the high-confidence set. With only 5 pairs, power is limited to genes with strong within-subject effects, which the report states explicitly.\", \"created_at\": \"2026-07-10T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Does the count matrix of the 10 blood samples (5 subjects x control/treated) show the expected paired structure - each control-treated pair closer to its own pair than to samples of other subjects - with no swapped, outlier, or compositionally anomalous sample?\", \"context\": \"Inputs: /eval-four-models-v2-with-paired-n5-s1-1/data/inputs/counts/counts.csv (12,000 genes x 10 samples, first column a gene ID, the 10 remaining columns the samples; raw integer counts from STAR/featureCounts) and /eval-four-models-v2-with-paired-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows: subject with 5 levels, condition with control/treated, one row per sample). Join the metadata to the count columns by sample name. Design: paired - each of the 5 subjects contributes exactly one control and one treated sample, so the within-subject pair structure is the key QC check before any test.\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"Verify the paired structure: each of the 5 within-subject control-treated pairs should be among the closest sample pairs in the distance matrix; explicitly flag any sample that does not cluster with its pair (possible sample swap or identity doubt).\"], \"acceptance_criteria\": [\"PCA plot on the top 500 variable genes from the blind VST, colored by subject and by condition\", \"Euclidean distance heatmap between all 10 samples, colored by subject and by condition\", \"Per-sample library sizes reported\", \"Explicit statement of whether the paired structure holds, or identification of the anomalous sample(s)\"], \"caveats\": [], \"packages\": [\"DESeq2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}}, {\"id\": \"T1S2\", \"name\": \"DESeq2 Wald test with apeglm log fold change shrinkage\", \"track\": \"T1\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which of the 12,000 genes respond to treatment within each of the 5 subjects (paired within-subject contrast, treated vs control, subject as a fixed-effect blocking term)?\", \"context\": \"Counts are raw integers from STAR/featureCounts: feed them to the count model as-is - no gene-length correction, no tximport. metadata.csv supplies subject (5 levels) and condition (control/treated) per sample. Set the reference level of condition explicitly to control (do not rely on alphabetical level order); the contrast is condition treated vs control, so a positive log2 fold change means higher expression in the treated sample. Design formula ~ subject + condition: the subject term removes between-subject variation, so the condition coefficient is the within-subject treatment effect. The pre-filter keeps genes with at least 10 counts in at least 5 samples (the smallest group size); it is minimal and the independent filtering of results() does the rest. The per-subject effect is reported by the report step, not by separate per-subject tests (one pair per subject is not testable on its own).\", \"constraints\": [\"filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)\", \"filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)\", \"filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)\", \"normalize: gc_length_bias_diagnostic = log_count_ratio_against_gc_and_length (doi:10.1186/1471-2105-12-480)\", \"normalize: gc_bias_tool_of_record = cqn_or_EDASeq_absent_from_pool (doi:10.1093/biostatistics/kxr054)\", \"normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)\", \"model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)\", \"model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)\", \"model_design: import = raw_integer_counts_no_length_correction (vignette:DESeq2/1.52.0#count-matrix-input)\", \"model_design: import_tool = none (vignette:DESeq2/1.52.0#count-matrix-input)\", \"differential_expression: design_terms = subject, condition (vignette:DESeq2/1.52.0#multi-factor-designs)\", \"differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)\", \"differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)\", \"shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)\", \"multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)\", \"multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)\", \"multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)\", \"multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)\", \"multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)\"], \"acceptance_criteria\": [\"Gene-level results table with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, and the apeglm-shrunken log2FoldChange\", \"Counts of: genes passing the pre-filter, genes tested after independent filtering, genes with NA adjusted p-value from the independent filter, and genes with NA p-value from count-outlier flags\", \"Unadjusted p-value histogram inspected before adjustment, with its shape described\", \"Design formula, explicit reference level, and the named contrast recorded in the output; the GC/length bias diagnostic outcome stated (trend observed, or that the check could not be run)\", \"MA plot and dispersion plot produced\"], \"caveats\": [\"With counts from an aligner and a counter, no bias model runs at the quantification, thus a sample-specific effect of the GC content and of the gene length can remain in the counts, and such an effect adds a difference between samples that the between-sample normalization does not remove. Draw the diagnostic: for each pair of samples, or for each sample against the median sample, plot the log ratio of the counts against the GC content of the genes and against the gene length, and report a trend. For a 3' tag library, the count does not depend on the gene length, thus plot the GC content only. Conditional quantile normalization (cqn) and the GC-content normalization of EDASeq are the tools of record for the correction, and both are absent from this pool. If the diagnostic shows a trend, state it in the plan and ask for cqn, or for a new quantification with a bias-aware quantifier such as Salmon with its GC bias model. If the diagnostic shows no trend, state the check and continue.\", \"Per-gene GC content and gene length are not derivable from the reference data provisioned in this environment (no human gene-sequence or gene-annotation collection is staged, and the analysis environment has no network access). If the GC/length diagnostic therefore cannot be computed, state that fact explicitly in the output and continue with the median-of-ratios results; do not attempt network downloads and do not apply cqn/EDASeq (neither is installed).\", \"With only 5 samples per condition cell (fewer than 7), DESeq2 flags count outliers by Cook's distance and sets the p-value and adjusted p-value of those genes to NA; report the number of flagged genes separately from the genes removed by the independent filter.\"], \"packages\": [\"DESeq2\", \"apeglm\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0029@22ca\", \"R-0002@087b\", \"R-0147@aebe\", \"R-0026@9ab1\", \"R-0036@9786\", \"R-0064@92ec\", \"R-0011@233b\", \"R-0001@9a17\", \"R-0039@968d\", \"R-0009@310d\", \"R-0166@bbcd\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-deseq2-blocked@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter_policy\", \"value\": \"minimal_then_independent\", \"source\": \"doi:10.1073/pnas.0914005107\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_count\", \"value\": 10, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_samples\", \"value\": \"smallest_group_size\", \"source\": \"vignette:DESeq2/1.52.0#pre-filtering\"}, {\"step\": \"normalize\", \"name\": \"gc_length_bias_diagnostic\", \"value\": \"log_count_ratio_against_gc_and_length\", \"source\": \"doi:10.1186/1471-2105-12-480\"}, {\"step\": \"normalize\", \"name\": \"gc_bias_tool_of_record\", \"value\": \"cqn_or_EDASeq_absent_from_pool\", \"source\": \"doi:10.1093/biostatistics/kxr054\"}, {\"step\": \"normalize\", \"name\": \"size_factors\", \"value\": \"median_of_ratios_named_in_the_plan\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"raw_integer_counts_no_length_correction\", \"source\": \"vignette:DESeq2/1.52.0#count-matrix-input\"}, {\"step\": \"model_design\", \"name\": \"import_tool\", \"value\": \"none\", \"source\": \"vignette:DESeq2/1.52.0#count-matrix-input\"}, {\"step\": \"differential_expression\", \"name\": \"design_terms\", \"value\": [\"subject\", \"condition\"], \"source\": \"vignette:DESeq2/1.52.0#multi-factor-designs\"}, {\"step\": \"differential_expression\", \"name\": \"test\", \"value\": \"Wald\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"differential_expression\", \"name\": \"count_outlier_policy\", \"value\": \"flag_and_report_na\", \"source\": \"vignette:DESeq2/1.52.0#approach-to-count-outliers\"}, {\"step\": \"shrink_lfc\", \"name\": \"lfc_shrink\", \"value\": \"apeglm\", \"source\": \"doi:10.1093/bioinformatics/bty895\"}, {\"step\": \"multiple_testing\", \"name\": \"independent_filtering\", \"value\": true, \"source\": \"doi:10.1073/pnas.0914005107\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca\"}}, {\"id\": \"T1S3\", \"name\": \"Report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What is the final set of genes responding to treatment within each subject, how consistent are their within-subject directions across the 5 subjects, and how robust is that set to a second method (edgeR quasi-likelihood F-test) on the identical paired design?\", \"context\": \"Consumes the T1S2 DESeq2 results. For robustness, fit the edgeR quasi-likelihood F-test on the same raw counts with the same design ~ subject + condition and the same contrast (treated vs control), and report the overlap with the DESeq2 significant set. For the 'within each subject' aspect, compute per-subject within-subject log2 fold changes (treated vs control on size-factor-normalized counts) for the DE genes and report the fraction of the 5 subjects whose direction agrees with the overall estimate. If the count matrix uses non-symbol gene IDs, map them to official human gene symbols via the provisioned UniProt human ID-mapping reference (gene identifiers, human) and report the mapping rate.\", \"constraints\": [\"report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)\", \"report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)\", \"report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)\", \"report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)\", \"report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)\", \"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\"], \"acceptance_criteria\": [\"Gene table carrying the unshrunken log2FoldChange from the test, the shrunken log2FoldChange (apeglm), and lfcSE; genes ranked and plotted on the shrunken value\", \"MA plot and dispersion plot placed before the gene tables, each with a statement of what it shows\", \"DE gene counts per method (DESeq2 and edgeR QL) and the size of the intersection, with the intersection presented as the high-confidence set and the method-specific remainders listed under their method names\", \"Per-subject within-subject fold-change table for the DE genes with a direction-concordance count out of 5 subjects per gene\", \"Report header stating method, package versions, design formula, named contrast, threshold (adjusted p-value < 0.05), number of genes tested, number of DE genes, sessionInfo, and random seed\"], \"caveats\": [\"With only 5 within-subject pairs, statistical power is limited: the significant set is expected to contain only genes with strong within-subject effects; state this limitation in the report.\", \"Do not present the union of the two methods as the result.\", \"Genes whose within-subject directions are not concordant across all 5 subjects (e.g. up in 3 of 5) are listed with their concordance count, not silently dropped.\"], \"packages\": [\"DESeq2\", \"edgeR\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0085@bb37\", \"R-0087@3dcc\", \"R-0042@54e1\", \"R-0041@059a\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"effect_columns\", \"value\": [\"log2FoldChange\", \"shrunken_log2FoldChange\", \"lfcSE\"], \"source\": \"doi:10.1093/bioinformatics/bty895\"}, {\"step\": \"report\", \"name\": \"rank_genes_by\", \"value\": \"shrunken_log2FoldChange\", \"source\": \"vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking\"}, {\"step\": \"report\", \"name\": \"fit_diagnostics\", \"value\": [\"ma_plot\", \"dispersion_plot\"], \"source\": \"vignette:DESeq2/1.52.0#ma-plot\"}, {\"step\": \"report\", \"name\": \"robustness\", \"value\": \"overlap_of_two_methods\", \"source\": \"doi:10.1261/rna.053959.115\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step\"}}]"
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_34edd3dce3f447c68f9b567c",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Paired within-subject DE: treated vs control (blood)\", \"created_at\": \"2026-07-10T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"analytical_narrative\": \"The input is human whole-blood bulk RNA-seq: raw integer gene counts from STAR/featureCounts (counts.csv, 12,000 genes x 10 samples plus a gene-ID column) and a sample table (metadata.csv, 10 rows: subject, condition) in which each of 5 subjects contributes one control and one treated sample. The research question asks which genes respond to treatment within each subject, so the condition effect is tested with a fixed-effects paired design ~ subject + condition: the subject term absorbs between-subject variation and the condition coefficient is estimated from within-subject differences. Sample-structure QC first verifies that the paired structure actually holds in the data (each control-treated pair closer than cross-subject pairs, no swapped or outlier samples). The integer counts enter the negative binomial model as-is (no length correction, no tximport); a minimal pre-filter (>=10 counts in at least 5 samples, the smallest group size) precedes DESeq2's independent filtering, with median-of-ratios normalization inside the model, the Wald test on the condition contrast (treated vs control, reference level explicitly control), apeglm shrinkage for effect-size reporting, and Benjamini-Hochberg adjustment at alpha 0.05. The report decomposes the significant genes per subject (within-subject direction concordance) and checks robustness against an edgeR quasi-likelihood F-test on the identical design, treating the intersection as the high-confidence set. With only 5 pairs, power is limited to genes with strong within-subject effects, which the report states explicitly.\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Does the count matrix of the 10 blood samples (5 subjects x control/treated) show the expected paired structure - each control-treated pair closer to its own pair than to samples of other subjects - with no swapped, outlier, or compositionally anomalous sample?\", \"context\": \"Inputs: /eval-four-models-v2-with-paired-n5-s1-1/data/inputs/counts/counts.csv (12,000 genes x 10 samples, first column a gene ID, the 10 remaining columns the samples; raw integer counts from STAR/featureCounts) and /eval-four-models-v2-with-paired-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows: subject with 5 levels, condition with control/treated, one row per sample). Join the metadata to the count columns by sample name. Design: paired - each of the 5 subjects contributes exactly one control and one treated sample, so the within-subject pair structure is the key QC check before any test.\", \"constraints\": [\"qc_sample_structure: n_top_genes = 500 (doi:10.12688/f1000research.7035.1)\", \"qc_sample_structure: transform = vst_blind (vignette:DESeq2/1.52.0#blind-dispersion-estimation)\", \"Verify the paired structure: each of the 5 within-subject control-treated pairs should be among the closest sample pairs in the distance matrix; explicitly flag any sample that does not cluster with its pair (possible sample swap or identity doubt).\"], \"acceptance_criteria\": [\"PCA plot on the top 500 variable genes from the blind VST, colored by subject and by condition\", \"Euclidean distance heatmap between all 10 samples, colored by subject and by condition\", \"Per-sample library sizes reported\", \"Explicit statement of whether the paired structure holds, or identification of the anomalous sample(s)\"], \"caveats\": [], \"packages\": [\"DESeq2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 8}, \"description\": \"Blind VST sample-structure QC: PCA on the top 500 variable genes, sample distance heatmap, library sizes, and a check that the 5 within-subject pairs are the closest pairs (sample-swap / outlier screen).\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf\"}}, {\"id\": \"T1S2\", \"name\": \"DESeq2 Wald test with apeglm log fold change shrinkage\", \"track\": \"T1\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which of the 12,000 genes respond to treatment within each of the 5 subjects (paired within-subject contrast, treated vs control, subject as a fixed-effect blocking term)?\", \"context\": \"Counts are raw integers from STAR/featureCounts: feed them to the count model as-is - no gene-length correction, no tximport. metadata.csv supplies subject (5 levels) and condition (control/treated) per sample. Set the reference level of condition explicitly to control (do not rely on alphabetical level order); the contrast is condition treated vs control, so a positive log2 fold change means higher expression in the treated sample. Design formula ~ subject + condition: the subject term removes between-subject variation, so the condition coefficient is the within-subject treatment effect. The pre-filter keeps genes with at least 10 counts in at least 5 samples (the smallest group size); it is minimal and the independent filtering of results() does the rest. The per-subject effect is reported by the report step, not by separate per-subject tests (one pair per subject is not testable on its own).\", \"constraints\": [\"filter_low_counts: filter_policy = minimal_then_independent (doi:10.1073/pnas.0914005107)\", \"filter_low_counts: min_count = 10 (doi:10.12688/f1000research.7035.1)\", \"filter_low_counts: min_samples = smallest_group_size (vignette:DESeq2/1.52.0#pre-filtering)\", \"normalize: gc_length_bias_diagnostic = log_count_ratio_against_gc_and_length (doi:10.1186/1471-2105-12-480)\", \"normalize: gc_bias_tool_of_record = cqn_or_EDASeq_absent_from_pool (doi:10.1093/biostatistics/kxr054)\", \"normalize: size_factors = median_of_ratios_named_in_the_plan (doi:10.1186/s13059-014-0550-8)\", \"model_design: reference_level = explicit (vignette:DESeq2/1.52.0#note-on-factor-levels)\", \"model_design: contrast_form = factor_numerator_denominator (vignette:DESeq2/1.52.0#contrasts)\", \"model_design: import = raw_integer_counts_no_length_correction (vignette:DESeq2/1.52.0#count-matrix-input)\", \"model_design: import_tool = none (vignette:DESeq2/1.52.0#count-matrix-input)\", \"differential_expression: design_terms = subject, condition (vignette:DESeq2/1.52.0#multi-factor-designs)\", \"differential_expression: test = Wald (doi:10.1186/s13059-014-0550-8)\", \"differential_expression: count_outlier_policy = flag_and_report_na (vignette:DESeq2/1.52.0#approach-to-count-outliers)\", \"shrink_lfc: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)\", \"multiple_testing: independent_filtering = true (doi:10.1073/pnas.0914005107)\", \"multiple_testing: pvalue_histogram = inspect_before_adjustment (doi:10.3390/ht7030023)\", \"multiple_testing: alpha = 0.05 (vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing)\", \"multiple_testing: adjustment = BH (doi:10.1111/j.2517-6161.1995.tb02031.x)\", \"multiple_testing: lfc_threshold_policy = test_against_threshold (doi:10.1093/bioinformatics/btp053)\", \"multiple_testing: filter_results_by = adjusted_pvalue (doi:10.1111/j.2517-6161.1995.tb02031.x)\"], \"acceptance_criteria\": [\"Gene-level results table with baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, and the apeglm-shrunken log2FoldChange\", \"Counts of: genes passing the pre-filter, genes tested after independent filtering, genes with NA adjusted p-value from the independent filter, and genes with NA p-value from count-outlier flags\", \"Unadjusted p-value histogram inspected before adjustment, with its shape described\", \"Design formula, explicit reference level, and the named contrast recorded in the output; the GC/length bias diagnostic outcome stated (trend observed, or that the check could not be run)\", \"MA plot and dispersion plot produced\"], \"caveats\": [\"With counts from an aligner and a counter, no bias model runs at the quantification, thus a sample-specific effect of the GC content and of the gene length can remain in the counts, and such an effect adds a difference between samples that the between-sample normalization does not remove. Draw the diagnostic: for each pair of samples, or for each sample against the median sample, plot the log ratio of the counts against the GC content of the genes and against the gene length, and report a trend. For a 3' tag library, the count does not depend on the gene length, thus plot the GC content only. Conditional quantile normalization (cqn) and the GC-content normalization of EDASeq are the tools of record for the correction, and both are absent from this pool. If the diagnostic shows a trend, state it in the plan and ask for cqn, or for a new quantification with a bias-aware quantifier such as Salmon with its GC bias model. If the diagnostic shows no trend, state the check and continue.\", \"Per-gene GC content and gene length are not derivable from the reference data provisioned in this environment (no human gene-sequence or gene-annotation collection is staged, and the analysis environment has no network access). If the GC/length diagnostic therefore cannot be computed, state that fact explicitly in the output and continue with the median-of-ratios results; do not attempt network downloads and do not apply cqn/EDASeq (neither is installed).\", \"With only 5 samples per condition cell (fewer than 7), DESeq2 flags count outliers by Cook's distance and sets the p-value and adjusted p-value of those genes to NA; report the number of flagged genes separately from the genes removed by the independent filter.\"], \"packages\": [\"DESeq2\", \"apeglm\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"description\": \"Paired within-subject differential expression: DESeq2 negative binomial Wald test on raw integer counts with design ~ subject + condition (condition contrast treated vs control, reference control), minimal pre-filter, median-of-ratios size factors, apeglm LFC shrinkage, BH adjustment at alpha 0.05 with independent filtering.\", \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0029@22ca\", \"R-0002@087b\", \"R-0147@aebe\", \"R-0026@9ab1\", \"R-0036@9786\", \"R-0064@92ec\", \"R-0011@233b\", \"R-0001@9a17\", \"R-0039@968d\", \"R-0009@310d\", \"R-0166@bbcd\", \"R-0083@12de\", \"R-0010@6072\", \"R-0037@e6d8\", \"R-0043@4f55\"], \"template\": \"tpl-deseq2-blocked@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"filter_policy\", \"value\": \"minimal_then_independent\", \"source\": \"doi:10.1073/pnas.0914005107\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_count\", \"value\": 10, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_samples\", \"value\": \"smallest_group_size\", \"source\": \"vignette:DESeq2/1.52.0#pre-filtering\"}, {\"step\": \"normalize\", \"name\": \"gc_length_bias_diagnostic\", \"value\": \"log_count_ratio_against_gc_and_length\", \"source\": \"doi:10.1186/1471-2105-12-480\"}, {\"step\": \"normalize\", \"name\": \"gc_bias_tool_of_record\", \"value\": \"cqn_or_EDASeq_absent_from_pool\", \"source\": \"doi:10.1093/biostatistics/kxr054\"}, {\"step\": \"normalize\", \"name\": \"size_factors\", \"value\": \"median_of_ratios_named_in_the_plan\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"raw_integer_counts_no_length_correction\", \"source\": \"vignette:DESeq2/1.52.0#count-matrix-input\"}, {\"step\": \"model_design\", \"name\": \"import_tool\", \"value\": \"none\", \"source\": \"vignette:DESeq2/1.52.0#count-matrix-input\"}, {\"step\": \"differential_expression\", \"name\": \"design_terms\", \"value\": [\"subject\", \"condition\"], \"source\": \"vignette:DESeq2/1.52.0#multi-factor-designs\"}, {\"step\": \"differential_expression\", \"name\": \"test\", \"value\": \"Wald\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"differential_expression\", \"name\": \"count_outlier_policy\", \"value\": \"flag_and_report_na\", \"source\": \"vignette:DESeq2/1.52.0#approach-to-count-outliers\"}, {\"step\": \"shrink_lfc\", \"name\": \"lfc_shrink\", \"value\": \"apeglm\", \"source\": \"doi:10.1093/bioinformatics/bty895\"}, {\"step\": \"multiple_testing\", \"name\": \"independent_filtering\", \"value\": true, \"source\": \"doi:10.1073/pnas.0914005107\"}, {\"step\": \"multiple_testing\", \"name\": \"pvalue_histogram\", \"value\": \"inspect_before_adjustment\", \"source\": \"doi:10.3390/ht7030023\"}, {\"step\": \"multiple_testing\", \"name\": \"alpha\", \"value\": 0.05, \"source\": \"vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing\"}, {\"step\": \"multiple_testing\", \"name\": \"adjustment\", \"value\": \"BH\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}, {\"step\": \"multiple_testing\", \"name\": \"lfc_threshold_policy\", \"value\": \"test_against_threshold\", \"source\": \"doi:10.1093/bioinformatics/btp053\"}, {\"step\": \"multiple_testing\", \"name\": \"filter_results_by\", \"value\": \"adjusted_pvalue\", \"source\": \"doi:10.1111/j.2517-6161.1995.tb02031.x\"}], \"reason\": \"DESeq2 Wald test with apeglm log fold change shrinkage per R-0029@22ca\"}}, {\"id\": \"T1S3\", \"name\": \"Report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"What is the final set of genes responding to treatment within each subject, how consistent are their within-subject directions across the 5 subjects, and how robust is that set to a second method (edgeR quasi-likelihood F-test) on the identical paired design?\", \"context\": \"Consumes the T1S2 DESeq2 results. For robustness, fit the edgeR quasi-likelihood F-test on the same raw counts with the same design ~ subject + condition and the same contrast (treated vs control), and report the overlap with the DESeq2 significant set. For the 'within each subject' aspect, compute per-subject within-subject log2 fold changes (treated vs control on size-factor-normalized counts) for the DE genes and report the fraction of the 5 subjects whose direction agrees with the overall estimate. If the count matrix uses non-symbol gene IDs, map them to official human gene symbols via the provisioned UniProt human ID-mapping reference (gene identifiers, human) and report the mapping rate.\", \"constraints\": [\"report: effect_columns = log2FoldChange, shrunken_log2FoldChange, lfcSE (doi:10.1093/bioinformatics/bty895)\", \"report: rank_genes_by = shrunken_log2FoldChange (vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking)\", \"report: fit_diagnostics = ma_plot, dispersion_plot (vignette:DESeq2/1.52.0#ma-plot)\", \"report: robustness = overlap_of_two_methods (doi:10.1261/rna.053959.115)\", \"report: report_fields = method, versions, design, thresholds, n_tested, n_de, session_info (doi:10.1093/bib/bbz124)\", \"report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)\"], \"acceptance_criteria\": [\"Gene table carrying the unshrunken log2FoldChange from the test, the shrunken log2FoldChange (apeglm), and lfcSE; genes ranked and plotted on the shrunken value\", \"MA plot and dispersion plot placed before the gene tables, each with a statement of what it shows\", \"DE gene counts per method (DESeq2 and edgeR QL) and the size of the intersection, with the intersection presented as the high-confidence set and the method-specific remainders listed under their method names\", \"Per-subject within-subject fold-change table for the DE genes with a direction-concordance count out of 5 subjects per gene\", \"Report header stating method, package versions, design formula, named contrast, threshold (adjusted p-value < 0.05), number of genes tested, number of DE genes, sessionInfo, and random seed\"], \"caveats\": [\"With only 5 within-subject pairs, statistical power is limited: the significant set is expected to contain only genes with strong within-subject effects; state this limitation in the report.\", \"Do not present the union of the two methods as the result.\", \"Genes whose within-subject directions are not concordant across all 5 subjects (e.g. up in 3 of 5) are listed with their concordance count, not silently dropped.\"], \"packages\": [\"DESeq2\", \"edgeR\"], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 4, \"memoryGb\": 8}, \"description\": \"Final report: ranked gene table with unshrunken and apeglm-shrunken log2FC, MA and dispersion plots, per-subject direction-concordance table for the DE genes, and edgeR QL robustness overlap (intersection as the high-confidence set); reproducibility record with versions, seed, and design.\", \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0085@bb37\", \"R-0087@3dcc\", \"R-0042@54e1\", \"R-0041@059a\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"effect_columns\", \"value\": [\"log2FoldChange\", \"shrunken_log2FoldChange\", \"lfcSE\"], \"source\": \"doi:10.1093/bioinformatics/bty895\"}, {\"step\": \"report\", \"name\": \"rank_genes_by\", \"value\": \"shrunken_log2FoldChange\", \"source\": \"vignette:DESeq2/1.52.0#log-fold-change-shrinkage-for-visualization-and-ranking\"}, {\"step\": \"report\", \"name\": \"fit_diagnostics\", \"value\": [\"ma_plot\", \"dispersion_plot\"], \"source\": \"vignette:DESeq2/1.52.0#ma-plot\"}, {\"step\": \"report\", \"name\": \"robustness\", \"value\": \"overlap_of_two_methods\", \"source\": \"doi:10.1261/rna.053959.115\"}, {\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"no rule covers this step\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 53
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 5,
+          "n_per_group_max": 5,
+          "paired": true,
+          "blocking_factor": "subject",
+          "batch": "none"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 5,
+          "n_per_group_max": 5,
+          "paired": true,
+          "blocking_factor": "subject",
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-blocked@1.0.0",
+            "rules": [
+              "R-0029@22ca",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0147@aebe",
+              "R-0026@9ab1"
+            ],
+            "flags": [
+              {
+                "rule": "R-0147@aebe",
+                "severity": "warn",
+                "message": "With counts from an aligner and a counter, no bias model runs at the quantification, thus a sample-specific effect of the GC content and of the gene length can remain in the counts, and such an effect adds a difference between samples that the between-sample normalization does not remove. Draw the diagnostic: for each pair of samples, or for each sample against the median sample, plot the log ratio of the counts against the GC content of the genes and against the gene length, and report a trend. For a 3' tag library, the count does not depend on the gene length, thus plot the GC content only. Conditional quantile normalization (cqn) and the GC-content normalization of EDASeq are the tools of record for the correction, and both are absent from this pool. If the diagnostic shows a trend, state it in the plan and ask for cqn, or for a new quantification with a bias-aware quantifier such as Salmon with its GC bias model. If the diagnostic shows no trend, state the check and continue."
+              }
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0036@9786",
+              "R-0064@92ec"
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0001"
+            },
+            "template": "tpl-deseq2-blocked@1.0.0",
+            "rules": [
+              "R-0011@233b",
+              "R-0001@9a17",
+              "R-0039@968d"
+            ]
+          },
+          {
+            "step": "shrink_lfc",
+            "method": {
+              "id": "M-0013"
+            },
+            "rules": [
+              "R-0009@310d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0166@bbcd",
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0085@bb37",
+              "R-0087@3dcc",
+              "R-0042@54e1",
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0011@233b"
+          },
+          {
+            "id": "R-0085@bb37"
+          },
+          {
+            "id": "R-0087@3dcc"
+          },
+          {
+            "id": "R-0042@54e1"
+          },
+          {
+            "id": "R-0001@9a17"
+          },
+          {
+            "id": "R-0029@22ca"
+          },
+          {
+            "id": "R-0039@968d"
+          },
+          {
+            "id": "R-0009@310d"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0064@92ec"
+          },
+          {
+            "id": "R-0166@bbcd"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0147@aebe"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 36636,
+      "elapsedMs": 13
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 5,
+          "n_per_group_max": 5,
+          "paired": true,
+          "blocking_factor": "subject",
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind variance-stabilizing transform, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "DESeq2 minimal pre-filter on raw counts",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the negative binomial model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "gc_length_bias_diagnostic",
+                "value": "log_count_ratio_against_gc_and_length"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 fixed-effect paired design ~ subject + condition",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition treated vs control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              },
+              {
+                "name": "import_tool",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg adjustment on DESeq2 p-values with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with per-subject decomposition and edgeR QL overlap robustness check",
+            "package": "edgeR"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0029@22ca",
+            "message": "DESeq2 likelihood ratio test is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 478,
+      "elapsedMs": 6
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "star_featurecounts",
+          "import_state": "integer_counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 5,
+          "n_per_group_max": 5,
+          "paired": true,
+          "blocking_factor": "subject",
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind variance-stabilizing transform, PCA on top variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "filter_policy",
+                "value": "minimal_then_independent"
+              },
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors inside the negative binomial model",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "gc_length_bias_diagnostic",
+                "value": "log_count_ratio_against_gc_and_length"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "DESeq2 fixed-effect paired design ~ subject + condition",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "condition treated vs control"
+              },
+              {
+                "name": "import",
+                "value": "raw_integer_counts_no_length_correction"
+              },
+              {
+                "name": "import_tool",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "test",
+                "value": "Wald"
+              },
+              {
+                "name": "design_terms",
+                "value": "subject, condition"
+              },
+              {
+                "name": "count_outlier_policy",
+                "value": "flag_and_report_na"
+              }
+            ]
+          },
+          {
+            "step_type": "shrink_lfc",
+            "method": "apeglm log fold change shrinkage",
+            "package": "apeglm",
+            "parameters": [
+              {
+                "name": "lfc_shrink",
+                "value": "apeglm"
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "Benjamini-Hochberg adjustment on DESeq2 p-values with independent filtering",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              },
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "independent_filtering",
+                "value": true
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Report with per-subject decomposition and edgeR QL overlap robustness check",
+            "package": "edgeR"
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 3
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

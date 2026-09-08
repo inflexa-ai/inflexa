@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reframes the question as prediction and prescribes glmnet elastic net inside repeated stratified nested CV with a fixed seed, with TMM/CPM normalization, scaling, and any gene selection refit within each outer training fold, outer-fold AUC with CI, calibration, permutation null, and a separate all-sample refit reported only for coefficients and fold selection frequency — this matches the reference closely and explicitly rejects a single split or resubstitution accuracy. QC is design-blind VST PCA, distance heatmap and library sizes coloured by condition with a report-don't-remove outlier policy, and filterByExpr is a minimal, justified filter kept distinct from supervised selection. The classification model has no formula per se, but the plan states why no batch or blocking term is used and defines the class label, threshold provenance and coefficient direction; DE/FDR and enrichment are appropriately absent for this question. The report step ties the headline claim to the outer-CV estimate, states chance level, single-cohort/no-external-validation limits, the Salmon length-correction caveat and depth-confound warning, and requires seeds and package versions."
+}

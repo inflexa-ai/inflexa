@@ -1,0 +1,292 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "covariates-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:03:12.476Z",
+  "elapsedMs": 31983,
+  "outcome": "plan_submitted",
+  "planId": "pln-4c676caa",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts and check condition/sex/age balance",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts.csv is gene-level from Salmon; confirm whether values are already integer-like counts before assuming raw counts for DESeq2 — round if needed but report if rounding was substantial",
+          "12000 x 13 implies one column is the gene identifier column — confirm column count 12 samples + 1 ID column matches metadata's 12 rows"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 6 treated and 6 control adipose samples in counts.csv/metadata.csv differ systematically in sex composition or age distribution, and what is the library size / count distribution across the 12 samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size (total counts) and number of genes with nonzero counts for all 12 samples",
+          "Cross-tabulates sex by condition and summarizes age (mean/median/range) by condition, explicitly stating the degree of imbalance",
+          "Flags any sample as a potential outlier by library size or PCA before modeling",
+          "Output table of sample metadata merged with library size saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 differential expression adjusted for sex and age",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per group and two covariates (sex, age) plus condition, degrees of freedom are limited (12 samples, 4 model terms if sex has 2 levels and age is continuous) — flag if this leaves few residual df and interpret p-values cautiously",
+          "If sex or age is confounded with condition (e.g., all treated are one sex), the design matrix may be rank-deficient — detect this and report it rather than silently dropping a term",
+          "Use apeglm or ashr shrinkage for log2FoldChange reporting if available, and note which shrinkage estimator was used"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas"
+        ],
+        "question": "Which genes are differentially expressed between treated and control adipose samples when the model adjusts for sex and age (design ~ sex + age + condition)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ sex + age + condition on raw/rounded integer counts from counts.csv joined to metadata.csv",
+          "Condition (treated vs control) result extracted via contrast/coefficient, independent of sex and age terms",
+          "Output table with gene id, log2FoldChange, lfcSE, stat, pvalue, padj for all tested genes, sorted by padj",
+          "Report number of genes significant at padj < 0.05 and independent filtering diagnostics (e.g., dispersion plot description, outlier count from Cook's distance)"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Sensitivity check: naive DE without covariates vs adjusted model",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This is a diagnostic/reporting step, not a step that should be used to cherry-pick whichever model gives more hits",
+          "With only 12 samples, differences between models can be driven by a small number of genes; report absolute gene counts alongside percentages"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "How much does the treated-vs-control gene list and effect size estimates change when sex and age are omitted from the model (design ~ condition only) compared to the covariate-adjusted model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "sensitivity_analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~ condition only on the same counts/metadata",
+          "Comparison table/plot of log2FoldChange and padj between naive and adjusted models for genes significant in either",
+          "Explicit count and gene list of genes significant only in the naive model (likely confounded by age/sex) vs only in the adjusted model vs in both",
+          "Written statement of whether covariate adjustment materially changed the conclusions, grounded in the actual overlap numbers, not assumed"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of covariate-adjusted DE genes",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Confirm gene identifiers in counts.csv (likely Ensembl gene IDs from Salmon) are mapped to HGNC symbols before matching against the WikiPathways human GMT, which uses gene symbols",
+          "Human WikiPathways gene sets at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt are confirmed present in the reference store; if absent at run time, report the gap rather than substituting mouse/rat pathways"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas"
+        ],
+        "question": "Which biological pathways are enriched among genes differentially expressed between treated and control adipose samples after adjusting for sex and age (from the T2S1 DESeq2 result)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run on genes significant at padj < 0.05 (or a stated relaxed threshold if too few genes pass, e.g. top N by padj) from the adjusted DESeq2 result using a human pathway gene set collection",
+          "Report which pathway gene set resource was actually used (confirm it is the human WikiPathways gene sets available in the reference store) and report if unavailable",
+          "Output enriched pathway table with adjusted p-values (e.g., FDR) and the overlapping gene symbols per pathway",
+          "State explicitly if the input gene list is too small for reliable enrichment (e.g., <10 genes) rather than forcing a result"
+        ]
+      }
+    ],
+    "title": "Adipose treated vs control DE adjusted for age/sex",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 samples/columns incl. gene id) from human adipose tissue, 6 treated vs 6 control, unpaired, single batch. Sex and age are recorded but the groups are NOT matched on age, and sex composition may differ between groups — both are known confounders of adipose gene expression (age affects adipogenesis/inflammation genes, sex affects many autosomal and all X/Y genes). Since covariates are available in metadata.csv, the correct approach is a single DESeq2 model with condition + sex + age as covariates, rather than a naive two-group t-test, to avoid confounding the treatment effect with age/sex differences between groups. Steps: (1) QC and exploratory check of counts vs metadata to confirm group balance on sex/age and flag any confounding severity; (2) DESeq2 differential expression with design ~ sex + age + condition, extracting the condition (treated vs control) coefficient, with age modeled continuously (or as a covariate) and sex as a factor; (3) sensitivity comparison against a naive model without covariates (~ condition only) to explicitly show how much the DE gene list and effect sizes shift when age/sex are accounted for, since this directly answers the confounding concern raised in the question; (4) pathway enrichment of the covariate-adjusted DE gene list against human pathway gene sets to interpret biological themes. This ordering surfaces the confounding issue explicitly (step 3) rather than assuming the covariate-adjusted model is automatically the only valid answer, which respects the scientific rigor the imbalance calls for."
+  },
+  "usage": {
+    "inputTokens": 43667,
+    "outputTokens": 2727,
+    "cacheCreationInputTokens": 34106,
+    "cacheReadInputTokens": 9549,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_013bmXvtgewNwe9zhSzUzbQj",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Adipose treated vs control DE adjusted for age/sex",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 samples/columns incl. gene id) from human adipose tissue, 6 treated vs 6 control, unpaired, single batch. Sex and age are recorded but the groups are NOT matched on age, and sex composition may differ between groups — both are known confounders of adipose gene expression (age affects adipogenesis/inflammation genes, sex affects many autosomal and all X/Y genes). Since covariates are available in metadata.csv, the correct approach is a single DESeq2 model with condition + sex + age as covariates, rather than a naive two-group t-test, to avoid confounding the treatment effect with age/sex differences between groups. Steps: (1) QC and exploratory check of counts vs metadata to confirm group balance on sex/age and flag any confounding severity; (2) DESeq2 differential expression with design ~ sex + age + condition, extracting the condition (treated vs control) coefficient, with age modeled continuously (or as a covariate) and sex as a factor; (3) sensitivity comparison against a naive model without covariates (~ condition only) to explicitly show how much the DE gene list and effect sizes shift when age/sex are accounted for, since this directly answers the confounding concern raised in the question; (4) pathway enrichment of the covariate-adjusted DE gene list against human pathway gene sets to interpret biological themes. This ordering surfaces the confounding issue explicitly (step 3) rather than assuming the covariate-adjusted model is automatically the only valid answer, which respects the scientific rigor the imbalance calls for.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts and check condition/sex/age balance",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 treated and 6 control adipose samples in counts.csv/metadata.csv differ systematically in sex composition or age distribution, and what is the library size / count distribution across the 12 samples?",
+              "acceptance_criteria": [
+                "Reports per-sample library size (total counts) and number of genes with nonzero counts for all 12 samples",
+                "Cross-tabulates sex by condition and summarizes age (mean/median/range) by condition, explicitly stating the degree of imbalance",
+                "Flags any sample as a potential outlier by library size or PCA before modeling",
+                "Output table of sample metadata merged with library size saved for downstream steps"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Counts.csv is gene-level from Salmon; confirm whether values are already integer-like counts before assuming raw counts for DESeq2 — round if needed but report if rounding was substantial",
+                "12000 x 13 implies one column is the gene identifier column — confirm column count 12 samples + 1 ID column matches metadata's 12 rows"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 differential expression adjusted for sex and age",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control adipose samples when the model adjusts for sex and age (design ~ sex + age + condition)?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ sex + age + condition on raw/rounded integer counts from counts.csv joined to metadata.csv",
+                "Condition (treated vs control) result extracted via contrast/coefficient, independent of sex and age terms",
+                "Output table with gene id, log2FoldChange, lfcSE, stat, pvalue, padj for all tested genes, sorted by padj",
+                "Report number of genes significant at padj < 0.05 and independent filtering diagnostics (e.g., dispersion plot description, outlier count from Cook's distance)"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "With n=6 per group and two covariates (sex, age) plus condition, degrees of freedom are limited (12 samples, 4 model terms if sex has 2 levels and age is continuous) — flag if this leaves few residual df and interpret p-values cautiously",
+                "If sex or age is confounded with condition (e.g., all treated are one sex), the design matrix may be rank-deficient — detect this and report it rather than silently dropping a term",
+                "Use apeglm or ashr shrinkage for log2FoldChange reporting if available, and note which shrinkage estimator was used"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Sensitivity check: naive DE without covariates vs adjusted model",
+              "track": "T2",
+              "step_type": "sensitivity_analysis",
+              "question": "How much does the treated-vs-control gene list and effect size estimates change when sex and age are omitted from the model (design ~ condition only) compared to the covariate-adjusted model?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~ condition only on the same counts/metadata",
+                "Comparison table/plot of log2FoldChange and padj between naive and adjusted models for genes significant in either",
+                "Explicit count and gene list of genes significant only in the naive model (likely confounded by age/sex) vs only in the adjusted model vs in both",
+                "Written statement of whether covariate adjustment materially changed the conclusions, grounded in the actual overlap numbers, not assumed"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "This is a diagnostic/reporting step, not a step that should be used to cherry-pick whichever model gives more hits",
+                "With only 12 samples, differences between models can be driven by a small number of genes; report absolute gene counts alongside percentages"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment of covariate-adjusted DE genes",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes differentially expressed between treated and control adipose samples after adjusting for sex and age (from the T2S1 DESeq2 result)?",
+              "acceptance_criteria": [
+                "Enrichment run on genes significant at padj < 0.05 (or a stated relaxed threshold if too few genes pass, e.g. top N by padj) from the adjusted DESeq2 result using a human pathway gene set collection",
+                "Report which pathway gene set resource was actually used (confirm it is the human WikiPathways gene sets available in the reference store) and report if unavailable",
+                "Output enriched pathway table with adjusted p-values (e.g., FDR) and the overlapping gene symbols per pathway",
+                "State explicitly if the input gene list is too small for reliable enrichment (e.g., <10 genes) rather than forcing a result"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Confirm gene identifiers in counts.csv (likely Ensembl gene IDs from Salmon) are mapped to HGNC symbols before matching against the WikiPathways human GMT, which uses gene symbols",
+                "Human WikiPathways gene sets at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt are confirmed present in the reference store; if absent at run time, report the gap rather than substituting mouse/rat pathways"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 51
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

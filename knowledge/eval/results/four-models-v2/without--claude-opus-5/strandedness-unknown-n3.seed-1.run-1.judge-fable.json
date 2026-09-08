@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The negative-binomial model, ~condition with control as reference, apeglm shrinkage, BH at 0.05 and the stated 3-vs-3 power caveat all match the reference, and the VST/PCA/distance QC with a flag-not-drop outlier policy is well specified. The central weakness is the strandedness handling: the plan does not run infer_experiment or salmon libType A on reads or alignments and does not plan to obtain the BAMs and re-count with the correct -s setting; instead it fits the model on the counts as delivered after a count-matrix proxy diagnostic (library size, zero fraction, hepatic marker ranking) that it admits cannot resolve the question, so the analysis still rests on unverified counts. Filtering (>=10 in >=3 samples, filterByExpr) and in-model normalization (median-of-ratios, TMM) are correct and justified. Enrichment uses the full ranking and a tested-gene universe but leaves the ranking metric undecided and omits collection versions and a set-size window; the report specifies method, design, thresholds and gene counts but not package versions."
+}

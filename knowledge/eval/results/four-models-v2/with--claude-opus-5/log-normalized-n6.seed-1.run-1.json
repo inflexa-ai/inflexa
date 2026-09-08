@@ -1,0 +1,1150 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T22:17:43.476Z",
+  "elapsedMs": 85486,
+  "outcome": "plan_submitted",
+  "planId": "pln-29cd93a5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Separation on PC1 by condition is not evidence of a treatment effect on its own with n=6 per group",
+          "TPM-derived values carry the facility's normalization; between-sample composition effects cannot be audited from this matrix alone"
+        ],
+        "context": "Human skeletal muscle, treatment vs control, single batch, unpaired, n=6 per group. Log2-scale normalized values from the core facility; no counts delivered. With n=6 per group one aberrant sample can dominate the contrast, so structure must be inspected before the model, not after.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 muscle samples separate by condition (6 treated vs 6 control), and is any sample an outlier or driven by unlabelled structure?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "Log-scale input (log2(TPM+1), 12000 x 12): sample structure QC by MDS/PCA on the top variable genes, sample distances and detected genes per sample, per R-0071@e4e2; no re-transformation and no count-model VST.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "log2_plus_1_unless_already_log",
+              "source": "guide:limma/2026-05-19#data-exploration"
+            },
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the delivered values as-is: transform = log2_plus_1_unless_already_log, and the profile states they are already log2(TPM + 1)",
+          "n_top_genes = 500 for the MDS/PCA",
+          "Colour by condition and by any other column present in metadata.csv",
+          "Do not drop any sample at this step; flag, do not remove"
+        ],
+        "description": "Load /data/inputs/expression/log_expr.csv (12000 genes x 12 samples, first column gene identifiers) and /data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and align column order. Because the values are already log2(TPM + 1), use them as delivered — do NOT apply log2 again and do NOT apply a count-model variance stabilizing transform. Produce: (1) MDS/PCA on the 500 most variable genes, points coloured by condition; (2) a sample-to-sample distance heatmap; (3) per-sample value distributions (boxplot/density) and the number of genes above the detection floor per sample. Write a plain verdict on whether any sample is an outlier and whether treated and control separate, and state that verdict as text in the output — it conditions how T1S2 results should be read.",
+        "acceptance_criteria": [
+          "Sample ids in log_expr.csv columns and metadata.csv rows are reconciled 1:1; 12 samples with 6 treated and 6 control confirmed",
+          "MDS/PCA plot on the top 500 most variable genes saved, coloured by condition",
+          "Sample-to-sample distance heatmap saved",
+          "Per-sample distribution summary saved, with the number of detected genes per sample",
+          "A written verdict on outliers and on condition separation is recorded in the step output",
+          "No re-logging and no VST is applied to the already log-scale matrix"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma linear model on log-scale expression values",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group gives modest power; a null or near-null result is a real and reportable outcome, not a failure of the pipeline",
+          "TPM-derived values are affected by transcript-length and composition effects the facility's pipeline applied and that cannot be re-derived here",
+          "limma has no independent filtering step, so the BH adjustment runs over exactly the genes retained by the filter — report both counts",
+          "If T1S1 flagged an outlier, report the DE result with and without it rather than silently choosing one"
+        ],
+        "context": "Human muscle, 6 treated vs 6 control, unpaired, single batch. Data state is log_normalized: DESeq2, edgeR and limma-voom all require raw counts and are inapplicable here; the values must not be back-transformed or rounded into pseudo-counts to make a count model runnable. The limma-trend path models the mean-variance relationship on the log scale directly. Carry forward any outlier flagged in T1S1 and state whether it was retained.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats",
+          "ggplot2"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed in treated versus control human muscle, at BH-adjusted p < 0.05?",
+        "grounding": {
+          "claims": [
+            "R-0075@4d16",
+            "R-0074@06b0",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0019@251d",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "Delivered data are log2(TPM+1), not counts, so the count models are inapplicable (R-0019@251d): limma linear model on log-scale values with trend and robust eBayes (R-0093@4fa4), no renormalization with a range check (R-0074@06b0), mean-log-expression filter (R-0075@4d16), explicit reference level and named contrast (R-0036@9786), BH adjustment via topTable and selection by adjusted p-value (R-0044@1777, R-0043@4f55), any effect-size threshold tested inside the model (R-0037@e6d8). Shrinkage is not planned: no rule covers shrink_lfc for log-scale input and limma moderation already stabilizes the statistics.",
+          "status": "grounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_statistic = mean_log_expression; min_samples = smallest group size (6)",
+          "normalization = none_already_normalized; value_range_check = required",
+          "reference_level set explicitly (control); contrast written as treated - control",
+          "eBayes: trend = TRUE, robust = TRUE",
+          "multiple testing: adjust.method = BH; select significance by adjusted p-value at alpha = 0.05",
+          "Forbidden here: DESeq2, edgeR exact/QL, limma-voom, and any conversion of log values into pseudo-counts"
+        ],
+        "description": "Fit the differential expression model on the delivered log2(TPM + 1) matrix. (1) Value-range check first: confirm the matrix is log-scale (approximately 0-20, fractional values) and not an integer count table; if it looks like counts, stop and report that rather than proceeding. (2) No normalization — the values already carry the facility's normalization, and a second normalization would hide it. (3) Filter low-expression genes on mean log expression, using a floor read from the low end of the distribution, or requiring a gene to exceed the floor in at least as many samples as the smallest group (6); the floor must be chosen without reference to the condition labels so the filter stays independent of the test. Report the number of genes kept. (4) Build design ~0 + condition with the condition factor levels set explicitly, control as reference, and a named contrast treated - control so a positive log2 fold change means higher in treated. (5) lmFit then eBayes with trend=TRUE and robust=TRUE. (6) topTable with adjust.method=\"BH\", number=Inf; call DE genes by adjusted p-value < 0.05. If a minimum effect size is wanted, obtain it with treat()/topTreat() against that log2 fold-change threshold inside the model — never by filtering the estimated logFC after a zero-null test. Output a full results table (gene, logFC, AveExpr, t, P.Value, adj.P.Val, B) for every tested gene, the significant subset, a volcano plot, and an MA-style plot.",
+        "acceptance_criteria": [
+          "Value-range check recorded, confirming log2 scale rather than counts",
+          "No renormalization applied to the delivered matrix",
+          "Number of genes retained after the mean-log-expression filter is reported, along with the floor used, and the floor was chosen without using condition labels",
+          "Design and contrast are stated explicitly, with control as the denominator so positive logFC = higher in treated",
+          "eBayes called with trend=TRUE and robust=TRUE",
+          "Full topTable for all tested genes exported with BH-adjusted p-values, plus the adj.P.Val < 0.05 subset",
+          "Volcano and MA-style plots saved",
+          "If any fold-change threshold is applied, it is tested via treat()/topTreat(), not post-hoc filtering on logFC"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene list at BH < 0.05 from 12 samples is a hypothesis-generating result and should be described as such"
+        ],
+        "context": "Deliverable for the research question 'which genes differ between treated and control' on human muscle bulk RNA-seq delivered as log2(TPM + 1).",
+        "maxSteps": 200,
+        "packages": [
+          "knitr",
+          "rmarkdown"
+        ],
+        "question": "What is the reproducible record of the treated vs control differential expression analysis, and what does it support?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "No rule covers the report step as such; the reporting and reproducibility settings from R-0041@059a and R-0086@becf are carried as constraints.",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "report_fields: method, versions, design, thresholds, n_tested, n_de, session_info",
+          "reproducibility_record: session_info, seed, package_versions",
+          "If zero genes reach adj.P.Val < 0.05, report that as the result — do not relax the threshold or switch to unadjusted p-values to produce a list"
+        ],
+        "description": "Assemble the final report from the T1S1 QC verdict and the T1S2 results. State: the method (limma linear model on log2(TPM + 1) values, eBayes with trend and robust) and why the count-based route was not used; the package versions; the design formula and the contrast direction (treated - control, control as reference); the filtering floor and thresholds; the number of genes tested after filtering out of the 12000 delivered; the number of DE genes at adj.P.Val < 0.05; and the top-ranked genes by adjusted p-value with their log2 fold changes. Include the QC figures and the volcano plot. Attach a reproducibility record: sessionInfo, package versions, and any random seed used. State the limitations plainly — 6 vs 6 unpaired samples, log-scale input with no access to counts or to the facility's normalization steps, and no external validation cohort. Do not extrapolate to mechanism or pathway claims; the question asked which genes differ.",
+        "acceptance_criteria": [
+          "Report names the method, package versions, design, contrast direction, thresholds, n_tested and n_de",
+          "States explicitly why DESeq2/edgeR/voom were not used (no counts delivered)",
+          "Reproducibility record with sessionInfo, package versions and any seed is stored alongside the results",
+          "Limitations section covers n=6 per group, log-scale-only input, and absence of validation",
+          "No pathway or mechanistic claims beyond the gene-level result"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE on log2 expression",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core facility delivered a 12000 x 12 matrix of log2(TPM + 1) values (/data/inputs/expression/log_expr.csv) with a 12-row sample table (/data/inputs/metadata/metadata.csv): 6 treated vs 6 control human muscle samples, unpaired, single batch. No counts exist, so the negative-binomial route (DESeq2, edgeR, limma-voom) is not available and must not be faked by rounding or back-transforming values into pseudo-counts. The plan therefore runs the limma linear model directly on the delivered log-scale values with an empirical Bayes step that uses the mean-variance trend and robust hyperparameter estimation.\n\nT1S1 establishes sample structure before any model: PCA/MDS on the 500 most variable genes, a sample-distance heatmap, and per-sample value distributions, coloured by condition. This is where an outlier or an unlabelled processing split would surface; with n=6 per group a single aberrant sample can drive the whole contrast, so the QC verdict is stated explicitly rather than assumed.\n\nT1S2 does the test. It first confirms the values really are log2-scale (roughly 0-20, fractional, not large integers) — the profile says log2(TPM + 1), and this check is what protects against a mislabelled count table. It does not renormalize. It filters on mean log expression with a floor set independently of the condition labels, fits ~0 + condition with an explicit treated-vs-control contrast, and calls eBayes(trend=TRUE, robust=TRUE). Significance is taken from BH-adjusted p-values, and any biologically motivated fold-change threshold is tested inside the model via treat() rather than applied post hoc to the estimates.\n\nT1S3 writes the report: method and package versions, the design and the contrast direction, the thresholds, the number of genes tested after filtering, the number of DE genes, and sessionInfo. The research question asks only which genes differ, so no enrichment step is planned — that would be unasked scope. Honest limits to carry through: 12 samples give modest power, TPM-derived values carry the facility's own normalization choices which cannot be audited from here, and the absence of counts means no count-based dispersion modelling and no independent replication of the facility's pipeline."
+  },
+  "usage": {
+    "inputTokens": 230141,
+    "outputTokens": 7188,
+    "cacheCreationInputTokens": 87746,
+    "cacheReadInputTokens": 142347,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01PRZg4dEFwddxjpKqGHGotC",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_015zxrYVbkbQav8eWwszfF3s",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2 values with sample distance heatmap",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "mean log expression floor filter",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "filter_statistic",
+                "value": "mean_log_expression"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "no renormalization; value range check",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "none_already_normalized"
+              },
+              {
+                "name": "value_range_check",
+                "value": "required"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~0 + condition with explicit reference level",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend linear model with robust eBayes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "method, versions, design, thresholds, n_tested, n_de, sessionInfo",
+            "package": "base"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "toolu_01G3D23kWhqZSsq58mZXXa7C",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2 values with sample distance heatmap",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM, FPKM, or log expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "filter_statistic",
+                "value": "mean_log_expression"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "no renormalization; value range check",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "none_already_normalized"
+              },
+              {
+                "name": "value_range_check",
+                "value": "required"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~0 + condition with explicit reference level",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "method, versions, design, thresholds, n_tested, n_de, sessionInfo",
+            "package": "base"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_01CoJhJFahcJ2NpaSR3dFNhg",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE on log2 expression",
+          "analytical_narrative": "The core facility delivered a 12000 x 12 matrix of log2(TPM + 1) values (/data/inputs/expression/log_expr.csv) with a 12-row sample table (/data/inputs/metadata/metadata.csv): 6 treated vs 6 control human muscle samples, unpaired, single batch. No counts exist, so the negative-binomial route (DESeq2, edgeR, limma-voom) is not available and must not be faked by rounding or back-transforming values into pseudo-counts. The plan therefore runs the limma linear model directly on the delivered log-scale values with an empirical Bayes step that uses the mean-variance trend and robust hyperparameter estimation.\n\nT1S1 establishes sample structure before any model: PCA/MDS on the 500 most variable genes, a sample-distance heatmap, and per-sample value distributions, coloured by condition. This is where an outlier or an unlabelled processing split would surface; with n=6 per group a single aberrant sample can drive the whole contrast, so the QC verdict is stated explicitly rather than assumed.\n\nT1S2 does the test. It first confirms the values really are log2-scale (roughly 0-20, fractional, not large integers) — the profile says log2(TPM + 1), and this check is what protects against a mislabelled count table. It does not renormalize. It filters on mean log expression with a floor set independently of the condition labels, fits ~0 + condition with an explicit treated-vs-control contrast, and calls eBayes(trend=TRUE, robust=TRUE). Significance is taken from BH-adjusted p-values, and any biologically motivated fold-change threshold is tested inside the model via treat() rather than applied post hoc to the estimates.\n\nT1S3 writes the report: method and package versions, the design and the contrast direction, the thresholds, the number of genes tested after filtering, the number of DE genes, and sessionInfo. The research question asks only which genes differ, so no enrichment step is planned — that would be unasked scope. Honest limits to carry through: 12 samples give modest power, TPM-derived values carry the facility's own normalization choices which cannot be audited from here, and the absence of counts means no count-based dispersion modelling and no independent replication of the facility's pipeline.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 muscle samples separate by condition (6 treated vs 6 control), and is any sample an outlier or driven by unlabelled structure?",
+              "description": "Load /data/inputs/expression/log_expr.csv (12000 genes x 12 samples, first column gene identifiers) and /data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample ids match between the two files and align column order. Because the values are already log2(TPM + 1), use them as delivered — do NOT apply log2 again and do NOT apply a count-model variance stabilizing transform. Produce: (1) MDS/PCA on the 500 most variable genes, points coloured by condition; (2) a sample-to-sample distance heatmap; (3) per-sample value distributions (boxplot/density) and the number of genes above the detection floor per sample. Write a plain verdict on whether any sample is an outlier and whether treated and control separate, and state that verdict as text in the output — it conditions how T1S2 results should be read.",
+              "context": "Human skeletal muscle, treatment vs control, single batch, unpaired, n=6 per group. Log2-scale normalized values from the core facility; no counts delivered. With n=6 per group one aberrant sample can dominate the contrast, so structure must be inspected before the model, not after.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "Sample ids in log_expr.csv columns and metadata.csv rows are reconciled 1:1; 12 samples with 6 treated and 6 control confirmed",
+                "MDS/PCA plot on the top 500 most variable genes saved, coloured by condition",
+                "Sample-to-sample distance heatmap saved",
+                "Per-sample distribution summary saved, with the number of detected genes per sample",
+                "A written verdict on outliers and on condition separation is recorded in the step output",
+                "No re-logging and no VST is applied to the already log-scale matrix"
+              ],
+              "constraints": [
+                "Use the delivered values as-is: transform = log2_plus_1_unless_already_log, and the profile states they are already log2(TPM + 1)",
+                "n_top_genes = 500 for the MDS/PCA",
+                "Colour by condition and by any other column present in metadata.csv",
+                "Do not drop any sample at this step; flag, do not remove"
+              ],
+              "caveats": [
+                "Separation on PC1 by condition is not evidence of a treatment effect on its own with n=6 per group",
+                "TPM-derived values carry the facility's normalization; between-sample composition effects cannot be audited from this matrix alone"
+              ],
+              "packages": [
+                "limma",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "Log-scale input (log2(TPM+1), 12000 x 12): sample structure QC by MDS/PCA on the top variable genes, sample distances and detected genes per sample, per R-0071@e4e2; no re-transformation and no count-model VST.",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "log2_plus_1_unless_already_log",
+                    "source": "guide:limma/2026-05-19#data-exploration"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma linear model on log-scale expression values",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12000 genes are differentially expressed in treated versus control human muscle, at BH-adjusted p < 0.05?",
+              "description": "Fit the differential expression model on the delivered log2(TPM + 1) matrix. (1) Value-range check first: confirm the matrix is log-scale (approximately 0-20, fractional values) and not an integer count table; if it looks like counts, stop and report that rather than proceeding. (2) No normalization — the values already carry the facility's normalization, and a second normalization would hide it. (3) Filter low-expression genes on mean log expression, using a floor read from the low end of the distribution, or requiring a gene to exceed the floor in at least as many samples as the smallest group (6); the floor must be chosen without reference to the condition labels so the filter stays independent of the test. Report the number of genes kept. (4) Build design ~0 + condition with the condition factor levels set explicitly, control as reference, and a named contrast treated - control so a positive log2 fold change means higher in treated. (5) lmFit then eBayes with trend=TRUE and robust=TRUE. (6) topTable with adjust.method=\"BH\", number=Inf; call DE genes by adjusted p-value < 0.05. If a minimum effect size is wanted, obtain it with treat()/topTreat() against that log2 fold-change threshold inside the model — never by filtering the estimated logFC after a zero-null test. Output a full results table (gene, logFC, AveExpr, t, P.Value, adj.P.Val, B) for every tested gene, the significant subset, a volcano plot, and an MA-style plot.",
+              "context": "Human muscle, 6 treated vs 6 control, unpaired, single batch. Data state is log_normalized: DESeq2, edgeR and limma-voom all require raw counts and are inapplicable here; the values must not be back-transformed or rounded into pseudo-counts to make a count model runnable. The limma-trend path models the mean-variance relationship on the log scale directly. Carry forward any outlier flagged in T1S1 and state whether it was retained.",
+              "acceptance_criteria": [
+                "Value-range check recorded, confirming log2 scale rather than counts",
+                "No renormalization applied to the delivered matrix",
+                "Number of genes retained after the mean-log-expression filter is reported, along with the floor used, and the floor was chosen without using condition labels",
+                "Design and contrast are stated explicitly, with control as the denominator so positive logFC = higher in treated",
+                "eBayes called with trend=TRUE and robust=TRUE",
+                "Full topTable for all tested genes exported with BH-adjusted p-values, plus the adj.P.Val < 0.05 subset",
+                "Volcano and MA-style plots saved",
+                "If any fold-change threshold is applied, it is tested via treat()/topTreat(), not post-hoc filtering on logFC"
+              ],
+              "constraints": [
+                "filter_statistic = mean_log_expression; min_samples = smallest group size (6)",
+                "normalization = none_already_normalized; value_range_check = required",
+                "reference_level set explicitly (control); contrast written as treated - control",
+                "eBayes: trend = TRUE, robust = TRUE",
+                "multiple testing: adjust.method = BH; select significance by adjusted p-value at alpha = 0.05",
+                "Forbidden here: DESeq2, edgeR exact/QL, limma-voom, and any conversion of log values into pseudo-counts"
+              ],
+              "caveats": [
+                "n=6 per group gives modest power; a null or near-null result is a real and reportable outcome, not a failure of the pipeline",
+                "TPM-derived values are affected by transcript-length and composition effects the facility's pipeline applied and that cannot be re-derived here",
+                "limma has no independent filtering step, so the BH adjustment runs over exactly the genes retained by the filter — report both counts",
+                "If T1S1 flagged an outlier, report the DE result with and without it rather than silently choosing one"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0075@4d16",
+                  "R-0074@06b0",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0019@251d",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "Delivered data are log2(TPM+1), not counts, so the count models are inapplicable (R-0019@251d): limma linear model on log-scale values with trend and robust eBayes (R-0093@4fa4), no renormalization with a range check (R-0074@06b0), mean-log-expression filter (R-0075@4d16), explicit reference level and named contrast (R-0036@9786), BH adjustment via topTable and selection by adjusted p-value (R-0044@1777, R-0043@4f55), any effect-size threshold tested inside the model (R-0037@e6d8). Shrinkage is not planned: no rule covers shrink_lfc for log-scale input and limma moderation already stabilizes the statistics."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the reproducible record of the treated vs control differential expression analysis, and what does it support?",
+              "description": "Assemble the final report from the T1S1 QC verdict and the T1S2 results. State: the method (limma linear model on log2(TPM + 1) values, eBayes with trend and robust) and why the count-based route was not used; the package versions; the design formula and the contrast direction (treated - control, control as reference); the filtering floor and thresholds; the number of genes tested after filtering out of the 12000 delivered; the number of DE genes at adj.P.Val < 0.05; and the top-ranked genes by adjusted p-value with their log2 fold changes. Include the QC figures and the volcano plot. Attach a reproducibility record: sessionInfo, package versions, and any random seed used. State the limitations plainly — 6 vs 6 unpaired samples, log-scale input with no access to counts or to the facility's normalization steps, and no external validation cohort. Do not extrapolate to mechanism or pathway claims; the question asked which genes differ.",
+              "context": "Deliverable for the research question 'which genes differ between treated and control' on human muscle bulk RNA-seq delivered as log2(TPM + 1).",
+              "acceptance_criteria": [
+                "Report names the method, package versions, design, contrast direction, thresholds, n_tested and n_de",
+                "States explicitly why DESeq2/edgeR/voom were not used (no counts delivered)",
+                "Reproducibility record with sessionInfo, package versions and any seed is stored alongside the results",
+                "Limitations section covers n=6 per group, log-scale-only input, and absence of validation",
+                "No pathway or mechanistic claims beyond the gene-level result"
+              ],
+              "constraints": [
+                "report_fields: method, versions, design, thresholds, n_tested, n_de, session_info",
+                "reproducibility_record: session_info, seed, package_versions",
+                "If zero genes reach adj.P.Val < 0.05, report that as the result — do not relax the threshold or switch to unadjusted p-values to produce a list"
+              ],
+              "caveats": [
+                "A gene list at BH < 0.05 from 12 samples is a hypothesis-generating result and should be described as such"
+              ],
+              "packages": [
+                "knitr",
+                "rmarkdown"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "No rule covers the report step as such; the reporting and reproducibility settings from R-0041@059a and R-0086@becf are carried as constraints.",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "report_fields",
+                    "value": [
+                      "method",
+                      "versions",
+                      "design",
+                      "thresholds",
+                      "n_tested",
+                      "n_de",
+                      "session_info"
+                    ],
+                    "source": "doi:10.1093/bib/bbz124"
+                  },
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0026"
+            },
+            "template": "tpl-qc-log-abundance@1.0.0",
+            "rules": [
+              "R-0071@e4e2"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0027"
+            },
+            "rules": [
+              "R-0075@4d16"
+            ]
+          },
+          {
+            "step": "normalize",
+            "rules": [
+              "R-0074@06b0"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0036@9786"
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0005"
+            },
+            "template": "tpl-limma-trend-logvalues@1.0.0",
+            "rules": [
+              "R-0093@4fa4",
+              "R-0019@251d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "rules": [
+              "R-0037@e6d8",
+              "R-0043@4f55",
+              "R-0044@1777"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0093@4fa4"
+          },
+          {
+            "id": "R-0019@251d"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0044@1777"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0071@e4e2"
+          },
+          {
+            "id": "R-0074@06b0"
+          },
+          {
+            "id": "R-0075@4d16"
+          }
+        ],
+        "flags": [],
+        "uncovered": [
+          "shrink_lfc"
+        ]
+      },
+      "responseChars": 17631,
+      "elapsedMs": 4
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2 values with sample distance heatmap",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "mean log expression floor filter",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "filter_statistic",
+                "value": "mean_log_expression"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "no renormalization; value range check",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "none_already_normalized"
+              },
+              {
+                "name": "value_range_check",
+                "value": "required"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~0 + condition with explicit reference level",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend linear model with robust eBayes",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "method, versions, design, thresholds, n_tested, n_de, sessionInfo",
+            "package": "base"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0075@4d16",
+            "message": "limma linear model on log-scale expression values is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low abundance filter on TPM, FPKM, or log expression values"
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "severity": "violation",
+            "rule": "R-0093@4fa4",
+            "message": "limma-voom with a fixed-effects linear model is forbidden in this situation.",
+            "permitted": [
+              "limma linear model on log-scale expression values"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 697,
+      "elapsedMs": 4
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "PCA/MDS on log2 values with sample distance heatmap",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "transform",
+                "value": "log2_plus_1_unless_already_log"
+              },
+              {
+                "name": "n_top_genes",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM, FPKM, or log expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "filter_statistic",
+                "value": "mean_log_expression"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "no renormalization; value range check",
+            "package": "base",
+            "parameters": [
+              {
+                "name": "normalization",
+                "value": "none_already_normalized"
+              },
+              {
+                "name": "value_range_check",
+                "value": "required"
+              }
+            ]
+          },
+          {
+            "step_type": "model_design",
+            "method": "~0 + condition with explicit reference level",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjustment",
+                "value": "BH"
+              },
+              {
+                "name": "filter_results_by",
+                "value": "adjusted_pvalue"
+              },
+              {
+                "name": "lfc_threshold_policy",
+                "value": "test_against_threshold"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "method, versions, design, thresholds, n_tested, n_de, sessionInfo",
+            "package": "base"
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 4
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

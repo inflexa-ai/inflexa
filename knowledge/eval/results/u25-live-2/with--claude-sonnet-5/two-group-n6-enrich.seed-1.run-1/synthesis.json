@@ -1,0 +1,173 @@
+{
+  "runId": "804407a4-1a9c-41fa-ba6a-33ad4bc25342",
+  "overview": "Bulk RNA-seq comparison of 6 treated vs 6 control human samples (agent/tissue/organism unspecified in metadata) identified 875 differentially expressed genes that resolve into one coherent, statistically robust biological axis: activation of TNFα/NF-κB, interferon-γ, and general inflammatory signaling, mirrored by suppression of oxidative phosphorylation, replicated independently across the Hallmark and WikiPathways collections. QC diagnostics (Cook's distance, length-bias, shallow-sample checks) give no reason to attribute this signal to technical artifact. Because treatment identity is unrecorded and part of the gene catalog carries placeholder rather than curated identifiers, the finding should be read as a coherent hypothesis about an immune-activation/mitochondrial-suppression phenotype, not a mechanistically resolved result.",
+  "conclusions": "The differential expression and enrichment results converge on a single narrative rather than a scattered gene list: treated samples show strong, cross-collection-replicated activation of TNFα/NF-κB, interferon-γ, and inflammatory-response transcriptional programs, paired with an equally robust and independently replicated (Hallmark plus two WikiPathways gene sets) suppression of oxidative phosphorylation. The QC and diagnostic work in this run (Cook's-distance attribution, length-bias correlation, sensitivity characterization of the shallow sample) supports treating this as a real biological signal rather than a technical artifact of the one low-depth sample or a length-driven bias.\n\nIL15RA anchors this program as the single most significant DE gene by a wide margin. The literature confirms IL15RA is a bona fide dual NF-κB/IRF-responsive transcriptional target — established by promoter mutagenesis and gel-shift studies since 2001-2002 — which mechanistically explains why it co-varies with both the TNF/NF-κB and IFN-γ hallmark signatures simultaneously rather than tracking only one. That general regulatory relationship is confirmed biology; the magnitude and rank of the induction observed here (the dominant hit in the entire dataset) is a genuine, dataset-specific observation not directly precedented in the literature reviewed. IL-15/IL-15Rα agonism is now an FDA-approved immunotherapy class and soluble IL-15Rα is used as a circulating readout of TNF-driven inflammatory pathway activity in human disease, giving this axis real translational precedent as a pharmacodynamic marker of NF-κB/immune pathway engagement — but applying that here is inferential, since the treatment itself is unidentified.\n\nThe oxidative phosphorylation suppression is the most consequential ambiguity in the run. Mechanistically it is unsurprising: TNF/IFN-γ/NF-κB-driven immune activation is textbook-coupled to a glycolytic shift away from OXPHOS in myeloid and other activated cells, and this precise transcriptional co-occurrence (inflammation up, OXPHOS down) has been independently reproduced in human whole-blood transcriptomes after intravenous endotoxin challenge. But an essentially indistinguishable transcriptomic signature is produced by drug-induced mitochondrial toxicity in bulk blood — a single acetaminophen dose in healthy volunteers reproduces the same OXPHOS-down pattern together with elevated lactate, in the absence of overt organ injury — and mitochondrial damage products (mtDNA, other DAMPs) are themselves potent activators of NF-κB and interferon signaling. Bulk RNA-seq, without cell-type deconvolution, tissue/organism identity, or orthogonal mitochondrial-function or clinical-chemistry data, cannot adjudicate between \"on-target immunopharmacology\" and \"off-target mitochondrial liability.\" This is the largest gap between the computational result and any translational claim.\n\nOverall, every finding here sits at the discovery-to-preclinical boundary, not closer. No treatment identity, organism, or tissue is recorded, and a substantial share of the DE table carries generic placeholder gene identifiers rather than curated symbols — both facts constrain any claim to \"a coherent inflammatory-activation/OXPHOS-suppression phenotype consistent with known immune or mitochondrial-toxicity biology,\" not a resolved mechanism. If this dataset is meant to characterize a specific agent, the actionable next steps are: confirm treatment identity and tissue of origin; add cell-type deconvolution or single-cell follow-up to localize the OXPHOS signal to immune versus parenchymal compartments; and obtain orthogonal safety/metabolic readouts (lactate, mtDNA copy number, transaminases, Seahorse OCR) before treating the OXPHOS suppression as either a desired pharmacodynamic effect or an unwanted toxicity signal.",
+  "findings": [
+    {
+      "stepId": "T2S1",
+      "title": "Coordinated TNFα/NF-κB, IFN-γ, and inflammatory response activation in treated samples",
+      "description": "fgsea preranked GSEA (ranked by DESeq2 Wald statistic) found strong, BH-significant, positive-NES enrichment in treated samples for HALLMARK_TNFA_SIGNALING_VIA_NFKB (NES 2.94, padj 4.3e-33), HALLMARK_INTERFERON_GAMMA_RESPONSE (NES 2.77, padj 1.0e-25), and HALLMARK_INFLAMMATORY_RESPONSE (NES 2.09, padj 9.9e-9), independently corroborated by WikiPathways hits (Cytosolic DNA sensing, miRNA role in immune response in sepsis, Cancer pathways) in the same direction.",
+      "confidence": "high",
+      "noveltyStatus": "confirmed",
+      "literatureInterpretation": "This is the canonical transcriptional signature of acute innate-immune/inflammatory activation, independently reproduced in human whole-blood transcriptomes after IV endotoxin challenge; the coherence and cross-collection replication argue this is a genuine biological axis rather than a diffuse gene list, but the literature cannot identify what specific agent or exposure produced it here since treatment identity is unrecorded in this dataset.",
+      "references": [
+        {
+          "pmid": "16136080",
+          "citation": "Calvano et al. 2005",
+          "relevance": "Human whole-blood leukocyte transcriptome after IV endotoxin shows the same coordinated inflammatory/innate-immune activation pattern seen here, the closest structural precedent to this dataset's design.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "23535595",
+          "citation": "Tannahill et al. 2013",
+          "relevance": "Establishes the mechanistic basis (succinate/HIF-1α) by which TNF/LPS-driven immune activation produces this class of transcriptional program.",
+          "concordance": "contextualizes"
+        }
+      ]
+    },
+    {
+      "stepId": "T1S2",
+      "title": "IL15RA is the dominant differentially expressed gene, anchoring the NF-κB/IFN-γ leading edge",
+      "description": "IL15RA is the single most significant DE gene by a wide margin (log2FC ~6.45 shrunken, padj ~3.9e-49) and appears in the leading edge of HALLMARK_TNFA_SIGNALING_VIA_NFKB.",
+      "confidence": "high",
+      "noveltyStatus": "partially_confirmed",
+      "literatureInterpretation": "IL15RA has a documented functional NF-κB binding site in its promoter and is independently inducible by interferon/IRF-4 signaling, mechanistically explaining its co-induction with both the TNF/NF-κB and IFN-γ hallmark programs; that general regulatory relationship is established across viral, autoimmune, and oncologic contexts, but the specific magnitude and rank of induction seen here (the single dominant hit in the dataset) is not directly precedented in a comparable treated-vs-control design in the literature reviewed.",
+      "references": [
+        {
+          "pmid": "11160322",
+          "citation": "Mariner et al. 2001",
+          "relevance": "First direct demonstration (promoter deletion, gel shift) of a functional NF-κB site driving human IL15RA transcription.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "12023365",
+          "citation": "Mariner et al. 2002",
+          "relevance": "Shows IRF-4 cooperates with NF-κB at the IL15RA promoter and that interferon alone induces IL15RA mRNA in monocytes, explaining co-induction with the IFN-γ hallmark.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "23039249",
+          "citation": "Perrier et al. 2013",
+          "relevance": "Soluble/mucosal IL-15Rα is elevated in human TNF-driven inflammatory bowel disease, precedent for IL15RA as a circulating readout of inflammatory pathway activity.",
+          "concordance": "contextualizes"
+        },
+        {
+          "pmid": "40824697",
+          "citation": "Heiss et al. 2025",
+          "relevance": "FDA approval of an IL-15/IL-15Rα agonist (nogapendekin alfa inbakicept) confirms this axis is an actively targeted, clinically validated therapeutic pathway.",
+          "concordance": "extends"
+        }
+      ]
+    },
+    {
+      "stepId": "T2S1",
+      "title": "Independent, cross-collection suppression of oxidative phosphorylation accompanies the inflammatory signature",
+      "description": "Oxidative phosphorylation / mitochondrial electron transport chain gene programs were suppressed with strong, concordant negative NES in three independently tested gene sets: HALLMARK_OXIDATIVE_PHOSPHORYLATION (NES -3.07, padj 2.9e-29), and two WikiPathways sets, WP111 Electron transport chain OXPHOS system (NES -2.77, padj 5.7e-14) and WP623 Oxidative phosphorylation (NES -2.57, padj 6.0e-9).",
+      "confidence": "high",
+      "noveltyStatus": "confirmed",
+      "literatureInterpretation": "The coupling of inflammatory/NF-κB-IFN activation with transcriptional suppression of OXPHOS is well-established immunometabolism (a glycolytic shift accompanying immune activation), reproduced in human blood transcriptomes after endotoxin challenge; however, an essentially indistinguishable OXPHOS-down transcriptomic signature is also a recognized drug-induced mitochondrial-toxicity biomarker in bulk blood (shown for acetaminophen), and mitochondrial damage products themselves activate NF-κB/interferon programs, so this analysis cannot determine whether the OXPHOS suppression here is an on-target immunometabolic consequence or an off-target mitochondrial liability.",
+      "references": [
+        {
+          "pmid": "23535595",
+          "citation": "Tannahill et al. 2013",
+          "relevance": "Mechanistic basis for OXPHOS-to-glycolysis switching during immune/inflammatory activation.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "16136080",
+          "citation": "Calvano et al. 2005",
+          "relevance": "Human blood transcriptome precedent showing the same inflammation-up/bioenergetic-dysregulation coupling.",
+          "concordance": "supports"
+        },
+        {
+          "pmid": "19918972",
+          "citation": "Fannin et al. 2010",
+          "relevance": "Single acetaminophen dose in healthy volunteers produces the same OXPHOS-gene-downregulation pattern in blood transcriptome as a drug-toxicity biomarker, independent of immune mechanism — an alternative explanation this dataset cannot rule out.",
+          "concordance": "contextualizes"
+        },
+        {
+          "pmid": "36739208",
+          "citation": "Xian & Karin 2023",
+          "relevance": "Reviews how mitochondrial damage (mtDNA/DAMP release) itself activates NF-κB and interferon signaling, supporting a bidirectional-causality caveat between the two hallmark signatures.",
+          "concordance": "contextualizes"
+        }
+      ]
+    }
+  ],
+  "themes": [
+    {
+      "name": "A convergent NF-κB/IFN-driven innate-immune activation program dominates the treated-vs-control transcriptome",
+      "findings": [
+        {
+          "stepId": "T2S1",
+          "title": "Coordinated TNFα/NF-κB, IFN-γ, and inflammatory response activation in treated samples"
+        },
+        {
+          "stepId": "T1S2",
+          "title": "IL15RA is the dominant differentially expressed gene, anchoring the NF-κB/IFN-γ leading edge"
+        }
+      ],
+      "narrative": "IL15RA's dual NF-κB/IRF-responsive promoter mechanistically explains why it anchors the leading edge of the TNFα/NF-κB hallmark set while the interferon-γ and general inflammatory programs are independently and concordantly activated. The convergence of one extreme, highly significant gene with multiple cross-pathway hallmark and WikiPathways hits (cytosolic DNA sensing, sepsis-associated miRNA signaling) indicates a coherent transcriptional axis rather than statistical noise, though the causal trigger of that axis remains unidentified from this data alone."
+    },
+    {
+      "name": "Inflammatory activation is mirrored by a reproducible collapse of oxidative phosphorylation, with two equally plausible and untested explanations",
+      "findings": [
+        {
+          "stepId": "T2S1",
+          "title": "Independent, cross-collection suppression of oxidative phosphorylation accompanies the inflammatory signature"
+        }
+      ],
+      "narrative": "The OXPHOS suppression converges across Hallmark and two WikiPathways gene sets, echoing the canonical immunometabolic glycolytic switch documented in human endotoxin-challenge blood transcriptomes. The same transcriptomic pattern, however, is also a documented signature of drug-induced mitochondrial toxicity in bulk blood, and mitochondrial damage products are themselves inflammatory triggers — so this run cannot distinguish an on-target immune consequence from an off-target safety signal, which is the most important open question the data raise."
+    }
+  ],
+  "limitations": [
+    "Treatment/agent identity and organism/tissue of origin are not recorded anywhere in the input metadata, so 'treated vs control' can only be interpreted directionally; all biological and translational claims here are hypothesis-level, not mechanistically resolved.",
+    "OXPHOS suppression coupled to inflammatory activation is transcriptomically indistinguishable, on the evidence available, between an on-target immunometabolic switch and a drug-induced mitochondrial-toxicity signature; no orthogonal data (serum lactate, mtDNA copy number, transaminases, Seahorse OCR) exists in this run to adjudicate between them.",
+    "Bulk RNA-seq without cell-type deconvolution cannot localize whether the inflammatory/OXPHOS signature reflects immune-cell infiltration or activation, a shift in tissue cellular composition, or direct transcriptional reprogramming of non-immune cells.",
+    "A substantial fraction of genes in the DE and leading-edge tables carry generic placeholder identifiers (e.g. GENE00040) rather than curated gene symbols, so full biological annotation and interpretation of the complete significant gene list is not possible — only the subset with recognizable symbols could be interpreted against the literature.",
+    "Enrichment results depend on the choice of ranking statistic (DESeq2 Wald stat, as used here); a different ranking metric (shrunken log2FC, signed -log10 p) could shift which gene sets cross significance or alter leading-edge composition.",
+    "The shallow sample (sample_01, 0.26x median depth) was retained based on available diagnostics (Cook's distance, PCA/clustering) but no DESeq2 model was actually re-fit with it excluded, so the quantitative sensitivity of the 875-gene DE list and downstream GSEA results to this one low-depth sample was not directly measured."
+  ],
+  "keyReferences": [
+    {
+      "pmid": "16136080",
+      "citation": "Calvano et al. 2005",
+      "description": "Human whole-blood transcriptome after IV endotoxin challenge reproduces the same coordinated inflammatory-activation/bioenergetic-dysregulation pattern seen in this run, the closest structural precedent to this dataset's design."
+    },
+    {
+      "pmid": "23535595",
+      "citation": "Tannahill et al. 2013",
+      "description": "Foundational immunometabolism paper establishing the mechanistic basis for OXPHOS-to-glycolysis switching during TNF/LPS-driven immune activation."
+    },
+    {
+      "pmid": "19918972",
+      "citation": "Fannin et al. 2010",
+      "description": "Shows a single acetaminophen dose produces OXPHOS-gene downregulation in human blood transcriptome as a drug-toxicity biomarker, the key alternative explanation for the OXPHOS signature this run cannot rule out."
+    },
+    {
+      "pmid": "36739208",
+      "citation": "Xian & Karin 2023",
+      "description": "Reviews mitochondrial DAMP-driven activation of NF-κB/interferon signaling, underpinning the bidirectional-causality caveat between the inflammatory and OXPHOS findings."
+    },
+    {
+      "pmid": "11160322",
+      "citation": "Mariner et al. 2001",
+      "description": "Establishes the functional NF-κB binding site in the human IL15RA promoter, the mechanistic basis for IL15RA's position in the TNFα/NF-κB leading edge."
+    },
+    {
+      "pmid": "12023365",
+      "citation": "Mariner et al. 2002",
+      "description": "Shows interferon/IRF-4 signaling also induces IL15RA, explaining its simultaneous co-induction with the IFN-γ hallmark program."
+    },
+    {
+      "pmid": "23039249",
+      "citation": "Perrier et al. 2013",
+      "description": "Clinical precedent for soluble IL-15Rα as a circulating marker of TNF-driven human inflammatory disease."
+    },
+    {
+      "pmid": "40824697",
+      "citation": "Heiss et al. 2025",
+      "description": "FDA approval of an IL-15/IL-15Rα agonist confirms this pathway's current translational and therapeutic relevance."
+    }
+  ]
+}

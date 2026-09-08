@@ -1,0 +1,19 @@
+{
+  "template": {"id": "tpl-fgsea-preranked", "version": "1.0.0", "label": "fgsea preranked gene set enrichment on a differential expression results table", "method": {"id": "M-0010", "label": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark"}},
+  "snapshot": {"date": "2026-09-07", "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"},
+  "slots": [
+    {"name": "results_path", "value": "output/ranked_genes_symbol.csv", "source": "caller", "adaptable": true},
+    {"name": "rank_metric", "value": "stat", "source": "caller", "adaptable": true},
+    {"name": "gmt_path", "value": "/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt", "source": "caller", "adaptable": true},
+    {"name": "min_size", "value": 15, "source": "caller", "adaptable": true},
+    {"name": "max_size", "value": 500, "source": "caller", "adaptable": true},
+    {"name": "eps", "value": 0, "source": "default", "adaptable": false, "default_source": "doi:10.1101/060012"},
+    {"name": "seed", "value": 20260904, "source": "caller", "adaptable": true},
+    {"name": "output_prefix", "value": "hallmark", "source": "caller", "adaptable": true}
+  ],
+  "environment_match": "exact",
+  "syntax": "ok",
+  "run_with": "Rscript scripts/tpl-fgsea-preranked.R",
+  "gene_set_collection": "MSigDB Hallmark human, 2026.1 release, 50 gene sets",
+  "note": "This file was reconstructed from the render tool's response immediately after rendering, because the tool always writes to the fixed path output/decision_record.json, which subsequent renders (Reactome, WikiPathways) overwrote."
+}

@@ -1,0 +1,327 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "mouse-two-group-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:06:36.800Z",
+  "elapsedMs": 24410,
+  "outcome": "plan_submitted",
+  "planId": "pln-a22f872a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and library-size assessment",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "What are the library sizes and count distributions across the 12 liver samples (6 high-fat diet vs 6 chow), and how does sample_01's library size compare to the cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Per-sample library size (total counts) reported for all 12 samples",
+          "sample_01 confirmed as an outlier (~4x below median) with a quantified fold-difference",
+          "Gene detection rate (genes with count>0) reported per sample",
+          "A clear recommendation on whether sample_01 should be dropped or retained with a size-factor caveat, based on the observed magnitude"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: HFD vs chow (all 12 samples)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which genes are differentially expressed between high-fat-diet and chow mouse liver samples (6 vs 6, unpaired, single batch, raw Salmon gene counts) using all 12 samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on raw counts.csv (12000 genes x 12 samples) against metadata.csv condition column, with high-fat-diet vs chow as the contrast",
+          "Output table with log2FoldChange, p-value, and BH-adjusted p-value for all genes",
+          "Significant genes reported at padj < 0.05 with |log2FC| threshold stated explicitly",
+          "sample_01's low library size is noted as a caveat on this run's size factors, not silently absorbed",
+          "MA plot or size-factor diagnostic included to show sample_01's influence"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity DE: HFD vs chow excluding sample_01",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the differentially expressed genes between high-fat-diet and chow liver change materially when the shallow-library sample_01 is excluded (5 vs 6 or 6 vs 5 comparison, whichever arm sample_01 belongs to)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 rerun on the same counts/metadata with sample_01 removed",
+          "Overlap of significant gene sets (padj<0.05) between the full-cohort and sample_01-excluded runs reported (e.g., Jaccard or simple overlap count)",
+          "Any genes whose significance call flips reported explicitly",
+          "Conclusion stated on whether sample_01 materially changes the DE result"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark pathway enrichment (GSEA) on HFD vs chow ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changing between high-fat-diet and chow mouse liver, using the full-cohort DESeq2 ranking?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Genes from T1S2 ranked by a signed statistic (e.g., Wald stat or sign(log2FC)*-log10(pvalue))",
+          "Pre-ranked GSEA run against the MSigDB mouse hallmark gene set collection (mouse gene symbols, MGI)",
+          "Normalized enrichment score, p-value, and FDR reported per hallmark pathway",
+          "Significant pathways (FDR<0.25 per standard GSEA convention, or a stricter threshold if stated) listed with direction (up in HFD vs down)",
+          "If the mouse hallmark gene set reference is unavailable at run time, the step reports that gap explicitly rather than substituting a human gene set"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Hallmark pathway enrichment on sample_01-excluded ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Are the hallmark pathway calls from T2S1 stable when the DE ranking is recomputed without the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Pre-ranked GSEA run against the same MSigDB mouse hallmark gene sets using the T1S3 (sample_01-excluded) ranking",
+          "Significant hallmark pathways compared side-by-side with T2S1's results",
+          "Pathways that appear/disappear between the two rankings flagged explicitly"
+        ]
+      }
+    ],
+    "title": "HFD vs chow mouse liver DE + hallmark pathways",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples) with mouse gene symbols are QC'd and normalized, flagging sample_01 whose library size is ~4x below median before it can distort size-factor estimation or a downstream DE call. DESeq2 tests high-fat-diet vs chow (6 vs 6, unpaired, single batch) to get the differential expression gene list. The DE result (ranked by Wald statistic) is then fed into a pre-ranked GSEA against the MSigDB mouse hallmark gene sets (48 sets, MGI symbols, staged locally) to identify which hallmark pathways shift with diet. A sensitivity step reruns DE with sample_01 excluded to confirm the DE and pathway calls are not artifacts of that one shallow sample."
+  },
+  "usage": {
+    "inputTokens": 91569,
+    "outputTokens": 2435,
+    "cacheCreationInputTokens": 72447,
+    "cacheReadInputTokens": 19098,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01H63TmKqPakazC7eNRrVLGh",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01L4Y9ahp4fQgyVq4UxGfo37",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "HFD vs chow mouse liver DE + hallmark pathways",
+          "analytical_narrative": "Raw Salmon gene-level counts (12000 genes x 12 samples) with mouse gene symbols are QC'd and normalized, flagging sample_01 whose library size is ~4x below median before it can distort size-factor estimation or a downstream DE call. DESeq2 tests high-fat-diet vs chow (6 vs 6, unpaired, single batch) to get the differential expression gene list. The DE result (ranked by Wald statistic) is then fed into a pre-ranked GSEA against the MSigDB mouse hallmark gene sets (48 sets, MGI symbols, staged locally) to identify which hallmark pathways shift with diet. A sensitivity step reruns DE with sample_01 excluded to confirm the DE and pathway calls are not artifacts of that one shallow sample.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and library-size assessment",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "What are the library sizes and count distributions across the 12 liver samples (6 high-fat diet vs 6 chow), and how does sample_01's library size compare to the cohort?",
+              "acceptance_criteria": [
+                "Per-sample library size (total counts) reported for all 12 samples",
+                "sample_01 confirmed as an outlier (~4x below median) with a quantified fold-difference",
+                "Gene detection rate (genes with count>0) reported per sample",
+                "A clear recommendation on whether sample_01 should be dropped or retained with a size-factor caveat, based on the observed magnitude"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: HFD vs chow (all 12 samples)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between high-fat-diet and chow mouse liver samples (6 vs 6, unpaired, single batch, raw Salmon gene counts) using all 12 samples?",
+              "acceptance_criteria": [
+                "DESeq2 run on raw counts.csv (12000 genes x 12 samples) against metadata.csv condition column, with high-fat-diet vs chow as the contrast",
+                "Output table with log2FoldChange, p-value, and BH-adjusted p-value for all genes",
+                "Significant genes reported at padj < 0.05 with |log2FC| threshold stated explicitly",
+                "sample_01's low library size is noted as a caveat on this run's size factors, not silently absorbed",
+                "MA plot or size-factor diagnostic included to show sample_01's influence"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sensitivity DE: HFD vs chow excluding sample_01",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the differentially expressed genes between high-fat-diet and chow liver change materially when the shallow-library sample_01 is excluded (5 vs 6 or 6 vs 5 comparison, whichever arm sample_01 belongs to)?",
+              "acceptance_criteria": [
+                "DESeq2 rerun on the same counts/metadata with sample_01 removed",
+                "Overlap of significant gene sets (padj<0.05) between the full-cohort and sample_01-excluded runs reported (e.g., Jaccard or simple overlap count)",
+                "Any genes whose significance call flips reported explicitly",
+                "Conclusion stated on whether sample_01 materially changes the DE result"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark pathway enrichment (GSEA) on HFD vs chow ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which of the 50 MSigDB hallmark pathways are enriched among genes changing between high-fat-diet and chow mouse liver, using the full-cohort DESeq2 ranking?",
+              "acceptance_criteria": [
+                "Genes from T1S2 ranked by a signed statistic (e.g., Wald stat or sign(log2FC)*-log10(pvalue))",
+                "Pre-ranked GSEA run against the MSigDB mouse hallmark gene set collection (mouse gene symbols, MGI)",
+                "Normalized enrichment score, p-value, and FDR reported per hallmark pathway",
+                "Significant pathways (FDR<0.25 per standard GSEA convention, or a stricter threshold if stated) listed with direction (up in HFD vs down)",
+                "If the mouse hallmark gene set reference is unavailable at run time, the step reports that gap explicitly rather than substituting a human gene set"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Hallmark pathway enrichment on sample_01-excluded ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Are the hallmark pathway calls from T2S1 stable when the DE ranking is recomputed without the shallow sample_01?",
+              "acceptance_criteria": [
+                "Pre-ranked GSEA run against the same MSigDB mouse hallmark gene sets using the T1S3 (sample_01-excluded) ranking",
+                "Significant hallmark pathways compared side-by-side with T2S1's results",
+                "Pathways that appear/disappear between the two rankings flagged explicitly"
+              ],
+              "packages": [
+                "gseapy",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

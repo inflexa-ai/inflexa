@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the data as RSEM expected counts, states that the effective-length offset is lost without the genes.results files, rounds for DESeq2 rather than substituting TPM/FPKM, and uses an appropriate 6v6 unpaired Wald model with control as reference; it loses a little on method because it never asks for the missing per-sample files (the reference's preferred tximport type=rsem path) and does not write the ~condition formula explicitly. QC is thorough and keeps sample_01 with an explicit disposition policy; the >=10 in >=6 filter is minimal and justified; normalization is inside the model; BH at 0.05 with apeglm is fully specified. Enrichment was not requested, but the added fgsea step is well specified (full ranked list, Wald stat metric, named collections with versions, 15-500 window, universe of tested genes), so it is not penalized heavily. The report covers design, thresholds, counts, versions, and both key caveats."
+}

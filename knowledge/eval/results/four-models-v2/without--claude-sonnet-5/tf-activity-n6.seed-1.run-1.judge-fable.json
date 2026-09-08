@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 4,
+    "low_count_filter": 3,
+    "normalization": 6,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 4
+  },
+  "rationale": "The plan correctly puts a DESeq2 count model on the raw Salmon counts with a single condition factor and feeds a per-gene statistic into decoupleR ulm against CollecTRI, and it adds a per-sample activity matrix on vst, which matches the reference skeleton. But it hedges at the key points: the input may be the Wald stat or a 'log2FC/padj-derived t-statistic', the per-sample test is a t-test or Wilcoxon rather than limma, the filter is 'row sum or CPM' with no threshold, no design formula, reference level or contrast is written, no alpha or shrinkage is stated, and no minimum regulon size, CollecTRI version or BH across regulators is specified. QC is a single 'PCA or dispersion plot' with no outlier policy. Step 3 runs ORA/GSEA on GTRD TF-target sets, which is exactly the over-representation-on-targets approach the reference calls wrong, with no universe defined, and the report omits versions, thresholds and counts of tested genes or regulators, though it does carry the caveat that activity is inferred from targets."
+}

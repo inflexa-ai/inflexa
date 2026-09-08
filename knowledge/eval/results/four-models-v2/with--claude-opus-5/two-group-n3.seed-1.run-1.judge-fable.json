@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald on raw Salmon counts with design ~condition, explicit relevel to control and contrast (condition, treated, control), rowSums(counts>=10)>=3 pre-filter, median-of-ratios/TMM normalization inside the models, BH at 0.05, apeglm shrinkage with the unshrunken estimate retained, and lfcThreshold used inside results() rather than post hoc. Blind-VST PCA, distance heatmap and library sizes precede the test with a stated report-don't-remove policy, though what to do downstream with a confirmed shallow library is left slightly implicit. Power at n=3 is addressed explicitly before any p-value is seen, alpha is not loosened, enrichment is correctly omitted with a reason, and the report carries sessionInfo, thresholds, tested/significant counts, and the length-offset and single-batch caveats. The edgeR QL cross-check is a reasonable addition for the confidence question rather than scope creep."
+}

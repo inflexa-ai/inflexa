@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 1,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core path: normalize (DESeq2 size factors + VST or log2-CPM) before rank-based per-sample scoring with GSVA/ssGSEA over the named, versioned Hallmark GMT with per-set overlap reported, then a per-signature two-group test with BH across the 50 sets, effect sizes, a condition-annotated heatmap, and a documented keep-and-sensitivity policy for sample_01. It omits any low-count gene filter entirely, and its QC is limited to library sizes with no PCA or sample-distance inspection of sample_01 or the score matrix. The contrast direction (inflamed minus control) and the row-scaling of the heatmap are not stated, and package versions are not requested in the report."
+}

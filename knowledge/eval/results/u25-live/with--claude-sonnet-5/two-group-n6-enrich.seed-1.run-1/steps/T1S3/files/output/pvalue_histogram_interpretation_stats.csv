@@ -1,0 +1,2 @@
+n_genes_with_pvalue,"first_bin_[0,0.05)_count","last_bin_[0.95,1.0]_count",tail_mean_count_p_gte_0.4,tail_sd_count_p_gte_0.4,enrichment_ratio_first_bin_vs_tail_mean
+10069,1557,447,435.3,11.7,3.58

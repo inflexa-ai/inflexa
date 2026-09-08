@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly rejects count models for a TPM-only delivery and fits limma on log2(TPM+1) with trend=TRUE, a ~0+condition two-group design, an explicit lesional-vs-control contrast, and BH at 0.05, with no voom, no size factors and no rounding to counts. It does not, however, ask the core for the raw counts or quantification directories, which the reference requires. QC includes distributions, a correlation heatmap and PCA colored by condition, but the outlier policy is only a written verdict with no stated action; the filter (mean TPM>=1 in at least one group) is reasonable though not phrased as a per-sample threshold in the smallest group. The |log2FC|>=1 tier is a post hoc threshold rather than a treat() test, and the unrequested enrichment names the collection and universe but omits version and set-size window; no package versions are promised in the report."
+}

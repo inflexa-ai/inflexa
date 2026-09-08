@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses to refit DESeq2, defines the foreground as padj<0.05 with a stated |log2FC|>1 cutoff, uses the tested genes (non-NA padj) as the universe rather than the whole genome, names GO BP with enrichGO/org.Hs.eg.db, applies BH at 0.05, tests up and down separately, and reports term, gene ratio, adjusted p and member genes. Weaknesses: no minimum/maximum gene-set size bound is stated, redundancy reduction via simplify is only 'optional', and annotation/package versions are not specified. Sample QC is only acknowledged as an upstream concern about sample_01 without any proposed check (reasonable given a results table, but not stated as a policy), and the direction of 'up' relative to the treated-vs-control contrast is not made explicit. Normalization and low-count filtering are appropriately untouched since the results table is in hand."
+}

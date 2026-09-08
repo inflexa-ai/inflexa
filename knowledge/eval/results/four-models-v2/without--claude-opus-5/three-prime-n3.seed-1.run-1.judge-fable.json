@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats QuantSeq counts as length-independent molecule counts, forbids TPM/FPKM, uses DESeq2 Wald on ~condition with control as reference, median-of-ratios inside the model, BH at 0.05 with apeglm shrinkage reported separately from the unshrunken tested effect, and states the low-power caveat at n=3. QC is thorough with PCA, distance/correlation heatmaps, library sizes, a tag-seq-specific top-gene fraction check and an explicit do-not-drop outlier policy. The low-count filter relies on filterByExpr defaults without stating the count floor or lowering it for a 3' tag library as the reference expects, and the |log2FC|>1 count is applied post hoc rather than via lfcThreshold. Enrichment was not asked; it is well specified (full Wald-ranked list, explicit filtered universe for ORA, size window, human collections) but collection versions are not stated, and software versions are not required in the report."
+}

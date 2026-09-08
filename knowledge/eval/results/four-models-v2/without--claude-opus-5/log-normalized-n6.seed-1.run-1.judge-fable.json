@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses count models and voom, runs limma-trend (eBayes trend=TRUE) on the log2(TPM+1) values as delivered with an explicit value-range check, a log-scale filter tied to the smallest group size, and BH at 0.05 with control as reference and direction stated. Deductions: it leaves the design formula ambiguous ('~0 + condition or ~condition'), floats a downstream quantile-normalization sensitivity run that the reference explicitly excludes, and reports |logFC|>1 as a post-hoc count rather than testing against it. Enrichment was not requested; the plan adds preranked GSEA that is mostly well specified (signed t, tested-gene universe, 15-500 window) but omits collection versions. The report section names method, design, thresholds and caveats but does not commit to reporting software versions."
+}

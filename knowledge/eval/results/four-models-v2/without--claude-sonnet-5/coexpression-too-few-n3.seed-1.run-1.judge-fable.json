@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 2,
+    "qc_present": 5,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses that six samples cannot support WGCNA and even cites the 15-20 sample requirement, but then builds the signed network, picks a soft power, detects modules, and correlates eigengenes with treatment anyway, which the reference identifies as wrong regardless of caveats; the STRING PPI step and DESeq2 contrast are the defensible substitute but are framed as triangulation of the WGCNA result rather than as its replacement. DESeq2 runs on raw counts with BH at 0.05, but no fold-change shrinkage (apeglm) is stated, the reference level is not named, and a post hoc nominal p<0.01 list is added. QC has a PCA/heatmap but no library sizes, coloring, or outlier policy; the low-count filter is vague. Enrichment names WikiPathways and a 12000-gene background with a minimum-overlap rule but gives no collection version or size window, and runs ORA on modules that are themselves unsupported. The report states caveats prominently and counts of significant genes but omits software versions."
+}

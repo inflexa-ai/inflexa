@@ -1,0 +1,15 @@
+field,value
+rank_metric,"DESeq2 Wald statistic (stat column), primary contrast treated vs control"
+n_tested_genes_ranked,10071
+n_unmapped_genes,6402
+unmapped_share,0.6357
+n_duplicate_symbol_rows_dropped,0
+min_size,15
+max_size,500
+hallmark_n_sets_tested,50
+hallmark_n_sets_in_size_window,50
+hallmark_n_significant_padj0.05,15
+reactome_n_sets_shipped_all_species,2868
+reactome_n_sets_human,2868
+reactome_n_sets_in_size_window,804
+reactome_n_significant_padj0.05,92

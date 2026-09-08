@@ -1,0 +1,369 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:56:55.819Z",
+  "elapsedMs": 73770,
+  "outcome": "plan_submitted",
+  "planId": "pln-f18b39be",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Differential expression: aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=6 per group: modest power; genes just past FDR 0.05 are provisional.",
+          "Do not use the shrunken LFC in place of the Wald statistic for the downstream TF inference — shrinkage distorts the ranking decoupler expects.",
+          "Genes with padj = NA from independent filtering must be excluded from the DE call but kept clearly labelled in the full table."
+        ],
+        "context": "Single-batch, unpaired 6 vs 6 design with one factor (condition). No covariates exist in the metadata, so ~condition is the full model. The downstream TF-activity step consumes the signed Wald statistic for every tested gene, so the complete table must be written, not only the significant subset. The data profile notes the record does not say whether Salmon length correction was applied to these gene-level counts.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "scikit-learn"
+        ],
+        "question": "Which of the 12,000 genes change in expression in the 6 aldosterone-treated human kidney samples relative to the 6 vehicle controls, and what is the signed Wald statistic for every gene?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Python only — use pydeseq2; do not call into R or rpy2 for the DE model.",
+          "Read the condition column from metadata.csv verbatim; set the control/vehicle level as the DESeq2 reference so positive log2FoldChange means up in aldosterone-treated.",
+          "Verify counts are integers; if the matrix carries non-integer values (possible length-corrected Salmon output), round to nearest integer, and state in the output that this was done and how many entries were affected.",
+          "Write the FULL result table for every gene DESeq2 tested, including the unshrunken Wald `stat` column — this is the required input for T1S2.",
+          "Filter low-count genes before fitting (e.g. require a minimum total count across samples) and report how many genes were dropped.",
+          "Report the number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1 separately; do not relabel a nominal-p list as significant."
+        ],
+        "description": "Run PyDESeq2 on the raw gene-level Salmon counts (/data/inputs/counts/counts.csv, 12000 genes x 12 samples) joined to the sample table (/data/inputs/metadata/metadata.csv, 12 rows x 2 columns) with design ~condition, vehicle/control as reference. Emit a full per-gene result table for all tested genes containing baseMean, log2FoldChange, lfcSE, the raw Wald stat, pvalue and padj, plus a shrunken log2FC column for ranking/plotting. Also emit VST- or log-normalised expression and a PCA of the 12 samples to confirm the two groups separate and no sample is an outlier.",
+        "acceptance_criteria": [
+          "A per-gene results CSV covering all tested genes with columns for baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, and gene identifier.",
+          "Direction of the contrast is stated explicitly (positive = up in aldosterone-treated).",
+          "Counts of genes retained after filtering, and DE gene counts at the stated thresholds, are reported.",
+          "A PCA / sample-clustering figure over the 12 samples with group labels.",
+          "Any non-integer count handling is reported explicitly."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "TF activity inference from the DE statistic",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Regulon coverage is the dominant limitation: with only 12,000 genes profiled, TFs whose targets are largely absent will score unstably — report regulon size per TF and treat small-n TFs as unreliable.",
+          "CollecTRI is literature-curated and biased toward well-studied TFs; absence of a TF is not evidence against it.",
+          "A high TF activity score does not establish causation or direct binding — it is consistency of the targets' expression with the regulon prior.",
+          "Do not interpret TF activity sign without confirming the contrast direction convention carried over from T1S1."
+        ],
+        "context": "The research question asks which TFs drive the aldosterone response. TF activity inferred from the coordinated behaviour of a TF's targets is the appropriate readout; TF transcript level is not. The dataset is human kidney, so the human regulon must be used — the store also carries mouse and rat resources and a DoRothEA human alternative (confidence levels A-E; A-C is the usual filter) that can serve as a sensitivity check. The MSigDB C3 GTRD TF-target sets are unsigned (binding, not direction) and are not a substitute for the signed regulon here.",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "rpy2",
+          "anndata"
+        ],
+        "question": "Which transcription factors show significantly altered inferred activity in aldosterone-treated versus vehicle-control kidney samples, and in which direction?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Python only — decoupler in Python. If a regulon is only available as an R .rda (DoRothEA), read it via rpy2 rather than switching the analysis to R.",
+          "Use the HUMAN regulon. Do not fall back to the mouse or rat network under any circumstance.",
+          "Input the unshrunken Wald statistic from T1S1 as the contrast vector, genes as features, one column.",
+          "Set a minimum regulon size (n >= 5 targets present in the data) and report how many TFs were dropped for insufficient coverage.",
+          "Report BH-adjusted p-values alongside raw p-values; rank primarily by adjusted significance and report the activity score sign as the direction.",
+          "Explicitly report the gene-symbol matching rate between the counts matrix identifiers and the regulon's gene symbols; if identifiers are Ensembl IDs, map to HGNC symbols using an available ID-mapping resource and report the mapping loss.",
+          "If the curated signed human regulon cannot be resolved in the reference store, stop and report that rather than substituting an unsigned TF-target set."
+        ],
+        "description": "Infer TF activity with decoupler (Python, v2.2.0) from the signed per-gene Wald statistic produced by T1S1, using a curated signed human TF-target regulon network from the reference store — the CollecTRI human regulatory network (one interaction per row: source TF symbol, target gene symbol, weight +1 activating / -1 repressing) is the intended prior. Run the univariate linear model (ULM) as the primary method on the single contrast vector, and additionally run a second decoupler method (e.g. MLM and/or the consensus estimator) as a robustness check. Output a ranked TF table with activity score, p-value, BH-adjusted p-value, direction, and the number of regulon targets of that TF actually present in this dataset. Report the overall fraction of the 12,000 dataset genes that intersect the regulon, and the concordance of the TF ranking between the primary and secondary methods.",
+        "acceptance_criteria": [
+          "A ranked TF activity table with score, p, padj, direction, and per-TF regulon size in this dataset.",
+          "Gene-identifier match rate against the regulon and the number of TFs tested after the minimum-regulon-size filter are both reported.",
+          "A second inference method is run and the agreement (e.g. rank correlation, overlap of top 20) with ULM is reported.",
+          "A barplot of the top activated and top repressed TFs.",
+          "Whether NR3C2 (mineralocorticoid receptor) is present in the regulon at all is stated explicitly, with its score if present."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Biological grounding of the top TFs",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Absence of a canonical gene may reflect the 12,000-gene subset rather than biology — distinguish 'not measured' from 'measured and unchanged'.",
+          "Enrichment on a 12,000-gene background is not the same as a whole-transcriptome background; use the tested-gene set as the background and say so.",
+          "Leading-target lists are descriptive, not a causal test."
+        ],
+        "context": "This is the check that distinguishes a genuine mineralocorticoid-pathway signal from a regulon artefact. Aldosterone acts through NR3C2 with a well-characterised early transcriptional response in kidney, so the presence or absence of those canonical targets is directly informative about whether the TF ranking is believable.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "decoupler",
+          "pandas",
+          "numpy",
+          "matplotlib"
+        ],
+        "question": "Do the top-scoring TFs act through canonical mineralocorticoid-responsive target genes, and what pathways are enriched among the aldosterone-vs-vehicle differentially expressed genes?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "constraints": [
+          "Python only — use gseapy and/or decoupler for enrichment; parse the pathway GMT with pandas/plain Python.",
+          "Use HUMAN pathway gene sets only.",
+          "Report the canonical aldosterone-response genes with their actual log2FC and padj even when not significant — state 'not significant' rather than omitting them.",
+          "Do not claim mechanism from enrichment alone; frame pathway hits as consistent-with, not evidence-of, mineralocorticoid signalling.",
+          "If the human pathway gene-set resource cannot be resolved at run time, still deliver the per-TF leading-target tables and the canonical-gene check, and note the enrichment as not performed."
+        ],
+        "description": "For the top activated and top repressed TFs from T1S2, list the regulon target genes driving each score (target symbol, its log2FC and Wald stat, its regulon weight) so the score is auditable rather than a black box. Explicitly check whether canonical aldosterone/mineralocorticoid-responsive genes — SGK1, SCNN1A, SCNN1B, SCNN1G, NR3C2, FKBP5, TSC22D3/GILZ, PER1, HSD11B2 — appear in the DE table, report their log2FC and padj regardless of significance, and state whether they are among the leading targets of any top TF. In parallel, run over-representation and/or ranked gene-set enrichment of the T1S1 DE results against human pathway gene sets from the reference store (the WikiPathways human GMT is present; the descriptor field is '%'-delimited and must be split to recover a readable set name).",
+        "acceptance_criteria": [
+          "Per-TF leading-target tables for the top activated and top repressed TFs, with each target's log2FC, Wald stat and regulon weight.",
+          "A table of the canonical aldosterone-responsive genes with log2FC and padj, including explicit 'not detected in this matrix' entries where applicable.",
+          "A pathway enrichment result table with set name, size, overlap, p and adjusted p — or an explicit statement that the gene-set resource was unavailable.",
+          "A written verdict on whether the top TF calls are supported by canonical mineralocorticoid biology or are unsupported/ambiguous."
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney: DE + TF activity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment: gene-level Salmon counts for 12,000 genes across 12 human kidney samples (counts.csv, 12000 x 13 — one gene-id column plus 12 sample columns), with metadata.csv giving one row per sample and a single `condition` factor, 6 aldosterone-treated vs 6 vehicle controls, unpaired. The research question — which transcription factors drive the treated-vs-control response — is answered by inferring TF activity from a gene-level differential expression statistic against a curated signed TF-target regulon, not by looking at TF transcript levels themselves (TF mRNA is a poor proxy for TF activity, and with n=6 per group individual TF genes will rarely clear FDR).\n\nT1S1 runs the differential expression: PyDESeq2 (Python only, per the user constraint) on the raw Salmon gene-level counts with design ~condition and control as the reference level, producing a full per-gene result table with the Wald statistic retained — the Wald stat is the input the TF-activity step needs, so no shrinkage-only output is acceptable. The profile flags that the record does not state whether a length correction was applied to the Salmon output; the step must check for non-integer values and round rather than fail silently, and report what it found. Independent filtering and low-count filtering are handled inside the step; no batch term exists (single batch) and the design is unpaired, so ~condition is the complete model.\n\nT1S2 takes the signed DE statistic vector and runs TF activity inference with decoupler (installed, v2.2.0) against the human CollecTRI regulon staged in the reference store (source/target/weight, +1 activating / -1 repressing). Univariate linear model (ULM) on the single Wald-statistic contrast is the method decoupler documents for a bulk two-group contrast; a consensus/multi-method cross-check is added as a robustness read. Activity sign gives direction (activated vs repressed in aldosterone-treated), and the regulon size per TF is reported because small regulons give unstable scores. The step must report the fraction of dataset genes that intersect the regulon — with only 12,000 genes present, coverage is the main threat to the result and it has to be stated, not assumed.\n\nT1S3 grounds the top TFs biologically: it checks whether the leading-edge target genes behind each top TF are actually the aldosterone/mineralocorticoid-responsive genes one would expect (SGK1, SCNN1A/B/G, NR3C2, FKBP5, TSC22D3, PER1), and runs pathway enrichment of the DE gene list against the human WikiPathways sets in the reference store. This is the sanity check that separates a real mineralocorticoid signal from regulon-artefact noise. NR3C2/MR itself may or may not be represented in CollecTRI; the step reports its status explicitly rather than assuming it drives the answer.\n\nPower is the honest limitation throughout: 6 vs 6 unpaired detects large coordinated shifts, which is precisely what TF-activity aggregation over regulons is good at, but individual TF calls near the significance boundary should be reported as provisional."
+  },
+  "usage": {
+    "inputTokens": 142974,
+    "outputTokens": 5237,
+    "cacheCreationInputTokens": 80378,
+    "cacheReadInputTokens": 62560,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_015wb5EvAQVu567nrnGeyVCe",
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_01VmenYHktwabzwkp5SW3Ym1",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_018WbWHcrfhjPS8J7LWDwHk7",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "TF activity inference ULM from DESeq2 t-statistics"
+      },
+      "outcome": "error",
+      "durationMs": 1664
+    },
+    {
+      "toolUseId": "toolu_01LpcefePwf3SjTNi6QxtBRe",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "pydeseq2",
+          "gseapy",
+          "rpy2",
+          "anndata"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01AfmJPaHLq5AEdK5wdQUE4Q",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney: DE + TF activity",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment: gene-level Salmon counts for 12,000 genes across 12 human kidney samples (counts.csv, 12000 x 13 — one gene-id column plus 12 sample columns), with metadata.csv giving one row per sample and a single `condition` factor, 6 aldosterone-treated vs 6 vehicle controls, unpaired. The research question — which transcription factors drive the treated-vs-control response — is answered by inferring TF activity from a gene-level differential expression statistic against a curated signed TF-target regulon, not by looking at TF transcript levels themselves (TF mRNA is a poor proxy for TF activity, and with n=6 per group individual TF genes will rarely clear FDR).\n\nT1S1 runs the differential expression: PyDESeq2 (Python only, per the user constraint) on the raw Salmon gene-level counts with design ~condition and control as the reference level, producing a full per-gene result table with the Wald statistic retained — the Wald stat is the input the TF-activity step needs, so no shrinkage-only output is acceptable. The profile flags that the record does not state whether a length correction was applied to the Salmon output; the step must check for non-integer values and round rather than fail silently, and report what it found. Independent filtering and low-count filtering are handled inside the step; no batch term exists (single batch) and the design is unpaired, so ~condition is the complete model.\n\nT1S2 takes the signed DE statistic vector and runs TF activity inference with decoupler (installed, v2.2.0) against the human CollecTRI regulon staged in the reference store (source/target/weight, +1 activating / -1 repressing). Univariate linear model (ULM) on the single Wald-statistic contrast is the method decoupler documents for a bulk two-group contrast; a consensus/multi-method cross-check is added as a robustness read. Activity sign gives direction (activated vs repressed in aldosterone-treated), and the regulon size per TF is reported because small regulons give unstable scores. The step must report the fraction of dataset genes that intersect the regulon — with only 12,000 genes present, coverage is the main threat to the result and it has to be stated, not assumed.\n\nT1S3 grounds the top TFs biologically: it checks whether the leading-edge target genes behind each top TF are actually the aldosterone/mineralocorticoid-responsive genes one would expect (SGK1, SCNN1A/B/G, NR3C2, FKBP5, TSC22D3, PER1), and runs pathway enrichment of the DE gene list against the human WikiPathways sets in the reference store. This is the sanity check that separates a real mineralocorticoid signal from regulon-artefact noise. NR3C2/MR itself may or may not be represented in CollecTRI; the step reports its status explicitly rather than assuming it drives the answer.\n\nPower is the honest limitation throughout: 6 vs 6 unpaired detects large coordinated shifts, which is precisely what TF-activity aggregation over regulons is good at, but individual TF calls near the significance boundary should be reported as provisional.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Differential expression: aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes change in expression in the 6 aldosterone-treated human kidney samples relative to the 6 vehicle controls, and what is the signed Wald statistic for every gene?",
+              "description": "Run PyDESeq2 on the raw gene-level Salmon counts (/data/inputs/counts/counts.csv, 12000 genes x 12 samples) joined to the sample table (/data/inputs/metadata/metadata.csv, 12 rows x 2 columns) with design ~condition, vehicle/control as reference. Emit a full per-gene result table for all tested genes containing baseMean, log2FoldChange, lfcSE, the raw Wald stat, pvalue and padj, plus a shrunken log2FC column for ranking/plotting. Also emit VST- or log-normalised expression and a PCA of the 12 samples to confirm the two groups separate and no sample is an outlier.",
+              "context": "Single-batch, unpaired 6 vs 6 design with one factor (condition). No covariates exist in the metadata, so ~condition is the full model. The downstream TF-activity step consumes the signed Wald statistic for every tested gene, so the complete table must be written, not only the significant subset. The data profile notes the record does not say whether Salmon length correction was applied to these gene-level counts.",
+              "constraints": [
+                "Python only — use pydeseq2; do not call into R or rpy2 for the DE model.",
+                "Read the condition column from metadata.csv verbatim; set the control/vehicle level as the DESeq2 reference so positive log2FoldChange means up in aldosterone-treated.",
+                "Verify counts are integers; if the matrix carries non-integer values (possible length-corrected Salmon output), round to nearest integer, and state in the output that this was done and how many entries were affected.",
+                "Write the FULL result table for every gene DESeq2 tested, including the unshrunken Wald `stat` column — this is the required input for T1S2.",
+                "Filter low-count genes before fitting (e.g. require a minimum total count across samples) and report how many genes were dropped.",
+                "Report the number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1 separately; do not relabel a nominal-p list as significant."
+              ],
+              "acceptance_criteria": [
+                "A per-gene results CSV covering all tested genes with columns for baseMean, log2FoldChange, lfcSE, stat, pvalue, padj, and gene identifier.",
+                "Direction of the contrast is stated explicitly (positive = up in aldosterone-treated).",
+                "Counts of genes retained after filtering, and DE gene counts at the stated thresholds, are reported.",
+                "A PCA / sample-clustering figure over the 12 samples with group labels.",
+                "Any non-integer count handling is reported explicitly."
+              ],
+              "caveats": [
+                "n=6 per group: modest power; genes just past FDR 0.05 are provisional.",
+                "Do not use the shrunken LFC in place of the Wald statistic for the downstream TF inference — shrinkage distorts the ranking decoupler expects.",
+                "Genes with padj = NA from independent filtering must be excluded from the DE call but kept clearly labelled in the full table."
+              ],
+              "packages": [
+                "pydeseq2",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "scikit-learn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "TF activity inference from the DE statistic",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which transcription factors show significantly altered inferred activity in aldosterone-treated versus vehicle-control kidney samples, and in which direction?",
+              "description": "Infer TF activity with decoupler (Python, v2.2.0) from the signed per-gene Wald statistic produced by T1S1, using a curated signed human TF-target regulon network from the reference store — the CollecTRI human regulatory network (one interaction per row: source TF symbol, target gene symbol, weight +1 activating / -1 repressing) is the intended prior. Run the univariate linear model (ULM) as the primary method on the single contrast vector, and additionally run a second decoupler method (e.g. MLM and/or the consensus estimator) as a robustness check. Output a ranked TF table with activity score, p-value, BH-adjusted p-value, direction, and the number of regulon targets of that TF actually present in this dataset. Report the overall fraction of the 12,000 dataset genes that intersect the regulon, and the concordance of the TF ranking between the primary and secondary methods.",
+              "context": "The research question asks which TFs drive the aldosterone response. TF activity inferred from the coordinated behaviour of a TF's targets is the appropriate readout; TF transcript level is not. The dataset is human kidney, so the human regulon must be used — the store also carries mouse and rat resources and a DoRothEA human alternative (confidence levels A-E; A-C is the usual filter) that can serve as a sensitivity check. The MSigDB C3 GTRD TF-target sets are unsigned (binding, not direction) and are not a substitute for the signed regulon here.",
+              "constraints": [
+                "Python only — decoupler in Python. If a regulon is only available as an R .rda (DoRothEA), read it via rpy2 rather than switching the analysis to R.",
+                "Use the HUMAN regulon. Do not fall back to the mouse or rat network under any circumstance.",
+                "Input the unshrunken Wald statistic from T1S1 as the contrast vector, genes as features, one column.",
+                "Set a minimum regulon size (n >= 5 targets present in the data) and report how many TFs were dropped for insufficient coverage.",
+                "Report BH-adjusted p-values alongside raw p-values; rank primarily by adjusted significance and report the activity score sign as the direction.",
+                "Explicitly report the gene-symbol matching rate between the counts matrix identifiers and the regulon's gene symbols; if identifiers are Ensembl IDs, map to HGNC symbols using an available ID-mapping resource and report the mapping loss.",
+                "If the curated signed human regulon cannot be resolved in the reference store, stop and report that rather than substituting an unsigned TF-target set."
+              ],
+              "acceptance_criteria": [
+                "A ranked TF activity table with score, p, padj, direction, and per-TF regulon size in this dataset.",
+                "Gene-identifier match rate against the regulon and the number of TFs tested after the minimum-regulon-size filter are both reported.",
+                "A second inference method is run and the agreement (e.g. rank correlation, overlap of top 20) with ULM is reported.",
+                "A barplot of the top activated and top repressed TFs.",
+                "Whether NR3C2 (mineralocorticoid receptor) is present in the regulon at all is stated explicitly, with its score if present."
+              ],
+              "caveats": [
+                "Regulon coverage is the dominant limitation: with only 12,000 genes profiled, TFs whose targets are largely absent will score unstably — report regulon size per TF and treat small-n TFs as unreliable.",
+                "CollecTRI is literature-curated and biased toward well-studied TFs; absence of a TF is not evidence against it.",
+                "A high TF activity score does not establish causation or direct binding — it is consistency of the targets' expression with the regulon prior.",
+                "Do not interpret TF activity sign without confirming the contrast direction convention carried over from T1S1."
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "rpy2",
+                "anndata"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Biological grounding of the top TFs",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the top-scoring TFs act through canonical mineralocorticoid-responsive target genes, and what pathways are enriched among the aldosterone-vs-vehicle differentially expressed genes?",
+              "description": "For the top activated and top repressed TFs from T1S2, list the regulon target genes driving each score (target symbol, its log2FC and Wald stat, its regulon weight) so the score is auditable rather than a black box. Explicitly check whether canonical aldosterone/mineralocorticoid-responsive genes — SGK1, SCNN1A, SCNN1B, SCNN1G, NR3C2, FKBP5, TSC22D3/GILZ, PER1, HSD11B2 — appear in the DE table, report their log2FC and padj regardless of significance, and state whether they are among the leading targets of any top TF. In parallel, run over-representation and/or ranked gene-set enrichment of the T1S1 DE results against human pathway gene sets from the reference store (the WikiPathways human GMT is present; the descriptor field is '%'-delimited and must be split to recover a readable set name).",
+              "context": "This is the check that distinguishes a genuine mineralocorticoid-pathway signal from a regulon artefact. Aldosterone acts through NR3C2 with a well-characterised early transcriptional response in kidney, so the presence or absence of those canonical targets is directly informative about whether the TF ranking is believable.",
+              "constraints": [
+                "Python only — use gseapy and/or decoupler for enrichment; parse the pathway GMT with pandas/plain Python.",
+                "Use HUMAN pathway gene sets only.",
+                "Report the canonical aldosterone-response genes with their actual log2FC and padj even when not significant — state 'not significant' rather than omitting them.",
+                "Do not claim mechanism from enrichment alone; frame pathway hits as consistent-with, not evidence-of, mineralocorticoid signalling.",
+                "If the human pathway gene-set resource cannot be resolved at run time, still deliver the per-TF leading-target tables and the canonical-gene check, and note the enrichment as not performed."
+              ],
+              "acceptance_criteria": [
+                "Per-TF leading-target tables for the top activated and top repressed TFs, with each target's log2FC, Wald stat and regulon weight.",
+                "A table of the canonical aldosterone-responsive genes with log2FC and padj, including explicit 'not detected in this matrix' entries where applicable.",
+                "A pathway enrichment result table with set name, size, overlap, p and adjusted p — or an explicit statement that the gene-set resource was unavailable.",
+                "A written verdict on whether the top TF calls are supported by canonical mineralocorticoid biology or are unsupported/ambiguous."
+              ],
+              "caveats": [
+                "Absence of a canonical gene may reflect the 12,000-gene subset rather than biology — distinguish 'not measured' from 'measured and unchanged'.",
+                "Enrichment on a 12,000-gene background is not the same as a whole-transcriptome background; use the tested-gene set as the background and say so.",
+                "Leading-target lists are descriptive, not a causal test."
+              ],
+              "packages": [
+                "gseapy",
+                "decoupler",
+                "pandas",
+                "numpy",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 48
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

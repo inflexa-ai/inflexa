@@ -1,0 +1,418 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "two-timepoints-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:01:02.785Z",
+  "elapsedMs": 156264,
+  "outcome": "plan_submitted",
+  "planId": "pln-5beadddd",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Ingest counts, align metadata, sample QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "context": "Data: /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns; gene-level counts from Salmon as delivered, length-correction status unknown) and /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/metadata/metadata.csv (12 x 4: condition, time, time_hours). Single batch, cell-line tissue, Homo sapiens. n=3 per condition/time cell means 8 residual df for the 2x2 factorial model; dispersion estimates will be noisy but the interaction test is estimable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 12 samples a clean 2 conditions x 2 time points (t0, t1) design with 3 replicates per cell, with no outliers or metadata mismatches that would invalidate a factorial interaction model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load the 12,000 x 12 count matrix and the 12-sample metadata table, verify the 2x2 factorial design (2 conditions x t0/t1, n=3 per cell), determine the gene identifier type, map to HGNC symbols if needed using the UniProt human ID-mapping table (HUMAN_9606_idmapping_selected.tab.gz, columns: UniProtKB-AC, GeneID, RefSeq, Ensembl), then run sample-level QC: library-size and filtered-count summaries, PCA on variance-stabilized counts, and a sample-distance heatmap to flag outliers before modeling.",
+        "acceptance_criteria": [
+          "A merged sample table with exactly 12 samples, all four condition-by-time cells populated with 3 replicates, is produced and reported",
+          "The gene identifier type in counts.csv is determined and documented; if Ensembl transcripts/genes, a gene-to-HGNC-symbol mapping is built from the UniProt human ID-mapping table and reported with its coverage over the 12,000 genes",
+          "A PCA (rlog/VST-transformed) and a sample-to-sample distance heatmap are produced and saved",
+          "Samples falling outside the design (missing metadata, wrong replicate count) or extreme PCA outliers are flagged explicitly rather than silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Factorial DESeq2: interaction test + simple effects",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "context": "The research question is a treatment-by-time interaction question, so the interaction term - not a marginal condition contrast pooled over time - is the primary test. With 3 replicates per cell, the Wald test on the interaction uses the 8 residual df of the 2x2; no alternative contrast can substitute for it. Counts are raw Salmon gene-level counts, appropriate for DESeq2's negative binomial GLM. FDR via Benjamini-Hochberg.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Does the treatment effect differ between t0 and t1 (condition:time interaction), and what is the treatment effect within each time point?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Fit DESeq2 with the factorial design ~ condition + time + condition:time (equivalently ~ condition*time) on the 12 samples x 12,000 genes. Primary test: the condition:time interaction term (Wald test, BH-adjusted) - this directly answers whether the treatment effect differs between t0 and t1. Secondary: (a) treatment vs control within t0 and within t1 (simple effects via contrasts of the model coefficients), (b) time effect within each condition, and (c) likelihood-ratio test of the full model vs the additive (no-interaction) model as a global check. Save full results tables for every test.",
+        "acceptance_criteria": [
+          "DESeq2 fits the full factorial design on all 12 samples; the interaction term is tested and the interaction results table (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) is saved for all tested genes",
+          "Within-time-point treatment contrasts (treatment vs control at t0 and at t1) and within-condition time contrasts are each saved as separate results tables",
+          "The counts of interaction-significant genes at FDR < 0.05 and FDR < 0.1 (and, for contrast tables, at FDR < 0.05 with |log2FC| > 1) are reported explicitly",
+          "The direction of the headline finding is stated: whether the treatment effect is larger, smaller, or reversed at t1 relative to t0, based on the interaction log2FC sign"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Visualize interaction and differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "context": "12,000 genes, 12 samples, 4 design cells of n=3. Volcano and heatmap are summaries of the T1S2 tables; profile plots are the most interpretable view of an interaction (parallel lines = no interaction, diverging/crossing lines = interaction).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "pheatmap"
+        ],
+        "question": "Which genes show a time-dependent treatment response, and is the interaction signature directionally consistent (e.g., treatment response amplified or reversed at t1)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Produce publication-quality figures from the T1S2 results: volcano plots for the interaction test and the two within-time-point contrasts, MA plots, a heatmap of variance-stabilized expression for the top interaction genes, and per-gene profile plots (mean expression vs time point, one line per condition) for the strongest interaction genes so the direction of the time-dependent treatment effect is directly visible.",
+        "acceptance_criteria": [
+          "A volcano plot for the interaction test (and one per within-time-point contrast) with FDR-significant genes labeled, saved as figures",
+          "A heatmap of variance-stabilized expression for the top interaction genes (by FDR), annotated by condition and time, is saved",
+          "Interaction/profile plots (mean expression vs time, one line per condition) for the top-ranked interaction genes are saved, making the direction of each gene's time-dependent treatment effect visible",
+          "Every figure references the actual condition and time level names from metadata.csv in its title/facets"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the interaction signature",
+        "agent": "enrichment-agent",
+        "track": "pathway-context",
+        "status": "pending",
+        "context": "Reference data: the WikiPathways Homo sapiens GMT staged at /mnt/refs/managed/wikipathways-human/2026.07.10/ (HGNC symbols; split the '%'-delimited first field for set names). Human organism matches the dataset (Homo sapiens, taxon 9606). Gene-to-symbol mapping comes from the UniProt human ID-mapping table if T1S1 found Ensembl-style identifiers. Ranking by the interaction statistic tests for pathway-level time-dependence of the treatment response, which is the pathway-level form of the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways show a treatment effect that differs between t0 and t1, and which pathways respond to treatment at t1 in the bulk-transcriptomics data?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Run GSEA (fgsea) with the WikiPathways human gene sets on ranked gene lists derived from the T1S2 tables: (a) ranked by the condition:time interaction statistic to find pathways whose treatment response changes between t0 and t1, and (b) ranked by the signed statistic of the treatment-vs-control contrast within t1 (and within t0 for comparison). Map gene identifiers to HGNC symbols first if the count matrix uses Ensembl IDs, using the UniProt human ID-mapping table.",
+        "acceptance_criteria": [
+          "FGSEA runs on at least two ranked lists: (a) genes ranked by the interaction Wald statistic, (b) genes ranked by the signed statistic of the t1 treatment-vs-control contrast (t0 contrast as comparison)",
+          "The WikiPathways human GMT (HGNC symbols) is used as the pathway source; if it is absent from /mnt/refs at run time, the step reports the gap and stops gracefully rather than substituting a cross-species set",
+          "Results tables report pathway name, size, NES, p-value and BH-adjusted p-value per ranked list; pathways with padj < 0.05 are highlighted",
+          "Enrichment results are cross-referenced with the interaction direction: for each significant pathway, whether the genes driving it shift treatment effect at t1 vs t0"
+        ]
+      }
+    ],
+    "title": "Treatment-by-time interaction analysis, 2x2 bulk RNA-seq",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is whether the treatment effect differs between two time points (t0, t1) in a 2 conditions x 2 time points factorial design with 3 replicates per cell (12 samples, 12,000 genes, Salmon gene-level counts, single batch, Homo sapiens cell line). The direct statistical answer is the condition:time interaction term in a negative-binomial GLM, so the plan fits DESeq2 with ~ condition + time + condition:time on all 12 samples rather than testing marginal condition contrasts that pool over time. Simple effects (treatment vs control within each time point, time effect within each condition) are extracted as secondary contrasts to characterize any interaction found. Sample-level QC (PCA on variance-stabilized counts, sample-distance heatmap) precedes modeling to catch outliers that would destabilize an n=3-per-cell design. Genes with a significant interaction are then visualized directly (profile plots of expression vs time per condition) and tested for pathway-level time-dependence of the treatment response via fgsea against the WikiPathways human gene sets, since with 12,000 genes the per-gene lists alone do not answer the biological question. Gene identifiers are mapped to HGNC symbols (UniProt human ID mapping) if the count matrix carries Ensembl IDs, because the staged GMT uses HGNC symbols."
+  },
+  "usage": {
+    "inputTokens": 66134,
+    "outputTokens": 6049,
+    "cacheReadInputTokens": 34816,
+    "reasoningTokens": 1608
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_20160bc3bd0545889954e1f7",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-14T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A merged sample table with exactly 12 samples, all four condition-by-time cells populated with 3 replicates, is produced and reported",
+                "The gene identifier type in counts.csv is determined and documented; if Ensembl transcripts/genes, a gene-to-HGNC-symbol mapping is built from the UniProt human ID-mapping table and reported with its coverage over the 12,000 genes",
+                "A PCA (rlog/VST-transformed) and a sample-to-sample distance heatmap are produced and saved",
+                "Samples falling outside the design (missing metadata, wrong replicate count) or extreme PCA outliers are flagged explicitly rather than silently dropped"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns; gene-level counts from Salmon as delivered, length-correction status unknown) and /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/metadata/metadata.csv (12 x 4: condition, time, time_hours). Single batch, cell-line tissue, Homo sapiens. n=3 per condition/time cell means 8 residual df for the 2x2 factorial model; dispersion estimates will be noisy but the interaction test is estimable.",
+              "depends_on": [],
+              "description": "Load the 12,000 x 12 count matrix and the 12-sample metadata table, verify the 2x2 factorial design (2 conditions x t0/t1, n=3 per cell), determine the gene identifier type, map to HGNC symbols if needed using the UniProt human ID-mapping table (HUMAN_9606_idmapping_selected.tab.gz, columns: UniProtKB-AC, GeneID, RefSeq, Ensembl), then run sample-level QC: library-size and filtered-count summaries, PCA on variance-stabilized counts, and a sample-distance heatmap to flag outliers before modeling.",
+              "id": "T1S1",
+              "name": "Ingest counts, align metadata, sample QC",
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Are the 12 samples a clean 2 conditions x 2 time points (t0, t1) design with 3 replicates per cell, with no outliers or metadata mismatches that would invalidate a factorial interaction model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "DESeq2 fits the full factorial design on all 12 samples; the interaction term is tested and the interaction results table (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) is saved for all tested genes",
+                "Within-time-point treatment contrasts (treatment vs control at t0 and at t1) and within-condition time contrasts are each saved as separate results tables",
+                "The counts of interaction-significant genes at FDR < 0.05 and FDR < 0.1 (and, for contrast tables, at FDR < 0.05 with |log2FC| > 1) are reported explicitly",
+                "The direction of the headline finding is stated: whether the treatment effect is larger, smaller, or reversed at t1 relative to t0, based on the interaction log2FC sign"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "The research question is a treatment-by-time interaction question, so the interaction term - not a marginal condition contrast pooled over time - is the primary test. With 3 replicates per cell, the Wald test on the interaction uses the 8 residual df of the 2x2; no alternative contrast can substitute for it. Counts are raw Salmon gene-level counts, appropriate for DESeq2's negative binomial GLM. FDR via Benjamini-Hochberg.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 with the factorial design ~ condition + time + condition:time (equivalently ~ condition*time) on the 12 samples x 12,000 genes. Primary test: the condition:time interaction term (Wald test, BH-adjusted) - this directly answers whether the treatment effect differs between t0 and t1. Secondary: (a) treatment vs control within t0 and within t1 (simple effects via contrasts of the model coefficients), (b) time effect within each condition, and (c) likelihood-ratio test of the full model vs the additive (no-interaction) model as a global check. Save full results tables for every test.",
+              "id": "T1S2",
+              "name": "Factorial DESeq2: interaction test + simple effects",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Does the treatment effect differ between t0 and t1 (condition:time interaction), and what is the treatment effect within each time point?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "A volcano plot for the interaction test (and one per within-time-point contrast) with FDR-significant genes labeled, saved as figures",
+                "A heatmap of variance-stabilized expression for the top interaction genes (by FDR), annotated by condition and time, is saved",
+                "Interaction/profile plots (mean expression vs time, one line per condition) for the top-ranked interaction genes are saved, making the direction of each gene's time-dependent treatment effect visible",
+                "Every figure references the actual condition and time level names from metadata.csv in its title/facets"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12,000 genes, 12 samples, 4 design cells of n=3. Volcano and heatmap are summaries of the T1S2 tables; profile plots are the most interpretable view of an interaction (parallel lines = no interaction, diverging/crossing lines = interaction).",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Produce publication-quality figures from the T1S2 results: volcano plots for the interaction test and the two within-time-point contrasts, MA plots, a heatmap of variance-stabilized expression for the top interaction genes, and per-gene profile plots (mean expression vs time point, one line per condition) for the strongest interaction genes so the direction of the time-dependent treatment effect is directly visible.",
+              "id": "T1S3",
+              "name": "Visualize interaction and differential expression",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "EnhancedVolcano",
+                "ComplexHeatmap",
+                "pheatmap"
+              ],
+              "question": "Which genes show a time-dependent treatment response, and is the interaction signature directionally consistent (e.g., treatment response amplified or reversed at t1)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            },
+            {
+              "acceptance_criteria": [
+                "FGSEA runs on at least two ranked lists: (a) genes ranked by the interaction Wald statistic, (b) genes ranked by the signed statistic of the t1 treatment-vs-control contrast (t0 contrast as comparison)",
+                "The WikiPathways human GMT (HGNC symbols) is used as the pathway source; if it is absent from /mnt/refs at run time, the step reports the gap and stops gracefully rather than substituting a cross-species set",
+                "Results tables report pathway name, size, NES, p-value and BH-adjusted p-value per ranked list; pathways with padj < 0.05 are highlighted",
+                "Enrichment results are cross-referenced with the interaction direction: for each significant pathway, whether the genes driving it shift treatment effect at t1 vs t0"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference data: the WikiPathways Homo sapiens GMT staged at /mnt/refs/managed/wikipathways-human/2026.07.10/ (HGNC symbols; split the '%'-delimited first field for set names). Human organism matches the dataset (Homo sapiens, taxon 9606). Gene-to-symbol mapping comes from the UniProt human ID-mapping table if T1S1 found Ensembl-style identifiers. Ranking by the interaction statistic tests for pathway-level time-dependence of the treatment response, which is the pathway-level form of the research question.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run GSEA (fgsea) with the WikiPathways human gene sets on ranked gene lists derived from the T1S2 tables: (a) ranked by the condition:time interaction statistic to find pathways whose treatment response changes between t0 and t1, and (b) ranked by the signed statistic of the treatment-vs-control contrast within t1 (and within t0 for comparison). Map gene identifiers to HGNC symbols first if the count matrix uses Ensembl IDs, using the UniProt human ID-mapping table.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the interaction signature",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways show a treatment effect that differs between t0 and t1, and which pathways respond to treatment at t1 in the bulk-transcriptomics data?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis"
+            }
+          ],
+          "title": "Treatment-by-time interaction analysis, 2x2 bulk RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_d568ac7700ad4c658def78c8",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The research question is whether the treatment effect differs between two time points (t0, t1) in a 2 conditions x 2 time points factorial design with 3 replicates per cell (12 samples, 12,000 genes, Salmon gene-level counts, single batch, Homo sapiens cell line). The direct statistical answer is the condition:time interaction term in a negative-binomial GLM, so the plan fits DESeq2 with ~ condition + time + condition:time on all 12 samples rather than testing marginal condition contrasts that pool over time. Simple effects (treatment vs control within each time point, time effect within each condition) are extracted as secondary contrasts to characterize any interaction found. Sample-level QC (PCA on variance-stabilized counts, sample-distance heatmap) precedes modeling to catch outliers that would destabilize an n=3-per-cell design. Genes with a significant interaction are then visualized directly (profile plots of expression vs time per condition) and tested for pathway-level time-dependence of the treatment response via fgsea against the WikiPathways human gene sets, since with 12,000 genes the per-gene lists alone do not answer the biological question. Gene identifiers are mapped to HGNC symbols (UniProt human ID mapping) if the count matrix carries Ensembl IDs, because the staged GMT uses HGNC symbols.",
+          "created_at": "2026-07-14T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A merged sample table with exactly 12 samples, all four condition-by-time cells populated with 3 replicates, is produced and reported",
+                "The gene identifier type in counts.csv is determined and documented; if Ensembl transcripts/genes, a gene-to-HGNC-symbol mapping is built from the UniProt human ID-mapping table and reported with its coverage over the 12,000 genes",
+                "A PCA (rlog/VST-transformed) and a sample-to-sample distance heatmap are produced and saved",
+                "Samples falling outside the design (missing metadata, wrong replicate count) or extreme PCA outliers are flagged explicitly rather than silently dropped"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns; gene-level counts from Salmon as delivered, length-correction status unknown) and /eval-four-models-v2-without-two-timepoints-n3-s1-1/data/inputs/metadata/metadata.csv (12 x 4: condition, time, time_hours). Single batch, cell-line tissue, Homo sapiens. n=3 per condition/time cell means 8 residual df for the 2x2 factorial model; dispersion estimates will be noisy but the interaction test is estimable.",
+              "depends_on": [],
+              "description": "Load the 12,000 x 12 count matrix and the 12-sample metadata table, verify the 2x2 factorial design (2 conditions x t0/t1, n=3 per cell), determine the gene identifier type, map to HGNC symbols if needed using the UniProt human ID-mapping table (HUMAN_9606_idmapping_selected.tab.gz, columns: UniProtKB-AC, GeneID, RefSeq, Ensembl), then run sample-level QC: library-size and filtered-count summaries, PCA on variance-stabilized counts, and a sample-distance heatmap to flag outliers before modeling.",
+              "id": "T1S1",
+              "name": "Ingest counts, align metadata, sample QC",
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Are the 12 samples a clean 2 conditions x 2 time points (t0, t1) design with 3 replicates per cell, with no outliers or metadata mismatches that would invalidate a factorial interaction model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "DESeq2 fits the full factorial design on all 12 samples; the interaction term is tested and the interaction results table (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) is saved for all tested genes",
+                "Within-time-point treatment contrasts (treatment vs control at t0 and at t1) and within-condition time contrasts are each saved as separate results tables",
+                "The counts of interaction-significant genes at FDR < 0.05 and FDR < 0.1 (and, for contrast tables, at FDR < 0.05 with |log2FC| > 1) are reported explicitly",
+                "The direction of the headline finding is stated: whether the treatment effect is larger, smaller, or reversed at t1 relative to t0, based on the interaction log2FC sign"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "The research question is a treatment-by-time interaction question, so the interaction term - not a marginal condition contrast pooled over time - is the primary test. With 3 replicates per cell, the Wald test on the interaction uses the 8 residual df of the 2x2; no alternative contrast can substitute for it. Counts are raw Salmon gene-level counts, appropriate for DESeq2's negative binomial GLM. FDR via Benjamini-Hochberg.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 with the factorial design ~ condition + time + condition:time (equivalently ~ condition*time) on the 12 samples x 12,000 genes. Primary test: the condition:time interaction term (Wald test, BH-adjusted) - this directly answers whether the treatment effect differs between t0 and t1. Secondary: (a) treatment vs control within t0 and within t1 (simple effects via contrasts of the model coefficients), (b) time effect within each condition, and (c) likelihood-ratio test of the full model vs the additive (no-interaction) model as a global check. Save full results tables for every test.",
+              "id": "T1S2",
+              "name": "Factorial DESeq2: interaction test + simple effects",
+              "packages": [
+                "DESeq2"
+              ],
+              "question": "Does the treatment effect differ between t0 and t1 (condition:time interaction), and what is the treatment effect within each time point?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "A volcano plot for the interaction test (and one per within-time-point contrast) with FDR-significant genes labeled, saved as figures",
+                "A heatmap of variance-stabilized expression for the top interaction genes (by FDR), annotated by condition and time, is saved",
+                "Interaction/profile plots (mean expression vs time, one line per condition) for the top-ranked interaction genes are saved, making the direction of each gene's time-dependent treatment effect visible",
+                "Every figure references the actual condition and time level names from metadata.csv in its title/facets"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12,000 genes, 12 samples, 4 design cells of n=3. Volcano and heatmap are summaries of the T1S2 tables; profile plots are the most interpretable view of an interaction (parallel lines = no interaction, diverging/crossing lines = interaction).",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Produce publication-quality figures from the T1S2 results: volcano plots for the interaction test and the two within-time-point contrasts, MA plots, a heatmap of variance-stabilized expression for the top interaction genes, and per-gene profile plots (mean expression vs time point, one line per condition) for the strongest interaction genes so the direction of the time-dependent treatment effect is directly visible.",
+              "id": "T1S3",
+              "name": "Visualize interaction and differential expression",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "EnhancedVolcano",
+                "ComplexHeatmap",
+                "pheatmap"
+              ],
+              "question": "Which genes show a time-dependent treatment response, and is the interaction signature directionally consistent (e.g., treatment response amplified or reversed at t1)?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "FGSEA runs on at least two ranked lists: (a) genes ranked by the interaction Wald statistic, (b) genes ranked by the signed statistic of the t1 treatment-vs-control contrast (t0 contrast as comparison)",
+                "The WikiPathways human GMT (HGNC symbols) is used as the pathway source; if it is absent from /mnt/refs at run time, the step reports the gap and stops gracefully rather than substituting a cross-species set",
+                "Results tables report pathway name, size, NES, p-value and BH-adjusted p-value per ranked list; pathways with padj < 0.05 are highlighted",
+                "Enrichment results are cross-referenced with the interaction direction: for each significant pathway, whether the genes driving it shift treatment effect at t1 vs t0"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference data: the WikiPathways Homo sapiens GMT staged at /mnt/refs/managed/wikipathways-human/2026.07.10/ (HGNC symbols; split the '%'-delimited first field for set names). Human organism matches the dataset (Homo sapiens, taxon 9606). Gene-to-symbol mapping comes from the UniProt human ID-mapping table if T1S1 found Ensembl-style identifiers. Ranking by the interaction statistic tests for pathway-level time-dependence of the treatment response, which is the pathway-level form of the research question.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run GSEA (fgsea) with the WikiPathways human gene sets on ranked gene lists derived from the T1S2 tables: (a) ranked by the condition:time interaction statistic to find pathways whose treatment response changes between t0 and t1, and (b) ranked by the signed statistic of the treatment-vs-control contrast within t1 (and within t0 for comparison). Map gene identifiers to HGNC symbols first if the count matrix uses Ensembl IDs, using the UniProt human ID-mapping table.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of the interaction signature",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways show a treatment effect that differs between t0 and t1, and which pathways respond to treatment at t1 in the bulk-transcriptomics data?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "pathway-context"
+            }
+          ],
+          "title": "Treatment-by-time interaction analysis, 2x2 bulk RNA-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

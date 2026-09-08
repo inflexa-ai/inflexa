@@ -1,0 +1,424 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "two-group-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:38:36.192Z",
+  "elapsedMs": 169160,
+  "outcome": "plan_submitted",
+  "planId": "pln-82cb5e87",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count matrix QC and sample-level quality check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "context": "Dataset: human liver bulk RNA-seq, 12,000 genes x 6 samples (3 drug-treated vs 3 control), raw gene-level counts exported from Salmon; the data profile does not record whether Salmon length correction was applied. Single batch, unpaired design.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Are the 6 liver samples (3 treated, 3 control) technically sound and comparable, and which genes carry enough count data to support a 3-vs-3 differential test?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples) and metadata.csv (6 x 2), verify sample-name alignment, library-size distribution and count integrity (integers, no negatives), filter genes with negligible counts (e.g. count >= 10 in at least 3 samples), then compute variance-stabilized/logCPM PCA, sample-to-sample distances and treatment-vs-control separation to detect outlier samples before any DE testing. Inspect whether the count column values are integral: raw Salmon gene counts are integers, whereas length-corrected countsFromAbundance output is not — record which case this is, since it determines whether standard DESeq2 size factors apply or the matrix must be handled as length-scaled counts.",
+        "acceptance_criteria": [
+          "counts.csv parsed: 12,000 genes x 6 samples confirmed against metadata.csv sample IDs",
+          "QC report with library sizes, pre/post-filter gene counts, and PCA sample clustering saved to T1S1 outputs",
+          "Explicit statement whether any sample is a candidate outlier, with the numeric evidence behind it"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control (DESeq2)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "context": "Design: ~condition, 3 treated vs 3 control, unpaired, single batch, human liver. Input is the QC-filtered gene-level count matrix from T1S1. DESeq2 1.52 and apeglm 1.34 are installed in the R track.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which genes are differentially expressed between drug-treated and control liver samples, and what are their effect sizes under the 3-vs-3 design?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run DESeq2 (R, DESeq2 1.52) on the filtered matrix with design ~condition (treated vs control), Wald test, Benjamini-Hochberg FDR. Apply apeglm LFC shrinkage for ranking and interpretation — essential at n=3/group where raw LFCs on low-count genes are wildly variable. Produce the full results table, MA plot, dispersion-fit plot and volcano plot. Report DE-gene counts at FDR < 0.05, < 0.10 and < 0.20, because at this sample size the 0.05 threshold alone will understate both the signal and the uncertainty. State in the output that dispersion is estimated from only 4 residual degrees of freedom, so per-gene SEs are wide and padj values are correspondingly unstable.",
+        "acceptance_criteria": [
+          "Full DESeq2 results table (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) written as CSV covering all tested genes",
+          "Shrunken LFC table produced; reported DE-gene counts at FDR < 0.05, < 0.10 and < 0.20 with the FDR-threshold sensitivity stated explicitly",
+          "MA plot, dispersion-fit plot and volcano plot saved; dispersion fit inspected for convergence given only 6 samples",
+          "Results table row count equals filtered gene count from T1S1 (or documented discrepancy)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Replicate-confidence audit: LOO stability and permutation null",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "differential-expression",
+        "status": "pending",
+        "context": "Observed DE results and the QC-stable sample set come from T1S1/T1S2. The design has 6 samples; leave-one-out leaves 2 treated vs 3 control or 3 vs 2, which DESeq2 still fits but with reduced power — LOO results must be reported as stability diagnostics, not as corrected p-values.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "How confident can we be in the DE calls — and in the set of DE genes — given only 3 replicates per group?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Quantify the stability of the T1S2 calls under resampling, since 3-vs-3 is the smallest design where DESeq2 dispersion estimation functions at all. Three diagnostics: (1) leave-one-out reruns — refit DESeq2 six times dropping each sample in turn, and measure Jaccard overlap of the FDR<0.05 gene sets, sign concordance of shrunken LFCs, and rank stability (Kendall tau on signed statistics) against the full model; (2) permutation calibration — for each of the 20 possible 3/3 label assignments (including the true one), rerun the same DESeq2 pipeline and record how many genes reach FDR<0.05, yielding an empirical null distribution for the DE-gene count and an empirical calibration of how unusual the observed count is; (3) effect-size sanity — report the width of shrunken-LFC confidence intervals for the top hits so the reader sees the precision actually supported. Conclude with a plain-language verdict: which calls are robust to the loss of any single replicate, and which rest on a single sample's signal.",
+        "acceptance_criteria": [
+          "Table of 6 leave-one-out reruns: DE-gene counts at FDR<0.05, overlap (Jaccard) with the full-model set, and LFC sign-concordance rates",
+          "Rank-stability metric (e.g. Kendall tau of signed statistics across LOO runs) for top-ranked genes",
+          "Exact permutation calibration over all 20 label assignments: observed DE count vs the null distribution, with an empirical calibration statement",
+          "Final confidence verdict combining internal (LOO/permutation) evidence, explicitly warning against extending it to external cohorts"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway-level interpretation of the DE signal",
+        "agent": "enrichment-agent",
+        "track": "interpretation",
+        "status": "pending",
+        "context": "The organism is human, so the WikiPathways Homo sapiens GMT (HGNC symbols) under /mnt/refs is the correct resource — not the rat or mouse files also staged. Input is the full ranked gene list from T1S2; fgsea 1.38 is installed.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "GSEABase",
+          "ggplot2"
+        ],
+        "question": "Do the treated-vs-control DE results converge on coherent biological pathways despite the small replicate number?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Convert DE results to a ranked list (signed Wald statistic or shrunken LFC x -log10(p) rank metric over all filtered genes) and run FGSEA against the WikiPathways human pathway set (HGNC-symbol GMT provisioned under /mnt/refs). Map gene identifiers to HGNC symbols if the count matrix uses Ensembl or Entrez IDs, using the staged human UniProt ID-mapping table if needed, and report the mapping rate. If the FDR<0.05 DE list from T1S2 is non-empty, additionally run a conservative over-representation check on it; with a small DE list the ranked-list FGSEA is the primary analysis and ORA the secondary. Interpret pathway hits as hypothesis-level context only, given n=3/group.",
+        "acceptance_criteria": [
+          "FGSEA results table (pathway, size, ES, NES, pval, padj) written as CSV; if no pathway reaches FDR<0.25 this is reported as a finding, not suppressed",
+          "Minimum pathway size and max size documented; number of DE genes mapping to pathway symbols reported",
+          "If the human pathway resource or ID mapping is unavailable, the step logs its absence and terminates gracefully without blocking the run"
+        ]
+      }
+    ],
+    "title": "Liver 3v3 drug-treatment DE with confidence audit",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a minimal but valid bulk RNA-seq design: 12,000 gene-level counts from Salmon across 6 human liver samples, 3 drug-treated vs 3 control, unpaired, single batch. The research question has two parts — which genes differ, and how much to trust the answer at n=3 per group — so the plan pairs a standard DE workflow with an explicit replicate-confidence audit rather than stopping at a DE table. Step order: (1) QC and low-count filtering to establish a stable gene universe and check for outlier samples, since one bad sample out of six distorts a 3-vs-3 contrast more than any statistical fix can repair; (2) DESeq2 differential expression with apeglm shrinkage, because at 4 residual degrees of freedom raw LFCs and SEs are unstable and shrinkage plus multi-threshold reporting is the honest way to present effect sizes; (3) a confidence audit quantifying stability directly — leave-one-out refits, an exact permutation null over all 20 possible 3/3 label assignments, and CI widths for top hits — which answers the 'how confident can we be' half of the question with numbers rather than hedging; (4) FGSEA against the human WikiPathways GMT on the full ranked list, chosen over over-representation because a ranked-list test extracts pathway signal even when the FDR<0.05 list is thin at this sample size. All steps run on the staged 12000x7 counts.csv and 6x2 metadata.csv; the human-only reference files are used because the organism is Homo sapiens."
+  },
+  "usage": {
+    "inputTokens": 65702,
+    "outputTokens": 5685,
+    "cacheReadInputTokens": 2752,
+    "reasoningTokens": 1352
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_da3d73f05e38406fa008ad30",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-10T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "counts.csv parsed: 12,000 genes x 6 samples confirmed against metadata.csv sample IDs",
+                "QC report with library sizes, pre/post-filter gene counts, and PCA sample clustering saved to T1S1 outputs",
+                "Explicit statement whether any sample is a candidate outlier, with the numeric evidence behind it"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: human liver bulk RNA-seq, 12,000 genes x 6 samples (3 drug-treated vs 3 control), raw gene-level counts exported from Salmon; the data profile does not record whether Salmon length correction was applied. Single batch, unpaired design.",
+              "depends_on": [],
+              "id": "T1S1",
+              "name": "Count matrix QC and sample-level quality check",
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "question": "Are the 6 liver samples (3 treated, 3 control) technically sound and comparable, and which genes carry enough count data to support a 3-vs-3 differential test?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "description": "Load /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples) and metadata.csv (6 x 2), verify sample-name alignment, library-size distribution and count integrity (integers, no negatives), filter genes with negligible counts (e.g. count >= 10 in at least 3 samples), then compute variance-stabilized/logCPM PCA, sample-to-sample distances and treatment-vs-control separation to detect outlier samples before any DE testing. Inspect whether the count column values are integral: raw Salmon gene counts are integers, whereas length-corrected countsFromAbundance output is not — record which case this is, since it determines whether standard DESeq2 size factors apply or the matrix must be handled as length-scaled counts."
+            },
+            {
+              "acceptance_criteria": [
+                "Full DESeq2 results table (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) written as CSV covering all tested genes",
+                "Shrunken LFC table produced; reported DE-gene counts at FDR < 0.05, < 0.10 and < 0.20 with the FDR-threshold sensitivity stated explicitly",
+                "MA plot, dispersion-fit plot and volcano plot saved; dispersion fit inspected for convergence given only 6 samples",
+                "Results table row count equals filtered gene count from T1S1 (or documented discrepancy)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Design: ~condition, 3 treated vs 3 control, unpaired, single batch, human liver. Input is the QC-filtered gene-level count matrix from T1S1. DESeq2 1.52 and apeglm 1.34 are installed in the R track.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control (DESeq2)",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2",
+                "data.table"
+              ],
+              "question": "Which genes are differentially expressed between drug-treated and control liver samples, and what are their effect sizes under the 3-vs-3 design?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "description": "Run DESeq2 (R, DESeq2 1.52) on the filtered matrix with design ~condition (treated vs control), Wald test, Benjamini-Hochberg FDR. Apply apeglm LFC shrinkage for ranking and interpretation — essential at n=3/group where raw LFCs on low-count genes are wildly variable. Produce the full results table, MA plot, dispersion-fit plot and volcano plot. Report DE-gene counts at FDR < 0.05, < 0.10 and < 0.20, because at this sample size the 0.05 threshold alone will understate both the signal and the uncertainty. State in the output that dispersion is estimated from only 4 residual degrees of freedom, so per-gene SEs are wide and padj values are correspondingly unstable."
+            },
+            {
+              "acceptance_criteria": [
+                "Table of 6 leave-one-out reruns: DE-gene counts at FDR<0.05, overlap (Jaccard) with the full-model set, and LFC sign-concordance rates",
+                "Rank-stability metric (e.g. Kendall tau of signed statistics across LOO runs) for top-ranked genes",
+                "Exact permutation calibration over all 20 label assignments: observed DE count vs the null distribution, with an empirical calibration statement",
+                "Final confidence verdict combining internal (LOO/permutation) evidence, explicitly warning against extending it to external cohorts"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Observed DE results and the QC-stable sample set come from T1S1/T1S2. The design has 6 samples; leave-one-out leaves 2 treated vs 3 control or 3 vs 2, which DESeq2 still fits but with reduced power — LOO results must be reported as stability diagnostics, not as corrected p-values.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T1S3",
+              "name": "Replicate-confidence audit: LOO stability and permutation null",
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "dplyr"
+              ],
+              "question": "How confident can we be in the DE calls — and in the set of DE genes — given only 3 replicates per group?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "description": "Quantify the stability of the T1S2 calls under resampling, since 3-vs-3 is the smallest design where DESeq2 dispersion estimation functions at all. Three diagnostics: (1) leave-one-out reruns — refit DESeq2 six times dropping each sample in turn, and measure Jaccard overlap of the FDR<0.05 gene sets, sign concordance of shrunken LFCs, and rank stability (Kendall tau on signed statistics) against the full model; (2) permutation calibration — for each of the 20 possible 3/3 label assignments (including the true one), rerun the same DESeq2 pipeline and record how many genes reach FDR<0.05, yielding an empirical null distribution for the DE-gene count and an empirical calibration of how unusual the observed count is; (3) effect-size sanity — report the width of shrunken-LFC confidence intervals for the top hits so the reader sees the precision actually supported. Conclude with a plain-language verdict: which calls are robust to the loss of any single replicate, and which rest on a single sample's signal."
+            },
+            {
+              "acceptance_criteria": [
+                "FGSEA results table (pathway, size, ES, NES, pval, padj) written as CSV; if no pathway reaches FDR<0.25 this is reported as a finding, not suppressed",
+                "Minimum pathway size and max size documented; number of DE genes mapping to pathway symbols reported",
+                "If the human pathway resource or ID mapping is unavailable, the step logs its absence and terminates gracefully without blocking the run"
+              ],
+              "agent": "enrichment-agent",
+              "context": "The organism is human, so the WikiPathways Homo sapiens GMT (HGNC symbols) under /mnt/refs is the correct resource — not the rat or mouse files also staged. Input is the full ranked gene list from T1S2; fgsea 1.38 is installed.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T2S1",
+              "name": "Pathway-level interpretation of the DE signal",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "GSEABase",
+                "ggplot2"
+              ],
+              "question": "Do the treated-vs-control DE results converge on coherent biological pathways despite the small replicate number?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "description": "Convert DE results to a ranked list (signed Wald statistic or shrunken LFC x -log10(p) rank metric over all filtered genes) and run FGSEA against the WikiPathways human pathway set (HGNC-symbol GMT provisioned under /mnt/refs). Map gene identifiers to HGNC symbols if the count matrix uses Ensembl or Entrez IDs, using the staged human UniProt ID-mapping table if needed, and report the mapping rate. If the FDR<0.05 DE list from T1S2 is non-empty, additionally run a conservative over-representation check on it; with a small DE list the ranked-list FGSEA is the primary analysis and ORA the secondary. Interpret pathway hits as hypothesis-level context only, given n=3/group."
+            }
+          ],
+          "title": "Liver 3v3 drug-treatment DE with confidence audit"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "chatcmpl-tool-b9204c3be83eab3d",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is a minimal but valid bulk RNA-seq design: 12,000 gene-level counts from Salmon across 6 human liver samples, 3 drug-treated vs 3 control, unpaired, single batch. The research question has two parts — which genes differ, and how much to trust the answer at n=3 per group — so the plan pairs a standard DE workflow with an explicit replicate-confidence audit rather than stopping at a DE table. Step order: (1) QC and low-count filtering to establish a stable gene universe and check for outlier samples, since one bad sample out of six distorts a 3-vs-3 contrast more than any statistical fix can repair; (2) DESeq2 differential expression with apeglm shrinkage, because at 4 residual degrees of freedom raw LFCs and SEs are unstable and shrinkage plus multi-threshold reporting is the honest way to present effect sizes; (3) a confidence audit quantifying stability directly — leave-one-out refits, an exact permutation null over all 20 possible 3/3 label assignments, and CI widths for top hits — which answers the 'how confident can we be' half of the question with numbers rather than hedging; (4) FGSEA against the human WikiPathways GMT on the full ranked list, chosen over over-representation because a ranked-list test extracts pathway signal even when the FDR<0.05 list is thin at this sample size. All steps run on the staged 12000x7 counts.csv and 6x2 metadata.csv; the human-only reference files are used because the organism is Homo sapiens.",
+          "created_at": "2026-07-10T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "counts.csv parsed: 12,000 genes x 6 samples confirmed against metadata.csv sample IDs",
+                "QC report with library sizes, pre/post-filter gene counts, and PCA sample clustering saved to T1S1 outputs",
+                "Explicit statement whether any sample is a candidate outlier, with the numeric evidence behind it"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: human liver bulk RNA-seq, 12,000 genes x 6 samples (3 drug-treated vs 3 control), raw gene-level counts exported from Salmon; the data profile does not record whether Salmon length correction was applied. Single batch, unpaired design.",
+              "depends_on": [],
+              "id": "T1S1",
+              "name": "Count matrix QC and sample-level quality check",
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "question": "Are the 6 liver samples (3 treated, 3 control) technically sound and comparable, and which genes carry enough count data to support a 3-vs-3 differential test?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential-expression",
+              "description": "Load /eval-four-models-v2-without-two-group-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 6 samples) and metadata.csv (6 x 2), verify sample-name alignment, library-size distribution and count integrity (integers, no negatives), filter genes with negligible counts (e.g. count >= 10 in at least 3 samples), then compute variance-stabilized/logCPM PCA, sample-to-sample distances and treatment-vs-control separation to detect outlier samples before any DE testing. Inspect whether the count column values are integral: raw Salmon gene counts are integers, whereas length-corrected countsFromAbundance output is not — record which case this is, since it determines whether standard DESeq2 size factors apply or the matrix must be handled as length-scaled counts."
+            },
+            {
+              "acceptance_criteria": [
+                "Full DESeq2 results table (gene, baseMean, log2FC, lfcSE, stat, pvalue, padj) written as CSV covering all tested genes",
+                "Shrunken LFC table produced; reported DE-gene counts at FDR < 0.05, < 0.10 and < 0.20 with the FDR-threshold sensitivity stated explicitly",
+                "MA plot, dispersion-fit plot and volcano plot saved; dispersion fit inspected for convergence given only 6 samples",
+                "Results table row count equals filtered gene count from T1S1 (or documented discrepancy)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Design: ~condition, 3 treated vs 3 control, unpaired, single batch, human liver. Input is the QC-filtered gene-level count matrix from T1S1. DESeq2 1.52 and apeglm 1.34 are installed in the R track.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control (DESeq2)",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2",
+                "data.table"
+              ],
+              "question": "Which genes are differentially expressed between drug-treated and control liver samples, and what are their effect sizes under the 3-vs-3 design?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential-expression",
+              "description": "Run DESeq2 (R, DESeq2 1.52) on the filtered matrix with design ~condition (treated vs control), Wald test, Benjamini-Hochberg FDR. Apply apeglm LFC shrinkage for ranking and interpretation — essential at n=3/group where raw LFCs on low-count genes are wildly variable. Produce the full results table, MA plot, dispersion-fit plot and volcano plot. Report DE-gene counts at FDR < 0.05, < 0.10 and < 0.20, because at this sample size the 0.05 threshold alone will understate both the signal and the uncertainty. State in the output that dispersion is estimated from only 4 residual degrees of freedom, so per-gene SEs are wide and padj values are correspondingly unstable."
+            },
+            {
+              "acceptance_criteria": [
+                "Table of 6 leave-one-out reruns: DE-gene counts at FDR<0.05, overlap (Jaccard) with the full-model set, and LFC sign-concordance rates",
+                "Rank-stability metric (e.g. Kendall tau of signed statistics across LOO runs) for top-ranked genes",
+                "Exact permutation calibration over all 20 label assignments: observed DE count vs the null distribution, with an empirical calibration statement",
+                "Final confidence verdict combining internal (LOO/permutation) evidence, explicitly warning against extending it to external cohorts"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Observed DE results and the QC-stable sample set come from T1S1/T1S2. The design has 6 samples; leave-one-out leaves 2 treated vs 3 control or 3 vs 2, which DESeq2 still fits but with reduced power — LOO results must be reported as stability diagnostics, not as corrected p-values.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T1S3",
+              "name": "Replicate-confidence audit: LOO stability and permutation null",
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "dplyr"
+              ],
+              "question": "How confident can we be in the DE calls — and in the set of DE genes — given only 3 replicates per group?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "differential-expression",
+              "description": "Quantify the stability of the T1S2 calls under resampling, since 3-vs-3 is the smallest design where DESeq2 dispersion estimation functions at all. Three diagnostics: (1) leave-one-out reruns — refit DESeq2 six times dropping each sample in turn, and measure Jaccard overlap of the FDR<0.05 gene sets, sign concordance of shrunken LFCs, and rank stability (Kendall tau on signed statistics) against the full model; (2) permutation calibration — for each of the 20 possible 3/3 label assignments (including the true one), rerun the same DESeq2 pipeline and record how many genes reach FDR<0.05, yielding an empirical null distribution for the DE-gene count and an empirical calibration of how unusual the observed count is; (3) effect-size sanity — report the width of shrunken-LFC confidence intervals for the top hits so the reader sees the precision actually supported. Conclude with a plain-language verdict: which calls are robust to the loss of any single replicate, and which rest on a single sample's signal."
+            },
+            {
+              "acceptance_criteria": [
+                "FGSEA results table (pathway, size, ES, NES, pval, padj) written as CSV; if no pathway reaches FDR<0.25 this is reported as a finding, not suppressed",
+                "Minimum pathway size and max size documented; number of DE genes mapping to pathway symbols reported",
+                "If the human pathway resource or ID mapping is unavailable, the step logs its absence and terminates gracefully without blocking the run"
+              ],
+              "agent": "enrichment-agent",
+              "context": "The organism is human, so the WikiPathways Homo sapiens GMT (HGNC symbols) under /mnt/refs is the correct resource — not the rat or mouse files also staged. Input is the full ranked gene list from T1S2; fgsea 1.38 is installed.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "id": "T2S1",
+              "name": "Pathway-level interpretation of the DE signal",
+              "packages": [
+                "fgsea",
+                "data.table",
+                "GSEABase",
+                "ggplot2"
+              ],
+              "question": "Do the treated-vs-control DE results converge on coherent biological pathways despite the small replicate number?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "interpretation",
+              "description": "Convert DE results to a ranked list (signed Wald statistic or shrunken LFC x -log10(p) rank metric over all filtered genes) and run FGSEA against the WikiPathways human pathway set (HGNC-symbol GMT provisioned under /mnt/refs). Map gene identifiers to HGNC symbols if the count matrix uses Ensembl or Entrez IDs, using the staged human UniProt ID-mapping table if needed, and report the mapping rate. If the FDR<0.05 DE list from T1S2 is non-empty, additionally run a conservative over-representation check on it; with a small DE list the ranked-list FGSEA is the primary analysis and ORA the secondary. Interpret pathway hits as hypothesis-level context only, given n=3/group."
+            }
+          ],
+          "title": "Liver 3v3 drug-treatment DE with confidence audit"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 61
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

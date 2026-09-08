@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to deduplicate no-UMI total RNA libraries, explains duplication as an expression-driven property of the protocol, and fits a DESeq2 Wald model on raw counts with an explicit ~condition design, control reference, in-model size factors, a group-size-justified filter, apeglm shrinkage, and BH at 0.05 with independent filtering. QC includes PCA, distance heatmap, library sizes, and an explicit keep/drop policy for sample_01, though the rRNA/mito share is only hedged as 'where derivable' and the reference's conditional removal of rRNA/mito genes before normalization is not stated; the claim that duplication rate can be derived from a count table is dubious. Enrichment is well specified (Wald stat ranking, 15-500 window, named collections with versions) though 'Reactome current' is vague. The report step is complete with versions, thresholds, counts, and caveats stated up front."
+}

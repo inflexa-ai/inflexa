@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 5,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan runs only the per-sample route (log2 CPM, ulm on signed CollecTRI from the local CSV, min 5 targets, per-regulator OLS with BH), which the reference treats as the consistency check, and it explicitly declines to fit the PyDESeq2 count model whose Wald statistics are the reference's primary input; it also leans on rpy2 to read an R-serialized DoRothEA object, which brushes against the Python-only constraint. QC is thorough and design-specific (blind VST, PCA on 500 genes, distances, library sizes, keep-all policy), and the regulon handling is correct (signed, named collection and version, mapping rate, no ORA). The low count filter is left unspecified and unjustified, normalization is plain CPM outside any count model, the per-regulator fit is vaguely stated (reference level and estimator not fixed, alpha not stated for BH). The report section is strong on provenance, estimator, regulon size, number tested, and caveats."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly treats the task as preranked fgsea on the full DESeq2 Wald-statistic ranking, with no significance cutoff, identifier mapping checked against the GMT, MSigDB 2026.1 hallmark named, minSize 15/maxSize 500, fixed seed, BH across the 50 sets, and leading edges reported. The sensitivity track (recomputed ~condition with control reference, Cook's distance on sample_01, exclusion run) is a sensible response to the shallow sample and keeps normalization inside DESeq2, but there is no PCA/sample-distance/library-size QC, so sample structure is only partially examined. Reporting at both padj<0.05 and padj<0.25 slightly blurs the stated alpha, and the fgsea version is not named, though DESeq2 and MSigDB versions and the ranking metric are."
+}

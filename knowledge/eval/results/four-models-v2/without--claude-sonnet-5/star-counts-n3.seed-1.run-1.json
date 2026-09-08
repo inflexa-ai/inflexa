@@ -1,0 +1,277 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "star-counts-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:06:10.097Z",
+  "elapsedMs": 26689,
+  "outcome": "plan_submitted",
+  "planId": "pln-af8700e4",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and filtering of raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 6 liver samples (3 treated, 3 control) in counts.csv show adequate library size, gene detection, and sample-sample correlation to proceed to differential expression, and which low-count genes should be filtered before modeling?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Library size and gene detection rate reported per sample for all 6 samples",
+          "Sample correlation / PCA computed on variance-stabilized counts to check for outliers or unexpected clustering by condition",
+          "Low-count genes (e.g., rowSum or rowMean threshold appropriate for n=3 per group) flagged for filtering, with the number of genes retained out of the original 12000 reported",
+          "Metadata condition column confirmed to align 3 treated vs 3 control against the count matrix column order"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between treated and control liver samples using DESeq2 on the STAR/featureCounts raw counts, after low-count filtering from T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeqDataSet built directly from raw integer counts and the metadata condition column (control as reference level)",
+          "Median-of-ratios size factor normalization applied (appropriate for featureCounts gene-level counts, no transcript-length offset needed)",
+          "Negative binomial GLM fit with Wald test for the treated-vs-control contrast",
+          "Independent filtering applied and log2 fold changes shrunk with apeglm (or ashr as fallback) for stable ranking",
+          "Full results table (gene, baseMean, log2FoldChange, shrunk LFC, p-value, padj) exported, with count of genes at padj < 0.05",
+          "Caveat stated: n=3 per group limits power to detect subtle effects and precludes robust outlier-sample exclusion decisions"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the treated-vs-control signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which biological pathways are enriched among genes differentially expressed between treated and control liver samples (from T1S2)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis run on the padj<0.05 DE gene set (or a stated alternative threshold if too few genes pass) against a human pathway gene-set collection",
+          "Pre-ranked GSEA run on the full gene list ranked by the DESeq2 shrunk log2FoldChange (or signed -log10(p) x sign(LFC)) against the same gene sets",
+          "Uses the WikiPathways human gene sets (HGNC symbols) available in the reference store; if this resource is unavailable at run time, the step must report that gap explicitly rather than silently skipping enrichment",
+          "Enriched pathways reported with adjusted p-values (BH), normalized enrichment scores for GSEA, and leading-edge genes for top hits",
+          "Gene symbol matching between DESeq2 result IDs and WikiPathways HGNC symbols verified/harmonized before testing"
+        ]
+      }
+    ],
+    "title": "Liver drug treatment vs control DESeq2 DE + pathway enrichment",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is raw integer gene-level counts (12000 genes x 6 samples) from STAR/featureCounts for a human liver drug-treatment study, 3 treated vs 3 control, unpaired, single batch. This is a standard bulk RNA-seq design well suited to DESeq2's negative-binomial GLM, which is validated for STAR/featureCounts-derived counts (no transcript-level offsets needed, unlike Salmon/kallisto outputs that require tximport). Track 1 runs QC/normalization then DESeq2 differential expression with independent filtering and effect-size shrinkage (apeglm) to get a stable, ranked gene list. Track 2 takes that ranked list into pathway enrichment (ORA + GSEA) against the WikiPathways human gene sets available in the reference store, giving biological interpretation of the treated-vs-control signature. No translational/PK/safety data are present in this dataset, so no such steps are added."
+  },
+  "usage": {
+    "inputTokens": 268383,
+    "outputTokens": 2288,
+    "cacheCreationInputTokens": 72521,
+    "cacheReadInputTokens": 195790,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Q8rNcBGDTuR398rAUt4Z9N",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene annotation GTF ensembl"
+      },
+      "outcome": "ok",
+      "durationMs": 35
+    },
+    {
+      "toolUseId": "toolu_01DTi2U1CXmiqPmoxunjXTya",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01DaQ4LLNPbC5hf9agfXGJNk",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome human"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01MzZdTkCcYeq5gd4hwFAz9y",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_011NfAtacTZaqNCd8jmvkhCJ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01Fcog3SwdCjj5Vs3e5CQRix",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "EnhancedVolcano",
+          "fgsea",
+          "clusterProfiler",
+          "apeglm",
+          "ashr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01FpyofNDDTZj12hRBy2NAWX",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug treatment vs control DESeq2 DE + pathway enrichment",
+          "analytical_narrative": "The input is raw integer gene-level counts (12000 genes x 6 samples) from STAR/featureCounts for a human liver drug-treatment study, 3 treated vs 3 control, unpaired, single batch. This is a standard bulk RNA-seq design well suited to DESeq2's negative-binomial GLM, which is validated for STAR/featureCounts-derived counts (no transcript-level offsets needed, unlike Salmon/kallisto outputs that require tximport). Track 1 runs QC/normalization then DESeq2 differential expression with independent filtering and effect-size shrinkage (apeglm) to get a stable, ranked gene list. Track 2 takes that ranked list into pathway enrichment (ORA + GSEA) against the WikiPathways human gene sets available in the reference store, giving biological interpretation of the treated-vs-control signature. No translational/PK/safety data are present in this dataset, so no such steps are added.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and filtering of raw counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples (3 treated, 3 control) in counts.csv show adequate library size, gene detection, and sample-sample correlation to proceed to differential expression, and which low-count genes should be filtered before modeling?",
+              "acceptance_criteria": [
+                "Library size and gene detection rate reported per sample for all 6 samples",
+                "Sample correlation / PCA computed on variance-stabilized counts to check for outliers or unexpected clustering by condition",
+                "Low-count genes (e.g., rowSum or rowMean threshold appropriate for n=3 per group) flagged for filtering, with the number of genes retained out of the original 12000 reported",
+                "Metadata condition column confirmed to align 3 treated vs 3 control against the count matrix column order"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between treated and control liver samples using DESeq2 on the STAR/featureCounts raw counts, after low-count filtering from T1S1?",
+              "acceptance_criteria": [
+                "DESeqDataSet built directly from raw integer counts and the metadata condition column (control as reference level)",
+                "Median-of-ratios size factor normalization applied (appropriate for featureCounts gene-level counts, no transcript-length offset needed)",
+                "Negative binomial GLM fit with Wald test for the treated-vs-control contrast",
+                "Independent filtering applied and log2 fold changes shrunk with apeglm (or ashr as fallback) for stable ranking",
+                "Full results table (gene, baseMean, log2FoldChange, shrunk LFC, p-value, padj) exported, with count of genes at padj < 0.05",
+                "Caveat stated: n=3 per group limits power to detect subtle effects and precludes robust outlier-sample exclusion decisions"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the treated-vs-control signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes differentially expressed between treated and control liver samples (from T1S2)?",
+              "acceptance_criteria": [
+                "Over-representation analysis run on the padj<0.05 DE gene set (or a stated alternative threshold if too few genes pass) against a human pathway gene-set collection",
+                "Pre-ranked GSEA run on the full gene list ranked by the DESeq2 shrunk log2FoldChange (or signed -log10(p) x sign(LFC)) against the same gene sets",
+                "Uses the WikiPathways human gene sets (HGNC symbols) available in the reference store; if this resource is unavailable at run time, the step must report that gap explicitly rather than silently skipping enrichment",
+                "Enriched pathways reported with adjusted p-values (BH), normalized enrichment scores for GSEA, and leading-edge genes for top hits",
+                "Gene symbol matching between DESeq2 result IDs and WikiPathways HGNC symbols verified/harmonized before testing"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

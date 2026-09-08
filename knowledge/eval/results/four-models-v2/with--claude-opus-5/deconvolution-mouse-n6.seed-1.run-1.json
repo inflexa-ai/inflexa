@@ -1,0 +1,1448 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T22:43:34.021Z",
+  "elapsedMs": 129688,
+  "outcome": "plan_submitted",
+  "planId": "pln-212f0af2",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC and low-depth inspection",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A sample with a library size several times below the median must not be deleted silently; the count model down-weights it through its size factor, so removal is a judgment, not a default",
+          "With 12 samples, a PCA that does not separate the arms is not evidence of no treatment effect"
+        ],
+        "context": "Data profile: raw gene-level counts from Salmon, length-correction state not recorded; mouse (taxon 10090); subcutaneous tumor; 6 anti-PD-1 vs 6 isotype control, unpaired, single batch. Caveat on record: sample_01 library size ~4x below median.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Do the 12 mouse subcutaneous tumor samples group by treatment (anti-PD-1 vs isotype control), and is sample_01 — whose library size is ~4x below the median — an outlier beyond its depth?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Raw mouse counts, 6v6 unpaired with one low-depth sample: blind vst, PCA on top 500 genes, sample distance heatmap per R-0033@40bf; sample_01 kept and reported per R-0008@440d.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500",
+          "qc_sample_structure: transform = vst_blind",
+          "qc_sample_structure: low_depth_policy = keep_inspect_report — keep sample_01, inspect it, report it"
+        ],
+        "description": "Load /eval-four-models-v2-with-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, mouse gene symbols) and /eval-four-models-v2-with-deconvolution-mouse-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id correspondence between the two files and record the exact condition level names as they appear in the metadata. Build a DESeq2 dataset with ~condition, apply the variance stabilizing transformation blind to the design, compute PCA on the 500 most variable genes, and draw a Euclidean sample-distance heatmap, coloring both by condition. Report per-sample library size and number of detected genes in a table, with sample_01 explicitly annotated. Do NOT remove sample_01 for depth alone; remove a sample only with a stated non-depth reason and carry that decision forward explicitly.",
+        "acceptance_criteria": [
+          "Counts and metadata are joined on sample id with all 12 samples matched and the actual condition level names reported verbatim",
+          "A blind-VST PCA on the top 500 variable genes and a sample-distance heatmap are produced, colored by condition",
+          "A per-sample table of library size and detected genes is reported, with sample_01 flagged",
+          "Any sample exclusion is accompanied by a stated reason other than low depth; if none, all 12 samples are carried forward"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and normalized matrices for composition analysis",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A gene filter removes markers of rare populations; record which mMCP-counter / signature marker genes are lost so the downstream steps can report coverage"
+        ],
+        "context": "Deconvolution requires linear-scale input; gene lengths are unavailable and the length-correction state of the Salmon counts is unknown, so CPM is the defensible linear scale here.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR"
+        ],
+        "question": "Which of the 12000 genes are expressed enough to inform composition estimates, and what are the correctly scaled expression matrices for a mouse marker-based deconvolution and for rank-based signature scoring?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0030@2248",
+            "R-0129@2909"
+          ],
+          "reason": "Pre-filter at 10 counts in the smallest group size per R-0002@087b; normalization inside the model with median-of-ratios per R-0026@9ab1; linear-scale CPM for deconvolution input per R-0129@2909 since gene lengths and length-correction state are unavailable.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "depth_policy",
+              "step": "normalize",
+              "value": "size_factors_account_for_depth",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-two-group@1.1.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_count = 10",
+          "filter_low_counts: min_samples = smallest_group_size (6)",
+          "normalize: size_factors = median-of-ratios, named in the plan",
+          "normalize: depth_policy = size factors account for depth; do not drop sample_01 for depth",
+          "Do not scale, transform, or normalize counts before size-factor estimation"
+        ],
+        "description": "Filter the count matrix to genes with at least 10 counts in at least 6 samples (the smallest group size). Estimate median-of-ratios size factors with DESeq2 — do not pre-scale or pre-transform counts before size-factor estimation. Emit three artifacts for downstream steps: (1) the filtered raw count matrix, (2) a LINEAR-scale CPM matrix (counts per million from library-size scaling, no log) for the deconvolution step, and (3) a log2(CPM+1) matrix for rank-based signature scoring. State explicitly in the output that CPM and not TPM is used because the Salmon import state — whether the length correction was applied — is not recorded for this dataset, and that a marker-score method is insensitive to a monotone per-sample scaling but an absolute mixture method would not be. Report how many genes pass the filter and how many were dropped.",
+        "acceptance_criteria": [
+          "Gene filter applied as >=10 counts in >=6 samples, with pre- and post-filter gene counts reported",
+          "Median-of-ratios size factors estimated and reported per sample, with sample_01's size factor visible",
+          "A linear-scale CPM matrix and a log2(CPM+1) matrix are written for downstream steps",
+          "The report states CPM (not TPM) was used and why — Salmon length-correction state unknown"
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "mMCP-counter mouse immune and stromal abundance per sample",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "mMCP-counter scores are marker-based relative abundances on an arbitrary per-population scale; treating them as fractions or comparing one population's score to another's is invalid",
+          "The 12000-gene matrix is a reduced feature space; a population whose markers were largely filtered out will have an unstable score",
+          "Bulk composition estimates from a tumor confound infiltration with tumor cellularity — a rise in an immune score can reflect fewer tumor cells rather than more immune cells"
+        ],
+        "context": "Mouse subcutaneous tumor, anti-PD-1 vs isotype. The knowledge service flagged that human deconvolution references must not be used on mouse data and named mMCP-counter the tool of record; a package check in this environment confirms mMCPcounter 1.1.0 is installed, so the flag's 'tool absent' branch does not apply and the mouse tool is used. If, at run time, mMCPcounter cannot be loaded, do not substitute a human method — fall back to reporting the T3S1 mouse marker signature scores as descriptive only, and say so.",
+        "maxSteps": 200,
+        "packages": [
+          "mMCPcounter"
+        ],
+        "question": "What is the relative abundance of each immune and stromal population in each of the 12 mouse subcutaneous tumors?",
+        "grounding": {
+          "claims": [
+            "R-0129@2909",
+            "R-0132@246d",
+            "R-0136@b81f"
+          ],
+          "reason": "Flagged by R-0136@b81f (no human reference on mouse data). The flag's stated remedy — mMCP-counter — is available in this environment (mMCPcounter 1.1.0 confirmed installed), so the step runs the mouse tool of record and forbids MCP-counter/xCell/EPIC/quanTIseq; linear CPM input per R-0129@2909, composition reported as the outcome per R-0132@246d.",
+          "status": "flagged",
+          "settings": [
+            {
+              "name": "deconvolution_input",
+              "step": "deconvolution",
+              "value": "linear_tpm_or_cpm",
+              "source": "doi:10.1038/s41467-020-19015-1"
+            },
+            {
+              "name": "log_input_for_absolute_methods",
+              "step": "deconvolution",
+              "value": false,
+              "source": "doi:10.1093/bioinformatics/btz363"
+            },
+            {
+              "name": "composition_role",
+              "step": "deconvolution",
+              "value": "outcome_or_covariate_stated",
+              "source": "doi:10.1093/bioinformatics/btz363"
+            },
+            {
+              "name": "report_composition_beside_de",
+              "step": "deconvolution",
+              "value": true,
+              "source": "doi:10.1038/s41467-020-19015-1"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "deconvolution: deconvolution_input = linear_tpm_or_cpm — use the linear CPM matrix from T1S2",
+          "deconvolution: log_input_for_absolute_methods = false",
+          "deconvolution: composition_role = outcome (stated) — composition is the outcome of this analysis, not a covariate in a gene-level model",
+          "deconvolution: report_composition_beside_de = true",
+          "Forbidden methods for this mouse dataset: MCP-counter (human), xCell, EPIC, quanTIseq"
+        ],
+        "description": "Run mMCP-counter (mMCPcounter, the mouse-specific version of MCP-counter, confirmed present at v1.1.0) on the LINEAR-scale CPM matrix from T1S2, using mouse gene symbols as the feature space. Produce a population x sample score matrix covering the mMCP-counter populations (T cells, CD8 T cells, NK cells, B derived, monocytes/macrophages, monocytes, granulocytes, neutrophils, basophils, mast cells, eosinophils, memory B cells, vessels, fibroblasts, and the others the package defines). Report, per population, how many of its marker genes were present in the filtered matrix and which were missing — a population with few surviving markers must be labelled low-confidence and must not be interpreted. Do NOT run MCP-counter, xCell, EPIC, or quanTIseq: their references are human and their specificity does not transfer to mouse tissue. State clearly in the output that these are relative marker-based abundance scores, comparable across samples within a population but NOT across populations, and not cell fractions. Deliver the per-sample composition table as a primary result.",
+        "acceptance_criteria": [
+          "A population x 12-sample mMCP-counter score matrix is produced from linear-scale CPM, with the actual condition label attached to each sample",
+          "Marker coverage per population is reported (markers present / total), and low-coverage populations are explicitly labelled low-confidence",
+          "No human-reference deconvolution method (MCP-counter, xCell, EPIC, quanTIseq) appears anywhere in the step",
+          "The output states that scores are relative abundances, not fractions, and are not comparable across populations",
+          "The input transform (linear CPM, not log, not TPM) is stated beside the result"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "UCell mouse immune and stromal marker signature scores",
+        "agent": "immune-profiling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A marker-set score is a relative enrichment, never a fraction",
+          "A marker of a cell type in one tissue is not necessarily a marker of that cell type in subcutaneous tumor tissue; state the tissue of origin of the markers",
+          "Where UCell and mMCP-counter disagree for a population, report the disagreement rather than choosing the more convenient one"
+        ],
+        "context": "This is the orthogonal check on T3S2, not a replacement. UCell 2.16.0 is installed. Reference store holds /mnt/refs/managed/wikipathways-mouse (MGI symbols); other mouse marker resources should be resolved at run time.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell",
+          "SummarizedExperiment"
+        ],
+        "question": "Do independent mouse immune and stromal marker signatures give the same per-sample composition picture as mMCP-counter across the 12 tumors?",
+        "grounding": {
+          "claims": [
+            "R-0133@ce76",
+            "R-0134@0f16",
+            "R-0135@f02d"
+          ],
+          "reason": "Per-sample cell-type scores with one gene list per population and a depth-variable sample: UCell rank-based scoring chosen among the R-0133@ce76 alternatives (singscore/GSVA) because the signatures are undirected single lists and ranks are depth-insensitive; mouse marker provenance per R-0135@f02d.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "score_method",
+              "step": "signature_scoring",
+              "value": "rank_based_per_sample",
+              "source": "doi:10.1016/j.csbj.2021.06.043"
+            },
+            {
+              "name": "input_scale",
+              "step": "signature_scoring",
+              "value": "log_normalized_expression",
+              "source": "doi:10.1186/s12859-018-2435-4"
+            },
+            {
+              "name": "marker_source",
+              "step": "signature_scoring",
+              "value": "panglaodb_or_hpa_tissue",
+              "source": "doi:10.1093/database/baz046"
+            },
+            {
+              "name": "marker_species_and_tissue",
+              "step": "signature_scoring",
+              "value": "state_in_report",
+              "source": "doi:10.1126/science.1260419"
+            },
+            {
+              "name": "signature_provenance",
+              "step": "signature_scoring",
+              "value": "source_version_and_genes_present",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "signature_scoring: score_method = rank_based_per_sample (UCell)",
+          "signature_scoring: input_scale = log_normalized_expression — the log2(CPM+1) matrix from T1S2",
+          "signature_scoring: marker_source = a mouse cell-type marker resource (PanglaoDB-style mouse markers, or mouse WikiPathways immune sets); state which",
+          "signature_scoring: marker_species_and_tissue = state in the report",
+          "signature_scoring: signature_provenance = source, version, and genes present"
+        ],
+        "description": "Score each of the 12 samples with UCell (rank-based, Mann-Whitney U on within-sample ranks, so insensitive to sample depth — relevant given sample_01) on the log2(CPM+1) matrix from T1S2, using MOUSE marker sets for the immune and stromal populations of interest: CD8 T cells, CD4 T cells, regulatory T cells, NK cells, B cells, macrophages (and M1/M2-leaning where a mouse set exists), monocytes, dendritic cells, neutrophils, mast cells, fibroblasts/CAF, and endothelium. Resolve mouse marker sets from the reference data available in this environment — the mouse WikiPathways collection is present and holds MGI-symbol gene sets usable for immune processes, and mouse-specific cell-type marker sets (e.g. a PanglaoDB-style mouse marker table) should be resolved if present. Do NOT use a human marker set or a human-to-mouse symbol coercion. For every signature report its source, its version, the number of marker genes defined, and the number present in the filtered matrix — a signature missing genes is a different signature. If no adequate mouse cell-type marker resource is available in the environment, report that explicitly and restrict this step to whatever mouse sets are present rather than substituting human sets; the mMCP-counter result in T3S2 remains the primary composition estimate in that case.",
+        "acceptance_criteria": [
+          "A signature x 12-sample UCell score matrix is produced from log2(CPM+1)",
+          "Every signature is reported with its source, version, marker count defined, and marker count present in the matrix",
+          "All marker sets used are mouse (MGI symbols); no human set and no cross-species symbol coercion is used, and any unavailable mouse resource is reported as such",
+          "Scores are described as relative signature enrichment, explicitly not cell fractions"
+        ]
+      },
+      {
+        "id": "T3S3",
+        "name": "Anti-PD-1 vs isotype comparison of composition scores",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Marker-based scores of different populations are on different arbitrary scales; only within-population between-group comparisons are meaningful",
+          "Anti-PD-1 treatment can change marker gene expression per cell (e.g. activation markers) independently of cell number, so a score shift is not proof of a change in cell abundance",
+          "With n=6 per arm, one influential animal can drive a nominally significant result — inspect the per-sample plots before interpreting"
+        ],
+        "context": "Composition is the outcome of this analysis, not a covariate in a gene-level model; no gene-level differential expression is planned because the research question stops at composition.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Does any immune or stromal population differ in abundance between the 6 anti-PD-1 and the 6 isotype control tumors?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16",
+            "R-0132@246d"
+          ],
+          "reason": "Per-sample composition scores compared between two groups: limma on the score matrix under the study design with BH across signatures per R-0134@0f16; composition treated as the outcome per R-0132@246d.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "score_test",
+              "step": "signature_scoring",
+              "value": "limma_on_scores_with_the_design",
+              "source": "doi:10.1186/1471-2105-14-7"
+            },
+            {
+              "name": "score_adjustment",
+              "step": "signature_scoring",
+              "value": "BH_across_signatures",
+              "source": "doi:10.1186/1471-2105-14-7"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T3S1",
+          "T3S2"
+        ],
+        "constraints": [
+          "signature_scoring: score_test = limma on the scores with the design",
+          "signature_scoring: score_adjustment = BH across signatures",
+          "The test unit is the 12 mice; do not treat genes as replicates",
+          "Do not use composition scores as a covariate in any gene-level model in this plan — they are the outcome here"
+        ],
+        "description": "Take the mMCP-counter population scores (T3S2) and the UCell signature scores (T3S1) as two score matrices, each population/signature x 12 samples. For each matrix, fit limma with the same two-group design used throughout (~condition, anti-PD-1 vs isotype control as named in the metadata, no covariates, unpaired) — the unit of the test is the 6+6 mice, not the genes. Adjust p-values with Benjamini-Hochberg ACROSS the populations tested within each matrix, reporting the number tested. Report per population: group means, the difference with a 95% confidence interval, the raw and BH-adjusted p-value, and a per-sample dot/box plot with sample_01 marked. Also report the Spearman concordance between the mMCP-counter score and the corresponding UCell signature for each population that both cover. State plainly that 6 vs 6 mice gives power only for large composition shifts, that a non-significant population is not evidence of no change, and that both score types are relative — a shift can arise from a change in another compartment (e.g. tumor cellularity) rather than from a true change in the population itself.",
+        "acceptance_criteria": [
+          "limma fitted on the score matrices with the two-group design using the actual condition level names, one test per population/signature",
+          "BH adjustment applied across populations within each score matrix, with the number of tests reported",
+          "A results table gives group means, difference with 95% CI, raw p and BH-adjusted p per population",
+          "Per-sample visualizations show all 12 points with sample_01 identifiable",
+          "Concordance between mMCP-counter and UCell is reported for overlapping populations",
+          "The report states the power limitation of 6 vs 6 and that null results are not evidence of absence"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Composition report and reproducibility record",
+        "agent": "immune-profiling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The report must not extrapolate from a 12-sample mouse experiment to human anti-PD-1 biology"
+        ],
+        "context": "Final deliverable answering both halves of the research question: composition of every sample, and whether it differs between arms.",
+        "maxSteps": 200,
+        "packages": [
+          "ComplexHeatmap",
+          "ggplot2",
+          "knitr",
+          "rmarkdown"
+        ],
+        "question": "What is the per-sample immune and stromal composition of the 12 mouse tumors, and which populations differ between anti-PD-1 and isotype control?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "No rule covers the report step itself; the reproducibility record follows R-0086@becf.",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T3S3"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release",
+          "Do not present marker-based scores as cell fractions or percentages anywhere in the report",
+          "Do not claim a treatment effect for any population whose BH-adjusted p-value does not support it"
+        ],
+        "description": "Assemble the final report: (1) the per-sample composition table — every sample as a row, every mMCP-counter population and UCell signature as a column, with the condition label; (2) a heatmap of composition scores across the 12 samples, samples annotated by arm; (3) the between-arm comparison table from T3S3 with effect sizes, confidence intervals and BH-adjusted p-values; (4) a methods statement recording that mMCP-counter (mouse) was used and that human-reference deconvolution methods were excluded because the samples are mouse, that input was linear CPM (not TPM, because the Salmon length-correction state is unrecorded), that scores are relative abundances and not fractions, that sample_01 was retained despite its ~4x-below-median library size and how it behaved in QC and in the composition scores, and that with 6 vs 6 mice only large composition differences are detectable. Include the reproducibility record: sessionInfo, random seeds, package versions, and the version of every marker/gene-set collection used.",
+        "acceptance_criteria": [
+          "A per-sample composition table covering all 12 samples with condition labels is delivered",
+          "A composition heatmap annotated by treatment arm is produced",
+          "The between-arm results table with effect sizes, CIs and adjusted p-values is included",
+          "The methods statement records the mouse-only method choice, the CPM input rationale, the relative-score caveat, sample_01's handling, and the power limitation",
+          "Reproducibility record includes sessionInfo, seeds, package versions, and marker collection versions"
+        ]
+      }
+    ],
+    "title": "Mouse tumor immune/stromal composition: anti-PD-1 vs isotype",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question asks for the immune and stromal composition of each of the 12 subcutaneous tumors (6 anti-PD-1, 6 isotype control) and whether composition differs between arms. The input is a single gene-level count matrix from Salmon (12000 genes x 12 samples, mouse gene symbols) plus a 12 x 2 metadata table with a condition column; the design is unpaired, single batch, no covariates. Sample sample_01 has a library size about 4x below the median, so QC keeps and inspects it rather than dropping it silently (R-0008), and depth is handled by size factors rather than by exclusion (R-0030).\n\nThe knowledge service flagged the deconvolution step: human reference methods (MCP-counter, xCell, EPIC, quanTIseq) must not be run on mouse data (R-0136), and the mouse tool of record is mMCP-counter. A package check confirms mMCPcounter 1.1.0 IS installed in this environment, so the flag's condition ('absent from this pool') does not hold here and the step proceeds with the mouse tool; the human methods listed in `forbids` are excluded. mMCP-counter is a marker-based abundance score, not a fraction, so results are reported as relative abundance per cell population, comparable across samples within a population and NOT across populations.\n\nStructure: T1 does QC/filtering/normalization on the counts and produces both the linear-scale CPM matrix that deconvolution requires (R-0129) and a log-CPM matrix for rank-based scoring. T3S2 runs mMCP-counter for the composition estimate. T3S1 runs UCell scores on independent mouse marker sets as an orthogonal check on the same populations, since a single marker-based method on 12000 genes can miss populations whose markers were filtered out. T3S3 tests every population score between arms with limma under the same two-group design, BH-adjusted across populations, and reports effect sizes with confidence intervals — with 6 vs 6 mice this is a small study and the test is powered only for large composition shifts, which the report must state. T1S3 assembles the per-sample composition table, the between-arm comparison, and the reproducibility record.\n\nThe import state of the Salmon counts is unknown (no statement of length correction), so CPM rather than TPM is the deconvolution input and that choice is stated with the result. No differential expression on genes is planned: the question stops at composition, and an unasked gene-level DE would be scope the user did not request. Composition here is the outcome, not a covariate (R-0132)."
+  },
+  "usage": {
+    "inputTokens": 178313,
+    "outputTokens": 11194,
+    "cacheCreationInputTokens": 94540,
+    "cacheReadInputTokens": 83737,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_016TyyeQjiYjdNDozBoECLRf",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "preferred_language": "R"
+      },
+      "outcome": "ok",
+      "durationMs": 38
+    },
+    {
+      "toolUseId": "toolu_01FHMyt9dhod9W6WUAJjbnw9",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "mMCPcounter",
+          "MCPcounter",
+          "quantiseqr",
+          "xCell2",
+          "ConsensusTME",
+          "EPIC",
+          "GSVA",
+          "UCell",
+          "singscore",
+          "decoupleR",
+          "DESeq2",
+          "edgeR",
+          "limma"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01EYSQFh9XiFoRtkWCjaAXxY",
+      "name": "knowledge_check",
+      "input": {
+        "question": "deconvolution",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "mouse",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top 500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in at least smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors; CPM for linear-scale deconvolution input",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "mMCP-counter mouse marker-based abundance scores",
+            "package": "mMCPcounter",
+            "parameters": [
+              {
+                "name": "deconvolution_input",
+                "value": "linear_tpm_or_cpm"
+              },
+              {
+                "name": "log_input_for_absolute_methods",
+                "value": false
+              },
+              {
+                "name": "composition_role",
+                "value": "outcome"
+              },
+              {
+                "name": "report_composition_beside_de",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based per-sample scores of mouse immune/stromal marker sets",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "marker_source",
+                "value": "panglaodb_or_hpa_tissue"
+              },
+              {
+                "name": "marker_species_and_tissue",
+                "value": "state_in_report"
+              },
+              {
+                "name": "signature_provenance",
+                "value": "source_version_and_genes_present"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "composition report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "toolu_011kGvr5q6uzohyqn4nF2CoB",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Mouse tumor immune/stromal composition: anti-PD-1 vs isotype",
+          "analytical_narrative": "The question asks for the immune and stromal composition of each of the 12 subcutaneous tumors (6 anti-PD-1, 6 isotype control) and whether composition differs between arms. The input is a single gene-level count matrix from Salmon (12000 genes x 12 samples, mouse gene symbols) plus a 12 x 2 metadata table with a condition column; the design is unpaired, single batch, no covariates. Sample sample_01 has a library size about 4x below the median, so QC keeps and inspects it rather than dropping it silently (R-0008), and depth is handled by size factors rather than by exclusion (R-0030).\n\nThe knowledge service flagged the deconvolution step: human reference methods (MCP-counter, xCell, EPIC, quanTIseq) must not be run on mouse data (R-0136), and the mouse tool of record is mMCP-counter. A package check confirms mMCPcounter 1.1.0 IS installed in this environment, so the flag's condition ('absent from this pool') does not hold here and the step proceeds with the mouse tool; the human methods listed in `forbids` are excluded. mMCP-counter is a marker-based abundance score, not a fraction, so results are reported as relative abundance per cell population, comparable across samples within a population and NOT across populations.\n\nStructure: T1 does QC/filtering/normalization on the counts and produces both the linear-scale CPM matrix that deconvolution requires (R-0129) and a log-CPM matrix for rank-based scoring. T3S2 runs mMCP-counter for the composition estimate. T3S1 runs UCell scores on independent mouse marker sets as an orthogonal check on the same populations, since a single marker-based method on 12000 genes can miss populations whose markers were filtered out. T3S3 tests every population score between arms with limma under the same two-group design, BH-adjusted across populations, and reports effect sizes with confidence intervals — with 6 vs 6 mice this is a small study and the test is powered only for large composition shifts, which the report must state. T1S3 assembles the per-sample composition table, the between-arm comparison, and the reproducibility record.\n\nThe import state of the Salmon counts is unknown (no statement of length correction), so CPM rather than TPM is the deconvolution input and that choice is stated with the result. No differential expression on genes is planned: the question stops at composition, and an unasked gene-level DE would be scope the user did not request. Composition here is the outcome, not a covariate (R-0132).",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC and low-depth inspection",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 mouse subcutaneous tumor samples group by treatment (anti-PD-1 vs isotype control), and is sample_01 — whose library size is ~4x below the median — an outlier beyond its depth?",
+              "description": "Load /eval-four-models-v2-with-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv (12000 genes x 12 samples, mouse gene symbols) and /eval-four-models-v2-with-deconvolution-mouse-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id correspondence between the two files and record the exact condition level names as they appear in the metadata. Build a DESeq2 dataset with ~condition, apply the variance stabilizing transformation blind to the design, compute PCA on the 500 most variable genes, and draw a Euclidean sample-distance heatmap, coloring both by condition. Report per-sample library size and number of detected genes in a table, with sample_01 explicitly annotated. Do NOT remove sample_01 for depth alone; remove a sample only with a stated non-depth reason and carry that decision forward explicitly.",
+              "context": "Data profile: raw gene-level counts from Salmon, length-correction state not recorded; mouse (taxon 10090); subcutaneous tumor; 6 anti-PD-1 vs 6 isotype control, unpaired, single batch. Caveat on record: sample_01 library size ~4x below median.",
+              "acceptance_criteria": [
+                "Counts and metadata are joined on sample id with all 12 samples matched and the actual condition level names reported verbatim",
+                "A blind-VST PCA on the top 500 variable genes and a sample-distance heatmap are produced, colored by condition",
+                "A per-sample table of library size and detected genes is reported, with sample_01 flagged",
+                "Any sample exclusion is accompanied by a stated reason other than low depth; if none, all 12 samples are carried forward"
+              ],
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500",
+                "qc_sample_structure: transform = vst_blind",
+                "qc_sample_structure: low_depth_policy = keep_inspect_report — keep sample_01, inspect it, report it"
+              ],
+              "caveats": [
+                "A sample with a library size several times below the median must not be deleted silently; the count model down-weights it through its size factor, so removal is a judgment, not a default",
+                "With 12 samples, a PCA that does not separate the arms is not evidence of no treatment effect"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "reason": "Raw mouse counts, 6v6 unpaired with one low-depth sample: blind vst, PCA on top 500 genes, sample distance heatmap per R-0033@40bf; sample_01 kept and reported per R-0008@440d.",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "low_depth_policy",
+                    "value": "keep_inspect_report",
+                    "source": "doi:10.1186/s13059-016-0881-8"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and normalized matrices for composition analysis",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12000 genes are expressed enough to inform composition estimates, and what are the correctly scaled expression matrices for a mouse marker-based deconvolution and for rank-based signature scoring?",
+              "description": "Filter the count matrix to genes with at least 10 counts in at least 6 samples (the smallest group size). Estimate median-of-ratios size factors with DESeq2 — do not pre-scale or pre-transform counts before size-factor estimation. Emit three artifacts for downstream steps: (1) the filtered raw count matrix, (2) a LINEAR-scale CPM matrix (counts per million from library-size scaling, no log) for the deconvolution step, and (3) a log2(CPM+1) matrix for rank-based signature scoring. State explicitly in the output that CPM and not TPM is used because the Salmon import state — whether the length correction was applied — is not recorded for this dataset, and that a marker-score method is insensitive to a monotone per-sample scaling but an absolute mixture method would not be. Report how many genes pass the filter and how many were dropped.",
+              "context": "Deconvolution requires linear-scale input; gene lengths are unavailable and the length-correction state of the Salmon counts is unknown, so CPM is the defensible linear scale here.",
+              "acceptance_criteria": [
+                "Gene filter applied as >=10 counts in >=6 samples, with pre- and post-filter gene counts reported",
+                "Median-of-ratios size factors estimated and reported per sample, with sample_01's size factor visible",
+                "A linear-scale CPM matrix and a log2(CPM+1) matrix are written for downstream steps",
+                "The report states CPM (not TPM) was used and why — Salmon length-correction state unknown"
+              ],
+              "constraints": [
+                "filter_low_counts: min_count = 10",
+                "filter_low_counts: min_samples = smallest_group_size (6)",
+                "normalize: size_factors = median-of-ratios, named in the plan",
+                "normalize: depth_policy = size factors account for depth; do not drop sample_01 for depth",
+                "Do not scale, transform, or normalize counts before size-factor estimation"
+              ],
+              "caveats": [
+                "A gene filter removes markers of rare populations; record which mMCP-counter / signature marker genes are lost so the downstream steps can report coverage"
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0030@2248",
+                  "R-0129@2909"
+                ],
+                "template": "tpl-deseq2-two-group@1.1.0",
+                "reason": "Pre-filter at 10 counts in the smallest group size per R-0002@087b; normalization inside the model with median-of-ratios per R-0026@9ab1; linear-scale CPM for deconvolution input per R-0129@2909 since gene lengths and length-correction state are unavailable.",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_count",
+                    "value": 10,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "vignette:DESeq2/1.52.0#pre-filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "size_factors",
+                    "value": "median_of_ratios_named_in_the_plan",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "depth_policy",
+                    "value": "size_factors_account_for_depth",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S2",
+              "name": "mMCP-counter mouse immune and stromal abundance per sample",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "What is the relative abundance of each immune and stromal population in each of the 12 mouse subcutaneous tumors?",
+              "description": "Run mMCP-counter (mMCPcounter, the mouse-specific version of MCP-counter, confirmed present at v1.1.0) on the LINEAR-scale CPM matrix from T1S2, using mouse gene symbols as the feature space. Produce a population x sample score matrix covering the mMCP-counter populations (T cells, CD8 T cells, NK cells, B derived, monocytes/macrophages, monocytes, granulocytes, neutrophils, basophils, mast cells, eosinophils, memory B cells, vessels, fibroblasts, and the others the package defines). Report, per population, how many of its marker genes were present in the filtered matrix and which were missing — a population with few surviving markers must be labelled low-confidence and must not be interpreted. Do NOT run MCP-counter, xCell, EPIC, or quanTIseq: their references are human and their specificity does not transfer to mouse tissue. State clearly in the output that these are relative marker-based abundance scores, comparable across samples within a population but NOT across populations, and not cell fractions. Deliver the per-sample composition table as a primary result.",
+              "context": "Mouse subcutaneous tumor, anti-PD-1 vs isotype. The knowledge service flagged that human deconvolution references must not be used on mouse data and named mMCP-counter the tool of record; a package check in this environment confirms mMCPcounter 1.1.0 is installed, so the flag's 'tool absent' branch does not apply and the mouse tool is used. If, at run time, mMCPcounter cannot be loaded, do not substitute a human method — fall back to reporting the T3S1 mouse marker signature scores as descriptive only, and say so.",
+              "acceptance_criteria": [
+                "A population x 12-sample mMCP-counter score matrix is produced from linear-scale CPM, with the actual condition label attached to each sample",
+                "Marker coverage per population is reported (markers present / total), and low-coverage populations are explicitly labelled low-confidence",
+                "No human-reference deconvolution method (MCP-counter, xCell, EPIC, quanTIseq) appears anywhere in the step",
+                "The output states that scores are relative abundances, not fractions, and are not comparable across populations",
+                "The input transform (linear CPM, not log, not TPM) is stated beside the result"
+              ],
+              "constraints": [
+                "deconvolution: deconvolution_input = linear_tpm_or_cpm — use the linear CPM matrix from T1S2",
+                "deconvolution: log_input_for_absolute_methods = false",
+                "deconvolution: composition_role = outcome (stated) — composition is the outcome of this analysis, not a covariate in a gene-level model",
+                "deconvolution: report_composition_beside_de = true",
+                "Forbidden methods for this mouse dataset: MCP-counter (human), xCell, EPIC, quanTIseq"
+              ],
+              "caveats": [
+                "mMCP-counter scores are marker-based relative abundances on an arbitrary per-population scale; treating them as fractions or comparing one population's score to another's is invalid",
+                "The 12000-gene matrix is a reduced feature space; a population whose markers were largely filtered out will have an unstable score",
+                "Bulk composition estimates from a tumor confound infiltration with tumor cellularity — a rise in an immune score can reflect fewer tumor cells rather than more immune cells"
+              ],
+              "packages": [
+                "mMCPcounter"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0129@2909",
+                  "R-0132@246d",
+                  "R-0136@b81f"
+                ],
+                "reason": "Flagged by R-0136@b81f (no human reference on mouse data). The flag's stated remedy — mMCP-counter — is available in this environment (mMCPcounter 1.1.0 confirmed installed), so the step runs the mouse tool of record and forbids MCP-counter/xCell/EPIC/quanTIseq; linear CPM input per R-0129@2909, composition reported as the outcome per R-0132@246d.",
+                "settings": [
+                  {
+                    "step": "deconvolution",
+                    "name": "deconvolution_input",
+                    "value": "linear_tpm_or_cpm",
+                    "source": "doi:10.1038/s41467-020-19015-1"
+                  },
+                  {
+                    "step": "deconvolution",
+                    "name": "log_input_for_absolute_methods",
+                    "value": false,
+                    "source": "doi:10.1093/bioinformatics/btz363"
+                  },
+                  {
+                    "step": "deconvolution",
+                    "name": "composition_role",
+                    "value": "outcome_or_covariate_stated",
+                    "source": "doi:10.1093/bioinformatics/btz363"
+                  },
+                  {
+                    "step": "deconvolution",
+                    "name": "report_composition_beside_de",
+                    "value": true,
+                    "source": "doi:10.1038/s41467-020-19015-1"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "UCell mouse immune and stromal marker signature scores",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Do independent mouse immune and stromal marker signatures give the same per-sample composition picture as mMCP-counter across the 12 tumors?",
+              "description": "Score each of the 12 samples with UCell (rank-based, Mann-Whitney U on within-sample ranks, so insensitive to sample depth — relevant given sample_01) on the log2(CPM+1) matrix from T1S2, using MOUSE marker sets for the immune and stromal populations of interest: CD8 T cells, CD4 T cells, regulatory T cells, NK cells, B cells, macrophages (and M1/M2-leaning where a mouse set exists), monocytes, dendritic cells, neutrophils, mast cells, fibroblasts/CAF, and endothelium. Resolve mouse marker sets from the reference data available in this environment — the mouse WikiPathways collection is present and holds MGI-symbol gene sets usable for immune processes, and mouse-specific cell-type marker sets (e.g. a PanglaoDB-style mouse marker table) should be resolved if present. Do NOT use a human marker set or a human-to-mouse symbol coercion. For every signature report its source, its version, the number of marker genes defined, and the number present in the filtered matrix — a signature missing genes is a different signature. If no adequate mouse cell-type marker resource is available in the environment, report that explicitly and restrict this step to whatever mouse sets are present rather than substituting human sets; the mMCP-counter result in T3S2 remains the primary composition estimate in that case.",
+              "context": "This is the orthogonal check on T3S2, not a replacement. UCell 2.16.0 is installed. Reference store holds /mnt/refs/managed/wikipathways-mouse (MGI symbols); other mouse marker resources should be resolved at run time.",
+              "acceptance_criteria": [
+                "A signature x 12-sample UCell score matrix is produced from log2(CPM+1)",
+                "Every signature is reported with its source, version, marker count defined, and marker count present in the matrix",
+                "All marker sets used are mouse (MGI symbols); no human set and no cross-species symbol coercion is used, and any unavailable mouse resource is reported as such",
+                "Scores are described as relative signature enrichment, explicitly not cell fractions"
+              ],
+              "constraints": [
+                "signature_scoring: score_method = rank_based_per_sample (UCell)",
+                "signature_scoring: input_scale = log_normalized_expression — the log2(CPM+1) matrix from T1S2",
+                "signature_scoring: marker_source = a mouse cell-type marker resource (PanglaoDB-style mouse markers, or mouse WikiPathways immune sets); state which",
+                "signature_scoring: marker_species_and_tissue = state in the report",
+                "signature_scoring: signature_provenance = source, version, and genes present"
+              ],
+              "caveats": [
+                "A marker-set score is a relative enrichment, never a fraction",
+                "A marker of a cell type in one tissue is not necessarily a marker of that cell type in subcutaneous tumor tissue; state the tissue of origin of the markers",
+                "Where UCell and mMCP-counter disagree for a population, report the disagreement rather than choosing the more convenient one"
+              ],
+              "packages": [
+                "UCell",
+                "SummarizedExperiment"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0133@ce76",
+                  "R-0134@0f16",
+                  "R-0135@f02d"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "Per-sample cell-type scores with one gene list per population and a depth-variable sample: UCell rank-based scoring chosen among the R-0133@ce76 alternatives (singscore/GSVA) because the signatures are undirected single lists and ranks are depth-insensitive; mouse marker provenance per R-0135@f02d.",
+                "settings": [
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_method",
+                    "value": "rank_based_per_sample",
+                    "source": "doi:10.1016/j.csbj.2021.06.043"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "input_scale",
+                    "value": "log_normalized_expression",
+                    "source": "doi:10.1186/s12859-018-2435-4"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "marker_source",
+                    "value": "panglaodb_or_hpa_tissue",
+                    "source": "doi:10.1093/database/baz046"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "marker_species_and_tissue",
+                    "value": "state_in_report",
+                    "source": "doi:10.1126/science.1260419"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "signature_provenance",
+                    "value": "source_version_and_genes_present",
+                    "source": "doi:10.1371/journal.pcbi.1009935"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S3",
+              "name": "Anti-PD-1 vs isotype comparison of composition scores",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Does any immune or stromal population differ in abundance between the 6 anti-PD-1 and the 6 isotype control tumors?",
+              "description": "Take the mMCP-counter population scores (T3S2) and the UCell signature scores (T3S1) as two score matrices, each population/signature x 12 samples. For each matrix, fit limma with the same two-group design used throughout (~condition, anti-PD-1 vs isotype control as named in the metadata, no covariates, unpaired) — the unit of the test is the 6+6 mice, not the genes. Adjust p-values with Benjamini-Hochberg ACROSS the populations tested within each matrix, reporting the number tested. Report per population: group means, the difference with a 95% confidence interval, the raw and BH-adjusted p-value, and a per-sample dot/box plot with sample_01 marked. Also report the Spearman concordance between the mMCP-counter score and the corresponding UCell signature for each population that both cover. State plainly that 6 vs 6 mice gives power only for large composition shifts, that a non-significant population is not evidence of no change, and that both score types are relative — a shift can arise from a change in another compartment (e.g. tumor cellularity) rather than from a true change in the population itself.",
+              "context": "Composition is the outcome of this analysis, not a covariate in a gene-level model; no gene-level differential expression is planned because the research question stops at composition.",
+              "acceptance_criteria": [
+                "limma fitted on the score matrices with the two-group design using the actual condition level names, one test per population/signature",
+                "BH adjustment applied across populations within each score matrix, with the number of tests reported",
+                "A results table gives group means, difference with 95% CI, raw p and BH-adjusted p per population",
+                "Per-sample visualizations show all 12 points with sample_01 identifiable",
+                "Concordance between mMCP-counter and UCell is reported for overlapping populations",
+                "The report states the power limitation of 6 vs 6 and that null results are not evidence of absence"
+              ],
+              "constraints": [
+                "signature_scoring: score_test = limma on the scores with the design",
+                "signature_scoring: score_adjustment = BH across signatures",
+                "The test unit is the 12 mice; do not treat genes as replicates",
+                "Do not use composition scores as a covariate in any gene-level model in this plan — they are the outcome here"
+              ],
+              "caveats": [
+                "Marker-based scores of different populations are on different arbitrary scales; only within-population between-group comparisons are meaningful",
+                "Anti-PD-1 treatment can change marker gene expression per cell (e.g. activation markers) independently of cell number, so a score shift is not proof of a change in cell abundance",
+                "With n=6 per arm, one influential animal can drive a nominally significant result — inspect the per-sample plots before interpreting"
+              ],
+              "packages": [
+                "limma",
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T3S1",
+                "T3S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0134@0f16",
+                  "R-0132@246d"
+                ],
+                "template": "tpl-signature-scoring@1.0.0",
+                "reason": "Per-sample composition scores compared between two groups: limma on the score matrix under the study design with BH across signatures per R-0134@0f16; composition treated as the outcome per R-0132@246d.",
+                "settings": [
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_test",
+                    "value": "limma_on_scores_with_the_design",
+                    "source": "doi:10.1186/1471-2105-14-7"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_adjustment",
+                    "value": "BH_across_signatures",
+                    "source": "doi:10.1186/1471-2105-14-7"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Composition report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the per-sample immune and stromal composition of the 12 mouse tumors, and which populations differ between anti-PD-1 and isotype control?",
+              "description": "Assemble the final report: (1) the per-sample composition table — every sample as a row, every mMCP-counter population and UCell signature as a column, with the condition label; (2) a heatmap of composition scores across the 12 samples, samples annotated by arm; (3) the between-arm comparison table from T3S3 with effect sizes, confidence intervals and BH-adjusted p-values; (4) a methods statement recording that mMCP-counter (mouse) was used and that human-reference deconvolution methods were excluded because the samples are mouse, that input was linear CPM (not TPM, because the Salmon length-correction state is unrecorded), that scores are relative abundances and not fractions, that sample_01 was retained despite its ~4x-below-median library size and how it behaved in QC and in the composition scores, and that with 6 vs 6 mice only large composition differences are detectable. Include the reproducibility record: sessionInfo, random seeds, package versions, and the version of every marker/gene-set collection used.",
+              "context": "Final deliverable answering both halves of the research question: composition of every sample, and whether it differs between arms.",
+              "acceptance_criteria": [
+                "A per-sample composition table covering all 12 samples with condition labels is delivered",
+                "A composition heatmap annotated by treatment arm is produced",
+                "The between-arm results table with effect sizes, CIs and adjusted p-values is included",
+                "The methods statement records the mouse-only method choice, the CPM input rationale, the relative-score caveat, sample_01's handling, and the power limitation",
+                "Reproducibility record includes sessionInfo, seeds, package versions, and marker collection versions"
+              ],
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release",
+                "Do not present marker-based scores as cell fractions or percentages anywhere in the report",
+                "Do not claim a treatment effect for any population whose BH-adjusted p-value does not support it"
+              ],
+              "caveats": [
+                "The report must not extrapolate from a 12-sample mouse experiment to human anti-PD-1 biology"
+              ],
+              "packages": [
+                "ComplexHeatmap",
+                "ggplot2",
+                "knitr",
+                "rmarkdown"
+              ],
+              "depends_on": [
+                "T3S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "No rule covers the report step itself; the reproducibility record follows R-0086@becf.",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 51
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "mouse",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "signature_scoring"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
+      },
+      "response": {
+        "match": "flag",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "mouse",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ],
+          "extra_analyses": [
+            "signature_scoring"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1",
+              "R-0030@2248"
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0045"
+            },
+            "template": "tpl-signature-scoring@1.0.0",
+            "rules": [
+              "R-0134@0f16",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "deconvolution",
+            "rules": [
+              "R-0129@2909",
+              "R-0132@246d",
+              "R-0136@b81f"
+            ],
+            "flags": [
+              {
+                "rule": "R-0136@b81f",
+                "severity": "flag",
+                "message": "Do not run a human deconvolution method on mouse data. The marker sets and the reference profiles of MCP-counter, xCell, EPIC, and quanTIseq come from human samples, and a mouse symbol that maps to a human marker does not carry the same specificity in mouse tissue. The mouse tool of record is mMCP-counter, the mouse version of MCP-counter with markers from mouse data, and it is absent from this pool. Stop the deconvolution and ask for mMCP-counter or for a mouse reference, or give a descriptive signature score from mouse marker sets with the caution that it is not a deconvolution.",
+                "outcome": "mouse_reference_required_or_descriptive_markers"
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0030@2248"
+          },
+          {
+            "id": "R-0129@2909"
+          },
+          {
+            "id": "R-0132@246d"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          },
+          {
+            "id": "R-0136@b81f"
+          }
+        ],
+        "flags": [
+          {
+            "rule": "R-0136@b81f",
+            "severity": "flag",
+            "message": "Do not run a human deconvolution method on mouse data. The marker sets and the reference profiles of MCP-counter, xCell, EPIC, and quanTIseq come from human samples, and a mouse symbol that maps to a human marker does not carry the same specificity in mouse tissue. The mouse tool of record is mMCP-counter, the mouse version of MCP-counter with markers from mouse data, and it is absent from this pool. Stop the deconvolution and ask for mMCP-counter or for a mouse reference, or give a descriptive signature score from mouse marker sets with the caution that it is not a deconvolution.",
+            "outcome": "mouse_reference_required_or_descriptive_markers"
+          }
+        ],
+        "uncovered": []
+      },
+      "responseChars": 22669,
+      "elapsedMs": 12
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "deconvolution",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "mouse",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "signature_scoring"
+          ],
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST, PCA on top 500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              },
+              {
+                "name": "low_depth_policy",
+                "value": "keep_inspect_report"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in at least smallest group size of samples",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "median-of-ratios size factors; CPM for linear-scale deconvolution input",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "depth_policy",
+                "value": "size_factors_account_for_depth"
+              }
+            ]
+          },
+          {
+            "step_type": "deconvolution",
+            "method": "mMCP-counter mouse marker-based abundance scores",
+            "package": "mMCPcounter",
+            "parameters": [
+              {
+                "name": "deconvolution_input",
+                "value": "linear_tpm_or_cpm"
+              },
+              {
+                "name": "log_input_for_absolute_methods",
+                "value": false
+              },
+              {
+                "name": "composition_role",
+                "value": "outcome"
+              },
+              {
+                "name": "report_composition_beside_de",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "UCell rank-based per-sample scores of mouse immune/stromal marker sets",
+            "package": "UCell",
+            "parameters": [
+              {
+                "name": "score_method",
+                "value": "rank_based_per_sample"
+              },
+              {
+                "name": "input_scale",
+                "value": "log_normalized_expression"
+              },
+              {
+                "name": "score_test",
+                "value": "limma_on_scores_with_the_design"
+              },
+              {
+                "name": "score_adjustment",
+                "value": "BH_across_signatures"
+              },
+              {
+                "name": "marker_source",
+                "value": "panglaodb_or_hpa_tissue"
+              },
+              {
+                "name": "marker_species_and_tissue",
+                "value": "state_in_report"
+              },
+              {
+                "name": "signature_provenance",
+                "value": "source_version_and_genes_present"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "composition report with reproducibility record",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions, collection_version, annotation_release"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 6
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

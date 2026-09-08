@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect batch-condition confounding, refuses both a batch term and any removal method (ComBat-seq, removeBatchEffect, SVA), states the no-batch-effect assumption, and labels every output as confounded, which matches the reference; the edgeR QL cross-check is a reasonable robustness addition at n=6 per group. QC is well specified (blind vst, PCA, distances, library sizes, colored by both factors) but only says shallow samples are 'flagged' without a stated retain/drop policy. Filtering (10 counts in ≥6 samples with independent filtering), median-of-ratios normalization inside the model, explicit control reference level and named contrast, apeglm shrinkage with BH at alpha 0.05 passed into results() are all stated correctly; the design formula is described rather than written as '~ condition', a minor gap. Enrichment is correctly omitted and the report requirements cover method, versions, design, thresholds, tested/DE counts, sessionInfo, and place the confounding limitation before the gene tables."
+}

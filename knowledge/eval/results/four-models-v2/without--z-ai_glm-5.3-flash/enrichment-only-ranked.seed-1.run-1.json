@@ -1,0 +1,436 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "enrichment-only-ranked",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:13:12.620Z",
+  "elapsedMs": 104518,
+  "outcome": "plan_submitted",
+  "planId": "pln-c132e67e",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Validate DE table and build ranked gene list",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "primary-hallmark-gsea",
+        "status": "pending",
+        "caveats": [
+          "The record does not state whether the Salmon counts had length correction; irrelevant here since DE is precomputed, but note it if recomputing in T2S1",
+          "A statistic of 0 or NA typically means all-zero counts — these cannot carry rank information"
+        ],
+        "context": "Data: psoriasis lesional vs control skin, 6 vs 6 unpaired, single batch, raw Salmon gene-level counts; DESeq2 contrast already run and delivered as a results table. Caveat: sample_01 library size ~4x below median. The hallmark collection staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt uses HGNC symbols.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Is the delivered DESeq2 results table for psoriasis lesional (treated) vs control internally consistent, and can its genes be ranked directly against the HGNC-symbol hallmark collection without identifier remapping?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not re-run differential expression in this step; the delivered results table is the input",
+          "Do not filter by significance or fold-change before ranking — rank all genes by statistic (GSEA uses the full ranked list)",
+          "Report any identifier mismatch honestly rather than silently dropping genes"
+        ],
+        "description": "Load /eval-four-models-v2-without-enrichment-only-ranked-s1-1/data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change standard error, statistic, p_value, p_value_adjusted or equivalent). Verify: column semantics, number of rows, NA rates in statistic/p_value, duplicate gene identifiers, and whether 'gene' values are HGNC symbols (spot-check ~20 against the hallmark GMT member list and report the match rate; if a large fraction are Ensembl IDs or Entrez IDs, say so and use the staged UniProt human ID mapping HUMAN_9606_idmapping_selected.tab.gz to map to symbols, reporting any unmapped genes). Then build the ranking vector: sort genes by the DESeq2 statistic (descending; ties broken deterministically), drop rows with NA statistic, and report how many genes with base_mean==0 / NA p-values were excluded. Save the named numeric ranked vector as TSV (gene, statistic) for the GSEA step, plus a short validation summary (identifier type, NA counts, ranking-metric distribution).",
+        "acceptance_criteria": [
+          "de_results.csv parsed with all 12,000 rows accounted for; NA statistic rows counted and excluded from ranking",
+          "gene identifier type established against the hallmark GMT with a reported match rate; mapping applied only if needed",
+          "Ranked list saved as TSV (gene, statistic), sorted descending, unique gene names, no NA values",
+          "Validation summary written reporting identifier type, exclusions, and the range of the statistic"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Run fgsea hallmark enrichment",
+        "agent": "enrichment-agent",
+        "track": "primary-hallmark-gsea",
+        "status": "pending",
+        "caveats": [
+          "With 6 vs 6 samples, GSEA reflects the delivered DE contrast's own power; low counts in sample_01 could have already influenced the statistic — the sensitivity track quantifies this",
+          "Pathways with very few genes in the tested universe get unstable NES — the minSize filter and log2err column address this"
+        ],
+        "context": "MSigDB 2026.1 human hallmark GMT staged under /mnt/refs (50 HALLMARK_* sets, HGNC symbols). Input ranked list is the DESeq2 statistic from the delivered psoriasis lesional vs control results table. Expected biology for psoriasis skin includes keratinocyte activation/keratinization, IL-17-driven and TNF-alpha-driven inflammatory sets, and interferon response — treat any such hits as consistent with known psoriasis biology, not as novel claims.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which of the 50 MSigDB hallmark pathways are enriched in psoriasis lesional skin versus control, and in which direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use only the staged human hallmark GMT; do not substitute WikiPathways or mouse sets",
+          "Rank by the DESeq2 statistic (not log2FC alone) — the statistic down-weights high-variance genes",
+          "Adjust across all 50 tested sets with BH as fgsea does by default; do not report unadjusted p-values as significant"
+        ],
+        "description": "Run GSEA pre-ranked (fgsea::fgsea) on the ranked statistic vector from T1S1 against the 50 hallmark sets in /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (HGNC symbols). Settings: minSize=15, maxSize=500, eps=0 (allow stable p-values with small gene sets), nPermSimple=100000, seed fixed for reproducibility. Report per-pathway: size, ES, NES, pval, padj (BH over the 50 sets), log2err, and leading-edge gene list. Produce: (1) a full results TSV sorted by NES; (2) a bar/lollipop plot of NES for all pathways with padj<0.25 (fgsea's conventional cut) and separately padj<0.05; (3) running-sum enrichment plots for the top 3 positive and top 3 negative NES pathways; (4) report how many of the 50 sets fall outside the minSize/maxSize window on this 12,000-gene ranked list and list them.",
+        "acceptance_criteria": [
+          "fgsea run on all 50 hallmark sets with a fixed seed; results table contains size, ES, NES, pval, padj, leadingEdge for every pathway",
+          "Full results TSV saved sorted by NES; number of significant pathways reported at padj<0.05 and padj<0.25",
+          "Plots saved: NES bar/lollipop plot and running-sum plots for top 3 up and top 3 down pathways",
+          "Gene-set size filtering explicitly reported (which sets were skipped and why)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Summarize hallmark findings and leading edges",
+        "agent": "enrichment-agent",
+        "track": "primary-hallmark-gsea",
+        "status": "pending",
+        "caveats": [
+          "Hallmark sets are broad and correlated; overlapping leading edges are expected and are a coherence signal, not redundancy to hide"
+        ],
+        "context": "Same dataset as T1S2. Leading-edge genes are the fgsea default (genes contributing to the running-sum maximum).",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "ggplot2",
+          "ComplexHeatmap",
+          "pheatmap"
+        ],
+        "question": "Which hallmark pathways change between psoriasis lesional and control skin, what genes drive each call, and how coherent is the overall picture?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Do not introduce a new significance threshold post hoc; carry the threshold from T1S2 and state it",
+          "Leading-edge overlap is descriptive — do not run additional enrichment or statistics in this step"
+        ],
+        "description": "Take the fgsea results from T1S2 and produce a final, readable summary: (1) a compact table of all hallmark pathways with direction (up in lesional / down in lesional), NES, padj, and leading-edge genes (symbols, collapsed to <=10 shown per pathway plus a full-list TSV); (2) a leading-edge overlap analysis — a heatmap or upset-style summary of which genes drive multiple significant pathways (e.g. shared keratinocyte or interferon drivers); (3) a short written interpretation of the pattern (which hallmark programs define the psoriasis lesional signature in this dataset), explicitly separating significant findings (padj threshold stated) from directional trends. No new statistics are computed beyond overlaps; this step organizes and reports T1S2's output.",
+        "acceptance_criteria": [
+          "Final summary table saved with pathway, direction, NES, padj, leading-edge genes for all 50 sets",
+          "Leading-edge overlap matrix or upset plot saved; genes driving multiple pathways identified",
+          "Written interpretation states significant hits with the padj threshold used and labels trends below threshold as trends"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Recompute DESeq2 contrast and alternative ranking",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "sensitivity",
+        "status": "pending",
+        "caveats": [
+          "A 5-vs-6 comparison has less power; losing significance in the excluded-sample run is not evidence against the finding, only of reduced power",
+          "12,000 genes x 12 samples is small; DESeq2 fits in seconds"
+        ],
+        "context": "Counts are gene-level Salmon output as delivered (length-correction status unknown — flag this in the report). Metadata has 12 rows, one condition column. The delivered DESeq2 table is the comparison target, not the source.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Does the ~4x-below-median library size of sample_01 change the psoriasis lesional vs control contrast, and does a freshly computed DESeq2 run agree with the delivered results table?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Design must be ~condition with control as reference, matching the delivered treated-vs-control contrast",
+          "Do not batch-correct or filter beyond DESeq2's independent filtering",
+          "Keep the recomputed results separate from the delivered ones — never overwrite or edit de_results.csv"
+        ],
+        "description": "From /eval-four-models-v2-without-enrichment-only-ranked-s1-1/data/inputs/counts.csv (12,000 genes x 13 columns; gene ID column + 12 samples) and metadata.csv (12 x 2: sample, condition), run DESeq2 (R, DESeq2 1.52.0) on the raw counts with design ~condition, levels control < treated, matching the delivered contrast. Do not pre-filter or apply length correction (none is available for these Salmon gene counts; standard gene-level DESeq2 practice). Compare the recomputed log2FC and statistic against the delivered de_results.csv gene-by-gene (correlation, median absolute difference, count of sign flips at nominal p<0.05) and report whether sample_01 is an outlier in the DESeq2 quality-control measures (Cook's distance / maxCooks). Then produce a sensitivity ranked list excluding sample_01 (5 treated vs 6 control) with the same pipeline, and save both the full-cohort recomputed ranking and the sample_01-excluded ranking as TSVs.",
+        "acceptance_criteria": [
+          "DESeq2 run on all 12 samples with design ~condition; per-gene comparison to the delivered table reported (correlation, MAD, sign flips)",
+          "Cook's-distance / outlier check for sample_01 reported explicitly",
+          "Two sensitivity ranked lists saved: full-cohort recomputed, and sample_01-excluded",
+          "Any discrepancy between recomputed and delivered DE explained (e.g. different DESeq2 version, normalization) rather than glossed over"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Sensitivity hallmark GSEA and comparison",
+        "agent": "enrichment-agent",
+        "track": "sensitivity",
+        "status": "pending",
+        "caveats": [
+          "padj values across runs are not directly comparable when the number of tested sets differs after size filtering; compare NES as primary and note set counts per run"
+        ],
+        "context": "Identical hallmark GMT and settings as T1S2 so NES values are directly comparable. The comparison target is the T1S2 results table.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Do the hallmark pathway calls from T1S2 survive recomputation of the contrast and removal of the low-depth sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use the same GMT, minSize, maxSize, and seed as T1S2 — differences in settings would make the comparison meaningless",
+          "Report concordance over all 50 sets, not only the significant ones"
+        ],
+        "description": "Run the identical fgsea hallmark analysis as T1S2 (same GMT /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, same minSize/maxSize/seed) on the two sensitivity ranked lists from T2S1 (recomputed full-cohort, and sample_01-excluded). Produce a three-way comparison table: pathway, NES/padj from the delivered ranking (T1S2), recomputed full-cohort ranking, and sample_01-excluded ranking, with per-pathway NES deltas and a concordance summary (Spearman correlation of NES across the 50 sets; number of pathways changing significance class at padj<0.05). Save the comparison TSV and a side-by-side NES plot. Close with an explicit statement: which hallmark calls in the primary analysis are robust to the low-depth sample and which are not.",
+        "acceptance_criteria": [
+          "fgsea run with identical settings and seed on both sensitivity ranked lists; results tables saved",
+          "Three-way NES/padj comparison table saved covering all 50 hallmark sets",
+          "NES concordance (Spearman) and significance-class changes reported; side-by-side plot saved",
+          "Explicit robustness verdict per significant primary call: robust / sensitive to sample_01"
+        ]
+      }
+    ],
+    "title": "Hallmark pathway GSEA on psoriasis DE results",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-14T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The differential expression (DESeq2, 6 psoriasis lesional 'treated' vs 6 control skin) is already delivered as de_results.csv (12,000 genes x 8 columns), so the question 'which hallmark pathways change' reduces to a gene-set enrichment analysis of the delivered contrast statistics rather than a re-run of DE. The plan ranks all genes by the DESeq2 Wald statistic (signed, so both directions are testable), runs fgsea against the staged MSigDB 2026.1 human hallmark collection (h.all.v2026.1.Hs.symbols.gmt, 50 HALLMARK_* sets in HGNC symbols), and reports normalized enrichment scores, adjusted p-values and leading-edge genes with enrichment plots. Because the data context flags sample_01 with a ~4x-below-median library size, a second track independently recomputes the DESeq2 contrast from the raw Salmon counts (counts.csv, 12,000 x 13) and re-runs the same hallmark enrichment on the recomputed ranking, quantifying how much the low-depth sample shifts both gene-level and pathway-level calls. Both tracks end in a small, comparable results table (pathway, NES, padj, leading edge) for the primary and sensitivity analyses."
+  },
+  "usage": {
+    "inputTokens": 66068,
+    "outputTokens": 4978,
+    "cacheReadInputTokens": 32000,
+    "reasoningTokens": 1601
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_5b599ad083454251a607029d",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 58
+    },
+    {
+      "toolUseId": "call_f3d6cb70c26540e587cf6824",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Hallmark pathway GSEA on psoriasis DE results",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The differential expression (DESeq2, 6 psoriasis lesional 'treated' vs 6 control skin) is already delivered as de_results.csv (12,000 genes x 8 columns), so the question 'which hallmark pathways change' reduces to a gene-set enrichment analysis of the delivered contrast statistics rather than a re-run of DE. The plan ranks all genes by the DESeq2 Wald statistic (signed, so both directions are testable), runs fgsea against the staged MSigDB 2026.1 human hallmark collection (h.all.v2026.1.Hs.symbols.gmt, 50 HALLMARK_* sets in HGNC symbols), and reports normalized enrichment scores, adjusted p-values and leading-edge genes with enrichment plots. Because the data context flags sample_01 with a ~4x-below-median library size, a second track independently recomputes the DESeq2 contrast from the raw Salmon counts (counts.csv, 12,000 x 13) and re-runs the same hallmark enrichment on the recomputed ranking, quantifying how much the low-depth sample shifts both gene-level and pathway-level calls. Both tracks end in a small, comparable results table (pathway, NES, padj, leading edge) for the primary and sensitivity analyses.",
+          "created_at": "2026-07-14T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Validate DE table and build ranked gene list",
+              "track": "primary-hallmark-gsea",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Is the delivered DESeq2 results table for psoriasis lesional (treated) vs control internally consistent, and can its genes be ranked directly against the HGNC-symbol hallmark collection without identifier remapping?",
+              "description": "Load /eval-four-models-v2-without-enrichment-only-ranked-s1-1/data/inputs/results/de_results.csv (12,000 genes x 8 columns: gene, base_mean, log2_fold_change, log2_fold_change standard error, statistic, p_value, p_value_adjusted or equivalent). Verify: column semantics, number of rows, NA rates in statistic/p_value, duplicate gene identifiers, and whether 'gene' values are HGNC symbols (spot-check ~20 against the hallmark GMT member list and report the match rate; if a large fraction are Ensembl IDs or Entrez IDs, say so and use the staged UniProt human ID mapping HUMAN_9606_idmapping_selected.tab.gz to map to symbols, reporting any unmapped genes). Then build the ranking vector: sort genes by the DESeq2 statistic (descending; ties broken deterministically), drop rows with NA statistic, and report how many genes with base_mean==0 / NA p-values were excluded. Save the named numeric ranked vector as TSV (gene, statistic) for the GSEA step, plus a short validation summary (identifier type, NA counts, ranking-metric distribution).",
+              "acceptance_criteria": [
+                "de_results.csv parsed with all 12,000 rows accounted for; NA statistic rows counted and excluded from ranking",
+                "gene identifier type established against the hallmark GMT with a reported match rate; mapping applied only if needed",
+                "Ranked list saved as TSV (gene, statistic), sorted descending, unique gene names, no NA values",
+                "Validation summary written reporting identifier type, exclusions, and the range of the statistic"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "context": "Data: psoriasis lesional vs control skin, 6 vs 6 unpaired, single batch, raw Salmon gene-level counts; DESeq2 contrast already run and delivered as a results table. Caveat: sample_01 library size ~4x below median. The hallmark collection staged at /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt uses HGNC symbols.",
+              "constraints": [
+                "Do not re-run differential expression in this step; the delivered results table is the input",
+                "Do not filter by significance or fold-change before ranking — rank all genes by statistic (GSEA uses the full ranked list)",
+                "Report any identifier mismatch honestly rather than silently dropping genes"
+              ],
+              "caveats": [
+                "The record does not state whether the Salmon counts had length correction; irrelevant here since DE is precomputed, but note it if recomputing in T2S1",
+                "A statistic of 0 or NA typically means all-zero counts — these cannot carry rank information"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Run fgsea hallmark enrichment",
+              "track": "primary-hallmark-gsea",
+              "step_type": "analysis",
+              "agent": "enrichment-agent",
+              "question": "Which of the 50 MSigDB hallmark pathways are enriched in psoriasis lesional skin versus control, and in which direction?",
+              "description": "Run GSEA pre-ranked (fgsea::fgsea) on the ranked statistic vector from T1S1 against the 50 hallmark sets in /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt (HGNC symbols). Settings: minSize=15, maxSize=500, eps=0 (allow stable p-values with small gene sets), nPermSimple=100000, seed fixed for reproducibility. Report per-pathway: size, ES, NES, pval, padj (BH over the 50 sets), log2err, and leading-edge gene list. Produce: (1) a full results TSV sorted by NES; (2) a bar/lollipop plot of NES for all pathways with padj<0.25 (fgsea's conventional cut) and separately padj<0.05; (3) running-sum enrichment plots for the top 3 positive and top 3 negative NES pathways; (4) report how many of the 50 sets fall outside the minSize/maxSize window on this 12,000-gene ranked list and list them.",
+              "acceptance_criteria": [
+                "fgsea run on all 50 hallmark sets with a fixed seed; results table contains size, ES, NES, pval, padj, leadingEdge for every pathway",
+                "Full results TSV saved sorted by NES; number of significant pathways reported at padj<0.05 and padj<0.25",
+                "Plots saved: NES bar/lollipop plot and running-sum plots for top 3 up and top 3 down pathways",
+                "Gene-set size filtering explicitly reported (which sets were skipped and why)"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "context": "MSigDB 2026.1 human hallmark GMT staged under /mnt/refs (50 HALLMARK_* sets, HGNC symbols). Input ranked list is the DESeq2 statistic from the delivered psoriasis lesional vs control results table. Expected biology for psoriasis skin includes keratinocyte activation/keratinization, IL-17-driven and TNF-alpha-driven inflammatory sets, and interferon response — treat any such hits as consistent with known psoriasis biology, not as novel claims.",
+              "constraints": [
+                "Use only the staged human hallmark GMT; do not substitute WikiPathways or mouse sets",
+                "Rank by the DESeq2 statistic (not log2FC alone) — the statistic down-weights high-variance genes",
+                "Adjust across all 50 tested sets with BH as fgsea does by default; do not report unadjusted p-values as significant"
+              ],
+              "caveats": [
+                "With 6 vs 6 samples, GSEA reflects the delivered DE contrast's own power; low counts in sample_01 could have already influenced the statistic — the sensitivity track quantifies this",
+                "Pathways with very few genes in the tested universe get unstable NES — the minSize filter and log2err column address this"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Summarize hallmark findings and leading edges",
+              "track": "primary-hallmark-gsea",
+              "step_type": "analysis",
+              "agent": "enrichment-agent",
+              "question": "Which hallmark pathways change between psoriasis lesional and control skin, what genes drive each call, and how coherent is the overall picture?",
+              "description": "Take the fgsea results from T1S2 and produce a final, readable summary: (1) a compact table of all hallmark pathways with direction (up in lesional / down in lesional), NES, padj, and leading-edge genes (symbols, collapsed to <=10 shown per pathway plus a full-list TSV); (2) a leading-edge overlap analysis — a heatmap or upset-style summary of which genes drive multiple significant pathways (e.g. shared keratinocyte or interferon drivers); (3) a short written interpretation of the pattern (which hallmark programs define the psoriasis lesional signature in this dataset), explicitly separating significant findings (padj threshold stated) from directional trends. No new statistics are computed beyond overlaps; this step organizes and reports T1S2's output.",
+              "acceptance_criteria": [
+                "Final summary table saved with pathway, direction, NES, padj, leading-edge genes for all 50 sets",
+                "Leading-edge overlap matrix or upset plot saved; genes driving multiple pathways identified",
+                "Written interpretation states significant hits with the padj threshold used and labels trends below threshold as trends"
+              ],
+              "packages": [
+                "data.table",
+                "ggplot2",
+                "ComplexHeatmap",
+                "pheatmap"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "context": "Same dataset as T1S2. Leading-edge genes are the fgsea default (genes contributing to the running-sum maximum).",
+              "constraints": [
+                "Do not introduce a new significance threshold post hoc; carry the threshold from T1S2 and state it",
+                "Leading-edge overlap is descriptive — do not run additional enrichment or statistics in this step"
+              ],
+              "caveats": [
+                "Hallmark sets are broad and correlated; overlapping leading edges are expected and are a coherence signal, not redundancy to hide"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Recompute DESeq2 contrast and alternative ranking",
+              "track": "sensitivity",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Does the ~4x-below-median library size of sample_01 change the psoriasis lesional vs control contrast, and does a freshly computed DESeq2 run agree with the delivered results table?",
+              "description": "From /eval-four-models-v2-without-enrichment-only-ranked-s1-1/data/inputs/counts.csv (12,000 genes x 13 columns; gene ID column + 12 samples) and metadata.csv (12 x 2: sample, condition), run DESeq2 (R, DESeq2 1.52.0) on the raw counts with design ~condition, levels control < treated, matching the delivered contrast. Do not pre-filter or apply length correction (none is available for these Salmon gene counts; standard gene-level DESeq2 practice). Compare the recomputed log2FC and statistic against the delivered de_results.csv gene-by-gene (correlation, median absolute difference, count of sign flips at nominal p<0.05) and report whether sample_01 is an outlier in the DESeq2 quality-control measures (Cook's distance / maxCooks). Then produce a sensitivity ranked list excluding sample_01 (5 treated vs 6 control) with the same pipeline, and save both the full-cohort recomputed ranking and the sample_01-excluded ranking as TSVs.",
+              "acceptance_criteria": [
+                "DESeq2 run on all 12 samples with design ~condition; per-gene comparison to the delivered table reported (correlation, MAD, sign flips)",
+                "Cook's-distance / outlier check for sample_01 reported explicitly",
+                "Two sensitivity ranked lists saved: full-cohort recomputed, and sample_01-excluded",
+                "Any discrepancy between recomputed and delivered DE explained (e.g. different DESeq2 version, normalization) rather than glossed over"
+              ],
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "context": "Counts are gene-level Salmon output as delivered (length-correction status unknown — flag this in the report). Metadata has 12 rows, one condition column. The delivered DESeq2 table is the comparison target, not the source.",
+              "constraints": [
+                "Design must be ~condition with control as reference, matching the delivered treated-vs-control contrast",
+                "Do not batch-correct or filter beyond DESeq2's independent filtering",
+                "Keep the recomputed results separate from the delivered ones — never overwrite or edit de_results.csv"
+              ],
+              "caveats": [
+                "A 5-vs-6 comparison has less power; losing significance in the excluded-sample run is not evidence against the finding, only of reduced power",
+                "12,000 genes x 12 samples is small; DESeq2 fits in seconds"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Sensitivity hallmark GSEA and comparison",
+              "track": "sensitivity",
+              "step_type": "analysis",
+              "agent": "enrichment-agent",
+              "question": "Do the hallmark pathway calls from T1S2 survive recomputation of the contrast and removal of the low-depth sample_01?",
+              "description": "Run the identical fgsea hallmark analysis as T1S2 (same GMT /mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt, same minSize/maxSize/seed) on the two sensitivity ranked lists from T2S1 (recomputed full-cohort, and sample_01-excluded). Produce a three-way comparison table: pathway, NES/padj from the delivered ranking (T1S2), recomputed full-cohort ranking, and sample_01-excluded ranking, with per-pathway NES deltas and a concordance summary (Spearman correlation of NES across the 50 sets; number of pathways changing significance class at padj<0.05). Save the comparison TSV and a side-by-side NES plot. Close with an explicit statement: which hallmark calls in the primary analysis are robust to the low-depth sample and which are not.",
+              "acceptance_criteria": [
+                "fgsea run with identical settings and seed on both sensitivity ranked lists; results tables saved",
+                "Three-way NES/padj comparison table saved covering all 50 hallmark sets",
+                "NES concordance (Spearman) and significance-class changes reported; side-by-side plot saved",
+                "Explicit robustness verdict per significant primary call: robust / sensitive to sample_01"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "context": "Identical hallmark GMT and settings as T1S2 so NES values are directly comparable. The comparison target is the T1S2 results table.",
+              "constraints": [
+                "Use the same GMT, minSize, maxSize, and seed as T1S2 — differences in settings would make the comparison meaningless",
+                "Report concordance over all 50 sets, not only the significant ones"
+              ],
+              "caveats": [
+                "padj values across runs are not directly comparable when the number of tested sets differs after size filtering; compare NES as primary and note set counts per run"
+              ]
+            }
+          ],
+          "grounded": false
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 50
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

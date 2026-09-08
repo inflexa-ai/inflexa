@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly refuses an expression-derived WGCNA network at n=6 and names STRING 12.0 at score >= 700 as the prior, but it then weights prior edges by Pearson correlation across the same six samples, computes eigengenes, and answers the 'which modules track treatment' question with an eigengene permutation test — the reference says the prior network should be a substitute reported as such, projected onto genes from a DESeq2/edgeR test, not an answer to the module-tracking question. No DE test is fitted at all, so there is no explicit contrast, reference level, BH at 0.05 on genes, or apeglm shrinkage; the permutation claim that 10,000 shuffles reach p ~5e-4 is wrong for 3 vs 3 (exact minimum is 1/20), which undermines the BH-across-modules step. QC, the 10-in-3 filter, and in-model median-of-ratios normalization are well specified, and the report section documents versions, seed, and the substitution, though it cannot report tested/significant gene counts because no test is run."
+}

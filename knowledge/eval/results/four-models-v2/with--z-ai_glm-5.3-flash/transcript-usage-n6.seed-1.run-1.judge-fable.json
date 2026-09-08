@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 1,
+    "low_count_filter": 1,
+    "normalization": 2,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that a gene-level count matrix cannot answer an isoform-switching question and stopped to request per-sample Salmon quant.sf files plus a transcript-to-gene map rather than fitting DESeq2/edgeR on gene counts or inventing a transcript matrix. However, the request omits the annotation version, and no downstream plan was stated at all: no DRIMSeq/DEXSeq-on-tximport method, no dmFilter, no stageR two-stage FDR, no design/contrast, and no policy for the shallow sample_01 or any QC. Enrichment is correctly absent since it is not warranted. Credit goes to the correct refusal and well-targeted question, but the unstated statistical details cannot be scored above minimal."
+}

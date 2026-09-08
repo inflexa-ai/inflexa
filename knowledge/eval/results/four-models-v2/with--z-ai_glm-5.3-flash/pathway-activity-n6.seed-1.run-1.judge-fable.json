@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 0,
+    "qc_present": 0,
+    "low_count_filter": 0,
+    "normalization": 0,
+    "model_formula_contrasts": 0,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 0,
+    "report_completeness": 0
+  },
+  "rationale": "No plan was submitted; the planner terminated with a provider network error before producing any content. There is nothing to judge on any criterion: no count model, no QC or policy for the shallow sample_01, no filter, no normalization, no design or contrast, no FDR or shrinkage, no PROGENy footprint inference, and no report. Every criterion scores zero."
+}

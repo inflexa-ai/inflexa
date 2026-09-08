@@ -1,0 +1,375 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "gene-list-ora",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:49:40.826Z",
+  "elapsedMs": 78639,
+  "outcome": "plan_submitted",
+  "planId": "pln-1f83626a",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Define significant gene set and universe",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Bulk RNA-seq, Homo sapiens skin, atopic dermatitis lesional (treated) vs control, 6 vs 6 unpaired, single batch, Salmon gene-level counts with a precomputed DESeq2 results table. The DE table is authoritative; this step only parses and defines lists, it does not re-run DESeq2.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "readr"
+        ],
+        "question": "From the delivered DESeq2 results table for AD treated vs control, which genes are significant (padj < 0.05), and what is the tested-gene universe they were selected from?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not re-run differential expression; use the delivered de_results.csv as-is",
+          "Use padj as the significance criterion; keep the padj-only list as the primary gene set for ORA",
+          "Exclude NA-padj genes from both the significant set and the universe so ORA denominators are consistent"
+        ],
+        "description": "Read /eval-four-models-v2-without-gene-list-ora-s1-1/data/inputs/results/de_results.csv (12,000 rows; columns gene, base_mean, log2_fold_change, ...). Verify the gene column matches the 12,000 gene IDs in counts.csv. Determine the identifier space of the gene column (HGNC symbols vs Ensembl gene IDs vs Entrez) by pattern inspection and a spot check against org.Hs.eg.db. Define: significant set = genes with padj < 0.05 (also record counts at |log2FC| >= 1 as a secondary stricter list, but ORA uses padj-only as primary); universe = all genes in the table with baseMean > 0 and non-NA padj (DESeq2 independent-filtering NA genes are excluded from both set and universe consistently). Write sig_genes.csv, universe.csv, and a summary (n significant, n universe, identifier type, median padj distribution, number of NA padj). Note sample_01's low library size in the report header as an inherited caveat of the delivered table.",
+        "acceptance_criteria": [
+          "de_results.csv parsed with 12,000 gene rows and 8 columns; gene IDs cross-checked against counts.csv with mismatch count reported",
+          "Identifier space stated explicitly (symbol / Ensembl / Entrez) with evidence",
+          "Significant set (padj < 0.05) and universe (baseMean > 0, non-NA padj) written as CSVs with sizes reported",
+          "If fewer than 5 significant genes, stop and report that ORA is not viable rather than proceeding"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GO Biological Process over-representation",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "clusterProfiler's default universe (all annotated genes) would inflate enrichment significance; passing the tested-gene universe is mandatory",
+          "If the significant set is small (< 10 mappable genes), ORA is underpowered; report term counts and note the limitation instead of over-interpreting single-gene terms"
+        ],
+        "context": "Human dataset (Homo sapiens), so the annotation database must be org.Hs.eg.db. ORA on a gene list from a 12,000-gene tested background. A human WikiPathways GMT exists in the reference store but is a different ontology; it is not a substitute for GO BP.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "GO.db",
+          "GSEABase"
+        ],
+        "question": "Which GO Biological Process terms are over-represented (BH-adjusted p < 0.05) among the significant treated-vs-control genes relative to the tested-gene universe?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run classical over-representation analysis with clusterProfiler::enrichGO(ont = \"BP\", pAdjustMethod = \"BH\", pvalueCutoff/qvalueCutoff = 0.05, universe = tested genes) on the significant gene list from T1S1, using org.Hs.eg.db 3.23.1 as the annotation. Map input identifiers to Entrez via the identifier type determined in T1S1 (keyType SYMBOL or ENSEMBL; strip Ensembl version suffixes; report genes that fail to map and the resulting set/universe sizes). Compute the full term-level result table (GeneRatio, BgRatio, pvalue, p.adjust, qvalue, geneID, count), report the number of significant terms before and after multiple-testing correction, and save the complete table as go_bp_ora_results.csv. If org.Hs.eg.db or clusterProfiler cannot be loaded, report the gap rather than substituting a non-GO resource (e.g. the staged WikiPathways human GMT, which is a different ontology and must not be silently used in its place).",
+        "acceptance_criteria": [
+          "enrichGO runs with the universe from T1S1, not the default genome-wide background",
+          "Mapping success rate for significant genes and universe genes reported (both set and universe mapped with the same keyType)",
+          "go_bp_ora_results.csv written with all enrichGO output columns; number of BP terms at p.adjust < 0.05 reported",
+          "No GO BP results and no fallback produced => step reports the empty result explicitly with set/universe sizes"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Deduplicate terms and report AD-relevant processes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Semantic-similarity reduction chooses representatives; the full un-reduced term table from T1S2 remains the primary quantitative result",
+          "With 12,000 tested genes and a small significant set, single dominant processes can dominate; check the leading-edge gene counts before interpreting term specificity"
+        ],
+        "context": "Follows GO BP ORA on the AD treated-vs-control significant gene set. The reduction step needs GO.db for semantic similarity, which is installed.",
+        "maxSteps": 200,
+        "packages": [
+          "rrvgo",
+          "GOSemSim",
+          "clusterProfiler",
+          "enrichplot",
+          "ggplot2"
+        ],
+        "question": "Which distinct GO Biological Processes summarize the significant treated-vs-control gene set, once near-duplicate GO terms are collapsed and results are interpreted against atopic dermatitis biology?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Take the BH-significant GO BP terms from T1S2 and collapse redundancy: run rrvgo (or GOSemSim-based simplify) on the significant terms using semantic similarity (threshold sim <= 0.7, i.e. drop a term when a more significant parent term represents it) to obtain a reduced representative list. Produce: (1) a final table of representative terms with adjusted p, GeneRatio, count and contributing gene symbols; (2) a dotplot / enrichment map (enrichplot or ggplot2) of the top terms; (3) a short interpretive summary flagging processes consistent with known atopic dermatitis skin biology (e.g. epidermal differentiation/keratinization, Th2-axis immune signalling, interferon response) — marked explicitly as interpretation, with the caveat that a 6-vs-6 unpaired design and a delivered (not re-derived) DE table limit generalization. Write go_bp_reduced_terms.csv and the plot; if T1S2 returned no significant terms, report that as the outcome.",
+        "acceptance_criteria": [
+          "Representative term list produced via semantic-similarity reduction with the threshold stated in the output",
+          "Final table includes adjusted p-value, gene ratio, term size and contributing gene symbols per term",
+          "Interpretive summary separates measured results (ORA statistics) from biological interpretation and states the design caveats",
+          "Deliverables written: go_bp_reduced_terms.csv plus one dotplot/enrichment-map figure"
+        ]
+      }
+    ],
+    "title": "GO BP over-representation of AD DE genes",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The treated-vs-control DESeq2 contrast for atopic dermatitis skin (6 vs 6) is already computed and delivered as de_results.csv (12,000 genes x 8 columns), so this plan does not re-run differential expression. It defines the significant gene list and the tested-gene universe directly from that table (padj < 0.05; universe = genes with a testable result, i.e. non-NA padj / baseMean > 0), determines the gene identifier space (symbols vs Ensembl) from the counts/de_results columns, then runs a classical over-representation analysis (ORA) of GO Biological Processes against that universe using clusterProfiler::enrichGO with org.Hs.eg.db (both installed). BH-adjusted term p-values guard the 12,000-gene multiple-testing scope; redundant child terms are collapsed by semantic similarity so the final report names distinct processes rather than many near-duplicate GO nodes. The known caveat that sample_01's library size is ~4x below median is already absorbed by DESeq2's size factors in the delivered table; it is recorded, not re-analyzed. If the significant set is empty or maps fewer than 5 genes to GO, the ORA step reports that instead of producing numbers."
+  },
+  "usage": {
+    "inputTokens": 66320,
+    "outputTokens": 5857,
+    "cacheReadInputTokens": 34816,
+    "reasoningTokens": 1659
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_f2a0f5523f414ba692e220f4",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "GO BP over-representation of AD DE genes",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The treated-vs-control DESeq2 contrast for atopic dermatitis skin (6 vs 6) is already computed and delivered as de_results.csv (12,000 genes x 8 columns), so this plan does not re-run differential expression. It defines the significant gene list and the tested-gene universe directly from that table (padj < 0.05; universe = genes with a testable result, i.e. non-NA padj / baseMean > 0), determines the gene identifier space (symbols vs Ensembl) from the counts/de_results columns, then runs a classical over-representation analysis (ORA) of GO Biological Processes against that universe using clusterProfiler::enrichGO with org.Hs.eg.db (both installed). BH-adjusted term p-values guard the 12,000-gene multiple-testing scope; redundant child terms are collapsed by semantic similarity so the final report names distinct processes rather than many near-duplicate GO nodes. The known caveat that sample_01's library size is ~4x below median is already absorbed by DESeq2's size factors in the delivered table; it is recorded, not re-analyzed. If the significant set is empty or maps fewer than 5 genes to GO, the ORA step reports that instead of producing numbers.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Define significant gene set and universe",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "From the delivered DESeq2 results table for AD treated vs control, which genes are significant (padj < 0.05), and what is the tested-gene universe they were selected from?",
+              "description": "Read /eval-four-models-v2-without-gene-list-ora-s1-1/data/inputs/results/de_results.csv (12,000 rows; columns gene, base_mean, log2_fold_change, ...). Verify the gene column matches the 12,000 gene IDs in counts.csv. Determine the identifier space of the gene column (HGNC symbols vs Ensembl gene IDs vs Entrez) by pattern inspection and a spot check against org.Hs.eg.db. Define: significant set = genes with padj < 0.05 (also record counts at |log2FC| >= 1 as a secondary stricter list, but ORA uses padj-only as primary); universe = all genes in the table with baseMean > 0 and non-NA padj (DESeq2 independent-filtering NA genes are excluded from both set and universe consistently). Write sig_genes.csv, universe.csv, and a summary (n significant, n universe, identifier type, median padj distribution, number of NA padj). Note sample_01's low library size in the report header as an inherited caveat of the delivered table.",
+              "acceptance_criteria": [
+                "de_results.csv parsed with 12,000 gene rows and 8 columns; gene IDs cross-checked against counts.csv with mismatch count reported",
+                "Identifier space stated explicitly (symbol / Ensembl / Entrez) with evidence",
+                "Significant set (padj < 0.05) and universe (baseMean > 0, non-NA padj) written as CSVs with sizes reported",
+                "If fewer than 5 significant genes, stop and report that ORA is not viable rather than proceeding"
+              ],
+              "packages": [
+                "data.table",
+                "readr"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Bulk RNA-seq, Homo sapiens skin, atopic dermatitis lesional (treated) vs control, 6 vs 6 unpaired, single batch, Salmon gene-level counts with a precomputed DESeq2 results table. The DE table is authoritative; this step only parses and defines lists, it does not re-run DESeq2.",
+              "constraints": [
+                "Do not re-run differential expression; use the delivered de_results.csv as-is",
+                "Use padj as the significance criterion; keep the padj-only list as the primary gene set for ORA",
+                "Exclude NA-padj genes from both the significant set and the universe so ORA denominators are consistent"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "GO Biological Process over-representation",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which GO Biological Process terms are over-represented (BH-adjusted p < 0.05) among the significant treated-vs-control genes relative to the tested-gene universe?",
+              "description": "Run classical over-representation analysis with clusterProfiler::enrichGO(ont = \"BP\", pAdjustMethod = \"BH\", pvalueCutoff/qvalueCutoff = 0.05, universe = tested genes) on the significant gene list from T1S1, using org.Hs.eg.db 3.23.1 as the annotation. Map input identifiers to Entrez via the identifier type determined in T1S1 (keyType SYMBOL or ENSEMBL; strip Ensembl version suffixes; report genes that fail to map and the resulting set/universe sizes). Compute the full term-level result table (GeneRatio, BgRatio, pvalue, p.adjust, qvalue, geneID, count), report the number of significant terms before and after multiple-testing correction, and save the complete table as go_bp_ora_results.csv. If org.Hs.eg.db or clusterProfiler cannot be loaded, fall back to gseapy's Enrichr-backed GO_Biological_Process_2023 library run offline-free via its local GMT handling only if an equivalent GO BP gene set file exists in the environment (e.g. the staged WikiPathways human GMT is NOT GO and must not be silently substituted); otherwise report the gap.",
+              "acceptance_criteria": [
+                "enrichGO runs with the universe from T1S1, not the default genome-wide background",
+                "Mapping success rate for significant genes and universe genes reported (both set and universe mapped with the same keyType)",
+                "go_bp_ora_results.csv written with all enrichGO output columns; number of BP terms at p.adjust < 0.05 reported",
+                "No GO BP results and no fallback produced => step reports the empty result explicitly with set/universe sizes"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "GSEABase"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "context": "Human dataset (Homo sapiens), so the annotation database must be org.Hs.eg.db. ORA on a gene list from a 12,000-gene tested background. A human WikiPathways GMT exists in the reference store but is a different ontology; it is not a substitute for GO BP.",
+              "caveats": [
+                "clusterProfiler's default universe (all annotated genes) would inflate enrichment significance; passing the tested-gene universe is mandatory",
+                "If the significant set is small (< 10 mappable genes), ORA is underpowered; report term counts and note the limitation instead of over-interpreting single-gene terms"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Deduplicate terms and report AD-relevant processes",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which distinct GO Biological Processes summarize the significant treated-vs-control gene set, once near-duplicate GO terms are collapsed and results are interpreted against atopic dermatitis biology?",
+              "description": "Take the BH-significant GO BP terms from T1S2 and collapse redundancy: run rrvgo (or GOSemSim-based simplify) on the significant terms using semantic similarity (threshold sim <= 0.7, i.e. drop a term when a more significant parent term represents it) to obtain a reduced representative list. Produce: (1) a final table of representative terms with adjusted p, GeneRatio, count and leading-edge gene symbols; (2) a dotplot / enrichment map (enrichplot or ggplot2) of the top terms; (3) a short interpretive summary flagging processes consistent with known atopic dermatitis skin biology (e.g. epidermal differentiation/keratinization, immune signalling such as IL-4/IL-13 / Th2 axis, interferon response) — marked explicitly as interpretation, with the caveat that a 6-vs-6 unpaired design and a delivered (not re-derived) DE table limit generalization. Write go_bp_reduced_terms.csv and the plot; if T1S2 returned no significant terms, report that as the outcome.",
+              "acceptance_criteria": [
+                "Representative term list produced via semantic-similarity reduction with the threshold stated in the output",
+                "Final table includes adjusted p-value, gene ratio, term size and contributing gene symbols per term",
+                "Interpretive summary separates measured results (ORA statistics) from biological interpretation and states the design caveats",
+                "Deliverables written: go_bp_reduced_terms.csv plus one dotplot/enrichment-map figure"
+              ],
+              "packages": [
+                "rrvgo",
+                "GOSemSim",
+                "clusterProfiler",
+                "enrichplot",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent",
+              "context": "Follows GO BP ORA on the AD treated-vs-control significant gene set. The reduction step needs GO.db for semantic similarity, which is installed.",
+              "caveats": [
+                "Semantic-similarity reduction chooses representatives; the full un-reduced term table from T1S2 remains the primary quantitative result",
+                "With 12,000 tested genes and a small significant set, single dominant processes can dominate; check the leading-edge gene counts before interpreting term specificity"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_f90e63cd122240d9a19853b4",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The treated-vs-control DESeq2 contrast for atopic dermatitis skin (6 vs 6) is already computed and delivered as de_results.csv (12,000 genes x 8 columns), so this plan does not re-run differential expression. It defines the significant gene list and the tested-gene universe directly from that table (padj < 0.05; universe = genes with a testable result, i.e. non-NA padj / baseMean > 0), determines the gene identifier space (symbols vs Ensembl) from the counts/de_results columns, then runs a classical over-representation analysis (ORA) of GO Biological Processes against that universe using clusterProfiler::enrichGO with org.Hs.eg.db (both installed). BH-adjusted term p-values guard the 12,000-gene multiple-testing scope; redundant child terms are collapsed by semantic similarity so the final report names distinct processes rather than many near-duplicate GO nodes. The known caveat that sample_01's library size is ~4x below median is already absorbed by DESeq2's size factors in the delivered table; it is recorded, not re-analyzed. If the significant set is empty or maps fewer than 5 genes to GO, the ORA step reports that instead of producing numbers.",
+          "created_at": "2026-07-22T12:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "de_results.csv parsed with 12,000 gene rows and 8 columns; gene IDs cross-checked against counts.csv with mismatch count reported",
+                "Identifier space stated explicitly (symbol / Ensembl / Entrez) with evidence",
+                "Significant set (padj < 0.05) and universe (baseMean > 0, non-NA padj) written as CSVs with sizes reported",
+                "If fewer than 5 significant genes, stop and report that ORA is not viable rather than proceeding"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Bulk RNA-seq, Homo sapiens skin, atopic dermatitis lesional (treated) vs control, 6 vs 6 unpaired, single batch, Salmon gene-level counts with a precomputed DESeq2 results table. The DE table is authoritative; this step only parses and defines lists, it does not re-run DESeq2.",
+              "constraints": [
+                "Do not re-run differential expression; use the delivered de_results.csv as-is",
+                "Use padj as the significance criterion; keep the padj-only list as the primary gene set for ORA",
+                "Exclude NA-padj genes from both the significant set and the universe so ORA denominators are consistent"
+              ],
+              "depends_on": [],
+              "description": "Read /eval-four-models-v2-without-gene-list-ora-s1-1/data/inputs/results/de_results.csv (12,000 rows; columns gene, base_mean, log2_fold_change, ...). Verify the gene column matches the 12,000 gene IDs in counts.csv. Determine the identifier space of the gene column (HGNC symbols vs Ensembl gene IDs vs Entrez) by pattern inspection and a spot check against org.Hs.eg.db. Define: significant set = genes with padj < 0.05 (also record counts at |log2FC| >= 1 as a secondary stricter list, but ORA uses padj-only as primary); universe = all genes in the table with baseMean > 0 and non-NA padj (DESeq2 independent-filtering NA genes are excluded from both set and universe consistently). Write sig_genes.csv, universe.csv, and a summary (n significant, n universe, identifier type, median padj distribution, number of NA padj). Note sample_01's low library size in the report header as an inherited caveat of the delivered table.",
+              "id": "T1S1",
+              "name": "Define significant gene set and universe",
+              "packages": [
+                "data.table",
+                "readr"
+              ],
+              "question": "From the delivered DESeq2 results table for AD treated vs control, which genes are significant (padj < 0.05), and what is the tested-gene universe they were selected from?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "enrichGO runs with the universe from T1S1, not the default genome-wide background",
+                "Mapping success rate for significant genes and universe genes reported (both set and universe mapped with the same keyType)",
+                "go_bp_ora_results.csv written with all enrichGO output columns; number of BP terms at p.adjust < 0.05 reported",
+                "No GO BP results and no fallback produced => step reports the empty result explicitly with set/universe sizes"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Human dataset (Homo sapiens), so the annotation database must be org.Hs.eg.db. ORA on a gene list from a 12,000-gene tested background. A human WikiPathways GMT exists in the reference store but is a different ontology; it is not a substitute for GO BP.",
+              "caveats": [
+                "clusterProfiler's default universe (all annotated genes) would inflate enrichment significance; passing the tested-gene universe is mandatory",
+                "If the significant set is small (< 10 mappable genes), ORA is underpowered; report term counts and note the limitation instead of over-interpreting single-gene terms"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Run classical over-representation analysis with clusterProfiler::enrichGO(ont = \"BP\", pAdjustMethod = \"BH\", pvalueCutoff/qvalueCutoff = 0.05, universe = tested genes) on the significant gene list from T1S1, using org.Hs.eg.db 3.23.1 as the annotation. Map input identifiers to Entrez via the identifier type determined in T1S1 (keyType SYMBOL or ENSEMBL; strip Ensembl version suffixes; report genes that fail to map and the resulting set/universe sizes). Compute the full term-level result table (GeneRatio, BgRatio, pvalue, p.adjust, qvalue, geneID, count), report the number of significant terms before and after multiple-testing correction, and save the complete table as go_bp_ora_results.csv. If org.Hs.eg.db or clusterProfiler cannot be loaded, report the gap rather than substituting a non-GO resource (e.g. the staged WikiPathways human GMT, which is a different ontology and must not be silently used in its place).",
+              "id": "T1S2",
+              "name": "GO Biological Process over-representation",
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "GO.db",
+                "GSEABase"
+              ],
+              "question": "Which GO Biological Process terms are over-represented (BH-adjusted p < 0.05) among the significant treated-vs-control genes relative to the tested-gene universe?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Representative term list produced via semantic-similarity reduction with the threshold stated in the output",
+                "Final table includes adjusted p-value, gene ratio, term size and contributing gene symbols per term",
+                "Interpretive summary separates measured results (ORA statistics) from biological interpretation and states the design caveats",
+                "Deliverables written: go_bp_reduced_terms.csv plus one dotplot/enrichment-map figure"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Follows GO BP ORA on the AD treated-vs-control significant gene set. The reduction step needs GO.db for semantic similarity, which is installed.",
+              "caveats": [
+                "Semantic-similarity reduction chooses representatives; the full un-reduced term table from T1S2 remains the primary quantitative result",
+                "With 12,000 tested genes and a small significant set, single dominant processes can dominate; check the leading-edge gene counts before interpreting term specificity"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Take the BH-significant GO BP terms from T1S2 and collapse redundancy: run rrvgo (or GOSemSim-based simplify) on the significant terms using semantic similarity (threshold sim <= 0.7, i.e. drop a term when a more significant parent term represents it) to obtain a reduced representative list. Produce: (1) a final table of representative terms with adjusted p, GeneRatio, count and contributing gene symbols; (2) a dotplot / enrichment map (enrichplot or ggplot2) of the top terms; (3) a short interpretive summary flagging processes consistent with known atopic dermatitis skin biology (e.g. epidermal differentiation/keratinization, Th2-axis immune signalling, interferon response) — marked explicitly as interpretation, with the caveat that a 6-vs-6 unpaired design and a delivered (not re-derived) DE table limit generalization. Write go_bp_reduced_terms.csv and the plot; if T1S2 returned no significant terms, report that as the outcome.",
+              "id": "T1S3",
+              "name": "Deduplicate terms and report AD-relevant processes",
+              "packages": [
+                "rrvgo",
+                "GOSemSim",
+                "clusterProfiler",
+                "enrichplot",
+                "ggplot2"
+              ],
+              "question": "Which distinct GO Biological Processes summarize the significant treated-vs-control gene set, once near-duplicate GO terms are collapsed and results are interpreted against atopic dermatitis biology?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "GO BP over-representation of AD DE genes"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 44
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

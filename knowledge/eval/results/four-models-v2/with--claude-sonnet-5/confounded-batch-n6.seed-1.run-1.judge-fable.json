@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly identifies the perfect confound, fits ~condition alone, explicitly refuses batch terms and ComBat-seq/SVA/removeBatchEffect, and labels every result as confounded, matching the reference. Design formula, reference level, contrast, apeglm shrinkage, BH at alpha 0.05 with independent filtering, and a justified 10-in-6 filter are all stated; normalization is implied by DESeq2 on raw counts but size factors are not named. QC covers PCA, distances, and library sizes colored by both factors, though it only says outliers are 'flagged' without a handling policy. Enrichment was not requested and runs on a confounded signal, so it is of doubtful value, but it is technically well specified (ranked stat, named collections with versions, 15-500 window). The report leads with the caveat and lists versions, thresholds, and gene counts."
+}

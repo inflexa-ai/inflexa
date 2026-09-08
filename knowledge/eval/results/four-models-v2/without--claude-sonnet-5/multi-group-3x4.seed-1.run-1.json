@@ -1,0 +1,220 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:04:11.101Z",
+  "elapsedMs": 27820,
+  "outcome": "plan_submitted",
+  "planId": "pln-bffce915",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and DESeq2 model fit (LRT + pairwise Wald)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene counts as delivered lack confirmed length-correction metadata; if that metadata is absent, results rely on DESeq2's internal normalization only, which is standard but should be flagged",
+          "n=4 per group is adequate but modest for NB dispersion estimation in a 12000-gene panel; report how many genes pass the count filter",
+          "LRT significance does not indicate which specific group(s) differ — that is resolved only by the Wald contrasts"
+        ],
+        "context": "12000 x 12 raw Salmon gene-level counts, liver, 3 groups x 4 reps, unpaired, single batch. This is the sole primary analysis producing both the omnibus multi-group test and the two treatment-vs-control contrasts needed to answer the research question.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "tximport",
+          "pheatmap",
+          "ggplot2",
+          "readr",
+          "dplyr"
+        ],
+        "question": "Across control, treated_a, and treated_b (4 replicates each, unpaired, single batch, raw Salmon gene counts), which genes show any difference across the three groups (omnibus LRT), and which genes are significant in each pairwise Wald contrast (treated_a vs control, treated_b vs control)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use a single DESeqDataSet with design ~condition for both the LRT and the Wald contrasts so that dispersion estimates are shared and comparable",
+          "Do not use a length offset/tximport average-transcript-length correction unless the counts file is confirmed to carry length metadata; state this assumption explicitly in the output notes",
+          "Apply independent filtering and BH FDR correction consistently across all three result tables"
+        ],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and sample order/IDs are verified to match between counts.csv and metadata.csv",
+          "A DESeqDataSet is built with design ~condition (3 levels: control, treated_a, treated_b), low-count genes are filtered (e.g. rowSums >= 10) before fitting",
+          "An LRT (full ~condition vs reduced ~1) is run to produce one omnibus 'any-group-difference' gene list with padj (BH) < 0.05",
+          "Two Wald contrasts (treated_a vs control, treated_b vs control) are extracted from the same fitted model with independent filtering, log2FC shrinkage (apeglm or ashr) applied, and padj < 0.05 & |log2FC| > 1 used as significance thresholds",
+          "Output includes: full LRT results table, full results table per Wald contrast, PCA/sample-distance QC plot, and a size-factor/dispersion diagnostic plot",
+          "Gene ID mapping (Ensembl/Entrez to HGNC symbol) is applied for readability using the human UniProt ID mapping reference if counts are keyed by Ensembl/Entrez IDs"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Reconcile LRT vs pairwise contrasts and pathway enrichment",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "WikiPathways coverage is comparatively small (a few hundred pathways) versus larger catalogs like Reactome/MSigDB; absence of a significant pathway does not rule out biological relevance, only that this specific curated set does not capture it",
+          "Overlap between LRT and Wald sets is expected to be imperfect by design: the LRT is more sensitive to genes with intermediate or non-monotonic patterns across groups that no single pairwise contrast captures alone"
+        ],
+        "context": "Uses the DE result tables (LRT and two Wald contrasts) from T1S1. Reference: WikiPathways human pathway gene sets (GMT, HGNC symbols) available at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, organism-matched to the human liver dataset.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "dplyr",
+          "readr",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "How do the omnibus any-group-difference gene set and the two treatment-specific gene sets (treated_a vs control, treated_b vs control) relate to each other, and which WikiPathways human pathways are enriched among the LRT hits and among each treatment-specific gene set?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Match gene identifiers between the DE tables and the WikiPathways GMT by HGNC gene symbol; if DE tables use Ensembl/Entrez IDs, map to symbols first using the human UniProt ID mapping reference or an org.Hs.eg.db lookup before enrichment",
+          "Run enrichment separately for each of the three gene lists (LRT, treated_a vs control, treated_b vs control) rather than pooling them",
+          "If the WikiPathways human GMT is unavailable at run time, report enrichment as skipped and still deliver the overlap/reconciliation table, since that does not depend on the pathway reference"
+        ],
+        "acceptance_criteria": [
+          "A gene-level comparison table/Venn (or UpSet) is produced showing overlap between the LRT significant set, the treated_a-vs-control significant set, and the treated_b-vs-control significant set",
+          "Genes significant in the LRT but in neither Wald contrast, and genes significant in a Wald contrast but not the LRT, are explicitly flagged and counted",
+          "Over-representation analysis (e.g. Fisher/hypergeometric via fgsea::fora or clusterProfiler::enricher) against WikiPathways human gene sets is run separately for: the LRT hit list, the treated_a-vs-control up/down gene lists, and the treated_b-vs-control up/down gene lists",
+          "Enrichment results report pathway name, gene ratio, p-value and BH-adjusted p-value, restricted to pathways with adjusted p < 0.05 or explicitly reported as none significant",
+          "A final summary table lists, per gene, LRT status, treated_a log2FC/padj, treated_b log2FC/padj, and whether the gene is treatment-a-specific, treatment-b-specific, or shared"
+        ]
+      }
+    ],
+    "title": "Liver 3-group DE: treated_a and treated_b vs control",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The input is a 12000-gene x 12-sample Salmon gene-level count matrix with three groups (control, treated_a, treated_b; n=4 each, unpaired, single batch). The design supports a single DESeq2 model with a 3-level condition factor, from which we extract (1) an overall likelihood-ratio test (LRT, full model vs reduced/intercept-only) to identify genes that differ across the three groups at all, and (2) two Wald contrasts (treated_a vs control, treated_b vs control) to identify genes each treatment changes relative to control. Because raw Salmon gene counts do not carry explicit length-correction metadata, we treat them as raw counts appropriate for DESeq2's negative-binomial model without additional length offset, noting this assumption. Downstream, DE gene sets from the LRT and each Wald contrast are run through WikiPathways human pathway enrichment (organism-matched) to give biological context to the significant genes, and a summary/comparison step reconciles the LRT hits against the union/intersection of the two Wald contrasts to characterize treatment-specific vs shared transcriptional responses."
+  },
+  "usage": {
+    "inputTokens": 43668,
+    "outputTokens": 2670,
+    "cacheCreationInputTokens": 34107,
+    "cacheReadInputTokens": 9549,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01SM9eyYQMz9EwCR2gewya5Q",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3-group DE: treated_a and treated_b vs control",
+          "analytical_narrative": "The input is a 12000-gene x 12-sample Salmon gene-level count matrix with three groups (control, treated_a, treated_b; n=4 each, unpaired, single batch). The design supports a single DESeq2 model with a 3-level condition factor, from which we extract (1) an overall likelihood-ratio test (LRT, full model vs reduced/intercept-only) to identify genes that differ across the three groups at all, and (2) two Wald contrasts (treated_a vs control, treated_b vs control) to identify genes each treatment changes relative to control. Because raw Salmon gene counts do not carry explicit length-correction metadata, we treat them as raw counts appropriate for DESeq2's negative-binomial model without additional length offset, noting this assumption. Downstream, DE gene sets from the LRT and each Wald contrast are run through WikiPathways human pathway enrichment (organism-matched) to give biological context to the significant genes, and a summary/comparison step reconciles the LRT hits against the union/intersection of the two Wald contrasts to characterize treatment-specific vs shared transcriptional responses.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and DESeq2 model fit (LRT + pairwise Wald)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Across control, treated_a, and treated_b (4 replicates each, unpaired, single batch, raw Salmon gene counts), which genes show any difference across the three groups (omnibus LRT), and which genes are significant in each pairwise Wald contrast (treated_a vs control, treated_b vs control)?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and sample order/IDs are verified to match between counts.csv and metadata.csv",
+                "A DESeqDataSet is built with design ~condition (3 levels: control, treated_a, treated_b), low-count genes are filtered (e.g. rowSums >= 10) before fitting",
+                "An LRT (full ~condition vs reduced ~1) is run to produce one omnibus 'any-group-difference' gene list with padj (BH) < 0.05",
+                "Two Wald contrasts (treated_a vs control, treated_b vs control) are extracted from the same fitted model with independent filtering, log2FC shrinkage (apeglm or ashr) applied, and padj < 0.05 & |log2FC| > 1 used as significance thresholds",
+                "Output includes: full LRT results table, full results table per Wald contrast, PCA/sample-distance QC plot, and a size-factor/dispersion diagnostic plot",
+                "Gene ID mapping (Ensembl/Entrez to HGNC symbol) is applied for readability using the human UniProt ID mapping reference if counts are keyed by Ensembl/Entrez IDs"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "tximport",
+                "pheatmap",
+                "ggplot2",
+                "readr",
+                "dplyr"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "12000 x 12 raw Salmon gene-level counts, liver, 3 groups x 4 reps, unpaired, single batch. This is the sole primary analysis producing both the omnibus multi-group test and the two treatment-vs-control contrasts needed to answer the research question.",
+              "constraints": [
+                "Use a single DESeqDataSet with design ~condition for both the LRT and the Wald contrasts so that dispersion estimates are shared and comparable",
+                "Do not use a length offset/tximport average-transcript-length correction unless the counts file is confirmed to carry length metadata; state this assumption explicitly in the output notes",
+                "Apply independent filtering and BH FDR correction consistently across all three result tables"
+              ],
+              "caveats": [
+                "Salmon gene counts as delivered lack confirmed length-correction metadata; if that metadata is absent, results rely on DESeq2's internal normalization only, which is standard but should be flagged",
+                "n=4 per group is adequate but modest for NB dispersion estimation in a 12000-gene panel; report how many genes pass the count filter",
+                "LRT significance does not indicate which specific group(s) differ — that is resolved only by the Wald contrasts"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Reconcile LRT vs pairwise contrasts and pathway enrichment",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How do the omnibus any-group-difference gene set and the two treatment-specific gene sets (treated_a vs control, treated_b vs control) relate to each other, and which WikiPathways human pathways are enriched among the LRT hits and among each treatment-specific gene set?",
+              "acceptance_criteria": [
+                "A gene-level comparison table/Venn (or UpSet) is produced showing overlap between the LRT significant set, the treated_a-vs-control significant set, and the treated_b-vs-control significant set",
+                "Genes significant in the LRT but in neither Wald contrast, and genes significant in a Wald contrast but not the LRT, are explicitly flagged and counted",
+                "Over-representation analysis (e.g. Fisher/hypergeometric via fgsea::fora or clusterProfiler::enricher) against WikiPathways human gene sets is run separately for: the LRT hit list, the treated_a-vs-control up/down gene lists, and the treated_b-vs-control up/down gene lists",
+                "Enrichment results report pathway name, gene ratio, p-value and BH-adjusted p-value, restricted to pathways with adjusted p < 0.05 or explicitly reported as none significant",
+                "A final summary table lists, per gene, LRT status, treated_a log2FC/padj, treated_b log2FC/padj, and whether the gene is treatment-a-specific, treatment-b-specific, or shared"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "dplyr",
+                "readr",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Uses the DE result tables (LRT and two Wald contrasts) from T1S1. Reference: WikiPathways human pathway gene sets (GMT, HGNC symbols) available at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, organism-matched to the human liver dataset.",
+              "constraints": [
+                "Match gene identifiers between the DE tables and the WikiPathways GMT by HGNC gene symbol; if DE tables use Ensembl/Entrez IDs, map to symbols first using the human UniProt ID mapping reference or an org.Hs.eg.db lookup before enrichment",
+                "Run enrichment separately for each of the three gene lists (LRT, treated_a vs control, treated_b vs control) rather than pooling them",
+                "If the WikiPathways human GMT is unavailable at run time, report enrichment as skipped and still deliver the overlap/reconciliation table, since that does not depend on the pathway reference"
+              ],
+              "caveats": [
+                "WikiPathways coverage is comparatively small (a few hundred pathways) versus larger catalogs like Reactome/MSigDB; absence of a significant pathway does not rule out biological relevance, only that this specific curated set does not capture it",
+                "Overlap between LRT and Wald sets is expected to be imperfect by design: the LRT is more sensitive to genes with intermediate or non-monotonic patterns across groups that no single pairwise contrast captures alone"
+              ]
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly consumes the existing DESeq2 table without redoing DE, ranks the full list by the Wald stat with a stated fallback, checks the symbol space against the HGNC-keyed Hallmark GMT, and runs fgsea multilevel / gseapy prerank against the named MSigDB 2026.1 Hallmark collection with a seed, size window (10-500, slightly looser than 15), BH at 0.05 and leading-edge reporting, plus per-set coverage. The sensitivity step handles the shallow sample_01 sensibly with an explicit ~condition design and control reference level, but sample-structure QC is limited to library sizes (no PCA or distances), the low-count prefilter and size-factor normalization for the recompute are left implicit ('minimal, state it'), and no fold-change shrinkage is mentioned for any reported effect. Reporting is strong on collection version, ranking metric and significant-gene counts, but the fgsea version is not required in the report."
+}

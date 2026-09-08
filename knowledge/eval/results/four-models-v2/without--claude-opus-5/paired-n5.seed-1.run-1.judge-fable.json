@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan fits the paired design exactly as the reference requires: DESeq2 ~subject + condition with control as reference, a limma-voom replication with the same fixed subject blocking, explicit refusal to present the unpaired fit as an answer, and per-subject consistency plus leave-one-subject-out checks that directly address the within-subject question. QC is thorough (pairing table, library-size flag at 50% of median, PCA by condition/subject, within-pair distances) with a stated policy of dropping pairs rather than single samples; filterByExpr against the design and raw counts into the model are handled correctly, though TMM for voom is not explicitly named. BH at 0.05 with apeglm/ashr shrinkage is explicit, but the |log2FC|>=1 count is applied post hoc rather than via lfcThreshold in the test. Enrichment uses the full ranked list and the filtered universe with named collections, but the ranking metric is left as an either/or, and no collection version or gene-set size window is specified; the report plan omits package versions."
+}

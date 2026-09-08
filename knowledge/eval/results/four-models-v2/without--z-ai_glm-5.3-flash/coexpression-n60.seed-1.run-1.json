@@ -1,0 +1,377 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "coexpression-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:51:42.898Z",
+  "elapsedMs": 104659,
+  "outcome": "plan_submitted",
+  "planId": "pln-bc4836c5",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, filtering, VST normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "coexpression",
+        "status": "pending",
+        "caveats": [
+          "Salmon output means these are estimated counts, not exactly integer alignments; DESeq2 handles them but report if non-integer values are present",
+          "The profile does not say whether Salmon applied length correction; TMM/VST on raw counts is robust to this, but the caveat must be recorded in the output"
+        ],
+        "context": "Dataset: /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns, gene-level Salmon counts, unpaired human whole-blood cohort, 60 cases vs 60 controls) and /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 2, sample id + condition). Single batch. R packages DESeq2, edgeR, data.table, pheatmap, ggplot2 are installed. Reference data is NOT needed in this step.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "data.table",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Are the 120 case/control samples and their labels consistent, which genes are expressible enough to enter a co-expression network, and is there any sample-level outlier in the whole-blood cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not use TPM or FPKM-style normalization: co-expression modules must be built from variance-stabilized count-based values",
+          "Report, do not silently drop, any sample flagged by PCA",
+          "All outputs under a single step output directory with the step id in the name"
+        ],
+        "description": "Read /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns, gene-level Salmon counts) and metadata.csv (120 x 2). Verify sample ID alignment between the two files and that the condition column encodes exactly 60 case / 60 control. Filter genes with very low counts (e.g. keep genes with CPM > 1 in at least 20 samples, the smallest group size), then normalize with DESeq2 variance-stabilizing transformation (VST) on raw counts. Produce QC artifacts: library-size distribution, mean-variance trend before/after VST, and a PCA of the VST matrix colored by condition and by library size to detect outliers. Because the profile does not state whether Salmon applied length correction, use count-based normalization only (VST on raw counts, no TPM); this is robust to that ambiguity. Output: filtered VST matrix (genes x samples), sample-level QC table, PCA plot. A very small number of samples (e.g. PCA outliers with median absolute deviation far from all others) may be excluded, with the decision and numbers reported; the 60/60 balance must be re-checked after any exclusion.",
+        "acceptance_criteria": [
+          "Normalized (VST) expression matrix for all samples that pass QC, with filtered gene set (low-count genes removed)",
+          "PCA plot annotated by condition and library size showing no sample excluded without justification",
+          "Condition labels reconciled 1:1 between counts.csv and metadata.csv with counts printed"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "WGCNA network construction and module detection",
+        "agent": "network-agent",
+        "track": "coexpression",
+        "status": "pending",
+        "caveats": [
+          "If no power reaches R^2 >= 0.8, take the largest power before mean connectivity collapses, and record that scale-free fit was not achieved",
+          "Block size must be large enough that all filtered genes fit in one block if memory allows; report the number of blocks used either way",
+          "Max block size must be reduced if memory becomes an issue; 12k genes is small"
+        ],
+        "context": "Input from T1S1: VST-normalized genes x samples matrix (roughly 5000-10000 genes after filtering, 120 samples, 60 case / 60 controls). R package WGCNA==1.74 is installed. Whole blood is dominated by a few abundant cell types, so a signed network is preferred: it separates co-up- from co-down-regulated directions, which matters when asking which modules track disease status. If the data are strongly cell-composition-driven, the step may note the dominant correlation structure in its report.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which co-expression modules do the filtered whole-blood genes form across the 120 samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use a signed network (type='signed'), not unsigned, so that modules group genes co-expressed in the same direction",
+          "Use bicor or Pearson on VST values; state which was used",
+          "Set RNG seed for reproducibility and report it"
+        ],
+        "description": "Build a signed weighted gene co-expression network on the T1S1 VST matrix with the WGCNA framework (R WGCNA 1.74 is installed; pywgcna 2.2.1 is the Python fallback). Pipeline: (1) transpose to samples x genes; (2) goodSamplesGenes check on the filtered matrix; (3) pickSoftThreshold over powers 1-20 (signed network) and select the lowest power reaching scale-free R^2 >= 0.8, falling back to the best available and reporting the choice; (4) blockwiseModules (or the manual step-by-step path: adjacency -> TOM -> hierarchical clustering -> dynamic tree cut) with minModuleSize 30, mergeCutHeight 0.25, deepSplit 2, maxBlockSize large enough to keep all filtered genes in a single block (>= 12000); (5) recompute module eigengenes (first PC of each module's expression) and module membership (kME = correlation of each gene with each eigengene). Output: gene-to-module color assignment table, module eigengene matrix (modules x 120 samples), kME table, the soft-threshold selection table, and a dendrogram with the module color band.",
+        "acceptance_criteria": [
+          "Soft-threshold power selected with a scale-free topology fit table (R^2 vs power, mean connectivity), target R^2 >= 0.8 or documented failure with best available power",
+          "One module assignment per gene plus the grey (unassigned) module",
+          "Module eigengene matrix (modules x samples) saved to disk",
+          "Number of genes in each module reported"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Module-trait association with case/control status",
+        "agent": "network-agent",
+        "track": "coexpression",
+        "status": "pending",
+        "caveats": [
+          "Module-trait correlation p-values from cor.test are anti-conservative because eigengenes are derived from the same data; the permutation p-value is the primary one",
+          "Do not interpret module enrichment in disease pathways as causal",
+          "If a module's eigengene correlates with library size as strongly as with condition, report it as a technical confound rather than a disease module"
+        ],
+        "context": "Input from T2S1: module eigengene matrix (modules x 120 samples), kME table, module color assignments, plus the condition column from metadata.csv. The cohort is unpaired and single-batch, so no covariate adjustment is needed; but if the T1S1 QC table carries library size or a surrogate variable that correlates with condition, add it to the model as a sensitivity check. This is an association analysis on the same samples used to define the modules: the result is descriptive of this cohort, not a validated biomarker claim, and the step must say so.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "data.table",
+          "pheatmap"
+        ],
+        "question": "Which of the modules detected across the 120 samples track case versus control status, and which genes drive them?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "Permutation p-value is the primary statistic; the asymptotic one is reported alongside",
+          "No module may be called 'disease-associated' from the asymptotic p-value alone",
+          "Keep a fixed seed and report it"
+        ],
+        "description": "Test which modules from T2S1 track case vs control. For each module eigengene: (1) point-biserial correlation with the binary condition (case=1/control=0) with 95% CI, plus a Wilcoxon rank-sum test on eigengene values between groups as a distribution-free check; (2) permutation significance: shuffle the 120 condition labels 1000 times, recompute each eigengene-condition correlation, and derive empirical p-values and FDR (Benjamini-Hochberg) across modules; (3) fit a logistic regression of condition on each eigengene (single batch, unpaired design, no covariates available) and report the odds ratio per SD of the eigengene; (4) within each significant module (FDR < 0.05), list the top 10 hub genes by absolute kME with their kME values and module colors. Output: module-trait association table, permutation null distributions, hub gene table, and a heatmap of module eigenges ordered by condition.",
+        "acceptance_criteria": [
+          "Module-trait table: for each module, correlation of eigengene with case/control status, 95% CI, and both asymptotic and permutation p-values",
+          "Permutation null distribution stored (permutations x modules) so the significance call is auditable",
+          "For every significant module: top 10 hub genes with kME values and mean expression",
+          "Explicit statement of which modules do NOT track status, not only the significant ones"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment of co-expression modules",
+        "agent": "enrichment-agent",
+        "track": "coexpression",
+        "status": "pending",
+        "caveats": [
+          "Modules are built from data-driven clustering, so pathway results describe the module, they do not validate it",
+          "If many modules contain fewer than 15 mappable genes, say so and restrict the table to those with enough",
+          "Report mapping loss; do not assume complete Ensembl-to-symbol coverage"
+        ],
+        "context": "Input from T2S1 (module assignments) and T2S2 (module significance). Reference data: the WikiPathways Homo sapiens GMT (2026.07.10) staged under /mnt/refs/managed/wikipathways-human, HGNC symbols; and the UniProt human ID mapping table (HUMAN_9606_idmapping_selected.tab.gz, headerless, column 19 = Ensembl, column 2 = UniProt entry name, column 3 = Entrez) under /mnt/refs/managed/uniprot-idmapping-human to bridge Ensembl gene IDs to symbols. R fgsea 1.38.0 and GSEABase 1.74.0 are installed. Salmon gene IDs may be Ensembl with or without version suffixes; strip versions before mapping.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table"
+        ],
+        "question": "What biological processes do the co-expression modules represent, especially those that track case vs control status?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Species must be human; never substitute the rat or mouse WikiPathways files also present in the reference store",
+          "FDR is Benjamini-Hochberg across pathways within each module",
+          "Report the GMT pathway count actually loaded"
+        ],
+        "description": "Give the case/control-associated modules (and, for completeness, all modules) a biological reading. Map gene identifiers from the counts matrix (Salmon gene IDs, expected to be Ensembl) to HGNC symbols using the UniProt human ID-mapping table staged under /mnt/refs (build the Ensembl-to-symbol map from it; report the fraction of module genes that map). Run over-representation analysis of each module's gene set against the WikiPathways human pathway GMT (fgsea::fora or clusterProfiler enricher, universe = all mappable filtered genes from T1S1), with BH FDR correction per module. Also run GSEA against the same GMT ranked by each module's kME, which uses module membership ordering rather than a hard threshold. Output: per-module pathway table (pathway, overlap size, FDR), ranked by significance, plus the symbol-mapped gene list per module so results are interpretable without the mapping step.",
+        "acceptance_criteria": [
+          "ID-mapping coverage reported (fraction of module genes with a symbol)",
+          "Per-module enrichment table: pathway name, WikiPathways ID, overlap size, FDR; full table written to disk not only the top hits",
+          "If the WikiPathways GMT or the ID mapping is unavailable, the step reports that and returns the symbol-mapped gene lists per module so the loss is an annotation, not the module result"
+        ]
+      }
+    ],
+    "title": "Whole-blood co-expression modules tracking case vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-23T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is which co-expression modules the 12000 Salmon gene-level counts form across the 60 case / 60 control whole-blood samples, and which modules track disease status. The flow is: (1) QC and normalize the raw counts with DESeq2 VST after filtering low-expression genes, checking sample/label alignment and outliers; (2) build a signed WGCNA co-expression network on the VST matrix and detect modules (soft-threshold selection, dynamic tree cut, eigengene computation); (3) test each module eigengene for association with case/control status (point-biserial correlation with permutation-based p-values, logistic regression, hub genes by kME); (4) annotate the modules with WikiPathways human pathway over-representation (the human WikiPathways GMT is provisioned) after mapping Salmon gene IDs to HGNC symbols via the provisioned UniProt human ID-mapping table. All packages used (DESeq2, WGCNA, fgsea, data.table) are installed in the sandbox."
+  },
+  "usage": {
+    "inputTokens": 63649,
+    "outputTokens": 4432,
+    "cacheReadInputTokens": 32256,
+    "reasoningTokens": 1312
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_5eb6cd65281f404c8301cf42",
+      "name": "submit_plan",
+      "input": {
+        "plan": "title</arg_key><arg_value>Co-expression modules tracking case vs control in whole blood"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_66374400b67a4d65abba3bcb",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-23T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Normalized (VST) expression matrix for all samples that pass QC, with filtered gene set (low-count genes removed)",
+                "PCA plot annotated by condition and library size showing no sample excluded without justification",
+                "Condition labels reconciled 1:1 between counts.csv and metadata.csv with counts printed"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns, gene-level Salmon counts, unpaired human whole-blood cohort, 60 cases vs 60 controls) and /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/metadata/metadata.csv (120 x 2, sample id + condition). Single batch. R packages DESeq2, edgeR, data.table, pheatmap, ggplot2 are installed. Reference data is NOT needed in this step.",
+              "caveats": [
+                "Salmon output means these are estimated counts, not exactly integer alignments; DESeq2 handles them but report if non-integer values are present",
+                "The profile does not say whether Salmon applied length correction; TMM/VST on raw counts is robust to this, but the caveat must be recorded in the output"
+              ],
+              "constraints": [
+                "Do not use TPM or FPKM-style normalization: co-expression modules must be built from variance-stabilized count-based values",
+                "Report, do not silently drop, any sample flagged by PCA",
+                "All outputs under a single step output directory with the step id in the name"
+              ],
+              "depends_on": [],
+              "description": "Read /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns, gene-level Salmon counts) and metadata.csv (120 x 2). Verify sample ID alignment between the two files and that the condition column encodes exactly 60 case / 60 control. Filter genes with very low counts (e.g. keep genes with CPM > 1 in at least 20 samples, the smallest group size), then normalize with DESeq2 variance-stabilizing transformation (VST) on raw counts. Produce QC artifacts: library-size distribution, mean-variance trend before/after VST, and a PCA of the VST matrix colored by condition and by library size to detect outliers. Because the profile does not state whether Salmon applied length correction, use count-based normalization only (VST on raw counts, no TPM); this is robust to that ambiguity. Output: filtered VST matrix (genes x samples), sample-level QC table, PCA plot. A very small number of samples (e.g. PCA outliers with median absolute deviation far from all others) may be excluded, with the decision and numbers reported; the 60/60 balance must be re-checked after any exclusion.",
+              "id": "T1S1",
+              "name": "QC, filtering, VST normalization",
+              "packages": [
+                "DESeq2",
+                "data.table",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "question": "Are the 120 case/control samples and their labels consistent, which genes are expressible enough to enter a co-expression network, and is there any sample-level outlier in the whole-blood cohort?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "coexpression"
+            },
+            {
+              "acceptance_criteria": [
+                "Soft-threshold power selected with a scale-free topology fit table (R^2 vs power, mean connectivity), target R^2 >= 0.8 or documented failure with best available power",
+                "One module assignment per gene plus the grey (unassigned) module",
+                "Module eigengene matrix (modules x samples) saved to disk",
+                "Number of genes in each module reported"
+              ],
+              "agent": "network-agent",
+              "context": "Input from T1S1: VST-normalized genes x samples matrix (roughly 5000-10000 genes after filtering, 120 samples, 60 case / 60 controls). R package WGCNA==1.74 is installed. Whole blood is dominated by a few abundant cell types, so a signed network is preferred: it separates co-up- from co-down-regulated directions, which matters when asking which modules track disease status. If the data are strongly cell-composition-driven, the step may note the dominant correlation structure in its report.",
+              "caveats": [
+                "If no power reaches R^2 >= 0.8, take the largest power before mean connectivity collapses, and record that scale-free fit was not achieved",
+                "Block size must be large enough that all filtered genes fit in one block if memory allows; report the number of blocks used either way",
+                "Max block size must be reduced if memory becomes an issue; 12k genes is small"
+              ],
+              "constraints": [
+                "Use a signed network (type='signed'), not unsigned, so that modules group genes co-expressed in the same direction",
+                "Use bicor or Pearson on VST values; state which was used",
+                "Set RNG seed for reproducibility and report it"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Build a signed weighted gene co-expression network on the T1S1 VST matrix with the WGCNA framework (R WGCNA 1.74 is installed; pywgcna 2.2.1 is the Python fallback). Pipeline: (1) transpose to samples x genes; (2) goodSamplesGenes check on the filtered matrix; (3) pickSoftThreshold over powers 1-20 (signed network) and select the lowest power reaching scale-free R^2 >= 0.8, falling back to the best available and reporting the choice; (4) blockwiseModules (or the manual step-by-step path: adjacency -> TOM -> hierarchical clustering -> dynamic tree cut) with minModuleSize 30, mergeCutHeight 0.25, deepSplit 2, maxBlockSize large enough to keep all filtered genes in a single block (>= 12000); (5) recompute module eigengenes (first PC of each module's expression) and module membership (kME = correlation of each gene with each eigengene). Output: gene-to-module color assignment table, module eigengene matrix (modules x 120 samples), kME table, the soft-threshold selection table, and a dendrogram with the module color band.",
+              "id": "T2S1",
+              "name": "WGCNA network construction and module detection",
+              "packages": [
+                "WGCNA",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which co-expression modules do the filtered whole-blood genes form across the 120 samples?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "coexpression"
+            },
+            {
+              "acceptance_criteria": [
+                "Module-trait table: for each module, correlation of eigengene with case/control status, 95% CI, and both asymptotic and permutation p-values",
+                "Permutation null distribution stored (permutations x modules) so the significance call is auditable",
+                "For every significant module: top 10 hub genes with kME values and mean expression",
+                "Explicit statement of which modules do NOT track status, not only the significant ones"
+              ],
+              "agent": "network-agent",
+              "context": "Input from T2S1: module eigengene matrix (modules x 120 samples), kME table, module color assignments, plus the condition column from metadata.csv. The cohort is unpaired and single-batch, so no covariate adjustment is needed; but if the T1S1 QC table carries library size or a surrogate variable that correlates with condition, add it to the model as a sensitivity check. This is an association analysis on the same samples used to define the modules: the result is descriptive of this cohort, not a validated biomarker claim, and the step must say so.",
+              "caveats": [
+                "Module-trait correlation p-values from cor.test are anti-conservative because eigengenes are derived from the same data; the permutation p-value is the primary one",
+                "Do not interpret module enrichment in disease pathways as causal",
+                "If a module's eigengene correlates with library size as strongly as with condition, report it as a technical confound rather than a disease module"
+              ],
+              "constraints": [
+                "Permutation p-value is the primary statistic; the asymptotic one is reported alongside",
+                "No module may be called 'disease-associated' from the asymptotic p-value alone",
+                "Keep a fixed seed and report it"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "description": "Test which modules from T2S1 track case vs control. For each module eigengene: (1) point-biserial correlation with the binary condition (case=1/control=0) with 95% CI, plus a Wilcoxon rank-sum test on eigengene values between groups as a distribution-free check; (2) permutation significance: shuffle the 120 condition labels 1000 times, recompute each eigengene-condition correlation, and derive empirical p-values and FDR (Benjamini-Hochberg) across modules; (3) fit a logistic regression of condition on each eigengene (single batch, unpaired design, no covariates available) and report the odds ratio per SD of the eigengene; (4) within each significant module (FDR < 0.05), list the top 10 hub genes by absolute kME with their kME values and module colors. Output: module-trait association table, permutation null distributions, hub gene table, and a heatmap of module eigenges ordered by condition.",
+              "id": "T2S2",
+              "name": "Module-trait association with case/control status",
+              "packages": [
+                "WGCNA",
+                "data.table",
+                "pheatmap"
+              ],
+              "question": "Which of the modules detected across the 120 samples track case versus control status, and which genes drive them?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "coexpression"
+            },
+            {
+              "acceptance_criteria": [
+                "ID-mapping coverage reported (fraction of module genes with a symbol)",
+                "Per-module enrichment table: pathway name, WikiPathways ID, overlap size, FDR; full table written to disk not only the top hits",
+                "If the WikiPathways GMT or the ID mapping is unavailable, the step reports that and returns the symbol-mapped gene lists per module so the loss is an annotation, not the module result"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Input from T2S1 (module assignments) and T2S2 (module significance). Reference data: the WikiPathways Homo sapiens GMT (2026.07.10) staged under /mnt/refs/managed/wikipathways-human, HGNC symbols; and the UniProt human ID mapping table (HUMAN_9606_idmapping_selected.tab.gz, headerless, column 19 = Ensembl, column 2 = UniProt entry name, column 3 = Entrez) under /mnt/refs/managed/uniprot-idmapping-human to bridge Ensembl gene IDs to symbols. R fgsea 1.38.0 and GSEABase 1.74.0 are installed. Salmon gene IDs may be Ensembl with or without version suffixes; strip versions before mapping.",
+              "caveats": [
+                "Modules are built from data-driven clustering, so pathway results describe the module, they do not validate it",
+                "If many modules contain fewer than 15 mappable genes, say so and restrict the table to those with enough",
+                "Report mapping loss; do not assume complete Ensembl-to-symbol coverage"
+              ],
+              "constraints": [
+                "Species must be human; never substitute the rat or mouse WikiPathways files also present in the reference store",
+                "FDR is Benjamini-Hochberg across pathways within each module",
+                "Report the GMT pathway count actually loaded"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "description": "Give the case/control-associated modules (and, for completeness, all modules) a biological reading. Map gene identifiers from the counts matrix (Salmon gene IDs, expected to be Ensembl) to HGNC symbols using the UniProt human ID-mapping table staged under /mnt/refs (build the Ensembl-to-symbol map from it; report the fraction of module genes that map). Run over-representation analysis of each module's gene set against the WikiPathways human pathway GMT (fgsea::fora or clusterProfiler enricher, universe = all mappable filtered genes from T1S1), with BH FDR correction per module. Also run GSEA against the same GMT ranked by each module's kME, which uses module membership ordering rather than a hard threshold. Output: per-module pathway table (pathway, overlap size, FDR), ranked by significance, plus the symbol-mapped gene list per module so results are interpretable without the mapping step.",
+              "id": "T3S1",
+              "name": "Pathway enrichment of co-expression modules",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table"
+              ],
+              "question": "What biological processes do the co-expression modules represent, especially those that track case vs control status?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "coexpression"
+            }
+          ],
+          "title": "Whole-blood co-expression modules tracking case vs control",
+          "analytical_narrative": "The question is which co-expression modules the 12000 Salmon gene-level counts form across the 60 case / 60 control whole-blood samples, and which modules track disease status. The flow is: (1) QC and normalize the raw counts with DESeq2 VST after filtering low-expression genes, checking sample/label alignment and outliers; (2) build a signed WGCNA co-expression network on the VST matrix and detect modules (soft-threshold selection, dynamic tree cut, eigengene computation); (3) test each module eigengene for association with case/control status (point-biserial correlation with permutation-based p-values, logistic regression, hub genes by kME); (4) annotate the modules with WikiPathways human pathway over-representation (the human WikiPathways GMT is provisioned) after mapping Salmon gene IDs to HGNC symbols via the provisioned UniProt human ID-mapping table. All packages used (DESeq2, WGCNA, fgsea, data.table) are installed in the sandbox."
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

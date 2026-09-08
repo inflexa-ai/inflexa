@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 with ~condition and apeglm shrinkage is a valid fit for an unpaired 60 vs 60 single-batch design, and the plan explicitly addresses effect magnitude with shrunken LFC, a threshold sweep, and a significance-vs-effect cross-tabulation, though the threshold is applied post hoc rather than via lfcThreshold or TREAT. QC covers alignment, library sizes, and VST PCA by condition but omits a sex check and any search for hidden structure, and normalization is never stated (DESeq2 size factors are implied, not named). The low-count filter (>=10 in >=10 samples) is stated but loosely justified compared with filterByExpr. Enrichment is done correctly on the full ranked list with a versioned WikiPathways collection and size window, and versions, thresholds, and composition caveats are reported, although ranking by |LFC| for the secondary fgsea run discards direction."
+}

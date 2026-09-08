@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 1,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The primary model matches the reference: DESeq2 Wald with ~ sex + age + condition, sex as factor, age centered, contrast on condition, apeglm shrinkage, BH at stated thresholds, and an explicit pre-model check of sex/age balance with a documented fallback if a covariate is collinear with treatment; the sensitivity analysis is correctly subordinated to the full model. QC includes PCA, sample distances and library sizes but does not say figures are colored by condition/sex/age, omits the XIST/Y-linked sex check at the QC stage, and gives no outlier or shallow-sample policy. No low-count filter is stated anywhere, and size-factor normalization is only implicit in the choice of DESeq2. Enrichment was not warranted and is included anyway; it names the collection and ranking metric but gives no version, ORA universe, or set-size window. The report specifies design, thresholds, gene counts and design caveats but not package versions."
+}

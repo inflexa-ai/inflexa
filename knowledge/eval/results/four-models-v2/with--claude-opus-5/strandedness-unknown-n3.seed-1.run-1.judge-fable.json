@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The negative binomial model, filter, normalization, contrast, shrinkage and BH handling are all explicit and correct for 3 vs 3, single batch, unpaired, and the enrichment and report sections are specific. The central failure against the reference is strandedness: the plan names infer_experiment as the method of record but declares it impossible, substitutes count-matrix proxy diagnostics that it admits are indicative only, and then fits the model on the counts as delivered rather than making acquisition of BAMs/reads and a per-sample strandedness inference (with re-counting under the correct -s) a blocking prerequisite. The honesty about the limit and the carried caveat are credited, but the reference is explicit that modelling unchecked counts is wrong, so method_fits_design is marked down heavily. QC, filter, normalization and contrast handling are otherwise close to the reference, and the plan states low power without lowering alpha."
+}

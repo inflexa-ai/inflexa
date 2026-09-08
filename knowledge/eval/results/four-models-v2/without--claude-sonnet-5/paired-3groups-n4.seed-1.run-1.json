@@ -1,0 +1,299 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "paired-3groups-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:00:27.125Z",
+  "elapsedMs": 25766,
+  "outcome": "plan_submitted",
+  "planId": "pln-02b393e3",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and filtering of Salmon gene counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Given the 12000x13 Salmon gene-count matrix and 12-sample metadata (4 subjects x control/treated_a/treated_b), what is the library-size distribution, and which low-count genes should be filtered before differential expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Confirms sample count matches metadata (12 samples: 4 subjects x 3 conditions) and reports the extra column (gene ID or annotation) in the 13-column counts file",
+          "Reports per-sample library sizes and flags any outlier sample",
+          "Applies and reports a low-count filter (e.g. genes with count >=10 in at least 4 samples) with number of genes retained",
+          "Outputs a filtered raw count matrix and updated gene list for downstream DESeq2 modeling"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 paired model with three condition contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr"
+        ],
+        "question": "Within the same 4 subjects, which genes are differentially expressed in treated_a vs control, treated_b vs control, and treated_a vs treated_b, controlling for subject as a paired/blocking factor?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Fits a single DESeq2 model on the filtered count matrix with design ~ subject + condition (subject as blocking factor, condition as 3-level factor: control, treated_a, treated_b)",
+          "Extracts three pairwise contrasts from the one fit: treated_a vs control, treated_b vs control, treated_a vs treated_b",
+          "Applies independent filtering and reports genes at padj < 0.05 (and log2FC) per contrast, with results tables saved for each contrast",
+          "Uses apeglm or ashr shrinkage for log2FC reporting and states which was used",
+          "Reports the number of significant genes per contrast and a summary table"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Union of treatment-responsive genes and A-vs-B concordance",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "matplotlib-venn"
+        ],
+        "question": "Which genes respond to either treatment A or treatment B relative to control (union of significant genes from treated_a-vs-control and treated_b-vs-control), and among those, how concordant or divergent are the A and B effect sizes, per the direct treated_a-vs-treated_b contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Computes the union and intersection of significant genes (padj<0.05) from treated_a-vs-control and treated_b-vs-control",
+          "Reports genes significant in the direct treated_a-vs-treated_b contrast as genes where the two treatments differ from each other",
+          "For the union gene set, correlates treated_a-vs-control log2FC against treated_b-vs-control log2FC and reports the correlation coefficient to characterize concordance",
+          "Produces a labeled table classifying each responsive gene as A-only, B-only, shared-concordant, or shared-divergent (divergent = significant in the direct A-vs-B contrast)",
+          "Outputs a Venn/UpSet-style summary and the classified gene table as CSV"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment per contrast using WikiPathways human gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "data.table"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed in treated_a vs control, treated_b vs control, and treated_a vs treated_b, and do the two treatments converge on shared pathways or diverge?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Confirms the WikiPathways human GMT reference is present at run time before use; if absent, reports the gap and skips enrichment rather than fabricating results",
+          "Runs over-representation or GSEA-style enrichment (e.g. fgsea or clusterProfiler) separately for treated_a-vs-control, treated_b-vs-control, and treated_a-vs-treated_b significant/ranked gene lists",
+          "Reports enriched pathways with adjusted p-value per contrast",
+          "Compares enriched pathway sets between treated_a-vs-control and treated_b-vs-control to report shared versus treatment-specific pathways",
+          "Saves per-contrast enrichment tables"
+        ]
+      }
+    ],
+    "title": "Paired 3-condition blood DE: control vs treatment A/B",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The design is a paired within-subject comparison across three conditions (control, treated_a, treated_b) in 4 subjects (12 samples total, 12000 genes, raw Salmon counts). This calls for a single DESeq2 model with subject as a blocking factor and condition as the factor of interest, followed by three pairwise contrasts (treated_a vs control, treated_b vs control, treated_a vs treated_b) extracted from one fit so the paired structure is respected and dispersion is estimated once across all 12 samples rather than per-pairwise subset. QC and normalization run first on the full count matrix to confirm gene filtering and library-size behavior before modeling. After DE, gene lists per contrast feed pathway enrichment (WikiPathways human, confirmed present in refs) to characterize what each treatment perturbs and whether A and B converge on shared or distinct biology. A final step overlaps the three DE gene sets to directly answer 'which genes respond to either treatment' (union of A-vs-control and B-vs-control) and 'do A and B differ' (the direct A-vs-B contrast plus concordance of A/B effect sizes among genes responsive to either)."
+  },
+  "usage": {
+    "inputTokens": 133361,
+    "outputTokens": 2577,
+    "cacheCreationInputTokens": 70547,
+    "cacheReadInputTokens": 62778,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01HzBPpDQcfq56jjw2Muyeu8",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01JRhrtcmBAUdCV2SjfLV1nt",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pydeseq2",
+          "DESeq2",
+          "limma",
+          "edgeR",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01HYDwMcsAATATannKLMREGL",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Paired 3-condition blood DE: control vs treatment A/B",
+          "created_at": "2026-09-08T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The design is a paired within-subject comparison across three conditions (control, treated_a, treated_b) in 4 subjects (12 samples total, 12000 genes, raw Salmon counts). This calls for a single DESeq2 model with subject as a blocking factor and condition as the factor of interest, followed by three pairwise contrasts (treated_a vs control, treated_b vs control, treated_a vs treated_b) extracted from one fit so the paired structure is respected and dispersion is estimated once across all 12 samples rather than per-pairwise subset. QC and normalization run first on the full count matrix to confirm gene filtering and library-size behavior before modeling. After DE, gene lists per contrast feed pathway enrichment (WikiPathways human, confirmed present in refs) to characterize what each treatment perturbs and whether A and B converge on shared or distinct biology. A final step overlaps the three DE gene sets to directly answer 'which genes respond to either treatment' (union of A-vs-control and B-vs-control) and 'do A and B differ' (the direct A-vs-B contrast plus concordance of A/B effect sizes among genes responsive to either).",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and filtering of Salmon gene counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Given the 12000x13 Salmon gene-count matrix and 12-sample metadata (4 subjects x control/treated_a/treated_b), what is the library-size distribution, and which low-count genes should be filtered before differential expression?",
+              "acceptance_criteria": [
+                "Confirms sample count matches metadata (12 samples: 4 subjects x 3 conditions) and reports the extra column (gene ID or annotation) in the 13-column counts file",
+                "Reports per-sample library sizes and flags any outlier sample",
+                "Applies and reports a low-count filter (e.g. genes with count >=10 in at least 4 samples) with number of genes retained",
+                "Outputs a filtered raw count matrix and updated gene list for downstream DESeq2 modeling"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 paired model with three condition contrasts",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Within the same 4 subjects, which genes are differentially expressed in treated_a vs control, treated_b vs control, and treated_a vs treated_b, controlling for subject as a paired/blocking factor?",
+              "acceptance_criteria": [
+                "Fits a single DESeq2 model on the filtered count matrix with design ~ subject + condition (subject as blocking factor, condition as 3-level factor: control, treated_a, treated_b)",
+                "Extracts three pairwise contrasts from the one fit: treated_a vs control, treated_b vs control, treated_a vs treated_b",
+                "Applies independent filtering and reports genes at padj < 0.05 (and log2FC) per contrast, with results tables saved for each contrast",
+                "Uses apeglm or ashr shrinkage for log2FC reporting and states which was used",
+                "Reports the number of significant genes per contrast and a summary table"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Union of treatment-responsive genes and A-vs-B concordance",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes respond to either treatment A or treatment B relative to control (union of significant genes from treated_a-vs-control and treated_b-vs-control), and among those, how concordant or divergent are the A and B effect sizes, per the direct treated_a-vs-treated_b contrast?",
+              "acceptance_criteria": [
+                "Computes the union and intersection of significant genes (padj<0.05) from treated_a-vs-control and treated_b-vs-control",
+                "Reports genes significant in the direct treated_a-vs-treated_b contrast as genes where the two treatments differ from each other",
+                "For the union gene set, correlates treated_a-vs-control log2FC against treated_b-vs-control log2FC and reports the correlation coefficient to characterize concordance",
+                "Produces a labeled table classifying each responsive gene as A-only, B-only, shared-concordant, or shared-divergent (divergent = significant in the direct A-vs-B contrast)",
+                "Outputs a Venn/UpSet-style summary and the classified gene table as CSV"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "matplotlib-venn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment per contrast using WikiPathways human gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed in treated_a vs control, treated_b vs control, and treated_a vs treated_b, and do the two treatments converge on shared pathways or diverge?",
+              "acceptance_criteria": [
+                "Confirms the WikiPathways human GMT reference is present at run time before use; if absent, reports the gap and skips enrichment rather than fabricating results",
+                "Runs over-representation or GSEA-style enrichment (e.g. fgsea or clusterProfiler) separately for treated_a-vs-control, treated_b-vs-control, and treated_a-vs-treated_b significant/ranked gene lists",
+                "Reports enriched pathways with adjusted p-value per contrast",
+                "Compares enriched pathway sets between treated_a-vs-control and treated_b-vs-control to report shared versus treatment-specific pathways",
+                "Saves per-contrast enrichment tables"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 52
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

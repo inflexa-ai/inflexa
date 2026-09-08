@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan answers the per-sample signature question correctly: VST/log input to GSVA over the named Hallmark 2026.1 collection with a 15-500 size window, then limma with the two-group design and BH across the 50 signatures, with mean scores per group reported beside the adjusted p-value. QC is thorough and specific to sample_01 (library size, detected genes, PCA, distance heatmap, stated keep/exclude reason), and normalization stays inside the model. Minor gaps: the design formula is never written explicitly, limma's trend option for score data is not mentioned, and the share of each signature's genes present in the matrix is not reported. The added DESeq2 gene-level step is unrequested but is correctly framed as complementary rather than as the signature answer."
+}

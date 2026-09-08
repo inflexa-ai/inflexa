@@ -1,0 +1,668 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:55:02.415Z",
+  "elapsedMs": 286579,
+  "outcome": "plan_submitted",
+  "planId": "pln-ddfff800",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count integrity and strandedness-risk QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Given that counts.csv (12000 genes x 6 samples, raw STAR/featureCounts integer counts) was produced with an unrecorded library strand setting, do the counts show internal signs of a strand-assignment problem (implausibly low library sizes, near-total zeroing of canonical highly-expressed liver genes, or outlier samples), and do the 3 treated vs 3 control replicates in metadata.csv otherwise look self-consistent?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "quality_control",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns are confirmed to match metadata.csv rows 1:1, and the 3-vs-3 treated/control group sizes are confirmed",
+          "Per-sample library size (total counts), number/fraction of genes with zero counts, and count distribution (log2) are reported for all 6 samples",
+          "A sample-sample correlation matrix and PCA/hierarchical clustering on variance-stabilized counts are produced and checked for whether replicates cluster by condition and whether any sample is an outlier",
+          "Canonical highly-expressed human liver marker genes (e.g. ALB, APOA1, APOB, TTR, SERPINA1, TF) are checked for non-trivial, biologically plausible counts across samples as a sanity check against gross mis-assignment from an incorrect strand setting",
+          "The report explicitly states that the true strand setting cannot be recovered from count-level data alone (no FASTQ/BAM available for RSeQC-style inference) and flags this as a standing caveat rather than resolving it",
+          "Any sample recommended for exclusion, or confirmation that none is warranted, is stated explicitly with the supporting metric"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "DESeq2 differential expression: drug-treated vs control liver",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "ggplot2"
+        ],
+        "question": "Using DESeq2 on the raw gene-level counts (design ~ condition, 3 treated vs 3 control, unpaired, single batch), which genes are significantly differentially expressed between drug-treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Low-count genes are filtered (e.g. row sum threshold) before dispersion estimation, and the number of genes retained out of the original 12000 is reported",
+          "A DESeqDataSet is built with design ~ condition and run through DESeq() with default median-of-ratios size factors; the Wald test contrasts treated vs control",
+          "apeglm-shrunk log2 fold changes are reported alongside unshrunk estimates and BH-adjusted p-values (padj) for every tested gene",
+          "Significant genes are called at padj < 0.05, with effect sizes (shrunk log2FC) reported so the reader can judge magnitude given n=3 per group",
+          "Gene IDs are mapped to human gene symbols (auto-detecting whether the counts.csv identifier column is Ensembl or already symbol-based) so results are interpretable, with the fraction of IDs that failed to map reported",
+          "MA plot and volcano plot (EnhancedVolcano) are produced from the shrunk results",
+          "The results narrative explicitly notes that DESeq2 size-factor normalization corrects for overall per-sample library-size differences but not for gene-specific mis-assignment that an incorrect strand setting could cause, referencing the QC findings from T1S1",
+          "The small per-group sample size (n=3) is stated as a power limitation when interpreting genes that narrowly miss significance"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Pathway enrichment on the treated vs control liver DE signature",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among genes ranked by the treated-vs-control DESeq2 test statistic in liver, using human WikiPathways gene sets and MSigDB Hallmark human gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T2S1"
+        ],
+        "acceptance_criteria": [
+          "Genes are ranked by the DESeq2 Wald statistic (or shrunk log2FC x -log10(padj)) from T2S1's full results table, not just the significant subset",
+          "fgsea is run against the human WikiPathways gene set collection (organism-matched to this human liver dataset) and, separately, against the MSigDB Hallmark human gene set collection",
+          "Each run reports normalized enrichment score, p-value, and BH-adjusted p-value per pathway, with the top up- and down-enriched pathways listed",
+          "If either gene set collection is unavailable in the environment at run time, the step reports enrichment using whichever collection is available rather than failing outright, and states which collection was skipped",
+          "Results are interpreted in the context of liver drug-treatment biology (e.g. xenobiotic/drug metabolism, bile acid or lipid metabolism pathways) only where the enrichment output actually supports it, not asserted a priori"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment vs control DE with strandedness QC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 6 samples, STAR/featureCounts) with a 3 treated vs 3 control, unpaired, single-batch design in human liver, and the strandedness used at counting was not recorded. Because no FASTQ/BAM is available, the true library strandedness cannot be re-derived by re-counting; the plan instead runs an explicit count-integrity/QC step that surfaces the signal an incorrect strand setting would leave behind (library-size anomalies, implausible zeroing of canonical highly-expressed liver genes, sample outliers) so that any DE result is reported alongside that uncertainty rather than silently assuming the counts are clean. DE then proceeds with DESeq2 (design ~ condition), which is the standard, appropriately powered method for a 3-vs-3 negative-binomial count comparison, followed by apeglm-shrunk fold changes for interpretable effect sizes. Because a wrong strand setting affects gene-specific read assignment (not just a uniform per-sample scale), DESeq2's median-of-ratios normalization is flagged as insufficient to fully correct for it, and that caveat is carried into the DE report. Finally, pathway enrichment on the resulting ranked gene list (WikiPathways human + MSigDB Hallmark human, both organism-matched and present in the reference set) gives biological context for a liver drug-response signature, which is the natural interpretive layer once the DE list exists."
+  },
+  "usage": {
+    "inputTokens": 2166777,
+    "outputTokens": 15343,
+    "cacheCreationInputTokens": 237596,
+    "cacheReadInputTokens": 1928711,
+    "reasoningTokens": 8953
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01AjUgoGSNbM4tNPV32GaPt3",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human gene annotation gtf"
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_018AqQQBzsSqiUKndCcGaunU",
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver hepatotoxicity drug"
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    },
+    {
+      "toolUseId": "toolu_01RzTSmXmBEeCvvmtw9GuETb",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "EnhancedVolcano",
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01UyvLhHiboFk6914MTaFQwM",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq unknown strandedness QC verify DESeq2 count quality control",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 255
+    },
+    {
+      "toolUseId": "toolu_01GDApgvPHK9LjuqrDHPYFoR",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "check library strand specificity RNA-seq gene counts XIST housekeeping antisense",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 293
+    },
+    {
+      "toolUseId": "toolu_01KX1rf4pGUtSz7qtqqeZXZb",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "inferring RNA-seq library strandedness from gene counts post hoc quality control",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8976
+    },
+    {
+      "toolUseId": "toolu_01GEAzDyCSJRsd397wJdg3cd",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "RNA-seq count matrix QC low complexity library size outlier detection before differential expression",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9064
+    },
+    {
+      "toolUseId": "toolu_01NWGmcXVPcqMovj27J2ZMB5",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 negative binomial differential expression RNA-seq recommended workflow",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 485
+    },
+    {
+      "toolUseId": "toolu_01AUzAtjW7wahQEgQuKoba5D",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Love Huber Anders DESeq2",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 988
+    },
+    {
+      "toolUseId": "toolu_01T2A2omqnsbyPNX3FPggfo5",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "strand-specific RNA-seq protocol featureCounts stranded unstranded correlation impact gene counts",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 629
+    },
+    {
+      "toolUseId": "toolu_01Mtzst49QXJAi9mTFBP8pXh",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Dobin STAR aligner",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 685
+    },
+    {
+      "toolUseId": "toolu_01FthraP5GbHe6CgHA6Z6UtG",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Liao featureCounts",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 3220
+    },
+    {
+      "toolUseId": "toolu_01W2pg56f73m14PrTB6Mm4nh",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human idmapping"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01S8jiNcVSKn51Nhc5PakpJu",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01Ayk9tKMPwc39haCAHBRixW",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/wikipathways-human"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01FxtT87YU8BoGYNVtTzA33d",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human"
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01RzwhWTeKov4ugQEJ4jNRLA",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db gene annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01NGWLMKp9VBkyXGTBvi2wEz",
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver hepatotox toxicity"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_013fF28z2h6ZnfPLSAiww1yt",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01MVJE1xbU35nQMmYD9n61Nx",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_012d2BwCX4Avz1h8NQWpgR3N",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_017CVkBPwUqfej9S3fNC8VD8",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gencode-human"
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_018L6Dhw9EBpbumEkx3QTGYi",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gencode-human/50"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01E7YaHmWDdmJbqrZWbRMiJ3",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RSeQC infer_experiment strand specificity gene body coverage RNA-seq quality control",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 247
+    },
+    {
+      "toolUseId": "toolu_01FcMwmWzxBEGNoKiY6UnpaD",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Wang RSeQC quality control RNA-seq",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 892
+    },
+    {
+      "toolUseId": "toolu_017qS7iPRAfaHNUDkCm8s319",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Conesa survey RNA-seq data analysis best practices",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 790
+    },
+    {
+      "toolUseId": "toolu_019gEBxWLbiFuxBif4xpmc85",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26813401"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 998
+    },
+    {
+      "toolUseId": "toolu_015fs55U3nTrxiotpBJC16Xh",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/gtex-v8"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01MnDRyuZkcDL5LpGdnZd9HB",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsubread",
+          "org.Hs.eg.db",
+          "GenomicFeatures",
+          "rtracklayer",
+          "PCAtools",
+          "vsn"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_015QzPd7pRSAGy16D3e7KFd1",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ashr",
+          "pheatmap",
+          "ggplot2",
+          "ComplexHeatmap",
+          "GenomeInfoDb"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_012sh2XrQDEniv9P4MFVhpBP",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01N6g6ajTEc6Dodkz3rkZoyK",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "sex-linked gene expression XIST RPS4Y1 sex mismatch RNA-seq sample swap quality check",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 452
+    },
+    {
+      "toolUseId": "toolu_01BThEUHJgHJbJo7Z9JZqisd",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Anders Reyes Huber HTSeq differential expression strand",
+        "maxResults": 3
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_014DephzXyAz9Twd3YsTwXkS",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "strand specificity impact gene counting overlapping antisense genes RNA-seq",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 10349
+    },
+    {
+      "toolUseId": "toolu_01FuBA5iS4wHWAPzce741akS",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "gseapy"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_011LXp1gLbfMRhyi7ra7StNA",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human gmt"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_018LUXnBYnu93ScMqtoqwjqY",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Zhu apeglm shrinkage estimator sequence count data",
+        "maxResults": 3
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_016sEyhsTkFDpnfvZRzjsnFD",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "Zhu apeglm heavy-tailed shrinkage estimation sequence count data",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 8587
+    },
+    {
+      "toolUseId": "toolu_01VtcoargMmkTGdSNjXBZZuS",
+      "name": "search_arxiv",
+      "input": {
+        "query": "RNA-seq differential expression negative binomial dispersion shrinkage",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 1631
+    },
+    {
+      "toolUseId": "toolu_018HMvKsdyN11wUtRzMuS9iK",
+      "name": "search_github_repos",
+      "input": {
+        "query": "RNA-seq strandedness check counts XIST paired antisense gene ratio QC",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 391
+    },
+    {
+      "toolUseId": "toolu_01KaZZrMvzUUPycqLJhiZK3w",
+      "name": "search_github_repos",
+      "input": {
+        "query": "nf-core rnaseq strandedness detection",
+        "limit": 5
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01ETsoPq83kpgwvKTMK4ZJeD",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment vs control DE with strandedness QC",
+          "analytical_narrative": "The input is a bulk RNA-seq gene-level count matrix (12000 genes x 6 samples, STAR/featureCounts) with a 3 treated vs 3 control, unpaired, single-batch design in human liver, and the strandedness used at counting was not recorded. Because no FASTQ/BAM is available, the true library strandedness cannot be re-derived by re-counting; the plan instead runs an explicit count-integrity/QC step that surfaces the signal an incorrect strand setting would leave behind (library-size anomalies, implausible zeroing of canonical highly-expressed liver genes, sample outliers) so that any DE result is reported alongside that uncertainty rather than silently assuming the counts are clean. DE then proceeds with DESeq2 (design ~ condition), which is the standard, appropriately powered method for a 3-vs-3 negative-binomial count comparison, followed by apeglm-shrunk fold changes for interpretable effect sizes. Because a wrong strand setting affects gene-specific read assignment (not just a uniform per-sample scale), DESeq2's median-of-ratios normalization is flagged as insufficient to fully correct for it, and that caveat is carried into the DE report. Finally, pathway enrichment on the resulting ranked gene list (WikiPathways human + MSigDB Hallmark human, both organism-matched and present in the reference set) gives biological context for a liver drug-response signature, which is the natural interpretive layer once the DE list exists.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count integrity and strandedness-risk QC",
+              "track": "T1",
+              "step_type": "quality_control",
+              "question": "Given that counts.csv (12000 genes x 6 samples, raw STAR/featureCounts integer counts) was produced with an unrecorded library strand setting, do the counts show internal signs of a strand-assignment problem (implausibly low library sizes, near-total zeroing of canonical highly-expressed liver genes, or outlier samples), and do the 3 treated vs 3 control replicates in metadata.csv otherwise look self-consistent?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns are confirmed to match metadata.csv rows 1:1, and the 3-vs-3 treated/control group sizes are confirmed",
+                "Per-sample library size (total counts), number/fraction of genes with zero counts, and count distribution (log2) are reported for all 6 samples",
+                "A sample-sample correlation matrix and PCA/hierarchical clustering on variance-stabilized counts are produced and checked for whether replicates cluster by condition and whether any sample is an outlier",
+                "Canonical highly-expressed human liver marker genes (e.g. ALB, APOA1, APOB, TTR, SERPINA1, TF) are checked for non-trivial, biologically plausible counts across samples as a sanity check against gross mis-assignment from an incorrect strand setting",
+                "The report explicitly states that the true strand setting cannot be recovered from count-level data alone (no FASTQ/BAM available for RSeQC-style inference) and flags this as a standing caveat rather than resolving it",
+                "Any sample recommended for exclusion, or confirmation that none is warranted, is stated explicitly with the supporting metric"
+              ],
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "DESeq2 differential expression: drug-treated vs control liver",
+              "track": "T2",
+              "step_type": "differential_expression",
+              "question": "Using DESeq2 on the raw gene-level counts (design ~ condition, 3 treated vs 3 control, unpaired, single batch), which genes are significantly differentially expressed between drug-treated and control liver samples?",
+              "acceptance_criteria": [
+                "Low-count genes are filtered (e.g. row sum threshold) before dispersion estimation, and the number of genes retained out of the original 12000 is reported",
+                "A DESeqDataSet is built with design ~ condition and run through DESeq() with default median-of-ratios size factors; the Wald test contrasts treated vs control",
+                "apeglm-shrunk log2 fold changes are reported alongside unshrunk estimates and BH-adjusted p-values (padj) for every tested gene",
+                "Significant genes are called at padj < 0.05, with effect sizes (shrunk log2FC) reported so the reader can judge magnitude given n=3 per group",
+                "Gene IDs are mapped to human gene symbols (auto-detecting whether the counts.csv identifier column is Ensembl or already symbol-based) so results are interpretable, with the fraction of IDs that failed to map reported",
+                "MA plot and volcano plot (EnhancedVolcano) are produced from the shrunk results",
+                "The results narrative explicitly notes that DESeq2 size-factor normalization corrects for overall per-sample library-size differences but not for gene-specific mis-assignment that an incorrect strand setting could cause, referencing the QC findings from T1S1",
+                "The small per-group sample size (n=3) is stated as a power limitation when interpreting genes that narrowly miss significance"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Pathway enrichment on the treated vs control liver DE signature",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among genes ranked by the treated-vs-control DESeq2 test statistic in liver, using human WikiPathways gene sets and MSigDB Hallmark human gene sets?",
+              "acceptance_criteria": [
+                "Genes are ranked by the DESeq2 Wald statistic (or shrunk log2FC x -log10(padj)) from T2S1's full results table, not just the significant subset",
+                "fgsea is run against the human WikiPathways gene set collection (organism-matched to this human liver dataset) and, separately, against the MSigDB Hallmark human gene set collection",
+                "Each run reports normalized enrichment score, p-value, and BH-adjusted p-value per pathway, with the top up- and down-enriched pathways listed",
+                "If either gene set collection is unavailable in the environment at run time, the step reports enrichment using whichever collection is available rather than failing outright, and states which collection was skipped",
+                "Results are interpreted in the context of liver drug-treatment biology (e.g. xenobiotic/drug metabolism, bile acid or lipid metabolism pathways) only where the enrichment output actually supports it, not asserted a priori"
+              ],
+              "packages": [
+                "fgsea",
+                "data.table",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 58
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

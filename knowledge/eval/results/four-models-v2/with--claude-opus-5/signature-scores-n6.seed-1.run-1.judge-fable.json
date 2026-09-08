@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: blind-VST PCA and distance heatmap with a keep-inspect-report policy for the shallow sample_01, a justified >=10-in-6 filter, median-of-ratios size factors with no pre-scaling, UCell per-sample scoring on the log matrix over the named MSigDB human Hallmark collection with version and per-set gene coverage reported, and limma on the 50x12 score matrix under ~condition with BH across the 50 sets and the mean-score difference reported alongside q. Weaknesses are that the reference level and contrast direction are not stated explicitly, eBayes/trend is not named, and no alpha is fixed in advance for calling signatures. The report section is thorough on reproducibility, power caveats, and the Salmon provenance issue."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the log2(TPM+1) data state, forbids DESeq2/edgeR/voom, and fits limma-trend (eBayes trend=TRUE, robust=TRUE) on the values as-is with explicit no-renormalization and no count conversion, matching the reference. QC covers MDS/PCA, distance heatmap, detected genes, and a value-range check on the log scale, though the outlier policy is only 'name it' and the expected range (0-20) is loose. The low-expression filter is on mean log expression with a stated floor independent of labels, but the min_samples/mean wording is slightly muddled. Design ~condition with control as explicit reference, BH at 0.05 via topTable, and a treat(lfc=0.25) threshold-in-test list are correct; shrinkage is honestly flagged as not applicable. Enrichment is appropriately omitted, and the report lists method, versions, design, thresholds, n_tested/n_de, and design caveats."
+}

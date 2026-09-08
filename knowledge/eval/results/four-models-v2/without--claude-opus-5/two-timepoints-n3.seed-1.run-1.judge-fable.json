@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames two time points as a 2x2 factorial, models time as a two-level factor (explicitly refusing the continuous time_hours column), fits ~ condition + time + condition:time in DESeq2 with stated reference levels, and tests the interaction coefficient directly with simple effects extracted by contrast list, exactly as the reference prescribes. QC (library sizes, VST PCA by condition and time, distance heatmap, filterByExpr-style filter with counts reported) and shrinkage (apeglm/ashr, BH at 0.05) are explicit, though the FDR 0.10/|LFC|>1 sensitivity set is a post hoc threshold. Normalization is only implicit: the plan handles Salmon rounding and forbids a second length correction but never states that size factors are estimated inside the model. Enrichment was not asked for; the fgsea design is sound (full ranked list, Wald-statistic metric, named collections, size window, seed) but no collection version is stated, and software versions are not promised in the report."
+}

@@ -1,0 +1,291 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:47:14.231Z",
+  "elapsedMs": 34634,
+  "outcome": "plan_submitted",
+  "planId": "pln-97b2b1ff",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalize raw Salmon counts and QC flag",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01's library size is ~4x below median, which can inflate technical noise in its normalized profile and its downstream signature scores"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "How should the 12000x12 raw Salmon gene-level counts (6 CD-inflamed ileum vs 6 control) be normalized so that per-sample gene-set scores are comparable across samples, and how should sample_01's ~4x-below-median library size be documented?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Do not remove sample_01 in this step — only flag and report its library size relative to the median",
+          "Use raw counts as provided; do not assume prior length correction was applied"
+        ],
+        "acceptance_criteria": [
+          "Raw counts.csv (12000 genes x 12 samples) are loaded and joined to metadata.csv on sample ID with condition labels verified for all 12 samples",
+          "A normalization suitable for single-sample gene-set scoring is applied (e.g., DESeq2 median-of-ratios size factors followed by variance-stabilizing transformation, or log2-CPM), producing a normalized expression matrix retained for downstream scoring",
+          "Library size (total counts) per sample is computed and reported in a QC table; sample_01 is confirmed as the low-library-size outlier and flagged in the output, not silently dropped",
+          "Output includes the normalized matrix (genes x samples) and the QC/library-size table as artifacts for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Score every MSigDB Hallmark signature per sample",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GSVA/ssGSEA scores are relative rankings within the sample set, not absolute activity levels — do not compare score magnitudes across independent cohorts"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "pandas",
+          "numpy"
+        ],
+        "question": "What is the per-sample enrichment score for each of the 50 MSigDB Hallmark gene sets across all 12 ileum samples, using the normalized expression matrix?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the 50-set human Hallmark GMT staged in the reference store (h.all.v2026.1.Hs.symbols.gmt); do not substitute GO or oncogenic collections",
+          "If gene IDs in counts.csv are not HGNC symbols, perform ID mapping before scoring and report how many hallmark-set genes failed to map"
+        ],
+        "acceptance_criteria": [
+          "All 50 HALLMARK_* gene sets from the human hallmark GMT are used (confirm the reference file loads and gene symbols match the count matrix's gene identifiers, mapping via the human UniProt ID mapping file if the counts are Ensembl-ID keyed rather than symbol-keyed)",
+          "A single-sample gene-set scoring method (GSVA or ssGSEA) is applied to the normalized matrix, producing a 12 samples x 50 hallmark scores matrix",
+          "Output score matrix is saved with sample IDs and condition labels attached",
+          "Report the fraction of each hallmark gene set actually found in the expression matrix (gene overlap), since a low overlap makes a signature's score unreliable"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Differential hallmark signature testing: inflamed vs control",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "n=6 vs 6 unpaired single-batch design has limited power to detect small effect sizes; treat q<0.05 hits as candidates requiring independent validation, not confirmed biology",
+          "sample_01's low library size can distort its normalized profile and hence its hallmark scores, potentially acting as an outlier that swings a marginal signature's significance"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Which of the 50 Hallmark signature scores differ significantly between the 6 CD-inflamed and 6 control ileum samples, and are the top hits robust to excluding the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "statistics",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Test every one of the 50 hallmark signatures, not a pre-filtered subset",
+          "Apply multiple-testing correction (BH) across all 50 signatures tested",
+          "Report both the all-samples result and the sample_01-excluded sensitivity result; do not present only one"
+        ],
+        "acceptance_criteria": [
+          "Per-signature two-group test (Welch t-test primary, Wilcoxon rank-sum as a robustness check given n=6 per group) comparing inflamed vs control scores across all 50 hallmark signatures",
+          "BH (FDR) correction applied across the 50 tests; ranked results table reports effect size (mean difference or Cohen's d), raw p-value, and adjusted q-value per signature",
+          "A documented sensitivity re-run of the same test excluding sample_01 is reported alongside the main (all-12-sample) result, flagging any signature whose significance or direction changes when sample_01 is dropped",
+          "A heatmap of the 12x50 score matrix (samples annotated by condition and by sample_01 flag) and a ranked bar/volcano-style plot of signature effect sizes vs q-values are produced",
+          "Given n=6 vs 6, results are reported as exploratory findings with explicit acknowledgment of limited power for signatures with modest effect sizes"
+        ]
+      }
+    ],
+    "title": "Hallmark signature scoring: CD ileum inflamed vs control",
+    "created_at": "2026-09-08",
+    "analytical_narrative": "The input is raw Salmon gene-level counts for 12 human ileum samples (6 Crohn's disease inflamed vs 6 control, unpaired, single batch), 12000 genes. To get a per-sample score for every MSigDB Hallmark signature and test which signatures differ between inflamed and control, the pipeline first normalizes the raw counts (library-size/variance-stabilizing normalization is required before any per-sample gene-set scoring method, since GSVA/ssGSEA assume normalized, comparable expression across samples) and explicitly flags sample_01's low library size rather than silently including or excluding it. It then computes per-sample Hallmark enrichment scores with a rank-based single-sample method (GSVA/ssGSEA, using the 50 human Hallmark gene sets staged in the reference store) to produce a sample x signature score matrix. That matrix is then tested signature-by-signature (Welch/Wilcoxon as appropriate, BH-corrected) for inflamed vs control differences, with sample_01 handled by a documented sensitivity check (main analysis with all 12 samples, a flagged re-run excluding sample_01 to confirm robustness of top hits). Final outputs are the full sample x hallmark score matrix and a ranked table of differential signatures with effect sizes, q-values, and a visualization (heatmap) so results are directly usable and the shallow-sample caveat is transparent rather than buried."
+  },
+  "usage": {
+    "inputTokens": 140556,
+    "outputTokens": 2875,
+    "cacheCreationInputTokens": 77736,
+    "cacheReadInputTokens": 62784,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Jbky4AKL5uc2XiD8DLnRN6",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01Pzin61aLX3s1X2aPuiWLQL",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GSVA",
+          "decoupleR",
+          "gseapy",
+          "singscore",
+          "UCell",
+          "pydeseq2",
+          "DESeq2",
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_012Tzf6UFUeCLTCMGGhjLkQT",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Hallmark signature scoring: CD ileum inflamed vs control",
+          "analytical_narrative": "The input is raw Salmon gene-level counts for 12 human ileum samples (6 Crohn's disease inflamed vs 6 control, unpaired, single batch), 12000 genes. To get a per-sample score for every MSigDB Hallmark signature and test which signatures differ between inflamed and control, the pipeline first normalizes the raw counts (library-size/variance-stabilizing normalization is required before any per-sample gene-set scoring method, since GSVA/ssGSEA assume normalized, comparable expression across samples) and explicitly flags sample_01's low library size rather than silently including or excluding it. It then computes per-sample Hallmark enrichment scores with a rank-based single-sample method (GSVA/ssGSEA, using the 50 human Hallmark gene sets staged in the reference store) to produce a sample x signature score matrix. That matrix is then tested signature-by-signature (Welch/Wilcoxon as appropriate, BH-corrected) for inflamed vs control differences, with sample_01 handled by a documented sensitivity check (main analysis with all 12 samples, a flagged re-run excluding sample_01 to confirm robustness of top hits). Final outputs are the full sample x hallmark score matrix and a ranked table of differential signatures with effect sizes, q-values, and a visualization (heatmap) so results are directly usable and the shallow-sample caveat is transparent rather than buried.",
+          "created_at": "2026-09-08",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalize raw Salmon counts and QC flag",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "How should the 12000x12 raw Salmon gene-level counts (6 CD-inflamed ileum vs 6 control) be normalized so that per-sample gene-set scores are comparable across samples, and how should sample_01's ~4x-below-median library size be documented?",
+              "acceptance_criteria": [
+                "Raw counts.csv (12000 genes x 12 samples) are loaded and joined to metadata.csv on sample ID with condition labels verified for all 12 samples",
+                "A normalization suitable for single-sample gene-set scoring is applied (e.g., DESeq2 median-of-ratios size factors followed by variance-stabilizing transformation, or log2-CPM), producing a normalized expression matrix retained for downstream scoring",
+                "Library size (total counts) per sample is computed and reported in a QC table; sample_01 is confirmed as the low-library-size outlier and flagged in the output, not silently dropped",
+                "Output includes the normalized matrix (genes x samples) and the QC/library-size table as artifacts for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "Do not remove sample_01 in this step — only flag and report its library size relative to the median",
+                "Use raw counts as provided; do not assume prior length correction was applied"
+              ],
+              "caveats": [
+                "sample_01's library size is ~4x below median, which can inflate technical noise in its normalized profile and its downstream signature scores"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Score every MSigDB Hallmark signature per sample",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the per-sample enrichment score for each of the 50 MSigDB Hallmark gene sets across all 12 ileum samples, using the normalized expression matrix?",
+              "acceptance_criteria": [
+                "All 50 HALLMARK_* gene sets from the human hallmark GMT are used (confirm the reference file loads and gene symbols match the count matrix's gene identifiers, mapping via the human UniProt ID mapping file if the counts are Ensembl-ID keyed rather than symbol-keyed)",
+                "A single-sample gene-set scoring method (GSVA or ssGSEA) is applied to the normalized matrix, producing a 12 samples x 50 hallmark scores matrix",
+                "Output score matrix is saved with sample IDs and condition labels attached",
+                "Report the fraction of each hallmark gene set actually found in the expression matrix (gene overlap), since a low overlap makes a signature's score unreliable"
+              ],
+              "packages": [
+                "GSVA",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "Use the 50-set human Hallmark GMT staged in the reference store (h.all.v2026.1.Hs.symbols.gmt); do not substitute GO or oncogenic collections",
+                "If gene IDs in counts.csv are not HGNC symbols, perform ID mapping before scoring and report how many hallmark-set genes failed to map"
+              ],
+              "caveats": [
+                "GSVA/ssGSEA scores are relative rankings within the sample set, not absolute activity levels — do not compare score magnitudes across independent cohorts"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Differential hallmark signature testing: inflamed vs control",
+              "track": "T2",
+              "step_type": "statistics",
+              "question": "Which of the 50 Hallmark signature scores differ significantly between the 6 CD-inflamed and 6 control ileum samples, and are the top hits robust to excluding the shallow sample_01?",
+              "acceptance_criteria": [
+                "Per-signature two-group test (Welch t-test primary, Wilcoxon rank-sum as a robustness check given n=6 per group) comparing inflamed vs control scores across all 50 hallmark signatures",
+                "BH (FDR) correction applied across the 50 tests; ranked results table reports effect size (mean difference or Cohen's d), raw p-value, and adjusted q-value per signature",
+                "A documented sensitivity re-run of the same test excluding sample_01 is reported alongside the main (all-12-sample) result, flagging any signature whose significance or direction changes when sample_01 is dropped",
+                "A heatmap of the 12x50 score matrix (samples annotated by condition and by sample_01 flag) and a ranked bar/volcano-style plot of signature effect sizes vs q-values are produced",
+                "Given n=6 vs 6, results are reported as exploratory findings with explicit acknowledgment of limited power for signatures with modest effect sizes"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "Test every one of the 50 hallmark signatures, not a pre-filtered subset",
+                "Apply multiple-testing correction (BH) across all 50 signatures tested",
+                "Report both the all-samples result and the sample_01-excluded sensitivity result; do not present only one"
+              ],
+              "caveats": [
+                "n=6 vs 6 unpaired single-batch design has limited power to detect small effect sizes; treat q<0.05 hits as candidates requiring independent validation, not confirmed biology",
+                "sample_01's low library size can distort its normalized profile and hence its hallmark scores, potentially acting as an outlier that swings a marginal signature's significance"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 38
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

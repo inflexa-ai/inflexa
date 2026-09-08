@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 5,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly routes STAR/featureCounts integer counts straight into DESeqDataSetFromMatrix with median-of-ratios normalization, explicitly rejects tximport/length offsets, sets control as the reference level, applies apeglm shrinkage, and states the n=3 power caveat. Weaknesses: the low-count filter is left as an unspecified 'e.g. rowSum or rowMean' threshold; the design formula is never written out; BH is not named for the DE step (only padj<0.05 is given); and the outlier/shallow-sample policy is only implicit. The enrichment track was not requested and is underspecified for what it adds: no ORA universe, no gene-set version, no size window, and shrunk LFC is a questionable GSEA ranking metric. Software versions are not reported."
+}

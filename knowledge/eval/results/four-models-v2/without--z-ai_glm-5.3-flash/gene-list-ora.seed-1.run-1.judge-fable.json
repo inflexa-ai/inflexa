@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit DESeq2, uses a hypergeometric ORA via clusterProfiler::enrichGO on GO BP with an explicit tested-gene universe (non-NA padj, consistently applied to set and universe), BH at 0.05, and rrvgo/simplify reduction with a stated threshold, and it reports term, GeneRatio, adjusted p and contributing genes. It falls short of the reference in not stating a gene set size window (minGSSize/maxGSSize) and in neither testing up and down genes separately nor explicitly declaring that they are pooled. The sample_01 shallow-library concern is recorded as an inherited caveat rather than examined, which is defensible given the delivered table but is not a sample QC; package versions beyond org.Hs.eg.db are not named."
+}

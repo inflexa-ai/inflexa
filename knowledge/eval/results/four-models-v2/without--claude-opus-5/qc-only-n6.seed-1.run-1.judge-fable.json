@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan stays within the QC question and does not fit a differential model, matching the reference. Library sizes, detection counts, size factors, top-gene domination, blind VST, PCA on top-500 and filtered genes coloured by condition and depth, a clustered Euclidean distance heatmap, and a leave-one-out re-embedding are all stated explicitly, with a pre-declared rubric and a keep/drop policy for sample_01 that rests on complexity and distance rather than depth alone. The low-count filter (>=10 in at least 6 samples) is sensible and minimal though its justification (smallest group size) is implied rather than stated. Normalization is inside DESeq2/edgeR with the Salmon rounding issue flagged; the design formula appears only as the VST scaffold and the downstream recommendation does not spell out the reference level or the later BH/shrinkage settings. The QC report is well specified but omits package versions."
+}

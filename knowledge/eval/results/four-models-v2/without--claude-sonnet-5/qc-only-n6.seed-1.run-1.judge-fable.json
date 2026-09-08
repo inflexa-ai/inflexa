@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 3,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly stays inside the QC question: library sizes with sample_01 quantified against the median, detected-gene counts, a VST-based PCA on top variable genes colored by condition, a Euclidean sample-distance heatmap annotated by condition, and a synthesis step with an explicit keep/sensitivity/drop policy tied to the numbers rather than depth alone, and it explicitly declines to run DE or enrichment. Its main gap is that no low-count gene filter is stated before the transform and PCA; it only reports all-zero genes without saying they are removed. Normalization is implicit in the DESeq2/pydeseq2 VST (size factors not named), the design formula is referenced but not written out, and the report omits package versions, though it does carry the single-batch and depth-confounding caveats."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: events and censored samples counted with reverse-KM median follow-up before the model, a Cox model Surv(time, event) ~ scale(score) + condition with the score continuous and standardized, HR per SD with 95% CI, scaled Schoenfeld PH check with stratification or time-varying remedy, and KM tertile curves explicitly demoted to illustration. QC on the blind VST with PCA, distance heatmap and library sizes coloured by condition and event, plus a stated no-silent-removal policy, is appropriate for a single-batch cohort; filterByExpr and TMM logCPM feed a rank-based UCell/singscore score with the count of the 20 genes present reported. Minor gaps: the p-value is Wald rather than likelihood ratio, the reference level of condition is not named, and no alpha is stated for the survival test; the BH mention is vacuous for a single signature. Enrichment is correctly omitted, and the report step covers versions, seeds, events-per-variable, and the design caveats."
+}

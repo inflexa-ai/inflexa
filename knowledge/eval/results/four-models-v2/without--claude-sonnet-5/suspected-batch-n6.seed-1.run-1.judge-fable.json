@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 5,
+    "low_count_filter": 4,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly keeps raw counts in DESeq2, avoids ComBat, and states the sva full (~condition) and null (~1) models with the covariate added to the design, but it never asks the analyst for the unrecorded variable, defaults to a PCA-derived binary cluster label as a covariate (circular, derived from the same data) rather than letting the SVA estimator choose the number of surrogate variables, and checks SVs against the cluster label instead of against condition. QC is limited to a vst PCA and a contingency table with no library sizes, sample distances, or outlier policy; the low-count filter is an unjustified 'e.g. CPM-based' placeholder. BH at 0.05 is stated but no fold-change shrinkage is mentioned, and the reference level is not set. Enrichment was not requested; the added WikiPathways step names the universe and ranking metric but leaves ORA-vs-GSEA, collection version, and size window unspecified, and the report omits package versions."
+}

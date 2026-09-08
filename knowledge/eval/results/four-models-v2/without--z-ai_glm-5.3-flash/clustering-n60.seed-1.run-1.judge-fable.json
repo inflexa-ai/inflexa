@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan matches the reference on the core method: ConsensusClusterPlus over k=2..8 with 80% item subsampling, PAC/delta-area/silhouette rather than silhouette alone, a permutation null explicitly framed as the deciding evidence, subsample ARI and Jaccard stability, and an ARI/crosstab against the condition label, plus a sensible condition-residual view; it loses points for using only item (not gene) resampling, fewer iterations than the reference, and never tabulating library size or depth against the discovered clusters as a confounder before claiming a subgroup. QC is adequate (library sizes, PCA, distances, variance explained by condition, a written outlier policy) but has no explicit policy for a shallow sample. The gene filter is only an illustrative example, the marker-gene design formula, reference level and alpha are not written out, and no fold-change shrinkage is mentioned. Enrichment is added where the reference deems it unwarranted, and the step does not state a universe, collection version or set-size window; the report lacks versions and counts of tested/significant genes, though seeds, thresholds and caveats are recorded."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 2,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core design: it counts events and events-per-parameter, uses singscore/z-mean/GSVA with the matched-gene count reported, fits coxph-style models with the standardized continuous score plus condition, reports HR per SD with CI and LRT, checks scaled Schoenfeld residuals with a stated remedy, and relegates tertile KM and cutpoints to flagged exploratory displays. It adds cross-validated concordance and a permutation null, which are sound. It lacks any sample-structure QC (no PCA, distances, or library-size inspection with an outlier policy), does not state the condition reference level, gives no BH alpha or shrinkage for the Step 4 DE, and the hallmark/GO overlap is included without a stated universe or collection version where the reference would simply omit enrichment, though the plan does frame it as descriptive only. Package versions are not committed to in the report."
+}

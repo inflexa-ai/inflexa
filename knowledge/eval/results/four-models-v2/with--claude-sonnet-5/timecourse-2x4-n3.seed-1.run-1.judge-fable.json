@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference exactly on the core test: DESeq2 LRT of ~condition + time + condition:time against ~condition + time, with explicit reference levels (t0), per-coefficient interaction LFCs, and trajectory clustering to describe the pattern for significant genes. QC (blind VST, PCA, distance heatmap colored by condition/time, library sizes, explicit flag-not-drop policy), the minimal justified filter (>=10 counts in >=3 samples, the cell size), in-model median-of-ratios normalization, BH at alpha 0.05 with independent filtering, and apeglm shrinkage are all stated clearly; the salmon length-offset caveat and 3-replicate power caution are appropriate. The main weakness is enrichment: it was not asked for and the reference omits it, and ranking by the non-negative LRT chi-square statistic is an awkward metric for preranked GSEA (no directional information), although the collections, versions, size window and full-list input are otherwise well specified. The report section is complete, naming method, versions, design, thresholds, tested/significant counts, diagnostics and caveats."
+}

@@ -1,0 +1,892 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "fastq-input",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T18:25:14.266Z",
+  "elapsedMs": 79222,
+  "outcome": "clarification_needed",
+  "question": "The 6 liver samples (3 treated vs 3 control) are provided only as paired-end FASTQ reads that are not yet quantified. Differential expression cannot start from raw reads — it requires a gene-level count matrix or per-sample transcript quantifications (e.g., Salmon quant.sf or kallisto abundance.h5) first. I checked this environment's package inventory and reference store: no aligner or pseudo-aligner (Salmon, kallisto, STAR, HISAT2, Subread/featureCounts, BWA, Bowtie2) is installed, and no pre-built transcriptome index or transcriptome FASTA is staged (only a GENCODE v50 GTF annotation and, separately, a PharmCAT-bundled GRCh38 genome FASTA meant for pharmacogenomic VCF preprocessing, not RNA-seq quantification). There is no way to go from these FASTQ files to a count matrix within this sandbox's available tools.",
+  "usage": {
+    "inputTokens": 1702308,
+    "outputTokens": 5999,
+    "cacheCreationInputTokens": 352940,
+    "cacheReadInputTokens": 1349090,
+    "reasoningTokens": 2088
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01EgfeTrAAV5vfe44FHGUnGY",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "fastq",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "library_type": "unknown",
+        "enrichment_input": "ranked_list"
+      },
+      "outcome": "ok",
+      "durationMs": 39
+    },
+    {
+      "toolUseId": "toolu_01NSfbYYkdSSdMdL3zMVn16Q",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human reference genome transcriptome salmon index GTF GENCODE"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01ShHWUZVYrRbYCsivRkxGMn",
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation",
+        "query": "human"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "toolu_01KH4jmAzrFTaJFPWaF4v5Aj",
+      "name": "list_available_refs",
+      "input": {
+        "query": "transcriptome fasta cDNA"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01UgPbM5mFvf7uXcdrFkksEh",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTF annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01P5jTFHGCFjDY59tdPqD2Xn",
+      "name": "list_available_refs",
+      "input": {
+        "query": "index"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_013Ve5MooJ15sAthwonWxmKQ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GENCODE"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_018jb8qNH6e7FbuYMr14YDs6",
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_019B9L6yscdSj31jvRMFd2gG",
+      "name": "list_available_refs",
+      "input": {
+        "query": "transcriptome fasta salmon"
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    },
+    {
+      "toolUseId": "toolu_01HHpiRC95x1daYo3qabXAWa",
+      "name": "list_available_refs",
+      "input": {
+        "query": "genome fasta"
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    },
+    {
+      "toolUseId": "toolu_0176bFbyoLqR6mcYTYWArUw6",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "salmon",
+          "STAR",
+          "kallisto",
+          "hisat2",
+          "subread",
+          "featureCounts",
+          "tximport",
+          "tximeta"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01Jxv2kKQu59k3bHKTkUPBx6",
+      "name": "list_available_packages",
+      "input": {
+        "query": "salmon"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_019KtzHMe61ZFcqvoTAfrf3r",
+      "name": "list_available_packages",
+      "input": {
+        "language": "cli"
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_013UgLB7Cn7vicTBZmmHaHty",
+      "name": "list_available_packages",
+      "input": {
+        "query": "align"
+      },
+      "outcome": "ok",
+      "durationMs": 35
+    },
+    {
+      "toolUseId": "toolu_016vg69tefPxsriLs6LfR822",
+      "name": "list_available_packages",
+      "input": {
+        "query": "Rsubread"
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01C7WqF5PUc62vDitmMpTbvU",
+      "name": "list_available_packages",
+      "input": {
+        "query": "quant"
+      },
+      "outcome": "ok",
+      "durationMs": 7
+    },
+    {
+      "toolUseId": "toolu_01UQvuwJp4UBfCB52tAzFHpC",
+      "name": "list_available_packages",
+      "input": {
+        "query": "pysam"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01BLDKkG6QCrvkGLjrahHU3r",
+      "name": "list_available_packages",
+      "input": {
+        "query": "bwa"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01W1oNEvHi96QDLVUWN5oY6v",
+      "name": "list_available_packages",
+      "input": {
+        "query": "bowtie"
+      },
+      "outcome": "ok",
+      "durationMs": 7
+    },
+    {
+      "toolUseId": "toolu_0184Nj3JcGdj3GCU2JjGxxrg",
+      "name": "list_available_packages",
+      "input": {
+        "language": "python",
+        "query": "seq"
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01QAqVi1ixKCPsVEaeTHpnKS",
+      "name": "list_available_packages",
+      "input": {
+        "query": "star"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_016E26yMWiUeoXAeyiGBtkPh",
+      "name": "list_available_packages",
+      "input": {
+        "query": "rnaseq"
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01RQanTfSVy85PJCT7U565ja",
+      "name": "list_available_packages",
+      "input": {
+        "query": "nf-core"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01ScV3XQfUhMiKggdxV98BQd",
+      "name": "list_available_packages",
+      "input": {
+        "query": "nf-core"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01HytT87HmsVahU4D5Y5n9Zk",
+      "name": "search_github_repos",
+      "input": {
+        "query": "RNA-seq quantification salmon pipeline lightweight python",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 347
+    },
+    {
+      "toolUseId": "toolu_011Zq4jCgeJfkWaPkgBoPQdW",
+      "name": "search_github_repos",
+      "input": {
+        "query": "salmon RNA-seq quantification",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 390
+    },
+    {
+      "toolUseId": "toolu_01A7gxmzZDQwJ75Eij6KFCYu",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01Xp3ZTNptUMWtiH8XUspmnR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "user",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_016qp9fLzZUaQYSWAQs1c6AX",
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_018aJysLTjEeWuu8pVMz6fjj",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "salmon-free STAR alignment quantification RNA-seq without pre-built index GTF genome reference",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 616
+    },
+    {
+      "toolUseId": "toolu_017ZvqkHiiGsje8RiB6M8cmk",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "salmon",
+          "STAR",
+          "hisat2",
+          "bowtie2",
+          "bwa",
+          "samtools",
+          "cutadapt",
+          "fastp",
+          "trim-galore",
+          "multiqc",
+          "fastqc",
+          "subread"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01HteUEcfK36J2ye6zaRmcQE",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "quantifications",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list"
+      },
+      "outcome": "ok",
+      "durationMs": 44
+    },
+    {
+      "toolUseId": "toolu_01A9ENrdLBV8H3YiDAnZvGuL",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list"
+      },
+      "outcome": "ok",
+      "durationMs": 44
+    },
+    {
+      "toolUseId": "toolu_01B951YbCXms3qUWg6jCM4us",
+      "name": "list_available_refs",
+      "input": {
+        "path": "msigdb-hallmark-human"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_019my9addSCGW6Qw9cqDpR2e",
+      "name": "list_available_refs",
+      "input": {
+        "path": "msigdb-canonical-pathways-human"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01HaZSt6EZQWjCziYEQYqGTU",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "DESeq2",
+          "apeglm",
+          "tximport",
+          "GenomicFeatures",
+          "rtracklayer"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_012jp7N8WadR4GTy7nWTywBG",
+      "name": "request_clarification",
+      "input": {
+        "question": "The 6 liver samples (3 treated vs 3 control) are provided only as paired-end FASTQ reads that are not yet quantified. Differential expression cannot start from raw reads — it requires a gene-level count matrix or per-sample transcript quantifications (e.g., Salmon quant.sf or kallisto abundance.h5) first. I checked this environment's package inventory and reference store: no aligner or pseudo-aligner (Salmon, kallisto, STAR, HISAT2, Subread/featureCounts, BWA, Bowtie2) is installed, and no pre-built transcriptome index or transcriptome FASTA is staged (only a GENCODE v50 GTF annotation and, separately, a PharmCAT-bundled GRCh38 genome FASTA meant for pharmacogenomic VCF preprocessing, not RNA-seq quantification). There is no way to go from these FASTQ files to a count matrix within this sandbox's available tools.",
+        "questionContext": "Please either (1) supply a pre-computed gene-level count matrix (genes x 6 samples) for these liver drug-treatment samples, or (2) supply per-sample Salmon/kallisto transcript-quantification files plus the transcript-to-gene map used, so the DESeq2-based treated-vs-control differential expression plan (3 vs 3, unpaired, single batch) can be built. Alternatively, if a quantification pipeline should be provisioned into this environment, let me know and I will replan once it is available."
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "fastq",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "library_type": "unknown",
+          "enrichment_input": "ranked_list"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "flag",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "fastq",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "library_type": "unknown",
+          "enrichment_input": "ranked_list"
+        },
+        "procedure": [
+          {
+            "step": "differential_expression",
+            "rules": [
+              "R-0020@fcfe"
+            ],
+            "flags": [
+              {
+                "rule": "R-0020@fcfe",
+                "severity": "flag",
+                "message": "If the input is FASTQ reads, the differential expression plan cannot start. Quantification is an upstream step with its own decisions: the aligner or the mapper, the reference, the decoys, and the annotation. Each of these decisions changes the abundance estimates. Stop, and ask for a count matrix from an alignment pipeline or for the transcript quantifications from Salmon or kallisto. Then continue with the count rules.",
+                "outcome": "stop_quantify_first"
+              }
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0020@fcfe"
+          }
+        ],
+        "flags": [
+          {
+            "rule": "R-0020@fcfe",
+            "severity": "flag",
+            "message": "If the input is FASTQ reads, the differential expression plan cannot start. Quantification is an upstream step with its own decisions: the aligner or the mapper, the reference, the decoys, and the annotation. Each of these decisions changes the abundance estimates. Stop, and ask for a count matrix from an alignment pipeline or for the transcript quantifications from Salmon or kallisto. Then continue with the count rules.",
+            "outcome": "stop_quantify_first"
+          }
+        ],
+        "dropped": [
+          "shrink_lfc",
+          "multiple_testing"
+        ],
+        "uncovered": [
+          "qc_sample_structure",
+          "filter_low_counts",
+          "normalize",
+          "model_design",
+          "enrichment",
+          "report"
+        ]
+      },
+      "responseChars": 2865,
+      "elapsedMs": 6
+    },
+    {
+      "seq": 2,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "quantifications",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "quantifications",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0029@22ca",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0162@ed74",
+              "R-0018@395e",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0162@ed74",
+                "severity": "warn",
+                "message": "With two or three replicates per group, the design step states the expected power of the test before the model. The tools of record for a power and sample size calculation, RNASeqPower and PROPER, are not in the pool here. Compute the power from the closed form of the sample size in terms of the depth, the biological coefficient of variation, the fold change, and the significance level, or take the dispersion from a pilot or a public dataset of the same tissue, and state the fold change that the design can find with 80 percent power. State that a larger replicate count raises the power more than a deeper sequencing does. The statement is a caution on the plan and not a reason to loosen the threshold."
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0001"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0001@9a17",
+              "R-0039@968d",
+              "R-0017@8a47"
+            ],
+            "flags": [
+              {
+                "rule": "R-0017@8a47",
+                "severity": "warn",
+                "message": "If the smallest group holds three replicates, the test has low power. Both count models find only a small share of the true differentially expressed genes, most of them with a large fold change. Interpret the result with caution, and state the power limit in the report. Keep alpha at its default value, and do not change the threshold to compensate for the small design. A gene that is not in the list is not shown to be unchanged."
+              }
+            ]
+          },
+          {
+            "step": "shrink_lfc",
+            "method": {
+              "id": "M-0013"
+            },
+            "rules": [
+              "R-0009@310d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0166@bbcd",
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0085@bb37",
+              "R-0087@3dcc",
+              "R-0094@6849",
+              "R-0042@54e1",
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0085@bb37"
+          },
+          {
+            "id": "R-0087@3dcc"
+          },
+          {
+            "id": "R-0094@6849"
+          },
+          {
+            "id": "R-0042@54e1"
+          },
+          {
+            "id": "R-0001@9a17"
+          },
+          {
+            "id": "R-0029@22ca"
+          },
+          {
+            "id": "R-0039@968d"
+          },
+          {
+            "id": "R-0162@ed74"
+          },
+          {
+            "id": "R-0009@310d"
+          },
+          {
+            "id": "R-0017@8a47"
+          },
+          {
+            "id": "R-0018@395e"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0166@bbcd"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 38027,
+      "elapsedMs": 6
+    },
+    {
+      "seq": 3,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list",
+          "import_state": "unknown"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0010"
+            },
+            "template": "tpl-fgsea-preranked@1.0.0",
+            "rules": [
+              "R-0098@d01b",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0054@801e",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0099@0e8a",
+              "R-0110@41cb"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0054@801e"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0099@0e8a"
+          },
+          {
+            "id": "R-0110@41cb"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 30019,
+      "elapsedMs": 11
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

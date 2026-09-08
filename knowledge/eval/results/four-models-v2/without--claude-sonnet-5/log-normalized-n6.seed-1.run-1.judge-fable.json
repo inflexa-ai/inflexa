@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 3,
+    "normalization": 8,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly rejects count models and voom and runs limma directly on the delivered log2(TPM+1) matrix without re-normalizing, but it omits the value-range sanity check (non-negative, max ~10-16, no hidden integers or double log) and never specifies eBayes with trend=TRUE, which is the key setting for log-scale non-count data. QC is well specified (distributions, PCA/clustering checked against condition, outliers flagged not dropped), yet the low-expression filter is deferred with no threshold or justification, and the reference level of the two-group design is not stated. BH at 0.05 is explicit, though the |log2FC| cutoffs are applied post hoc. Enrichment was not asked for; it is nonetheless included with a named, versioned WikiPathways collection and a reported background, but the ranking metric is left undecided and no size window is given. The report names the method, transform, and caveats but does not commit to reporting package versions."
+}

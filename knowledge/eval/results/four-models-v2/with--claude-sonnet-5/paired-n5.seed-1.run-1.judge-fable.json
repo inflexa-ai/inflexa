@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference exactly on the core design: DESeq2 with ~subject + condition, explicit control reference level, Wald test on the condition coefficient, apeglm shrinkage, BH at alpha 0.05 with thresholds kept in the test rather than post hoc. QC is design-specific (blind VST, PCA colored by condition and subject, distance heatmap, library-size flags) with a stated report-not-drop outlier policy; the filter is minimal and justified against the smallest group size, and normalization is internal via median-of-ratios with an explicit ban on pre-scaling. Enrichment was not asked but is handled correctly (full ranked list on the Wald stat, tested genes as universe, named collections with versions, 15-500 window), though Reactome's version is only 'current release'. The report step covers method, versions, design, thresholds, gene counts split by NA cause, and design caveats, with only minor room to state the n=5 power limitation more directly."
+}

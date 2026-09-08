@@ -1,0 +1,538 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "strandedness-unknown-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:08:46.731Z",
+  "elapsedMs": 117313,
+  "outcome": "plan_submitted",
+  "planId": "pln-b00626e9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count-integrity and strandedness-consequence diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Low library size alone is also consistent with shallow sequencing; the diagnostic is the combination of low depth, collapsed detection and a non-hepatic abundance profile, not any single number.",
+          "A 12,000-gene matrix is already smaller than a full human annotation (~20,000 protein-coding), so it has likely been pre-filtered — say so, and note that pre-filtering inflates apparent detection rates.",
+          "If the identifier column is Ensembl rather than symbols, map to symbols for the liver-marker check and report the mapping rate."
+        ],
+        "context": "Input is /eval-four-models-v2-without-strandedness-unknown-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns: a gene identifier column plus 6 sample columns) and /eval-four-models-v2-without-strandedness-unknown-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample and condition, 3 treated / 3 control). The profile records that strandedness was not recorded, so the featureCounts -s setting is unverifiable. A wrong strand setting discards most assignable reads uniformly across samples, which shows up as low library sizes, collapsed gene detection, an inflated zero fraction and a non-hepatic abundance ranking — those are the observable consequences this step measures.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 12,000 x 6 star_featurecounts counts in counts.csv show the signature of a correct strand assignment, or the read-loss signature of a library counted with the wrong strand setting?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Read counts.csv and metadata.csv from the exact paths given; do not re-derive counts from anything else.",
+          "Verify the count matrix is raw integers (no decimals, no negatives) and that the 6 sample column names match the metadata sample column exactly; report any mismatch instead of silently reordering.",
+          "Report per-sample library size, detected-gene counts at >0 and >=10, zero fraction, and top-10/50/500 library share as a table.",
+          "Rank genes by mean CPM and report the top 30 with their symbols and library share; explicitly check the named liver marker list against that ranking.",
+          "State in the output that strandedness is not inferable from a count matrix and name what input would be required to infer it (FASTQ or BAM).",
+          "Do not claim to have determined the library protocol under any circumstance."
+        ],
+        "description": "Diagnose whether the raw gene-level counts are usable, given that the library's strandedness was never recorded. Compute per-sample library size (total assigned counts), number of detected genes (count > 0 and count >= 10), zero fraction, median and IQR of non-zero counts, and the fraction of each library held by the top 10, 50 and 500 genes. Then rank genes by mean normalised abundance and inspect the top of the ranking against the canonical human liver high-abundance transcripts (ALB, SERPINA1, APOA1, APOA2, APOB, HP, HPX, FGA, FGB, FGG, TF, TTR, APOC3, ORM1, CYP2E1, CYP3A4) — in a correctly counted human liver bulk library these dominate the abundance distribution, with ALB typically alone holding a multi-percent share. Report a plain verdict with the numbers behind it: counts behave like a correctly assigned library, or they show the depletion pattern expected from a wrong-strand count. State explicitly and prominently that library strandedness CANNOT be determined from a gene-level count matrix — that inference requires the FASTQs or BAMs (e.g. RSeQC infer_experiment or salmon library-type autodetection), neither of which is among the inputs — so this step bounds the risk rather than resolving it.",
+        "acceptance_criteria": [
+          "A per-sample QC table covering all 6 samples with library size, detected genes, zero fraction and top-N library share.",
+          "The top-30 abundance ranking is reported and the canonical liver transcripts are explicitly located within (or reported absent from) it.",
+          "A written verdict on count integrity with the supporting numbers, plus an explicit statement that strandedness itself cannot be determined from these inputs.",
+          "Any sample-name mismatch between counts.csv and metadata.csv is reported rather than silently fixed."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "VST, PCA and sample clustering",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=3 per group, PCA is dominated by whichever sample is noisiest; separation on PC1 is encouraging but not itself evidence of a treatment effect.",
+          "If the count-integrity step flagged the counts as suspect, unsupervised separation may reflect shared miscounting rather than biology — carry that flag forward."
+        ],
+        "context": "Continues from the count-integrity check. Design is 3 treated vs 3 control, unpaired, single batch, so `condition` is the only covariate available — there is no batch, sex, or pairing term to include and none should be invented. Six samples is too few for surrogate-variable estimation to be trustworthy, so no latent-factor correction is planned.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "matrixStats"
+        ],
+        "question": "Do the 3 treated and 3 control liver samples separate on unsupervised structure, and is any of the 6 samples an outlier that would distort an n=3 vs n=3 dispersion fit?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "qc",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use DESeq2 with design ~condition and control as the reference level.",
+          "Use VST (not rlog) for the transformation, with blind=TRUE for the unsupervised views.",
+          "Report percent variance explained by PC1 and PC2 explicitly.",
+          "Flag outliers; do NOT drop any sample from the matrix passed downstream.",
+          "Do not add any covariate beyond condition — no batch term exists in the metadata."
+        ],
+        "description": "Build a DESeq2 dataset from the raw counts with design ~condition, apply variance-stabilising transformation, and characterise sample structure: PCA (PC1/PC2 with percent variance explained), a sample-sample Euclidean-distance and Spearman-correlation heatmap, and hierarchical clustering. Report whether treated and control form distinct groups, how much of the total variance the condition axis carries, and whether any single sample sits apart from its own group. Also report the dispersion trend from the fitted model. Flag — do not remove — any outlier: with 3 samples per group, dropping one leaves n=2 and effectively ends the analysis, so an outlier is a caveat on the DE result rather than grounds for exclusion.",
+        "acceptance_criteria": [
+          "PCA plot and coordinates for all 6 samples, labelled by condition, with percent variance on both axes.",
+          "Sample-sample distance/correlation heatmap and dendrogram covering all 6 samples.",
+          "A written statement on whether condition is the dominant source of variance, and whether any sample is an outlier.",
+          "The dispersion-estimate plot from the fitted DESeq2 model is produced."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 treated vs control differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A uniform p-value histogram with no left-hand spike means no detectable treatment effect — report that as the finding, do not lower the threshold until something appears.",
+          "With 3 vs 3, apeglm shrinkage is doing substantial work; unshrunken LFCs on low-count genes are not trustworthy and should not be quoted as effect sizes.",
+          "Independent filtering removes low-count genes from the multiple-testing burden — report how many genes were filtered out so the tested-gene denominator is transparent."
+        ],
+        "context": "The matrix is 12,000 genes x 6 samples of raw star_featurecounts counts — small enough that the whole fit runs in seconds. The unpaired single-batch design leaves ~condition as the only sensible model. Carry forward whatever verdict the count-integrity step reached: if the counts look wrong-stranded, the DE result is still computable but every effect size is attenuated and the FDR-passing list will be short, and that must be said up front.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "pheatmap",
+          "EnhancedVolcano"
+        ],
+        "question": "Which genes are differentially expressed between the 3 treated and the 3 control human liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use DESeq2 with design ~condition; set control as the reference level so positive LFC means up in treated.",
+          "Pre-filter: keep genes with count >= 10 in at least 3 samples; report how many genes survive.",
+          "Use lfcShrink with type='apeglm' for ranked/plotted fold changes; report unshrunken LFC and SE in the same table.",
+          "Report DE gene counts at BH-adjusted p < 0.05 AND at < 0.10; do not pick one threshold post hoc to maximise hits.",
+          "Write the full results table for every tested gene, not only the significant ones.",
+          "State the n=3 vs n=3 power limitation explicitly in the step summary."
+        ],
+        "description": "Fit DESeq2 on the raw integer counts with design ~condition, control as reference, using median-of-ratios size factors, gene-wise dispersion with empirical-Bayes shrinkage, and the Wald test for the treated-vs-control contrast with independent filtering and BH adjustment. Pre-filter to genes with at least 10 counts in at least 3 samples (the smallest group size). Produce shrunken log2 fold changes with apeglm for ranking and visualisation while reporting the unshrunken LFC, standard error and Wald statistic alongside. Output the full results table sorted by adjusted p-value, the number of genes passing FDR < 0.05 and separately at FDR < 0.10, an MA plot, a p-value histogram, a volcano plot, and a heatmap of the top 30 genes on VST values. The step must state the power limitation of a 3-vs-3 design in its own summary rather than leaving it to interpretation.",
+        "acceptance_criteria": [
+          "A complete results table (gene, baseMean, unshrunken LFC, SE, Wald stat, p, BH padj, shrunken LFC) for all tested genes, written to file.",
+          "DE gene counts reported at padj < 0.05 and padj < 0.10, with the direction split (up/down in treated).",
+          "MA plot, p-value histogram, volcano plot and top-30 VST heatmap produced.",
+          "The summary states the power limitation of 3 vs 3 and carries forward the count-integrity verdict from T1S1."
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "edgeR cross-check and filter-sensitivity of the DE list",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "High concordance between DESeq2 and edgeR is expected on any dataset and is weak evidence on its own — the informative comparison is which specific genes drop out under the stricter filter.",
+          "If the FDR<0.05 sets are empty under either estimator, report the empty overlap honestly and fall back to comparing the top-ranked genes by statistic.",
+          "Two estimators sharing the same miscounted input cannot detect that miscounting; this step bounds analytical, not upstream, variability."
+        ],
+        "context": "Same 12,000 x 6 raw count matrix and the same 3-treated / 3-control metadata. TMM (edgeR) and median-of-ratios (DESeq2) make different assumptions about the composition of the library, which is exactly the axis that a wrong strand setting would perturb, so their agreement is informative rather than merely redundant. The quasi-likelihood F-test is preferable to the exact test here because it holds the type-I error rate better at very small sample sizes.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma",
+          "DESeq2",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "Which treated-vs-control calls survive a change of estimator (edgeR QLF with TMM) and a stricter low-count filter — i.e. which genes are robust to the counting uncertainty the unrecorded strandedness creates?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use edgeR with calcNormFactors(method='TMM'), estimateDisp(robust=TRUE) and glmQLFit/glmQLFTest on ~condition, with control as reference.",
+          "Run under two filters — filterByExpr default and CPM > 1 in >= 3 samples — and report both gene counts and both DE counts.",
+          "Report Spearman correlation of DESeq2 Wald statistics against edgeR QLF statistics over the genes tested by both.",
+          "Emit an explicit consensus list (significant in both estimators, stable across both filters) as a file, plus the estimator-specific and filter-specific discordant sets.",
+          "Do not present the consensus list as proof the counts were correctly stranded — state the limitation."
+        ],
+        "description": "Re-run the same treated-vs-control contrast with an independent estimator and normalisation — edgeR with TMM normalisation factors, robust dispersion estimation and the quasi-likelihood F-test — and repeat it under two filters: the permissive filterByExpr default and a stricter CPM-based filter (e.g. CPM > 1 in at least 3 samples). Compare against the DESeq2 result: rank correlation (Spearman) of the test statistics over shared genes, overlap of the FDR<0.05 sets as counts and a Venn/UpSet summary, and a concordance table listing genes called by both estimators, by DESeq2 only, and by edgeR only. Produce a final consensus gene list — significant under both estimators and stable across both filters — and explicitly label genes that appear only under one estimator or one filter as filter/estimator-dependent and lower-confidence. Explain in the summary why this addresses the strandedness concern: a wrong strand setting would be a systematic, sample-independent read loss that attenuates all effects rather than fabricating a group difference, so calls that persist across normalisation and filtering are the ones that survive that uncertainty — while acknowledging that no re-analysis of a count matrix can rule out a genuinely mis-assigned library.",
+        "acceptance_criteria": [
+          "edgeR results tables for both filter settings, written to file.",
+          "A concordance summary: Spearman rho of test statistics, overlap counts, and an overlap figure.",
+          "A consensus DE gene list file, with discordant genes separately listed and labelled as estimator- or filter-dependent.",
+          "A written statement on what this robustness check does and does not establish about the unrecorded strandedness."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSEA on the treated-vs-control ranking",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment from a 3-vs-3 contrast rests on an unstable ranking; treat significant sets as hypotheses, not established pathway activity.",
+          "GO biological process sets are a nested hierarchy — parent and child sets will co-occur; collapse redundant hits before reporting a count of enriched processes.",
+          "If the counts were flagged as suspect in T1S1, the ranking is attenuated and enrichment will be conservative — carry that caveat into the interpretation.",
+          "A 12,000-gene matrix means the tested universe is already reduced; gene sets whose members were mostly filtered out cannot be evaluated and should be reported as under-covered rather than as non-enriched."
+        ],
+        "context": "Requires human gene-set collections in symbol space: hallmark sets, GO biological process sets, and WikiPathways human pathways. All three are present in the environment's human pathway references; resolve them there and confirm the organism is human before use — mouse and rat versions of the same collections are also staged and would silently return near-empty results against human symbols. The DE input is a 12,000-gene tested set, so the enrichment universe must be the genes actually tested by DESeq2, never the whole genome.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Which biological processes and pathways are coordinately shifted in treated versus control human liver, based on the full ranked treated-vs-control statistic?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use the full ranked list of DESeq2-tested genes for GSEA — do not pre-threshold before ranking.",
+          "Resolve human hallmark, human GO biological process, and human WikiPathways gene sets from the environment's reference store; verify the organism label is human before running, and report which collections were found.",
+          "Map the count matrix identifiers to HGNC symbols and report the mapping rate; if the rate is below ~80%, report that as a finding about the annotation the counts were built against.",
+          "Use the DESeq2 tested-gene set as the background universe for any over-representation test.",
+          "Run ORA only if the FDR<0.05 DE list has >= 25 genes; otherwise report GSEA results only and state why ORA was skipped.",
+          "Do not infer or name the drug, its target, or its mechanism — the metadata records only 'treated' vs 'control'."
+        ],
+        "description": "Run pre-ranked gene set enrichment on the complete treated-vs-control ranking from the DESeq2 result (rank by the shrunken log2 fold change, or by -log10(p) signed by fold-change direction — state which was used and why), against human hallmark gene sets, human GO biological process sets, and human WikiPathways, all in HGNC symbol space. Report normalised enrichment scores, BH-adjusted p-values and leading-edge genes for significant sets, and enrichment plots for the top sets in each collection. Because the liver context and 'drug treatment' condition make xenobiotic and stress responses plausible a priori, note explicitly whether drug-metabolism, xenobiotic, oxidative-stress, inflammatory or lipid-metabolism sets appear — but report them as observed enrichments, not as confirmation of an expected mechanism, and do not name a compound or a mechanism of action that the metadata does not contain. Secondarily, if the FDR<0.05 DE list from T1S3 holds at least 25 genes, run an over-representation test on it against the same collections with the tested-gene universe as background; if it does not, say so and report GSEA alone.",
+        "acceptance_criteria": [
+          "GSEA results tables for each gene-set collection that was successfully resolved, with NES, p, BH padj and leading-edge genes.",
+          "The identifier mapping rate to HGNC symbols is reported.",
+          "Enrichment plots for the top significant sets, or an explicit statement that no set passed FDR when none did.",
+          "A statement of which collections were resolved and which, if any, were absent — the analysis proceeds on whichever are present."
+        ]
+      }
+    ],
+    "title": "Liver drug-treated vs control DE with strandedness QC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is a single-batch bulk RNA-seq experiment on human liver: one raw integer gene-level count matrix (12,000 genes x 6 samples, star_featurecounts) plus a 6-row sample table carrying a single `condition` column with 3 treated and 3 control samples, unpaired. The research question has two parts, and the second one gates the first: the user wants the treated-vs-control gene list, but is not confident the counts are correct because the library's strandedness was never recorded and therefore the strand setting used at featureCounts time is unverifiable.\n\nStrandedness cannot be re-derived from a gene-level count matrix — that inference needs reads or alignments (RSeQC infer_experiment, or salmon's library-type autodetection), and neither BAMs nor FASTQs are among the inputs. What a count matrix CAN show is the characteristic damage a wrong strand setting leaves behind: a counted-in-the-wrong-strand library loses the large majority of assignable reads, so library sizes come out low and uniform-ish, the detected-gene count collapses, the count distribution is dominated by zeros and small values, and antisense-heavy or overlapping-gene loci behave oddly. Step T1S1 therefore runs the diagnostic that IS available — library size, detection rate, zero fraction, count-distribution shape, and the fraction of the library held by the top genes — and, on liver specifically, checks whether the canonical high-abundance hepatocyte transcripts (ALB, APOA1/APOA2, SERPINA1, HP, FGA/FGB/FGG, TF, APOB, the CYPs) sit where they should in the abundance ranking. In a correctly counted human liver library ALB alone typically takes a large share of the reads; if the top of the abundance distribution is not hepatic, the counts are suspect independent of any strand argument. The step reports a verdict — counts consistent with a correctly-stranded assignment, or not — and never claims to have determined the protocol.\n\nT1S2 is the unsupervised sample-level QC: VST, PCA, sample-sample correlation and hierarchical clustering, to see whether treated and control separate at all and whether any of the 6 samples is an outlier. With n=3 per group a single bad sample dominates the dispersion estimate, so this has to be looked at before the model is fitted, not after.\n\nT1S3 is the differential expression itself: DESeq2 on the raw integer counts with `~condition`, control as reference, Wald test, independent filtering, apeglm-shrunk LFCs for ranking, BH FDR < 0.05. n=3 vs 3 is the minimum for a dispersion-based negative-binomial fit — it is enough to run, but power is low and effect sizes are unstable, and the step is required to say so and to report the count of genes passing at FDR 0.05 and at the more permissive 0.10 rather than quietly picking whichever gives more hits.\n\nT1S4 is the robustness check that the strandedness uncertainty actually demands. If the strand setting was wrong, it was wrong for ALL six samples in the same way — a shared, systematic loss of reads. That kind of uniform miscounting attenuates power but does not usually invent a treated-vs-control difference, and the way to demonstrate that rather than assert it is to re-run the contrast with a different estimator (edgeR quasi-likelihood F-test with TMM normalisation) and with a stricter low-count filter, then measure the concordance of the two gene rankings. Genes called by both estimators under both filters are the ones the user can act on; genes that appear only under one are flagged as filter- or estimator-dependent.\n\nT2S1 takes the shrunken-LFC ranking into GSEA against human hallmark and GO biological-process sets, plus WikiPathways human, using symbols. With a 12,000-gene matrix and n=3 per group, a ranked whole-transcriptome test is far better behaved than an over-representation test on a short thresholded list, so GSEA on the full ranking is the primary readout and ORA is secondary and only run if the FDR<0.05 list has enough genes to support it. All three gene-set resources are human and staged; the step must confirm the identifier space of the count matrix maps onto HGNC symbols and report the mapping rate, because a poor map is itself evidence about the annotation the counts were built against.\n\nNo translational steps are planned: the condition is described only as 'drug treatment' with no compound identity, no dose, no exposure and no outcome data, so drug-target, safety, or biomarker steps would be speculation."
+  },
+  "usage": {
+    "inputTokens": 267581,
+    "outputTokens": 8448,
+    "cacheCreationInputTokens": 135563,
+    "cacheReadInputTokens": 131970,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01YEvQJDXLyx7qtVp2pKnFAf",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "pydeseq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "EnhancedVolcano",
+          "decoupleR",
+          "sva"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01Xuh24XprPVDzffPG5w2HGS",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human",
+        "limit": 60
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_014hgCaEJQph28w5v1TMdrJC",
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal-expression",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_01SMPa9RoyAcMSdZ3GwKQagv",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_018xE1QPas1EnzVwKA7RAQoK",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treated vs control DE with strandedness QC",
+          "analytical_narrative": "The dataset is a single-batch bulk RNA-seq experiment on human liver: one raw integer gene-level count matrix (12,000 genes x 6 samples, star_featurecounts) plus a 6-row sample table carrying a single `condition` column with 3 treated and 3 control samples, unpaired. The research question has two parts, and the second one gates the first: the user wants the treated-vs-control gene list, but is not confident the counts are correct because the library's strandedness was never recorded and therefore the strand setting used at featureCounts time is unverifiable.\n\nStrandedness cannot be re-derived from a gene-level count matrix — that inference needs reads or alignments (RSeQC infer_experiment, or salmon's library-type autodetection), and neither BAMs nor FASTQs are among the inputs. What a count matrix CAN show is the characteristic damage a wrong strand setting leaves behind: a counted-in-the-wrong-strand library loses the large majority of assignable reads, so library sizes come out low and uniform-ish, the detected-gene count collapses, the count distribution is dominated by zeros and small values, and antisense-heavy or overlapping-gene loci behave oddly. Step T1S1 therefore runs the diagnostic that IS available — library size, detection rate, zero fraction, count-distribution shape, and the fraction of the library held by the top genes — and, on liver specifically, checks whether the canonical high-abundance hepatocyte transcripts (ALB, APOA1/APOA2, SERPINA1, HP, FGA/FGB/FGG, TF, APOB, the CYPs) sit where they should in the abundance ranking. In a correctly counted human liver library ALB alone typically takes a large share of the reads; if the top of the abundance distribution is not hepatic, the counts are suspect independent of any strand argument. The step reports a verdict — counts consistent with a correctly-stranded assignment, or not — and never claims to have determined the protocol.\n\nT1S2 is the unsupervised sample-level QC: VST, PCA, sample-sample correlation and hierarchical clustering, to see whether treated and control separate at all and whether any of the 6 samples is an outlier. With n=3 per group a single bad sample dominates the dispersion estimate, so this has to be looked at before the model is fitted, not after.\n\nT1S3 is the differential expression itself: DESeq2 on the raw integer counts with `~condition`, control as reference, Wald test, independent filtering, apeglm-shrunk LFCs for ranking, BH FDR < 0.05. n=3 vs 3 is the minimum for a dispersion-based negative-binomial fit — it is enough to run, but power is low and effect sizes are unstable, and the step is required to say so and to report the count of genes passing at FDR 0.05 and at the more permissive 0.10 rather than quietly picking whichever gives more hits.\n\nT1S4 is the robustness check that the strandedness uncertainty actually demands. If the strand setting was wrong, it was wrong for ALL six samples in the same way — a shared, systematic loss of reads. That kind of uniform miscounting attenuates power but does not usually invent a treated-vs-control difference, and the way to demonstrate that rather than assert it is to re-run the contrast with a different estimator (edgeR quasi-likelihood F-test with TMM normalisation) and with a stricter low-count filter, then measure the concordance of the two gene rankings. Genes called by both estimators under both filters are the ones the user can act on; genes that appear only under one are flagged as filter- or estimator-dependent.\n\nT2S1 takes the shrunken-LFC ranking into GSEA against human hallmark and GO biological-process sets, plus WikiPathways human, using symbols. With a 12,000-gene matrix and n=3 per group, a ranked whole-transcriptome test is far better behaved than an over-representation test on a short thresholded list, so GSEA on the full ranking is the primary readout and ORA is secondary and only run if the FDR<0.05 list has enough genes to support it. All three gene-set resources are human and staged; the step must confirm the identifier space of the count matrix maps onto HGNC symbols and report the mapping rate, because a poor map is itself evidence about the annotation the counts were built against.\n\nNo translational steps are planned: the condition is described only as 'drug treatment' with no compound identity, no dose, no exposure and no outcome data, so drug-target, safety, or biomarker steps would be speculation.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count-integrity and strandedness-consequence diagnostics",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12,000 x 6 star_featurecounts counts in counts.csv show the signature of a correct strand assignment, or the read-loss signature of a library counted with the wrong strand setting?",
+              "description": "Diagnose whether the raw gene-level counts are usable, given that the library's strandedness was never recorded. Compute per-sample library size (total assigned counts), number of detected genes (count > 0 and count >= 10), zero fraction, median and IQR of non-zero counts, and the fraction of each library held by the top 10, 50 and 500 genes. Then rank genes by mean normalised abundance and inspect the top of the ranking against the canonical human liver high-abundance transcripts (ALB, SERPINA1, APOA1, APOA2, APOB, HP, HPX, FGA, FGB, FGG, TF, TTR, APOC3, ORM1, CYP2E1, CYP3A4) — in a correctly counted human liver bulk library these dominate the abundance distribution, with ALB typically alone holding a multi-percent share. Report a plain verdict with the numbers behind it: counts behave like a correctly assigned library, or they show the depletion pattern expected from a wrong-strand count. State explicitly and prominently that library strandedness CANNOT be determined from a gene-level count matrix — that inference requires the FASTQs or BAMs (e.g. RSeQC infer_experiment or salmon library-type autodetection), neither of which is among the inputs — so this step bounds the risk rather than resolving it.",
+              "context": "Input is /eval-four-models-v2-without-strandedness-unknown-n3-s1-1/data/inputs/counts/counts.csv (12,000 genes x 7 columns: a gene identifier column plus 6 sample columns) and /eval-four-models-v2-without-strandedness-unknown-n3-s1-1/data/inputs/metadata/metadata.csv (6 rows x 2 columns: sample and condition, 3 treated / 3 control). The profile records that strandedness was not recorded, so the featureCounts -s setting is unverifiable. A wrong strand setting discards most assignable reads uniformly across samples, which shows up as low library sizes, collapsed gene detection, an inflated zero fraction and a non-hepatic abundance ranking — those are the observable consequences this step measures.",
+              "constraints": [
+                "Read counts.csv and metadata.csv from the exact paths given; do not re-derive counts from anything else.",
+                "Verify the count matrix is raw integers (no decimals, no negatives) and that the 6 sample column names match the metadata sample column exactly; report any mismatch instead of silently reordering.",
+                "Report per-sample library size, detected-gene counts at >0 and >=10, zero fraction, and top-10/50/500 library share as a table.",
+                "Rank genes by mean CPM and report the top 30 with their symbols and library share; explicitly check the named liver marker list against that ranking.",
+                "State in the output that strandedness is not inferable from a count matrix and name what input would be required to infer it (FASTQ or BAM).",
+                "Do not claim to have determined the library protocol under any circumstance."
+              ],
+              "acceptance_criteria": [
+                "A per-sample QC table covering all 6 samples with library size, detected genes, zero fraction and top-N library share.",
+                "The top-30 abundance ranking is reported and the canonical liver transcripts are explicitly located within (or reported absent from) it.",
+                "A written verdict on count integrity with the supporting numbers, plus an explicit statement that strandedness itself cannot be determined from these inputs.",
+                "Any sample-name mismatch between counts.csv and metadata.csv is reported rather than silently fixed."
+              ],
+              "caveats": [
+                "Low library size alone is also consistent with shallow sequencing; the diagnostic is the combination of low depth, collapsed detection and a non-hepatic abundance profile, not any single number.",
+                "A 12,000-gene matrix is already smaller than a full human annotation (~20,000 protein-coding), so it has likely been pre-filtered — say so, and note that pre-filtering inflates apparent detection rates.",
+                "If the identifier column is Ensembl rather than symbols, map to symbols for the liver-marker check and report the mapping rate."
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "VST, PCA and sample clustering",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 3 treated and 3 control liver samples separate on unsupervised structure, and is any of the 6 samples an outlier that would distort an n=3 vs n=3 dispersion fit?",
+              "description": "Build a DESeq2 dataset from the raw counts with design ~condition, apply variance-stabilising transformation, and characterise sample structure: PCA (PC1/PC2 with percent variance explained), a sample-sample Euclidean-distance and Spearman-correlation heatmap, and hierarchical clustering. Report whether treated and control form distinct groups, how much of the total variance the condition axis carries, and whether any single sample sits apart from its own group. Also report the dispersion trend from the fitted model. Flag — do not remove — any outlier: with 3 samples per group, dropping one leaves n=2 and effectively ends the analysis, so an outlier is a caveat on the DE result rather than grounds for exclusion.",
+              "context": "Continues from the count-integrity check. Design is 3 treated vs 3 control, unpaired, single batch, so `condition` is the only covariate available — there is no batch, sex, or pairing term to include and none should be invented. Six samples is too few for surrogate-variable estimation to be trustworthy, so no latent-factor correction is planned.",
+              "constraints": [
+                "Use DESeq2 with design ~condition and control as the reference level.",
+                "Use VST (not rlog) for the transformation, with blind=TRUE for the unsupervised views.",
+                "Report percent variance explained by PC1 and PC2 explicitly.",
+                "Flag outliers; do NOT drop any sample from the matrix passed downstream.",
+                "Do not add any covariate beyond condition — no batch term exists in the metadata."
+              ],
+              "acceptance_criteria": [
+                "PCA plot and coordinates for all 6 samples, labelled by condition, with percent variance on both axes.",
+                "Sample-sample distance/correlation heatmap and dendrogram covering all 6 samples.",
+                "A written statement on whether condition is the dominant source of variance, and whether any sample is an outlier.",
+                "The dispersion-estimate plot from the fitted DESeq2 model is produced."
+              ],
+              "caveats": [
+                "With n=3 per group, PCA is dominated by whichever sample is noisiest; separation on PC1 is encouraging but not itself evidence of a treatment effect.",
+                "If the count-integrity step flagged the counts as suspect, unsupervised separation may reflect shared miscounting rather than biology — carry that flag forward."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 treated vs control differential expression",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between the 3 treated and the 3 control human liver samples?",
+              "description": "Fit DESeq2 on the raw integer counts with design ~condition, control as reference, using median-of-ratios size factors, gene-wise dispersion with empirical-Bayes shrinkage, and the Wald test for the treated-vs-control contrast with independent filtering and BH adjustment. Pre-filter to genes with at least 10 counts in at least 3 samples (the smallest group size). Produce shrunken log2 fold changes with apeglm for ranking and visualisation while reporting the unshrunken LFC, standard error and Wald statistic alongside. Output the full results table sorted by adjusted p-value, the number of genes passing FDR < 0.05 and separately at FDR < 0.10, an MA plot, a p-value histogram, a volcano plot, and a heatmap of the top 30 genes on VST values. The step must state the power limitation of a 3-vs-3 design in its own summary rather than leaving it to interpretation.",
+              "context": "The matrix is 12,000 genes x 6 samples of raw star_featurecounts counts — small enough that the whole fit runs in seconds. The unpaired single-batch design leaves ~condition as the only sensible model. Carry forward whatever verdict the count-integrity step reached: if the counts look wrong-stranded, the DE result is still computable but every effect size is attenuated and the FDR-passing list will be short, and that must be said up front.",
+              "constraints": [
+                "Use DESeq2 with design ~condition; set control as the reference level so positive LFC means up in treated.",
+                "Pre-filter: keep genes with count >= 10 in at least 3 samples; report how many genes survive.",
+                "Use lfcShrink with type='apeglm' for ranked/plotted fold changes; report unshrunken LFC and SE in the same table.",
+                "Report DE gene counts at BH-adjusted p < 0.05 AND at < 0.10; do not pick one threshold post hoc to maximise hits.",
+                "Write the full results table for every tested gene, not only the significant ones.",
+                "State the n=3 vs n=3 power limitation explicitly in the step summary."
+              ],
+              "acceptance_criteria": [
+                "A complete results table (gene, baseMean, unshrunken LFC, SE, Wald stat, p, BH padj, shrunken LFC) for all tested genes, written to file.",
+                "DE gene counts reported at padj < 0.05 and padj < 0.10, with the direction split (up/down in treated).",
+                "MA plot, p-value histogram, volcano plot and top-30 VST heatmap produced.",
+                "The summary states the power limitation of 3 vs 3 and carries forward the count-integrity verdict from T1S1."
+              ],
+              "caveats": [
+                "A uniform p-value histogram with no left-hand spike means no detectable treatment effect — report that as the finding, do not lower the threshold until something appears.",
+                "With 3 vs 3, apeglm shrinkage is doing substantial work; unshrunken LFCs on low-count genes are not trustworthy and should not be quoted as effect sizes.",
+                "Independent filtering removes low-count genes from the multiple-testing burden — report how many genes were filtered out so the tested-gene denominator is transparent."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "pheatmap",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "edgeR cross-check and filter-sensitivity of the DE list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which treated-vs-control calls survive a change of estimator (edgeR QLF with TMM) and a stricter low-count filter — i.e. which genes are robust to the counting uncertainty the unrecorded strandedness creates?",
+              "description": "Re-run the same treated-vs-control contrast with an independent estimator and normalisation — edgeR with TMM normalisation factors, robust dispersion estimation and the quasi-likelihood F-test — and repeat it under two filters: the permissive filterByExpr default and a stricter CPM-based filter (e.g. CPM > 1 in at least 3 samples). Compare against the DESeq2 result: rank correlation (Spearman) of the test statistics over shared genes, overlap of the FDR<0.05 sets as counts and a Venn/UpSet summary, and a concordance table listing genes called by both estimators, by DESeq2 only, and by edgeR only. Produce a final consensus gene list — significant under both estimators and stable across both filters — and explicitly label genes that appear only under one estimator or one filter as filter/estimator-dependent and lower-confidence. Explain in the summary why this addresses the strandedness concern: a wrong strand setting would be a systematic, sample-independent read loss that attenuates all effects rather than fabricating a group difference, so calls that persist across normalisation and filtering are the ones that survive that uncertainty — while acknowledging that no re-analysis of a count matrix can rule out a genuinely mis-assigned library.",
+              "context": "Same 12,000 x 6 raw count matrix and the same 3-treated / 3-control metadata. TMM (edgeR) and median-of-ratios (DESeq2) make different assumptions about the composition of the library, which is exactly the axis that a wrong strand setting would perturb, so their agreement is informative rather than merely redundant. The quasi-likelihood F-test is preferable to the exact test here because it holds the type-I error rate better at very small sample sizes.",
+              "constraints": [
+                "Use edgeR with calcNormFactors(method='TMM'), estimateDisp(robust=TRUE) and glmQLFit/glmQLFTest on ~condition, with control as reference.",
+                "Run under two filters — filterByExpr default and CPM > 1 in >= 3 samples — and report both gene counts and both DE counts.",
+                "Report Spearman correlation of DESeq2 Wald statistics against edgeR QLF statistics over the genes tested by both.",
+                "Emit an explicit consensus list (significant in both estimators, stable across both filters) as a file, plus the estimator-specific and filter-specific discordant sets.",
+                "Do not present the consensus list as proof the counts were correctly stranded — state the limitation."
+              ],
+              "acceptance_criteria": [
+                "edgeR results tables for both filter settings, written to file.",
+                "A concordance summary: Spearman rho of test statistics, overlap counts, and an overlap figure.",
+                "A consensus DE gene list file, with discordant genes separately listed and labelled as estimator- or filter-dependent.",
+                "A written statement on what this robustness check does and does not establish about the unrecorded strandedness."
+              ],
+              "caveats": [
+                "High concordance between DESeq2 and edgeR is expected on any dataset and is weak evidence on its own — the informative comparison is which specific genes drop out under the stricter filter.",
+                "If the FDR<0.05 sets are empty under either estimator, report the empty overlap honestly and fall back to comparing the top-ranked genes by statistic.",
+                "Two estimators sharing the same miscounted input cannot detect that miscounting; this step bounds analytical, not upstream, variability."
+              ],
+              "packages": [
+                "edgeR",
+                "limma",
+                "DESeq2",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "GSEA on the treated-vs-control ranking",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and pathways are coordinately shifted in treated versus control human liver, based on the full ranked treated-vs-control statistic?",
+              "description": "Run pre-ranked gene set enrichment on the complete treated-vs-control ranking from the DESeq2 result (rank by the shrunken log2 fold change, or by -log10(p) signed by fold-change direction — state which was used and why), against human hallmark gene sets, human GO biological process sets, and human WikiPathways, all in HGNC symbol space. Report normalised enrichment scores, BH-adjusted p-values and leading-edge genes for significant sets, and enrichment plots for the top sets in each collection. Because the liver context and 'drug treatment' condition make xenobiotic and stress responses plausible a priori, note explicitly whether drug-metabolism, xenobiotic, oxidative-stress, inflammatory or lipid-metabolism sets appear — but report them as observed enrichments, not as confirmation of an expected mechanism, and do not name a compound or a mechanism of action that the metadata does not contain. Secondarily, if the FDR<0.05 DE list from T1S3 holds at least 25 genes, run an over-representation test on it against the same collections with the tested-gene universe as background; if it does not, say so and report GSEA alone.",
+              "context": "Requires human gene-set collections in symbol space: hallmark sets, GO biological process sets, and WikiPathways human pathways. All three are present in the environment's human pathway references; resolve them there and confirm the organism is human before use — mouse and rat versions of the same collections are also staged and would silently return near-empty results against human symbols. The DE input is a 12,000-gene tested set, so the enrichment universe must be the genes actually tested by DESeq2, never the whole genome.",
+              "constraints": [
+                "Use the full ranked list of DESeq2-tested genes for GSEA — do not pre-threshold before ranking.",
+                "Resolve human hallmark, human GO biological process, and human WikiPathways gene sets from the environment's reference store; verify the organism label is human before running, and report which collections were found.",
+                "Map the count matrix identifiers to HGNC symbols and report the mapping rate; if the rate is below ~80%, report that as a finding about the annotation the counts were built against.",
+                "Use the DESeq2 tested-gene set as the background universe for any over-representation test.",
+                "Run ORA only if the FDR<0.05 DE list has >= 25 genes; otherwise report GSEA results only and state why ORA was skipped.",
+                "Do not infer or name the drug, its target, or its mechanism — the metadata records only 'treated' vs 'control'."
+              ],
+              "acceptance_criteria": [
+                "GSEA results tables for each gene-set collection that was successfully resolved, with NES, p, BH padj and leading-edge genes.",
+                "The identifier mapping rate to HGNC symbols is reported.",
+                "Enrichment plots for the top significant sets, or an explicit statement that no set passed FDR when none did.",
+                "A statement of which collections were resolved and which, if any, were absent — the analysis proceeds on whichever are present."
+              ],
+              "caveats": [
+                "Enrichment from a 3-vs-3 contrast rests on an unstable ranking; treat significant sets as hypotheses, not established pathway activity.",
+                "GO biological process sets are a nested hierarchy — parent and child sets will co-occur; collapse redundant hits before reporting a count of enriched processes.",
+                "If the counts were flagged as suspect in T1S1, the ranking is attenuated and enrichment will be conservative — carry that caveat into the interpretation.",
+                "A 12,000-gene matrix means the tested universe is already reduced; gene sets whose members were mostly filtered out cannot be evaluated and should be reported as under-covered rather than as non-enriched."
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 54
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

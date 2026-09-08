@@ -1,0 +1,476 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "paired-n5",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T05:42:15.881Z",
+  "elapsedMs": 110147,
+  "outcome": "plan_submitted",
+  "planId": "pln-ccdac366",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Import counts, verify pairing, filter genes",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The counts CSV has 11 columns for 10 samples - do not assume column order; match on sample IDs, not position.",
+          "Gene identifier column may be Ensembl IDs or symbols - inspect it here and record which, since the enrichment step depends on this."
+        ],
+        "context": "Dataset: raw integer STAR/featureCounts gene-level counts, 12,000 genes x 11 columns (one identifier column + 10 samples), Homo sapiens, blood tissue. Metadata: 10 rows x 3 columns (sample, subject, condition), 5 subjects each contributing one control and one treated sample (paired design). Condition label per the profile is 'treatment'.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "data.table==1.18.4",
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13",
+          "matrixStats==1.5.0"
+        ],
+        "question": "Do the 10 samples in counts.csv align one-to-one with the 10 metadata rows as 5 control/treated pairs, and which genes pass minimal expression filtering?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load the raw integer counts (counts.csv, 12,000 genes x 11 columns - expect one gene-ID column plus 10 sample columns) and the 10-row sample table (metadata.csv with sample, subject, condition). Verify that every metadata sample matches exactly one count column and that the pairing structure (5 subjects x {control, treated}) is complete. Summarize library sizes, map the gene identifier space, drop genes with negligible counts (e.g. fewer than 10 counts in fewer than 5 samples, keeping genes detected in at least half the samples), and compute a pre-analysis PCA / sample-distance heatmap on variance-stabilized values to confirm samples cluster by subject (paired structure) and to flag gross outliers. Reference data needed: none - this step uses only the input files.",
+        "acceptance_criteria": [
+          "A count matrix of filtered genes x 10 samples saved as TSV with per-sample library sizes and per-gene counts retained",
+          "A QC report (library sizes, PCA plot, sample-pairing check) with any sample flagged for exclusion explicitly listed",
+          "Metadata columns mapped: condition levels control vs treated, subject levels S1-S5; sample-to-column alignment asserted with zero mismatches"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Paired DESeq2 differential expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=5 pairs the analysis is powered only for moderate-to-large effects; report effect sizes and CIs, not just significance.",
+          "If dispersion estimation struggles, rely on DESeq2's default shrinkage rather than removing the subject term - dropping subject would discard the pairing the design depends on.",
+          "If the leading-edge of the results looks like it is driven by a single subject, report per-subject log2FC values as a diagnostic."
+        ],
+        "context": "After T1S1: filtered count matrix, sample metadata with subject and condition columns, verified 5 control/treated pairs. This is the primary paired analysis the research question asks for.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0",
+          "ggplot2==4.0.3",
+          "EnhancedVolcano==1.30.0",
+          "data.table==1.18.4"
+        ],
+        "question": "Which genes respond to treatment within each subject (treated vs control, paired across 5 subjects)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Run differential expression with DESeq2 on the filtered counts using the paired design ~ subject + condition, extracting the treated-vs-control coefficient. Apply independent filtering (DESeq2 default), Benjamini-Hochberg FDR correction, and LFC shrinkage with apeglm for effect-size estimates and ranking. Report: number of DE genes at FDR < 0.05 and at nominal p < 0.05, per-subject paired log2FC consistency (each subject's treated/control log2FC), MA plot, and volcano plot. Save the full DE table with shrinkage-corrected log2FC, standard error, Wald statistic, p-value, and FDR. With 5 pairs, power is limited: also report the genes with the most consistent direction of change across all 5 subjects regardless of FDR. Reference data needed: none.",
+        "acceptance_criteria": [
+          "DE results table (gene, baseMean, log2FC, lfcSE, stat, p-value, padj) for all genes passing the filter, saved as TSV",
+          "Number of DE genes at FDR < 0.05 and at nominal p < 0.05 reported at both thresholds; with 5 pairs these counts are expected to be modest and must be reported with that caveat, not inflated",
+          "One results plot (volcano and/or DE heatmap of top genes) produced",
+          "Design formula logged as ~ subject + condition and the coefficient extracted is the treated-vs-control term"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sensitivity check with limma-voom",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "limma-voom log2FCs for genes near zero counts can be unstable - intersect the concordance analysis on genes passing the T1S1 filter only.",
+          "Do not average or merge the two result sets into one p-value; report agreement, and use DESeq2 FDR as the headline significance."
+        ],
+        "context": "Uses the T1S1 filtered counts and metadata. This is a robustness check on the primary DESeq2 result, not a second answer: discordant genes are flagged rather than dropped.",
+        "maxSteps": 200,
+        "packages": [
+          "limma==3.68.5",
+          "edgeR==4.10.3",
+          "data.table==1.18.4"
+        ],
+        "question": "Are the DESeq2 treatment effects reproducible under a voom/limma mixed-model treatment of the same paired data, and which calls are robust across methods?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Re-run the same paired contrast with an independent statistical framework as a robustness check: limma-voom on the TMM-normalized counts with a design of ~0 + condition + subject and duplicateCorrelation to model the within-subject correlation (equivalently, treat subject as a blocking factor). Compare the two methods on (a) log2FC agreement (correlation, median absolute difference), (b) overlap of significant hits at nominal p < 0.05 and at BH-FDR < 0.05, and (c) genes significant in both with the same direction. Flag genes called by only one method as lower-confidence. Reference data needed: none.",
+        "acceptance_criteria": [
+          "Concordance summary: Spearman correlation of DESeq2 and limma-voom log2FCs, and the overlap of hits at nominal p<0.05 reported as counts and a Jaccard index",
+          "A combined table flagging for each gene: direction agreement, both-methods nominal significance, and DESeq2 FDR < 0.05",
+          "Divergent calls (same-direction p-values but large |log2FC| discrepancy) listed explicitly"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Pathway enrichment of the treatment response",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With ~10 samples and few hits, enrichment results are exploratory; label them as hypothesis-generating.",
+          "Rank by the signed statistic including all genes - do not pre-filter to significant genes, which destroys GSEA's ranking assumption."
+        ],
+        "context": "Inputs: full ranked gene lists from T1S2 (signed Wald statistic or shrinkage log2FC) and T1S3 (moderated t). Human HGNC-symbol GMT is provisioned at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt - first field splits on '%' for name/ID/species.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "data.table==1.18.4",
+          "ggplot2==4.0.3"
+        ],
+        "question": "Which biological pathways are enriched among genes responding to treatment across the five paired subjects?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "description": "Run GSEA-style enrichment with fgsea on the treatment response, using the full gene lists ranked by the DESeq2 Wald statistic (and, as a secondary input, by the limma moderated t-statistic) against the human WikiPathways gene sets (GMT of HGNC symbols, 2026.07.10 build). This uses all 12,000 genes' signal rather than only an arbitrary significant-gene cutoff, which suits the modest power of 5 pairs. Report top pathways by normalized enrichment score with FDR adjustment, and note the direction (up in treated vs down in treated). Confirm the gene identifier type from T1S1 matches the GMT (HGNC symbols); if the counts carry Ensembl IDs instead, map them to symbols first and report the mapping rate. Reference data needed: a human pathway gene-set collection in GMT format (HGNC gene symbols) - the staged WikiPathways human GMT is expected to serve; if absent, the step reports the gap and returns the ranked lists unenriched rather than substituting a non-human set.",
+        "acceptance_criteria": [
+          "Enrichment table: pathway, size, ES, NES, padj, leading-edge genes - ranked by |NES|",
+          "Separate GSEA runs for the DESeq2-statistic-ranked and the limma-moderated-t-ranked lists, with direction-of-enriched-pathways agreement noted",
+          "Explicit statement of how many genes mapped to the GMT and how many were left unmapped",
+          "If the human GMT is unavailable in the environment, the step reports the gap and completes with no enrichment rather than substituting a non-human pathway set"
+        ]
+      }
+    ],
+    "title": "Paired treated-vs-control blood RNA-seq DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is raw STAR/featureCounts integer gene counts (12,000 genes x 11 columns, one identifier column plus 10 samples) from human blood, with a 10-row metadata table defining 5 subjects each contributing one control and one treated sample. The research question - which genes respond to treatment within each subject - maps directly onto a paired within-subject differential-expression design. The plan: (T1S1) import and align the counts and metadata, verify the 5 control/treated pairs, filter negligible-count genes, and check by PCA that the paired structure holds; (T1S2) run the primary paired analysis with DESeq2 using ~ subject + condition, with apeglm-shrunk effect sizes and per-subject consistency diagnostics, since n=5 pairs limits power and direction consistency matters as much as FDR; (T1S3) re-estimate the same contrast with limma-voom plus duplicateCorrelation as an independent-method robustness check and flag calls that only one method supports; (T1S4) run fgsea GSEA on the full ranked gene lists against the provisioned human WikiPathways GMT to place the response in pathway context, using the full ranking rather than a significance cutoff because few genes are expected to clear FDR at n=5. No translational, biomarker, or safety steps are included because the research question and data context contain no outcome, drug, or clinical-response variables."
+  },
+  "usage": {
+    "inputTokens": 65105,
+    "outputTokens": 5412,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 428
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_243c0b9e26ea4f8b8f577983",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-10T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A count matrix of filtered genes x 10 samples saved as TSV with per-sample library sizes and per-gene counts retained",
+                "A QC report (library sizes, PCA plot, sample-pairing check) with any sample flagged for exclusion explicitly listed",
+                "Metadata columns mapped: condition levels control vs treated, subject levels S1-S5; sample-to-column alignment asserted with zero mismatches"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: raw integer STAR/featureCounts gene-level counts, 12,000 genes x 11 columns (one identifier column + 10 samples), Homo sapiens, blood tissue. Metadata: 10 rows x 3 columns (sample, subject, condition), 5 subjects each contributing one control and one treated sample (paired design). Condition label per the profile is 'treatment'.",
+              "caveats": [
+                "The counts CSV has 11 columns for 10 samples - do not assume column order; match on sample IDs, not position.",
+                "Gene identifier column may be Ensembl IDs or symbols - inspect it here and record which, since the enrichment step depends on this."
+              ],
+              "depends_on": [],
+              "description": "Load the raw integer counts (counts.csv, 12,000 genes x 11 columns - expect one gene-ID column plus 10 sample columns) and the 10-row sample table (metadata.csv with sample, subject, condition). Verify that every metadata sample matches exactly one count column and that the pairing structure (5 subjects x {control, treated}) is complete. Summarize library sizes, map the gene identifier space, drop genes with negligible counts (e.g. fewer than 10 counts in fewer than 5 samples, keeping genes detected in at least half the samples), and compute a pre-analysis PCA / sample-distance heatmap on variance-stabilized values to confirm samples cluster by subject (paired structure) and to flag gross outliers. Reference data needed: none - this step uses only the input files.",
+              "id": "T1S1",
+              "name": "Import counts, verify pairing, filter genes",
+              "packages": [
+                "DESeq2==1.52.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3",
+                "pheatmap==1.0.13",
+                "matrixStats==1.5.0"
+              ],
+              "question": "Do the 10 samples in counts.csv align one-to-one with the 10 metadata rows as 5 control/treated pairs, and which genes pass minimal expression filtering?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "DE results table (gene, baseMean, log2FC, lfcSE, stat, p-value, padj) for all genes passing the filter, saved as TSV",
+                "Number of DE genes at FDR < 0.05 and at nominal p < 0.05 reported at both thresholds; with 5 pairs these counts are expected to be modest and must be reported with that caveat, not inflated",
+                "One results plot (volcano and/or DE heatmap of top genes) produced",
+                "Design formula logged as ~ subject + condition and the coefficient extracted is the treated-vs-control term"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "After T1S1: filtered count matrix, sample metadata with subject and condition columns, verified 5 control/treated pairs. This is the primary paired analysis the research question asks for.",
+              "caveats": [
+                "With n=5 pairs the analysis is powered only for moderate-to-large effects; report effect sizes and CIs, not just significance.",
+                "If dispersion estimation struggles, rely on DESeq2's default shrinkage rather than removing the subject term - dropping subject would discard the pairing the design depends on.",
+                "If the leading-edge of the results looks like it is driven by a single subject, report per-subject log2FC values as a diagnostic."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Run differential expression with DESeq2 on the filtered counts using the paired design ~ subject + condition, extracting the treated-vs-control coefficient. Apply independent filtering (DESeq2 default), Benjamini-Hochberg FDR correction, and LFC shrinkage with apeglm for effect-size estimates and ranking. Report: number of DE genes at FDR < 0.05 and at nominal p < 0.05, per-subject paired log2FC consistency (each subject's treated/control log2FC), MA plot, and volcano plot. Save the full DE table with shrinkage-corrected log2FC, standard error, Wald statistic, p-value, and FDR. With 5 pairs, power is limited: also report the genes with the most consistent direction of change across all 5 subjects regardless of FDR. Reference data needed: none.",
+              "id": "T1S2",
+              "name": "Paired DESeq2 differential expression",
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0",
+                "ggplot2==4.0.3",
+                "EnhancedVolcano==1.30.0",
+                "data.table==1.18.4"
+              ],
+              "question": "Which genes respond to treatment within each subject (treated vs control, paired across 5 subjects)?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Concordance summary: Spearman correlation of DESeq2 and limma-voom log2FCs, and the overlap of hits at nominal p<0.05 reported as counts and a Jaccard index",
+                "A combined table flagging for each gene: direction agreement, both-methods nominal significance, and DESeq2 FDR < 0.05",
+                "Divergent calls (same-direction p-values but large |log2FC| discrepancy) listed explicitly"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Uses the T1S1 filtered counts and metadata. This is a robustness check on the primary DESeq2 result, not a second answer: discordant genes are flagged rather than dropped.",
+              "caveats": [
+                "limma-voom log2FCs for genes near zero counts can be unstable - intersect the concordance analysis on genes passing the T1S1 filter only.",
+                "Do not average or merge the two result sets into one p-value; report agreement, and use DESeq2 FDR as the headline significance."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Re-run the same paired contrast with an independent statistical framework as a robustness check: limma-voom on the TMM-normalized counts with a design of ~0 + condition + subject and duplicateCorrelation to model the within-subject correlation (equivalently, treat subject as a blocking factor). Compare the two methods on (a) log2FC agreement (correlation, median absolute difference), (b) overlap of significant hits at nominal p < 0.05 and at BH-FDR < 0.05, and (c) genes significant in both with the same direction. Flag genes called by only one method as lower-confidence. Reference data needed: none.",
+              "id": "T1S3",
+              "name": "Sensitivity check with limma-voom",
+              "packages": [
+                "limma==3.68.5",
+                "edgeR==4.10.3",
+                "data.table==1.18.4"
+              ],
+              "question": "Are the DESeq2 treatment effects reproducible under a voom/limma mixed-model treatment of the same paired data, and which calls are robust across methods?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Enrichment table: pathway, size, ES, NES, padj, leading-edge genes - ranked by |NES|",
+                "Separate GSEA runs for the DESeq2-statistic-ranked and the limma-moderated-t-ranked lists, with direction-of- enriched-pathways agreement noted",
+                "Explicit statement of how many genes mapped to the GMT and how many were left unmapped",
+                "If the human GMT is unavailable in the environment, the step reports the gap and completes with no enrichment rather than substituting a non-human pathway set"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Inputs: full ranked gene lists from T1S2 (signed Wald statistic or shrinkage log2FC) and T1S3 (moderated t). Human HGNC-symbol GMT is provisioned at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt - first field splits on '%' for name/ID/species.",
+              "caveats": [
+                "With ~10 samples and few hits, enrichment results are exploratory; label them as hypothesis-generating.",
+                "Rank by the signed statistic including all genes - do not pre-filter to significant genes, which destroys GSEA's ranking assumption."
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "description": "Run GSEA-style enrichment with fgsea on the treatment response, using the full gene lists ranked by the DESeq2 Wald statistic (and, as a secondary input, by the limma moderated t-statistic) against the human WikiPathways gene sets (GMT of HGNC symbols, 2026.07.10 build). This uses all 12,000 genes' signal rather than only an arbitrary significant-gene cutoff, which suits the modest power of 5 pairs. Report top pathways by normalized enrichment score with FDR adjustment, and note the direction (up in treated vs down in treated). Confirm the gene identifier type from T1S1 matches the GMT (HGNC symbols); if the counts carry Ensembl IDs instead, map them to symbols first and report the mapping rate. Reference data needed: a human pathway gene-set collection in GMT format (HGNC gene symbols) - the staged WikiPathways human GMT is expected to serve; if absent, the step reports the gap and returns the ranked lists unenriched rather than substituting a non-human set.",
+              "id": "T1S4",
+              "name": "Pathway enrichment of the treatment response",
+              "packages": [
+                "fgsea==1.38.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3"
+              ],
+              "question": "Which biological pathways are enriched among genes responding to treatment across the five paired subjects?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Paired treated-vs-control blood RNA-seq DE"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "call_f8c9449e921644d7b50cb8dd",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is raw STAR/featureCounts integer gene counts (12,000 genes x 11 columns, one identifier column plus 10 samples) from human blood, with a 10-row metadata table defining 5 subjects each contributing one control and one treated sample. The research question - which genes respond to treatment within each subject - maps directly onto a paired within-subject differential-expression design. The plan: (T1S1) import and align the counts and metadata, verify the 5 control/treated pairs, filter negligible-count genes, and check by PCA that the paired structure holds; (T1S2) run the primary paired analysis with DESeq2 using ~ subject + condition, with apeglm-shrunk effect sizes and per-subject consistency diagnostics, since n=5 pairs limits power and direction consistency matters as much as FDR; (T1S3) re-estimate the same contrast with limma-voom plus duplicateCorrelation as an independent-method robustness check and flag calls that only one method supports; (T1S4) run fgsea GSEA on the full ranked gene lists against the provisioned human WikiPathways GMT to place the response in pathway context, using the full ranking rather than a significance cutoff because few genes are expected to clear FDR at n=5. No translational, biomarker, or safety steps are included because the research question and data context contain no outcome, drug, or clinical-response variables.",
+          "created_at": "2026-07-10T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "A count matrix of filtered genes x 10 samples saved as TSV with per-sample library sizes and per-gene counts retained",
+                "A QC report (library sizes, PCA plot, sample-pairing check) with any sample flagged for exclusion explicitly listed",
+                "Metadata columns mapped: condition levels control vs treated, subject levels S1-S5; sample-to-column alignment asserted with zero mismatches"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Dataset: raw integer STAR/featureCounts gene-level counts, 12,000 genes x 11 columns (one identifier column + 10 samples), Homo sapiens, blood tissue. Metadata: 10 rows x 3 columns (sample, subject, condition), 5 subjects each contributing one control and one treated sample (paired design). Condition label per the profile is 'treatment'.",
+              "caveats": [
+                "The counts CSV has 11 columns for 10 samples - do not assume column order; match on sample IDs, not position.",
+                "Gene identifier column may be Ensembl IDs or symbols - inspect it here and record which, since the enrichment step depends on this."
+              ],
+              "depends_on": [],
+              "description": "Load the raw integer counts (counts.csv, 12,000 genes x 11 columns - expect one gene-ID column plus 10 sample columns) and the 10-row sample table (metadata.csv with sample, subject, condition). Verify that every metadata sample matches exactly one count column and that the pairing structure (5 subjects x {control, treated}) is complete. Summarize library sizes, map the gene identifier space, drop genes with negligible counts (e.g. fewer than 10 counts in fewer than 5 samples, keeping genes detected in at least half the samples), and compute a pre-analysis PCA / sample-distance heatmap on variance-stabilized values to confirm samples cluster by subject (paired structure) and to flag gross outliers. Reference data needed: none - this step uses only the input files.",
+              "id": "T1S1",
+              "name": "Import counts, verify pairing, filter genes",
+              "packages": [
+                "DESeq2==1.52.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3",
+                "pheatmap==1.0.13",
+                "matrixStats==1.5.0"
+              ],
+              "question": "Do the 10 samples in counts.csv align one-to-one with the 10 metadata rows as 5 control/treated pairs, and which genes pass minimal expression filtering?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "DE results table (gene, baseMean, log2FC, lfcSE, stat, p-value, padj) for all genes passing the filter, saved as TSV",
+                "Number of DE genes at FDR < 0.05 and at nominal p < 0.05 reported at both thresholds; with 5 pairs these counts are expected to be modest and must be reported with that caveat, not inflated",
+                "One results plot (volcano and/or DE heatmap of top genes) produced",
+                "Design formula logged as ~ subject + condition and the coefficient extracted is the treated-vs-control term"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "After T1S1: filtered count matrix, sample metadata with subject and condition columns, verified 5 control/treated pairs. This is the primary paired analysis the research question asks for.",
+              "caveats": [
+                "With n=5 pairs the analysis is powered only for moderate-to-large effects; report effect sizes and CIs, not just significance.",
+                "If dispersion estimation struggles, rely on DESeq2's default shrinkage rather than removing the subject term - dropping subject would discard the pairing the design depends on.",
+                "If the leading-edge of the results looks like it is driven by a single subject, report per-subject log2FC values as a diagnostic."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Run differential expression with DESeq2 on the filtered counts using the paired design ~ subject + condition, extracting the treated-vs-control coefficient. Apply independent filtering (DESeq2 default), Benjamini-Hochberg FDR correction, and LFC shrinkage with apeglm for effect-size estimates and ranking. Report: number of DE genes at FDR < 0.05 and at nominal p < 0.05, per-subject paired log2FC consistency (each subject's treated/control log2FC), MA plot, and volcano plot. Save the full DE table with shrinkage-corrected log2FC, standard error, Wald statistic, p-value, and FDR. With 5 pairs, power is limited: also report the genes with the most consistent direction of change across all 5 subjects regardless of FDR. Reference data needed: none.",
+              "id": "T1S2",
+              "name": "Paired DESeq2 differential expression",
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0",
+                "ggplot2==4.0.3",
+                "EnhancedVolcano==1.30.0",
+                "data.table==1.18.4"
+              ],
+              "question": "Which genes respond to treatment within each subject (treated vs control, paired across 5 subjects)?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Concordance summary: Spearman correlation of DESeq2 and limma-voom log2FCs, and the overlap of hits at nominal p<0.05 reported as counts and a Jaccard index",
+                "A combined table flagging for each gene: direction agreement, both-methods nominal significance, and DESeq2 FDR < 0.05",
+                "Divergent calls (same-direction p-values but large |log2FC| discrepancy) listed explicitly"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Uses the T1S1 filtered counts and metadata. This is a robustness check on the primary DESeq2 result, not a second answer: discordant genes are flagged rather than dropped.",
+              "caveats": [
+                "limma-voom log2FCs for genes near zero counts can be unstable - intersect the concordance analysis on genes passing the T1S1 filter only.",
+                "Do not average or merge the two result sets into one p-value; report agreement, and use DESeq2 FDR as the headline significance."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Re-run the same paired contrast with an independent statistical framework as a robustness check: limma-voom on the TMM-normalized counts with a design of ~0 + condition + subject and duplicateCorrelation to model the within-subject correlation (equivalently, treat subject as a blocking factor). Compare the two methods on (a) log2FC agreement (correlation, median absolute difference), (b) overlap of significant hits at nominal p < 0.05 and at BH-FDR < 0.05, and (c) genes significant in both with the same direction. Flag genes called by only one method as lower-confidence. Reference data needed: none.",
+              "id": "T1S3",
+              "name": "Sensitivity check with limma-voom",
+              "packages": [
+                "limma==3.68.5",
+                "edgeR==4.10.3",
+                "data.table==1.18.4"
+              ],
+              "question": "Are the DESeq2 treatment effects reproducible under a voom/limma mixed-model treatment of the same paired data, and which calls are robust across methods?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Enrichment table: pathway, size, ES, NES, padj, leading-edge genes - ranked by |NES|",
+                "Separate GSEA runs for the DESeq2-statistic-ranked and the limma-moderated-t-ranked lists, with direction-of-enriched-pathways agreement noted",
+                "Explicit statement of how many genes mapped to the GMT and how many were left unmapped",
+                "If the human GMT is unavailable in the environment, the step reports the gap and completes with no enrichment rather than substituting a non-human pathway set"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Inputs: full ranked gene lists from T1S2 (signed Wald statistic or shrinkage log2FC) and T1S3 (moderated t). Human HGNC-symbol GMT is provisioned at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt - first field splits on '%' for name/ID/species.",
+              "caveats": [
+                "With ~10 samples and few hits, enrichment results are exploratory; label them as hypothesis-generating.",
+                "Rank by the signed statistic including all genes - do not pre-filter to significant genes, which destroys GSEA's ranking assumption."
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "description": "Run GSEA-style enrichment with fgsea on the treatment response, using the full gene lists ranked by the DESeq2 Wald statistic (and, as a secondary input, by the limma moderated t-statistic) against the human WikiPathways gene sets (GMT of HGNC symbols, 2026.07.10 build). This uses all 12,000 genes' signal rather than only an arbitrary significant-gene cutoff, which suits the modest power of 5 pairs. Report top pathways by normalized enrichment score with FDR adjustment, and note the direction (up in treated vs down in treated). Confirm the gene identifier type from T1S1 matches the GMT (HGNC symbols); if the counts carry Ensembl IDs instead, map them to symbols first and report the mapping rate. Reference data needed: a human pathway gene-set collection in GMT format (HGNC gene symbols) - the staged WikiPathways human GMT is expected to serve; if absent, the step reports the gap and returns the ranked lists unenriched rather than substituting a non-human set.",
+              "id": "T1S4",
+              "name": "Pathway enrichment of the treatment response",
+              "packages": [
+                "fgsea==1.38.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3"
+              ],
+              "question": "Which biological pathways are enriched among genes responding to treatment across the five paired subjects?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Paired treated-vs-control blood RNA-seq DE"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

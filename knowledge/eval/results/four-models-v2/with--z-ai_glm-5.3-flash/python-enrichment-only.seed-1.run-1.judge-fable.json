@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: it refits no count model, ranks every tested gene by the Wald statistic with explicit tie (baseMean descending) and NA (exclude, count reported) rules, runs gseapy.prerank against a locally staged, version-named MSigDB Hallmark 2026.1 GMT with a 15-500 window, 100,000 permutations, seed 42, and BH, and reports NES, FDR, and leading edge per set. The QC step is design-specific (blind VST, PCA, distances, library sizes, keep-inspect-report policy for sample_01) and the contrast direction and sign convention are stated explicitly. Minor gaps: no low-count filter or size-factor normalization is explicitly discussed (largely moot since no model is fit, but the QC transform's normalization is not stated), and the report does not explicitly restate the count of significant DE genes from the delivered table."
+}

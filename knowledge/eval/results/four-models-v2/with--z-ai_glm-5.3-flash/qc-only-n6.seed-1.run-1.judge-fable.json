@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan stays within the QC question: library sizes, size factors, detected genes, blind vst, PCA on the 500 top-variance genes colored by condition, a Euclidean sample-distance heatmap, and an explicit keep-by-default verdict on sample_01 grounded in its position on the plots rather than depth alone, with no differential test, p-values, or enrichment. Normalization is handled through DESeq2 size factors, which are reported, and the design ~ condition for the vst object is stated with DESeq2 1.52.0 named. The main gap is the low count filter: the plan refers to a 'low-count threshold' for the detected-gene count but never states a filter (or its value) applied before the transformation and PCA, so that criterion is largely unspecified. The count distribution per sample, which the reference uses in the verdict, is also not mentioned, and the reference level is not stated, though neither matters much for a blind QC."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald with ~condition, vehicle as reference, rowSums>=10 filter, BH at 0.05 and apeglm shrinkage with the unshrunken stat retained matches the reference, and the activity step correctly reuses the Wald stat column of all tested genes with decoupleR ulm on signed CollecTRI, min size 5, BH across TFs, and the inference caveat. Weaknesses: the per-sample activity matrix on VST with limma across replicates is omitted, size-factor normalization is implied rather than stated, and the rounding of non-integer Salmon values is a pre-model adjustment left somewhat open. The pathway step is unwarranted for the question asked; it is well specified (tested-gene universe, 10-500 window, Wald-stat ranking) but names no collection version. Package and network versions are not stated in the report."
+}

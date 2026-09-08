@@ -1,0 +1,20 @@
+{
+  "template": {"id": "tpl-fgsea-preranked", "version": "1.0.0", "label": "fgsea preranked gene set enrichment on a differential expression results table", "method": {"id": "M-0010", "label": "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark"}},
+  "snapshot": {"date": "2026-09-07", "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"},
+  "slots": [
+    {"name": "results_path", "value": "output/ranked_genes_entrez.csv", "source": "caller", "adaptable": true},
+    {"name": "rank_metric", "value": "stat", "source": "caller", "adaptable": true},
+    {"name": "gmt_path", "value": "output/refdata/wikipathways_clean.gmt", "source": "caller", "adaptable": true},
+    {"name": "min_size", "value": 15, "source": "caller", "adaptable": true},
+    {"name": "max_size", "value": 500, "source": "caller", "adaptable": true},
+    {"name": "eps", "value": 0, "source": "default", "adaptable": false, "default_source": "doi:10.1101/060012"},
+    {"name": "seed", "value": 20260904, "source": "caller", "adaptable": true},
+    {"name": "output_prefix", "value": "wikipathways", "source": "caller", "adaptable": true}
+  ],
+  "environment_match": "exact",
+  "syntax": "ok",
+  "run_with": "Rscript scripts/tpl-fgsea-preranked_wikipathways.R",
+  "gene_set_collection": "WikiPathways human, 2026.07.10 release (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt, 987 gene sets)",
+  "identifier_space_override": "results_path uses Entrez Gene ID ('gene' column), not HGNC symbol, because direct inspection of the staged WikiPathways GMT showed its gene-set members are numeric Entrez Gene IDs despite the reference-store catalog description stating HGNC symbols. gmt_path points to a cleaned copy (output/refdata/wikipathways_clean.gmt) with a readable 'name (WPID)' pathway-name field; gene-set membership is untouched.",
+  "note": "This file was reconstructed from the render tool's response immediately after rendering, because the tool always writes to the fixed path output/decision_record.json."
+}

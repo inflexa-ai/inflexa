@@ -1,0 +1,1772 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "survival-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:16:47.115Z",
+  "elapsedMs": 175138,
+  "outcome": "plan_submitted",
+  "planId": "pln-2d9f8c42",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on raw counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Input is /data/inputs/counts/counts.csv (12000 genes x 120 samples, raw Salmon gene-level counts) and /data/inputs/metadata/metadata.csv (condition, time, event, one more column). Single batch design per the profile.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 120 tumor-biopsy samples (60 case, 60 control) separate by condition or show batch/outlier structure in a blind variance-stabilized PCA, before any score or model is fit?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on raw counts",
+          "PCA on top 500 most-variable genes, colored by case/control status",
+          "Sample-distance heatmap produced",
+          "Library size per sample reported; any extreme outlier flagged"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Filter and normalize counts (filterByExpr + TMM)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A quantifier name alone does not establish that the length correction occurred; no per-sample quantification files or transcript-length table are present, so the length offset is lost. State this in the report."
+        ],
+        "context": "Raw gene-level Salmon counts with no stated length correction (import_state unknown). Per the population-cohort rule (n=60/group), filterByExpr + TMM feeds a limma-voom-style log-CPM matrix; the length offset is not established and this is stated as a caveat rather than corrected for, since no per-sample quantification files or transcript-length table are available.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "After filtering genes with filterByExpr (grouped by case/control) and applying edgeR TMM normalization, what is the log-normalized expression matrix on which the 20-gene signature will be scored?",
+        "grounding": {
+          "claims": [
+            "R-0058@99e1",
+            "R-0057@31cc",
+            "R-0169@18ab"
+          ],
+          "reason": "filterByExpr + TMM for a population-scale cohort (n=60/group) per R-0058@99e1, R-0057@31cc; length-offset caveat per R-0169@18ab",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter",
+              "step": "filter_low_counts",
+              "value": "filterByExpr",
+              "source": "guide:edgeR/2026-04-25#filtering"
+            },
+            {
+              "name": "method",
+              "step": "normalize",
+              "value": "TMM",
+              "source": "doi:10.1186/gb-2014-15-2-r29"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "filter_low_counts",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter = filterByExpr",
+          "normalize = TMM"
+        ],
+        "acceptance_criteria": [
+          "Genes filtered with filterByExpr using the case/control grouping",
+          "Number of genes kept before/after filter reported",
+          "TMM normalization factors computed with edgeR",
+          "log-CPM (voom-style) matrix produced for downstream scoring",
+          "Report states the length-offset caveat explicitly"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "UCell signature score per sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A signature with a missing gene is a different signature; report exactly how many of the 20 genes were scored."
+        ],
+        "context": "The 20-gene signature list is in /data/inputs/signature/signature_genes.csv (one gene symbol per column 'gene', no weights). UCell (Bioconductor, present, v2.16.0) gives a rank-based Mann-Whitney-U score per sample that does not depend on sample depth or on the composition of the rest of the cohort — the correct default for a single unweighted gene list.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell"
+        ],
+        "question": "What is the per-sample UCell score of the study's 20-gene signature (from signature_genes.csv), computed on the log-normalized expression matrix?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16",
+            "R-0133@ce76"
+          ],
+          "reason": "UCell rank-based per-sample signature score per R-0133@ce76, provenance/coverage stated per R-0134@0f16",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "score_method",
+              "step": "signature_scoring",
+              "value": "rank_based_per_sample",
+              "source": "doi:10.1016/j.csbj.2021.06.043"
+            },
+            {
+              "name": "input_scale",
+              "step": "signature_scoring",
+              "value": "log_normalized_expression",
+              "source": "doi:10.1186/s12859-018-2435-4"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-signature-scoring@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "score_method = rank_based_per_sample",
+          "input_scale = log_normalized_expression"
+        ],
+        "acceptance_criteria": [
+          "Number of the 20 signature genes present in the expression matrix reported (genes absent from the 12000-gene matrix are dropped and counted)",
+          "UCell score computed per sample on the log-normalized matrix from T1S2",
+          "Score distribution summarized (histogram/summary stats) and by case/control group",
+          "Signature source and gene count stated in output"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Signature score vs case/control status (descriptive check)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Do not conflate this group comparison with the survival association — they answer different questions."
+        ],
+        "context": "Uses the UCell scores from T2S1 and the case/control label from metadata.csv. This is descriptive context for interpreting the adjusted Cox result in T3S1, not the primary research question.",
+        "maxSteps": 200,
+        "packages": [
+          "stats"
+        ],
+        "question": "Does the 20-gene signature score differ between the 60 cases and 60 controls on its own (unadjusted), to characterize collinearity between the score and the covariate the Cox model will adjust for?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16"
+          ],
+          "reason": "Score compared between groups with a t-test per R-0134@0f16 (two-group design, no additional covariate)",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "score_test",
+              "step": "signature_scoring",
+              "value": "limma_on_scores_with_the_design",
+              "source": "doi:10.1186/1471-2105-14-7"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "signature_scoring",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "Two-group comparison (t-test or Wilcoxon) of the score between case and control reported with effect size",
+          "Result explicitly framed as descriptive context, not as the survival answer"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Cox proportional hazards model: signature score adjusted for case/control",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "The 'survival' package is not confirmed importable in this environment; rms::cph is used as the Cox-model substitute (same Efron partial-likelihood method, cox.zph-equivalent diagnostics available via rms::residuals.cph type='scaledsch'). State this substitution in the report.",
+          "Do not dichotomize the score before the test; report the KM-by-tertile plot as descriptive only."
+        ],
+        "context": "Fit Surv(time, event) ~ scale(ucell_score) + case_control on the 120-sample cohort using metadata.csv's time and event columns and the UCell scores from T2S1. The R package census does not list 'survival' as directly importable, but rms::cph (rms 8.1-1) provides the same Cox regression, Surv() objects and cox.zph-equivalent Schoenfeld residual diagnostics and is used as the fitting engine instead — noted as a package substitution, not a change in method.",
+        "maxSteps": 200,
+        "packages": [
+          "rms"
+        ],
+        "question": "Once case/control status is included as a covariate, is the 20-gene signature score (continuous, standardized) significantly associated with time to the recorded event?",
+        "grounding": {
+          "claims": [
+            "R-0153@92b8"
+          ],
+          "reason": "Survival association of a score adjusted for a covariate: continuous Cox model with the covariate in the model, per R-0153@92b8. Package substitution flagged: 'survival' package not confirmed present in this environment's R census; rms::cph substituted (same Cox PH methodology).",
+          "status": "flagged",
+          "settings": [
+            {
+              "name": "score_term",
+              "step": "survival",
+              "value": "continuous_no_cut_before_the_test",
+              "source": "doi:10.1111/j.2517-6161.1972.tb00899.x"
+            },
+            {
+              "name": "covariates",
+              "step": "survival",
+              "value": "clinical_covariates_in_the_model",
+              "source": "doi:10.1111/j.2517-6161.1972.tb00899.x"
+            },
+            {
+              "name": "ph_check",
+              "step": "survival",
+              "value": "scaled_schoenfeld_residuals",
+              "source": "doi:10.1111/j.2517-6161.1972.tb00899.x"
+            },
+            {
+              "name": "score_scale",
+              "step": "survival",
+              "value": "per_standard_deviation",
+              "source": "rule:R-0153"
+            },
+            {
+              "name": "event_count_statement",
+              "step": "survival",
+              "value": "state_events_censored_and_median_follow_up",
+              "source": "rule:R-0153"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-survival-cox@1.0.0"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "survival",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "score_term = continuous_no_cut_before_the_test",
+          "covariates = case_control_status_in_the_model",
+          "ph_check = scaled_schoenfeld_residuals",
+          "score_scale = per_standard_deviation"
+        ],
+        "acceptance_criteria": [
+          "Cox model fit with the signature score (standardized, continuous, no cut applied before the test) and case/control status as covariates",
+          "Hazard ratio per SD of the score reported with 95% CI and p-value",
+          "Proportional hazards assumption checked via scaled Schoenfeld residuals for both terms; violation reported if present",
+          "Number of events, number censored, and median follow-up time reported before the model results",
+          "Kaplan-Meier curve by score tertile shown for visualization only, with the continuous Cox model kept as the inferential result"
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "Time-dependent ROC/AUC of the signature score for the event",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "A plain ROC on the event indicator alone would ignore censoring and time; timeROC is used instead.",
+          "pROC is not appropriate for this censored outcome and is not used here."
+        ],
+        "context": "Uses timeROC (CRAN, present, v0.4.1) on the linear predictor from the T3S1 Cox model (score + case/control), against time and event from metadata.csv. Horizons are chosen from the observed follow-up distribution (e.g., quartiles of observed event times) since no external clinical horizon (e.g., 1/3/5-year) is stated for this cohort.",
+        "maxSteps": 200,
+        "packages": [
+          "timeROC",
+          "rms"
+        ],
+        "question": "How well does the (case/control-adjusted) signature-score risk predictor discriminate the time-to-event outcome at clinically relevant horizons?",
+        "grounding": {
+          "claims": [
+            "R-0156@9238"
+          ],
+          "reason": "Time-dependent ROC at stated horizons with CI, not a plain ROC on the event indicator, per R-0156@9238",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "time_dependent_auc",
+              "step": "survival",
+              "value": "timeROC_at_stated_horizons_with_confidence_interval",
+              "source": "rule:R-0156"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "survival",
+        "depends_on": [
+          "T3S1"
+        ],
+        "constraints": [
+          "time_dependent_auc = timeROC_at_stated_horizons_with_confidence_interval"
+        ],
+        "acceptance_criteria": [
+          "Time-dependent AUC computed at 2-3 stated horizons within the observed follow-up range, each with a 95% CI",
+          "Number of samples at risk at each horizon reported",
+          "Harrell's concordance index (C-index) of the T3S1 model reported alongside the AUCs",
+          "Report states these horizons were chosen from the data's own follow-up distribution, not a pre-specified clinical cutoff"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Integrated report: signature score, case/control status, and survival",
+        "agent": "statistical-modeling-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [],
+        "context": "Synthesizes T1S1 (QC), T1S2 (filter/normalize), T2S1/T2S2 (signature scoring and its relation to case/control), T3S1 (adjusted Cox model with PH diagnostics), and T3S2 (time-dependent discrimination) into one report with a reproducibility record.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the combined, reproducible answer to whether the 20-gene signature score associates with time-to-event once case/control status is accounted for, with all supporting QC, scoring, and diagnostic evidence?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers report synthesis; reproducibility-record convention applied from R-0086@becf",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S2",
+          "T3S1",
+          "T3S2"
+        ],
+        "constraints": [],
+        "acceptance_criteria": [
+          "States the primary result: adjusted hazard ratio per SD of the signature score with 95% CI and p-value, and whether PH assumption held",
+          "States sample sizes, event/censoring counts, and median follow-up",
+          "States the descriptive score-vs-case/control relationship from T2S2 and discusses any collinearity implications for interpreting the adjusted HR",
+          "States the length-offset and rms/survival package-substitution caveats explicitly",
+          "Includes package versions, gene set/signature provenance, and thresholds used (reproducibility record)"
+        ]
+      }
+    ],
+    "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is a 60-case vs 60-control human tumor-biopsy bulk RNA-seq cohort (n=120, gene-level Salmon counts, 12000 genes) with a follow-up time and event indicator per sample and a 20-gene signature list. The research question is whether the signature score is associated with time-to-event once case/control status is accounted for. The plan: (1) QC the sample structure on variance-stabilized counts; (2) filter and normalize the counts (filterByExpr + TMM, following the population-cohort rule for n>=50/group, which flags that DESeq2/edgeR negative-binomial models exaggerate false positives at this sample size); (3) score every sample on the 20-gene signature with UCell, a rank-based, per-sample method that does not depend on the other samples in the batch; (4) fit a Cox proportional hazards model of time-to-event on the standardized signature score with case/control status as a covariate (the exact 'once we account for' adjustment the question asks for), check the proportional-hazards assumption via scaled Schoenfeld residuals, and report the hazard ratio per SD with its 95% CI; (5) compute a time-dependent ROC/AUC at clinically meaningful horizons as a discrimination readout, since a plain ROC on the event indicator would mishandle censoring; (6) as a secondary robustness step, test whether the score differs between the case and control groups themselves (limma/t-test on the score) so that a positive Cox association can be interpreted with awareness of collinearity between the score and the case/control label; (7) synthesize into one report with the reproducibility record (package versions, thresholds, signature provenance). No enrichment or DE gene-list analysis was requested by the user beyond the signature itself, so DE/pathway steps are omitted as unasked scope — the signature score is the sole feature under test. The `survival` R package itself is not listed as importable in the environment census; `rms::cph` (rms 8.1-1, present) and `timeROC` (0.4.1, present) implement the same Cox/Schoenfeld/time-dependent-AUC methodology and are used as substitutes, noted explicitly as such."
+  },
+  "usage": {
+    "inputTokens": 4806716,
+    "outputTokens": 10820,
+    "cacheCreationInputTokens": 283466,
+    "cacheReadInputTokens": 4522782,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01QWtbSZD1fMAhCgfhVvEXmW",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "signature_scoring",
+          "survival"
+        ],
+        "quality_flags": []
+      },
+      "outcome": "ok",
+      "durationMs": 44
+    },
+    {
+      "toolUseId": "toolu_01UuHBku3Vpx5babFTT4gEPK",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "survival",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "covariates": [
+          "case_control_status"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 44
+    },
+    {
+      "toolUseId": "toolu_017Skbw3MCwtES3TMHwnw4na",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "survival",
+          "timeROC",
+          "UCell",
+          "edgeR",
+          "limma",
+          "DESeq2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01GiJUiSJKfZfYgzTeqj9CEu",
+      "name": "list_available_packages",
+      "input": {
+        "query": "surv"
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01UGsxNppEJNkwCDKM9E2q8D",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "survival",
+          "prodlim",
+          "riskRegression"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01EASWtEMy539opDHtzUbopt",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "survminer",
+        "query": "Cox proportional hazards model coxph survival package dependency"
+      },
+      "outcome": "ok",
+      "durationMs": 782
+    },
+    {
+      "toolUseId": "toolu_01G9KvPzoHS72WH4tKS4gbt1",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/kassambara/survminer",
+        "query": "coxph Surv function proportional hazards model example"
+      },
+      "outcome": "ok",
+      "durationMs": 823
+    },
+    {
+      "toolUseId": "toolu_01KpdS9YTTAZWE1GjXnvoDd8",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01QNw8iGQKTyEDGPEtdne1bd",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01UnyjqtsY4QUE3fh7164Pxz",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_018ibwHQ2rpD8EpaaYnMQgv7",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db entrez human annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_01JCajYvAU8tmPq1zBwThx1B",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01SD6UmQGmyZcLjH3nxQeWxk",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01Jne9FtDdsjiCoySyT9TkzH",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01QESSffraPXQENZAJWb1eTd",
+      "name": "list_available_refs",
+      "input": {
+        "query": "immune deconvolution CIBERSORT xCell TME"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01HayawTshAnP9VBfoqAqDSb",
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed",
+        "limit": 200
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01K6cboGeaiiAEh1FUuDPo1J",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "immunedeconv",
+          "quantiseqr",
+          "MCPcounter",
+          "EPIC",
+          "xCell",
+          "ConsensusTME"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01N59T56NPu41pss7EL8iXVi",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "glmnet",
+          "timeROC",
+          "survival"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_0171MHzWC9t23sEzi2Y584H1",
+      "name": "list_available_packages",
+      "input": {
+        "query": "survival",
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01W6A8TBik3PHVoVp4WoSXTJ",
+      "name": "list_available_packages",
+      "input": {
+        "query": "cox"
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_011dVmtNsJsiDErYm9QnVQbJ",
+      "name": "list_available_packages",
+      "input": {
+        "query": "timereg"
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01SgVR8pKYjzp45zSvZdeBgb",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "pec",
+          "rms",
+          "prodlim",
+          "riskRegression",
+          "survival",
+          "Publish"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01FmCjZrzCo3iTuRL4Ft9Lmr",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "rms",
+        "query": "cph Cox proportional hazards Surv function"
+      },
+      "outcome": "ok",
+      "durationMs": 371
+    },
+    {
+      "toolUseId": "toolu_01TWC7HWdSmWqF7FonuFAdpd",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "rms package cph function R Cox model Frank Harrell survival",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 17244
+    },
+    {
+      "toolUseId": "toolu_01RQ2SZMpdxcZjHBQCZY6qex",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "rms coxph",
+        "query": "cph function Surv proportional hazards R survival modeling"
+      },
+      "outcome": "ok",
+      "durationMs": 332
+    },
+    {
+      "toolUseId": "toolu_01WXb5TtY2tcEnw8yGgHdv4E",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "timeROC",
+        "query": "time dependent ROC AUC censored survival data"
+      },
+      "outcome": "ok",
+      "durationMs": 554
+    },
+    {
+      "toolUseId": "toolu_01PrRPDvPRCasZVf8hZziEUj",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "rms package R cph function coxph proportional hazards survival analysis",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 568
+    },
+    {
+      "toolUseId": "toolu_012dngDHAWNTVftJ1Hn2tAjn",
+      "name": "search_github_repos",
+      "input": {
+        "query": "rms cph function survival Harrell R package",
+        "language": "r",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 350
+    },
+    {
+      "toolUseId": "toolu_01CS9uaXwDVSEzWswAgY2n6V",
+      "name": "search_github_repos",
+      "input": {
+        "query": "rms harrell survival package",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 228
+    },
+    {
+      "toolUseId": "toolu_01C2WQNb2hrzL9yXYLkQbz8h",
+      "name": "search_arxiv",
+      "input": {
+        "query": "rms package cph function proportional hazards survival",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 680
+    },
+    {
+      "toolUseId": "toolu_01DSafmHcfBjXVerq3ghWAm4",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "timeROC",
+        "query": "timeROC time dependent ROC AUC survival"
+      },
+      "outcome": "ok",
+      "durationMs": 395
+    },
+    {
+      "toolUseId": "toolu_01FpEp3yvsqHFsvoiTrtbEpW",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "UCell",
+        "query": "UCell signature scoring function ScoreSignatures_UCell"
+      },
+      "outcome": "ok",
+      "durationMs": 395
+    },
+    {
+      "toolUseId": "toolu_01Xqs2njdA5XFTenXGrMrKEr",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "UCell",
+        "query": "bioconductor UCell gene signature scoring"
+      },
+      "outcome": "ok",
+      "durationMs": 354
+    },
+    {
+      "toolUseId": "toolu_01BNvig2QhMXhVWBz9yQhHQU",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "UCell robust scalable single-cell gene signature scoring Andreatta",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 9324
+    },
+    {
+      "toolUseId": "toolu_01K3rwyQ1Nv2NbaryySSscxT",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "UCell robust scalable single-cell gene signature scoring",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 1061
+    },
+    {
+      "toolUseId": "toolu_013w3KGVnbq8kz2So4mNg9qy",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "34285779"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 871
+    },
+    {
+      "toolUseId": "toolu_01Y79MMMibKNRSWfNM6GpGuB",
+      "name": "search_github_repos",
+      "input": {
+        "query": "carmonalab UCell",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 227
+    },
+    {
+      "toolUseId": "toolu_018RPYuj5SZDhsoXUpBL5dpf",
+      "name": "search_github_repos",
+      "input": {
+        "query": "UCell single cell gene signature scoring",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 260
+    },
+    {
+      "toolUseId": "toolu_019YfVuEgvxMVQDom5YJDoVD",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "glmnet",
+        "query": "cv.glmnet cox family penalized regression"
+      },
+      "outcome": "ok",
+      "durationMs": 313
+    },
+    {
+      "toolUseId": "toolu_014kjvwXk7CH3juvVcFTwvMa",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/myles-lewis/nestedcv",
+        "query": "glmnet Surv Cox family cv.glmnet lambda min lambda 1se"
+      },
+      "outcome": "ok",
+      "durationMs": 968
+    },
+    {
+      "toolUseId": "toolu_01FuDZftMcU2yZJLSuhvd3wq",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gtex-v8 tissue expression"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_018RHnUH9ak13Zq2uU9RnLGo",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+          "created_at": "2026-09-08T00:00:00Z",
+          "analytical_narrative": "The dataset is a 60-case vs 60-control human tumor-biopsy bulk RNA-seq cohort (n=120, gene-level Salmon counts, 12000 genes) with a follow-up time and event indicator per sample and a 20-gene signature list. The research question is whether the signature score is associated with time-to-event once case/control status is accounted for. The plan: (1) QC the sample structure on variance-stabilized counts; (2) filter and normalize the counts (filterByExpr + TMM, following the population-cohort rule for n>=50/group, which flags that DESeq2/edgeR negative-binomial models exaggerate false positives at this sample size); (3) score every sample on the 20-gene signature with UCell, a rank-based, per-sample method that does not depend on the other samples in the batch; (4) fit a Cox proportional hazards model of time-to-event on the standardized signature score with case/control status as a covariate (the exact 'once we account for' adjustment the question asks for), check the proportional-hazards assumption via scaled Schoenfeld residuals, and report the hazard ratio per SD with its 95% CI; (5) compute a time-dependent ROC/AUC at clinically meaningful horizons as a discrimination readout, since a plain ROC on the event indicator would mishandle censoring; (6) as a secondary robustness step, test whether the score differs between the case and control groups themselves (limma/t-test on the score) so that a positive Cox association can be interpreted with awareness of collinearity between the score and the case/control label; (7) synthesize into one report with the reproducibility record (package versions, thresholds, signature provenance). No enrichment or DE gene-list analysis was requested by the user beyond the signature itself, so DE/pathway steps are omitted as unasked scope — the signature score is the sole feature under test. The `survival` R package itself is not listed as importable in the environment census; `rms::cph` (rms 8.1-1, present) and `timeROC` (0.4.1, present) implement the same Cox/Schoenfeld/time-dependent-AUC methodology and are used as substitutes, noted explicitly as such.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on raw counts",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 120 tumor-biopsy samples (60 case, 60 control) separate by condition or show batch/outlier structure in a blind variance-stabilized PCA, before any score or model is fit?",
+              "context": "Input is /data/inputs/counts/counts.csv (12000 genes x 120 samples, raw Salmon gene-level counts) and /data/inputs/metadata/metadata.csv (condition, time, event, one more column). Single batch design per the profile.",
+              "acceptance_criteria": [
+                "Blind VST computed on raw counts",
+                "PCA on top 500 most-variable genes, colored by case/control status",
+                "Sample-distance heatmap produced",
+                "Library size per sample reported; any extreme outlier flagged"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances, library sizes per R-0033@40bf",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  }
+                ],
+                "template": "tpl-qc-eda@1.0.0"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Filter and normalize counts (filterByExpr + TMM)",
+              "track": "T1",
+              "step_type": "filter_low_counts",
+              "question": "After filtering genes with filterByExpr (grouped by case/control) and applying edgeR TMM normalization, what is the log-normalized expression matrix on which the 20-gene signature will be scored?",
+              "context": "Raw gene-level Salmon counts with no stated length correction (import_state unknown). Per the population-cohort rule (n=60/group), filterByExpr + TMM feeds a limma-voom-style log-CPM matrix; the length offset is not established and this is stated as a caveat rather than corrected for, since no per-sample quantification files or transcript-length table are available.",
+              "acceptance_criteria": [
+                "Genes filtered with filterByExpr using the case/control grouping",
+                "Number of genes kept before/after filter reported",
+                "TMM normalization factors computed with edgeR",
+                "log-CPM (voom-style) matrix produced for downstream scoring",
+                "Report states the length-offset caveat explicitly"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "filter = filterByExpr",
+                "normalize = TMM"
+              ],
+              "caveats": [
+                "A quantifier name alone does not establish that the length correction occurred; no per-sample quantification files or transcript-length table are present, so the length offset is lost. State this in the report."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0058@99e1",
+                  "R-0057@31cc",
+                  "R-0169@18ab"
+                ],
+                "reason": "filterByExpr + TMM for a population-scale cohort (n=60/group) per R-0058@99e1, R-0057@31cc; length-offset caveat per R-0169@18ab",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "filter",
+                    "value": "filterByExpr",
+                    "source": "guide:edgeR/2026-04-25#filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "method",
+                    "value": "TMM",
+                    "source": "doi:10.1186/gb-2014-15-2-r29"
+                  }
+                ],
+                "template": "tpl-edger-ql@1.0.0"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "UCell signature score per sample",
+              "track": "T2",
+              "step_type": "signature_scoring",
+              "question": "What is the per-sample UCell score of the study's 20-gene signature (from signature_genes.csv), computed on the log-normalized expression matrix?",
+              "context": "The 20-gene signature list is in /data/inputs/signature/signature_genes.csv (one gene symbol per column 'gene', no weights). UCell (Bioconductor, present, v2.16.0) gives a rank-based Mann-Whitney-U score per sample that does not depend on sample depth or on the composition of the rest of the cohort — the correct default for a single unweighted gene list.",
+              "acceptance_criteria": [
+                "Number of the 20 signature genes present in the expression matrix reported (genes absent from the 12000-gene matrix are dropped and counted)",
+                "UCell score computed per sample on the log-normalized matrix from T1S2",
+                "Score distribution summarized (histogram/summary stats) and by case/control group",
+                "Signature source and gene count stated in output"
+              ],
+              "packages": [
+                "UCell"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "score_method = rank_based_per_sample",
+                "input_scale = log_normalized_expression"
+              ],
+              "caveats": [
+                "A signature with a missing gene is a different signature; report exactly how many of the 20 genes were scored."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0134@0f16",
+                  "R-0133@ce76"
+                ],
+                "reason": "UCell rank-based per-sample signature score per R-0133@ce76, provenance/coverage stated per R-0134@0f16",
+                "settings": [
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_method",
+                    "value": "rank_based_per_sample",
+                    "source": "doi:10.1016/j.csbj.2021.06.043"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "input_scale",
+                    "value": "log_normalized_expression",
+                    "source": "doi:10.1186/s12859-018-2435-4"
+                  }
+                ],
+                "template": "tpl-signature-scoring@1.0.0"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Signature score vs case/control status (descriptive check)",
+              "track": "T2",
+              "step_type": "signature_scoring",
+              "question": "Does the 20-gene signature score differ between the 60 cases and 60 controls on its own (unadjusted), to characterize collinearity between the score and the covariate the Cox model will adjust for?",
+              "context": "Uses the UCell scores from T2S1 and the case/control label from metadata.csv. This is descriptive context for interpreting the adjusted Cox result in T3S1, not the primary research question.",
+              "acceptance_criteria": [
+                "Two-group comparison (t-test or Wilcoxon) of the score between case and control reported with effect size",
+                "Result explicitly framed as descriptive context, not as the survival answer"
+              ],
+              "packages": [
+                "stats"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [],
+              "caveats": [
+                "Do not conflate this group comparison with the survival association — they answer different questions."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0134@0f16"
+                ],
+                "reason": "Score compared between groups with a t-test per R-0134@0f16 (two-group design, no additional covariate)",
+                "settings": [
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_test",
+                    "value": "limma_on_scores_with_the_design",
+                    "source": "doi:10.1186/1471-2105-14-7"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Cox proportional hazards model: signature score adjusted for case/control",
+              "track": "T3",
+              "step_type": "survival",
+              "question": "Once case/control status is included as a covariate, is the 20-gene signature score (continuous, standardized) significantly associated with time to the recorded event?",
+              "context": "Fit Surv(time, event) ~ scale(ucell_score) + case_control on the 120-sample cohort using metadata.csv's time and event columns and the UCell scores from T2S1. The R package census does not list 'survival' as directly importable, but rms::cph (rms 8.1-1) provides the same Cox regression, Surv() objects and cox.zph-equivalent Schoenfeld residual diagnostics and is used as the fitting engine instead — noted as a package substitution, not a change in method.",
+              "acceptance_criteria": [
+                "Cox model fit with the signature score (standardized, continuous, no cut applied before the test) and case/control status as covariates",
+                "Hazard ratio per SD of the score reported with 95% CI and p-value",
+                "Proportional hazards assumption checked via scaled Schoenfeld residuals for both terms; violation reported if present",
+                "Number of events, number censored, and median follow-up time reported before the model results",
+                "Kaplan-Meier curve by score tertile shown for visualization only, with the continuous Cox model kept as the inferential result"
+              ],
+              "packages": [
+                "rms"
+              ],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "score_term = continuous_no_cut_before_the_test",
+                "covariates = case_control_status_in_the_model",
+                "ph_check = scaled_schoenfeld_residuals",
+                "score_scale = per_standard_deviation"
+              ],
+              "caveats": [
+                "The 'survival' package is not confirmed importable in this environment; rms::cph is used as the Cox-model substitute (same Efron partial-likelihood method, cox.zph-equivalent diagnostics available via rms::residuals.cph type='scaledsch'). State this substitution in the report.",
+                "Do not dichotomize the score before the test; report the KM-by-tertile plot as descriptive only."
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0153@92b8"
+                ],
+                "reason": "Survival association of a score adjusted for a covariate: continuous Cox model with the covariate in the model, per R-0153@92b8. Package substitution flagged: 'survival' package not confirmed present in this environment's R census; rms::cph substituted (same Cox PH methodology).",
+                "settings": [
+                  {
+                    "step": "survival",
+                    "name": "score_term",
+                    "value": "continuous_no_cut_before_the_test",
+                    "source": "doi:10.1111/j.2517-6161.1972.tb00899.x"
+                  },
+                  {
+                    "step": "survival",
+                    "name": "covariates",
+                    "value": "clinical_covariates_in_the_model",
+                    "source": "doi:10.1111/j.2517-6161.1972.tb00899.x"
+                  },
+                  {
+                    "step": "survival",
+                    "name": "ph_check",
+                    "value": "scaled_schoenfeld_residuals",
+                    "source": "doi:10.1111/j.2517-6161.1972.tb00899.x"
+                  },
+                  {
+                    "step": "survival",
+                    "name": "score_scale",
+                    "value": "per_standard_deviation",
+                    "source": "rule:R-0153"
+                  },
+                  {
+                    "step": "survival",
+                    "name": "event_count_statement",
+                    "value": "state_events_censored_and_median_follow_up",
+                    "source": "rule:R-0153"
+                  }
+                ],
+                "template": "tpl-survival-cox@1.0.0"
+              }
+            },
+            {
+              "id": "T3S2",
+              "name": "Time-dependent ROC/AUC of the signature score for the event",
+              "track": "T3",
+              "step_type": "survival",
+              "question": "How well does the (case/control-adjusted) signature-score risk predictor discriminate the time-to-event outcome at clinically relevant horizons?",
+              "context": "Uses timeROC (CRAN, present, v0.4.1) on the linear predictor from the T3S1 Cox model (score + case/control), against time and event from metadata.csv. Horizons are chosen from the observed follow-up distribution (e.g., quartiles of observed event times) since no external clinical horizon (e.g., 1/3/5-year) is stated for this cohort.",
+              "acceptance_criteria": [
+                "Time-dependent AUC computed at 2-3 stated horizons within the observed follow-up range, each with a 95% CI",
+                "Number of samples at risk at each horizon reported",
+                "Harrell's concordance index (C-index) of the T3S1 model reported alongside the AUCs",
+                "Report states these horizons were chosen from the data's own follow-up distribution, not a pre-specified clinical cutoff"
+              ],
+              "packages": [
+                "timeROC",
+                "rms"
+              ],
+              "depends_on": [
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [
+                "time_dependent_auc = timeROC_at_stated_horizons_with_confidence_interval"
+              ],
+              "caveats": [
+                "A plain ROC on the event indicator alone would ignore censoring and time; timeROC is used instead.",
+                "pROC is not appropriate for this censored outcome and is not used here."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0156@9238"
+                ],
+                "reason": "Time-dependent ROC at stated horizons with CI, not a plain ROC on the event indicator, per R-0156@9238",
+                "settings": [
+                  {
+                    "step": "survival",
+                    "name": "time_dependent_auc",
+                    "value": "timeROC_at_stated_horizons_with_confidence_interval",
+                    "source": "rule:R-0156"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Integrated report: signature score, case/control status, and survival",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What is the combined, reproducible answer to whether the 20-gene signature score associates with time-to-event once case/control status is accounted for, with all supporting QC, scoring, and diagnostic evidence?",
+              "context": "Synthesizes T1S1 (QC), T1S2 (filter/normalize), T2S1/T2S2 (signature scoring and its relation to case/control), T3S1 (adjusted Cox model with PH diagnostics), and T3S2 (time-dependent discrimination) into one report with a reproducibility record.",
+              "acceptance_criteria": [
+                "States the primary result: adjusted hazard ratio per SD of the signature score with 95% CI and p-value, and whether PH assumption held",
+                "States sample sizes, event/censoring counts, and median follow-up",
+                "States the descriptive score-vs-case/control relationship from T2S2 and discusses any collinearity implications for interpreting the adjusted HR",
+                "States the length-offset and rms/survival package-substitution caveats explicitly",
+                "Includes package versions, gene set/signature provenance, and thresholds used (reproducibility record)"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S2",
+                "T3S1",
+                "T3S2"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "statistical-modeling-agent",
+              "constraints": [],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "no rule covers report synthesis; reproducibility-record convention applied from R-0086@becf",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 51
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "signature_scoring",
+            "survival"
+          ],
+          "quality_flags": []
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "signature_scoring",
+            "survival"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0022"
+            },
+            "template": "tpl-edger-ql@1.0.0",
+            "rules": [
+              "R-0058@99e1",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0009"
+            },
+            "rules": [
+              "R-0057@31cc",
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0169@18ab",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0169@18ab",
+                "severity": "warn",
+                "message": "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+                "outcome": "report_missing_length_input"
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0019"
+            },
+            "template": "tpl-limma-voom-fixed@1.0.0",
+            "rules": [
+              "R-0015@65aa",
+              "R-0038@7ec6"
+            ],
+            "flags": [
+              {
+                "rule": "R-0015@65aa",
+                "severity": "warn",
+                "message": "If each group holds 50 or more samples, use limma-voom with a fixed-effects linear model for the differential expression test. In a population cohort the sample-to-sample variation does not obey the negative binomial model, and DESeq2 and edgeR then report many false positives, even on permuted labels. The linear model on the log counts with precision weights keeps the false discovery rate closer to the nominal level than the count models, but it also exceeds it on some data. The paper recommends the Wilcoxon rank-sum test at a large sample size. State this caution in the report, and give the Wilcoxon test or a permutation check as the control."
+              }
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0021"
+            },
+            "template": "tpl-camera-hallmark@1.0.0",
+            "rules": [
+              "R-0088@8b80",
+              "R-0098@d01b",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0054@801e",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0099@0e8a"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0045"
+            },
+            "template": "tpl-signature-scoring@1.0.0",
+            "rules": [
+              "R-0134@0f16",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "survival",
+            "method": {
+              "id": "M-0053"
+            },
+            "template": "tpl-survival-cox@1.0.0",
+            "rules": [
+              "R-0153@92b8",
+              "R-0154@a88c",
+              "R-0156@9238"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0089@69f0",
+              "R-0041@059a",
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0169@18ab"
+          },
+          {
+            "id": "R-0088@8b80"
+          },
+          {
+            "id": "R-0089@69f0"
+          },
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0057@31cc"
+          },
+          {
+            "id": "R-0058@99e1"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0015@65aa"
+          },
+          {
+            "id": "R-0038@7ec6"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0054@801e"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0153@92b8"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0099@0e8a"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          },
+          {
+            "id": "R-0154@a88c"
+          },
+          {
+            "id": "R-0156@9238"
+          }
+        ],
+        "flags": [],
+        "uncovered": [
+          "shrink_lfc"
+        ]
+      },
+      "responseChars": 65028,
+      "elapsedMs": 4
+    },
+    {
+      "seq": 2,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "survival",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "covariates": [
+            "case_control_status"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "survival",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "covariates": [
+            "case_control_status"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0022"
+            },
+            "template": "tpl-edger-ql@1.0.0",
+            "rules": [
+              "R-0058@99e1",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0009"
+            },
+            "rules": [
+              "R-0057@31cc",
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0045"
+            },
+            "template": "tpl-signature-scoring@1.0.0",
+            "rules": [
+              "R-0134@0f16",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "survival",
+            "method": {
+              "id": "M-0053"
+            },
+            "template": "tpl-survival-cox@1.0.0",
+            "rules": [
+              "R-0153@92b8",
+              "R-0154@a88c",
+              "R-0156@9238"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0057@31cc"
+          },
+          {
+            "id": "R-0058@99e1"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0153@92b8"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          },
+          {
+            "id": "R-0154@a88c"
+          },
+          {
+            "id": "R-0156@9238"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 21174,
+      "elapsedMs": 14
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

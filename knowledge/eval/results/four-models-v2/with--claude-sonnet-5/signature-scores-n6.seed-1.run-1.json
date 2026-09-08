@@ -1,0 +1,1012 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:37:46.530Z",
+  "elapsedMs": 54818,
+  "outcome": "plan_submitted",
+  "planId": "pln-fd889d51",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC with library-size flag inspection",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Sample sample_01 has a library size about 4x below the median — do not drop it silently; DESeq2 size factors already down-weight low-depth samples, so exclusion needs a stated reason beyond depth alone (e.g., PCA outlier or identity doubt)."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 6 Crohn's-inflamed and 6 control ileum samples separate by condition on a blind-VST PCA and sample-distance heatmap, and how does sample_01 (library size ~4x below the median) behave relative to its group — is there a stated reason to exclude it or should it be kept and down-weighted by DESeq2's own size factors?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf",
+            "R-0008@440d"
+          ],
+          "reason": "Sample structure QC per R-0033@40bf; low-depth sample handling per R-0008@440d",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            },
+            {
+              "name": "low_depth_policy",
+              "step": "qc_sample_structure",
+              "value": "keep_inspect_report",
+              "source": "doi:10.1186/s13059-016-0881-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500",
+          "transform = vst_blind",
+          "low_depth_policy = keep_inspect_report"
+        ],
+        "acceptance_criteria": [
+          "Blind VST computed on the raw count matrix (12000 genes x 12 samples) and used only for QC, not for the DE model",
+          "PCA on the top 500 most-variable genes, colored by condition (inflamed vs control)",
+          "Sample-distance (Euclidean) heatmap of all 12 samples",
+          "Library size and number of detected genes reported per sample, with sample_01 explicitly compared to the group median",
+          "A stated decision (keep or exclude sample_01) with an explicit reason, not a silent default"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 Wald test with apeglm shrinkage: Crohn inflamed vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts are delivered as gene-level Salmon output with no stated length correction (no quant.sf/quant files or avg-transcript-length table provided); the model runs on the counts as delivered with no length offset — a shift in isoform usage between inflamed and control ileum could appear as differential expression."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which of the 12000 genes in ileum are differentially expressed between Crohn disease-inflamed (n=6) and control (n=6) samples, using DESeq2 with condition as the sole factor (control as reference level)?",
+        "grounding": {
+          "claims": [
+            "R-0029@22ca",
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0036@9786",
+            "R-0169@18ab",
+            "R-0039@968d",
+            "R-0009@310d",
+            "R-0166@bbcd",
+            "R-0010@6072",
+            "R-0043@4f55"
+          ],
+          "reason": "DESeq2 Wald test with apeglm shrinkage per R-0029@22ca",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "test",
+              "step": "differential_expression",
+              "value": "Wald",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "lfc_shrink",
+              "step": "shrink_lfc",
+              "value": "apeglm",
+              "source": "doi:10.1093/bioinformatics/bty895"
+            },
+            {
+              "name": "alpha",
+              "step": "multiple_testing",
+              "value": 0.05,
+              "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-two-group@1.1.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter: min_count=10, min_samples=6",
+          "model: reference_level=control, contrast=condition_inflamed_vs_control",
+          "shrink_lfc: apeglm",
+          "multiple_testing: BH, alpha=0.05, independent_filtering=true"
+        ],
+        "acceptance_criteria": [
+          "Pre-filter: keep genes with >=10 counts in at least 6 samples (the smaller group size)",
+          "DESeq2 size-factor normalization (median-of-ratios) applied inside the model, no pre-scaling of counts",
+          "Condition factor releveled with 'control' as the explicit reference; contrast named as condition, inflamed, control",
+          "Wald test; apeglm shrinkage applied to the inflamed-vs-control log2FoldChange coefficient",
+          "Independent filtering left on in results(), alpha=0.05; p-value histogram inspected before BH adjustment",
+          "Report unshrunken log2FC, shrunken log2FC, lfcSE, p-value, padj per gene; state number of genes tested and number with padj<0.05",
+          "State explicitly that the count table's length-offset status (Salmon quantification files/avg transcript length not provided) is unknown, so a gene-level length offset was not applied"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "GSVA Hallmark per-sample scores + limma test, inflamed vs control",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A GSVA score for one sample is not independent of the other samples in the batch — the score for sample_01 (the low-depth sample) should be interpreted alongside its QC flag from T1S1, since GSVA scores computed from a shallow sample carry more noise even though the kernel is rank-based across samples."
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "limma"
+        ],
+        "question": "What is the GSVA score of each of the 50 MSigDB Hallmark gene sets in each of the 12 ileum samples, and which Hallmark signatures differ significantly between Crohn's-inflamed (n=6) and control (n=6) after BH adjustment across the 50 signatures?",
+        "grounding": {
+          "claims": [
+            "R-0102@c84c",
+            "R-0134@0f16",
+            "R-0047@fd9d",
+            "R-0048@500d"
+          ],
+          "reason": "GSVA per-sample pathway scores with limma on the scores per R-0102@c84c / R-0098@d01b, restricted to Hallmark per the user's explicit request (Reactome/WikiPathways follow-up per R-0098/R-0165 is available reference data but out of the scope the user asked for, so omitted)",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "gene_set_collection",
+              "step": "enrichment",
+              "value": "msigdb_hallmark_human",
+              "source": "doi:10.1016/j.cels.2015.12.004"
+            },
+            {
+              "name": "pathway_scores",
+              "step": "enrichment",
+              "value": "gsva_then_limma",
+              "source": "doi:10.1186/1471-2105-14-7"
+            },
+            {
+              "name": "min_size",
+              "step": "enrichment",
+              "value": 15,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "max_size",
+              "step": "enrichment",
+              "value": 500,
+              "source": "doi:10.1073/pnas.0506580102"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-gsva-hallmark@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "gene_set_collection = msigdb_hallmark_human (2026.1, 50 sets)",
+          "pathway_scores = gsva_then_limma",
+          "min_size = 15, max_size = 500",
+          "kernel = gaussian (log-scale input)"
+        ],
+        "acceptance_criteria": [
+          "GSVA run on normalized log-scale expression (e.g., DESeq2 vst/rlog or log2(normalized counts+1)) against the 50 MSigDB Hallmark human gene sets (h.all.v2026.1.Hs.symbols.gmt), producing a 50 x 12 score matrix",
+          "Gene set size window 15-500 applied to the Hallmark sets intersected with the tested genes",
+          "limma model fit on the GSVA score matrix with the same condition factor (inflamed vs control) and reference level as the DE model",
+          "BH adjustment applied across the 50 Hallmark signatures tested",
+          "Output table: signature name, mean score per group, logFC/t-statistic, p-value, adjusted p-value for all 50 signatures",
+          "Full per-sample x per-signature score matrix delivered as a supplementary table",
+          "State the MSigDB release (2026.1) and the kernel choice (Gaussian, since input is log-scale) in the report"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Combined report: DE + Hallmark signature scores",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What does the combined evidence show for the Crohn's-inflamed vs control ileum comparison: which genes are differentially expressed, which of the 50 Hallmark signatures differ per sample and per group, and how does the flagged low-depth sample (sample_01) affect either result?",
+        "grounding": {
+          "claims": [
+            "R-0085@bb37",
+            "R-0087@3dcc",
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers a combined DE+signature-scoring report step directly, but the DE report and signature-scoring reporting rules both apply",
+          "status": "ungrounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S1"
+        ],
+        "constraints": [
+          "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info"
+        ],
+        "acceptance_criteria": [
+          "Report states method, package versions, design formula, contrast, thresholds (padj<0.05), number of genes tested and number DE",
+          "MA plot and dispersion plot included as DE fit diagnostics",
+          "Full Hallmark score matrix (50 x 12) and the limma results table for all 50 signatures included, ranked by adjusted p-value",
+          "sample_01's QC status (kept/excluded, with the T1S1 reason) stated up front and referenced when interpreting both the DE and the Hallmark results",
+          "Reproducibility record: session info, package versions, MSigDB collection version (2026.1), random seed"
+        ]
+      }
+    ],
+    "title": "Crohn's ileum: hallmark GSVA scores, inflamed vs control",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The research question asks for a per-sample score for every MSigDB Hallmark signature and which signatures differ between Crohn's-inflamed and control ileum (6 vs 6, unpaired, single batch, raw Salmon gene counts, 12000 genes x 12 samples). The design has one flagged quality issue: sample_01's library size is ~4x below the median, so QC must inspect it (not silently drop it) per rule R-0008/R-0030. The plan follows the grounded procedure: (1) sample-structure QC (blind VST, PCA, sample-distance heatmap, explicit library-size/detected-gene reporting for sample_01) to decide, with a stated reason, whether it stays; (2) DESeq2 filtering/normalization/Wald test with apeglm shrinkage to get a gene-level differential expression backbone, run on the counts as delivered since the profile does not establish that Salmon's length correction was applied — this is stated as a caveat rather than assumed; (3) GSVA per-sample Hallmark pathway scores (the 50 human Hallmark sets from the reference store) tested with limma using the same 2-group design, which directly answers 'a score for every hallmark signature in every sample' and 'which signatures differ'; (4) a combined report giving DE diagnostics, the Hallmark score matrix, the limma results per signature (BH-adjusted across the 50 signatures), and the reproducibility record. Reactome/WikiPathways/GO follow-up enrichment was not requested by the user (only Hallmark signatures) so it is left out to avoid unasked scope, per the plan-authoring rule against speculative additions; the DE step nonetheless anchors gene-level significance so the Hallmark scores are read alongside, not instead of, individual gene evidence."
+  },
+  "usage": {
+    "inputTokens": 222830,
+    "outputTokens": 5612,
+    "cacheCreationInputTokens": 138872,
+    "cacheReadInputTokens": 83922,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_0153K3G5DeEgnx35HvaFA9dY",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 44
+    },
+    {
+      "toolUseId": "toolu_011Qpxh6hPeRrey6sHDp1AGs",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "quality_flags": [
+          "low_depth_sample"
+        ],
+        "extra_analyses": [
+          "signature_scoring"
+        ],
+        "enrichment_input": "sample_scores"
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    },
+    {
+      "toolUseId": "toolu_01EMRCyomx3z99kjenYM4763",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 36
+    },
+    {
+      "toolUseId": "toolu_01BCXAhzh7gpRVdLweZ1rhcD",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Crohn's ileum: hallmark GSVA scores, inflamed vs control",
+          "analytical_narrative": "The research question asks for a per-sample score for every MSigDB Hallmark signature and which signatures differ between Crohn's-inflamed and control ileum (6 vs 6, unpaired, single batch, raw Salmon gene counts, 12000 genes x 12 samples). The design has one flagged quality issue: sample_01's library size is ~4x below the median, so QC must inspect it (not silently drop it) per rule R-0008/R-0030. The plan follows the grounded procedure: (1) sample-structure QC (blind VST, PCA, sample-distance heatmap, explicit library-size/detected-gene reporting for sample_01) to decide, with a stated reason, whether it stays; (2) DESeq2 filtering/normalization/Wald test with apeglm shrinkage to get a gene-level differential expression backbone, run on the counts as delivered since the profile does not establish that Salmon's length correction was applied — this is stated as a caveat rather than assumed; (3) GSVA per-sample Hallmark pathway scores (the 50 human Hallmark sets from the reference store) tested with limma using the same 2-group design, which directly answers 'a score for every hallmark signature in every sample' and 'which signatures differ'; (4) a combined report giving DE diagnostics, the Hallmark score matrix, the limma results per signature (BH-adjusted across the 50 signatures), and the reproducibility record. Reactome/WikiPathways/GO follow-up enrichment was not requested by the user (only Hallmark signatures) so it is left out to avoid unasked scope, per the plan-authoring rule against speculative additions; the DE step nonetheless anchors gene-level significance so the Hallmark scores are read alongside, not instead of, individual gene evidence.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC with library-size flag inspection",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 Crohn's-inflamed and 6 control ileum samples separate by condition on a blind-VST PCA and sample-distance heatmap, and how does sample_01 (library size ~4x below the median) behave relative to its group — is there a stated reason to exclude it or should it be kept and down-weighted by DESeq2's own size factors?",
+              "acceptance_criteria": [
+                "Blind VST computed on the raw count matrix (12000 genes x 12 samples) and used only for QC, not for the DE model",
+                "PCA on the top 500 most-variable genes, colored by condition (inflamed vs control)",
+                "Sample-distance (Euclidean) heatmap of all 12 samples",
+                "Library size and number of detected genes reported per sample, with sample_01 explicitly compared to the group median",
+                "A stated decision (keep or exclude sample_01) with an explicit reason, not a silent default"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "n_top_genes = 500",
+                "transform = vst_blind",
+                "low_depth_policy = keep_inspect_report"
+              ],
+              "caveats": [
+                "Sample sample_01 has a library size about 4x below the median — do not drop it silently; DESeq2 size factors already down-weight low-depth samples, so exclusion needs a stated reason beyond depth alone (e.g., PCA outlier or identity doubt)."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf",
+                  "R-0008@440d"
+                ],
+                "reason": "Sample structure QC per R-0033@40bf; low-depth sample handling per R-0008@440d",
+                "template": "tpl-qc-eda@1.0.0",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "low_depth_policy",
+                    "value": "keep_inspect_report",
+                    "source": "doi:10.1186/s13059-016-0881-8"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 Wald test with apeglm shrinkage: Crohn inflamed vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 genes in ileum are differentially expressed between Crohn disease-inflamed (n=6) and control (n=6) samples, using DESeq2 with condition as the sole factor (control as reference level)?",
+              "acceptance_criteria": [
+                "Pre-filter: keep genes with >=10 counts in at least 6 samples (the smaller group size)",
+                "DESeq2 size-factor normalization (median-of-ratios) applied inside the model, no pre-scaling of counts",
+                "Condition factor releveled with 'control' as the explicit reference; contrast named as condition, inflamed, control",
+                "Wald test; apeglm shrinkage applied to the inflamed-vs-control log2FoldChange coefficient",
+                "Independent filtering left on in results(), alpha=0.05; p-value histogram inspected before BH adjustment",
+                "Report unshrunken log2FC, shrunken log2FC, lfcSE, p-value, padj per gene; state number of genes tested and number with padj<0.05",
+                "State explicitly that the count table's length-offset status (Salmon quantification files/avg transcript length not provided) is unknown, so a gene-level length offset was not applied"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "filter: min_count=10, min_samples=6",
+                "model: reference_level=control, contrast=condition_inflamed_vs_control",
+                "shrink_lfc: apeglm",
+                "multiple_testing: BH, alpha=0.05, independent_filtering=true"
+              ],
+              "caveats": [
+                "Counts are delivered as gene-level Salmon output with no stated length correction (no quant.sf/quant files or avg-transcript-length table provided); the model runs on the counts as delivered with no length offset — a shift in isoform usage between inflamed and control ileum could appear as differential expression."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0029@22ca",
+                  "R-0002@087b",
+                  "R-0026@9ab1",
+                  "R-0036@9786",
+                  "R-0169@18ab",
+                  "R-0039@968d",
+                  "R-0009@310d",
+                  "R-0166@bbcd",
+                  "R-0010@6072",
+                  "R-0043@4f55"
+                ],
+                "reason": "DESeq2 Wald test with apeglm shrinkage per R-0029@22ca",
+                "template": "tpl-deseq2-two-group@1.1.0",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_count",
+                    "value": 10,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "vignette:DESeq2/1.52.0#pre-filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "size_factors",
+                    "value": "median_of_ratios_named_in_the_plan",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "reference_level",
+                    "value": "explicit",
+                    "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "contrast_form",
+                    "value": "factor_numerator_denominator",
+                    "source": "vignette:DESeq2/1.52.0#contrasts"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "test",
+                    "value": "Wald",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  },
+                  {
+                    "step": "shrink_lfc",
+                    "name": "lfc_shrink",
+                    "value": "apeglm",
+                    "source": "doi:10.1093/bioinformatics/bty895"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "alpha",
+                    "value": 0.05,
+                    "source": "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "adjustment",
+                    "value": "BH",
+                    "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "GSVA Hallmark per-sample scores + limma test, inflamed vs control",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "What is the GSVA score of each of the 50 MSigDB Hallmark gene sets in each of the 12 ileum samples, and which Hallmark signatures differ significantly between Crohn's-inflamed (n=6) and control (n=6) after BH adjustment across the 50 signatures?",
+              "acceptance_criteria": [
+                "GSVA run on normalized log-scale expression (e.g., DESeq2 vst/rlog or log2(normalized counts+1)) against the 50 MSigDB Hallmark human gene sets (h.all.v2026.1.Hs.symbols.gmt), producing a 50 x 12 score matrix",
+                "Gene set size window 15-500 applied to the Hallmark sets intersected with the tested genes",
+                "limma model fit on the GSVA score matrix with the same condition factor (inflamed vs control) and reference level as the DE model",
+                "BH adjustment applied across the 50 Hallmark signatures tested",
+                "Output table: signature name, mean score per group, logFC/t-statistic, p-value, adjusted p-value for all 50 signatures",
+                "Full per-sample x per-signature score matrix delivered as a supplementary table",
+                "State the MSigDB release (2026.1) and the kernel choice (Gaussian, since input is log-scale) in the report"
+              ],
+              "packages": [
+                "GSVA",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "constraints": [
+                "gene_set_collection = msigdb_hallmark_human (2026.1, 50 sets)",
+                "pathway_scores = gsva_then_limma",
+                "min_size = 15, max_size = 500",
+                "kernel = gaussian (log-scale input)"
+              ],
+              "caveats": [
+                "A GSVA score for one sample is not independent of the other samples in the batch — the score for sample_01 (the low-depth sample) should be interpreted alongside its QC flag from T1S1, since GSVA scores computed from a shallow sample carry more noise even though the kernel is rank-based across samples."
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0102@c84c",
+                  "R-0134@0f16",
+                  "R-0047@fd9d",
+                  "R-0048@500d"
+                ],
+                "reason": "GSVA per-sample pathway scores with limma on the scores per R-0102@c84c / R-0098@d01b, restricted to Hallmark per the user's explicit request (Reactome/WikiPathways follow-up per R-0098/R-0165 is available reference data but out of the scope the user asked for, so omitted)",
+                "template": "tpl-gsva-hallmark@1.0.0",
+                "settings": [
+                  {
+                    "step": "enrichment",
+                    "name": "gene_set_collection",
+                    "value": "msigdb_hallmark_human",
+                    "source": "doi:10.1016/j.cels.2015.12.004"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "pathway_scores",
+                    "value": "gsva_then_limma",
+                    "source": "doi:10.1186/1471-2105-14-7"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "min_size",
+                    "value": 15,
+                    "source": "doi:10.1073/pnas.0506580102"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "max_size",
+                    "value": 500,
+                    "source": "doi:10.1073/pnas.0506580102"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Combined report: DE + Hallmark signature scores",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What does the combined evidence show for the Crohn's-inflamed vs control ileum comparison: which genes are differentially expressed, which of the 50 Hallmark signatures differ per sample and per group, and how does the flagged low-depth sample (sample_01) affect either result?",
+              "acceptance_criteria": [
+                "Report states method, package versions, design formula, contrast, thresholds (padj<0.05), number of genes tested and number DE",
+                "MA plot and dispersion plot included as DE fit diagnostics",
+                "Full Hallmark score matrix (50 x 12) and the limma results table for all 50 signatures included, ranked by adjusted p-value",
+                "sample_01's QC status (kept/excluded, with the T1S1 reason) stated up front and referenced when interpreting both the DE and the Hallmark results",
+                "Reproducibility record: session info, package versions, MSigDB collection version (2026.1), random seed"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0085@bb37",
+                  "R-0087@3dcc",
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "no rule covers a combined DE+signature-scoring report step directly, but the DE report and signature-scoring reporting rules both apply"
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 68
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "signature_scoring"
+          ],
+          "enrichment_input": "sample_scores",
+          "quality_flags": [
+            "low_depth_sample"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "quality_flags": [
+            "low_depth_sample"
+          ],
+          "enrichment_input": "sample_scores",
+          "extra_analyses": [
+            "signature_scoring"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf",
+              "R-0008@440d"
+            ],
+            "flags": [
+              {
+                "rule": "R-0008@440d",
+                "severity": "warn",
+                "message": "If one sample has a library size several times below the median of the study, do not delete it in silence. Keep it through the sample structure QC, look at it on the PCA and on the sample distance heatmap, report its library size and its detected genes beside the others, and remove it only with a stated reason. The count models down-weight a low-depth sample through its size factor, thus removal is a judgment, not a default."
+              }
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0029@22ca",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1",
+              "R-0030@2248"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0169@18ab",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0169@18ab",
+                "severity": "warn",
+                "message": "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+                "outcome": "report_missing_length_input"
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0001"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0001@9a17",
+              "R-0039@968d"
+            ]
+          },
+          {
+            "step": "shrink_lfc",
+            "method": {
+              "id": "M-0013"
+            },
+            "rules": [
+              "R-0009@310d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "method": {
+              "id": "M-0012"
+            },
+            "rules": [
+              "R-0166@bbcd",
+              "R-0083@12de",
+              "R-0010@6072",
+              "R-0037@e6d8",
+              "R-0043@4f55"
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0034"
+            },
+            "template": "tpl-gsva-hallmark@1.0.0",
+            "rules": [
+              "R-0098@d01b",
+              "R-0102@c84c",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0054@801e",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0099@0e8a"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0045"
+            },
+            "template": "tpl-signature-scoring@1.0.0",
+            "rules": [
+              "R-0134@0f16",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0085@bb37",
+              "R-0087@3dcc",
+              "R-0042@54e1",
+              "R-0041@059a",
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0085@bb37"
+          },
+          {
+            "id": "R-0087@3dcc"
+          },
+          {
+            "id": "R-0042@54e1"
+          },
+          {
+            "id": "R-0001@9a17"
+          },
+          {
+            "id": "R-0029@22ca"
+          },
+          {
+            "id": "R-0169@18ab"
+          },
+          {
+            "id": "R-0039@968d"
+          },
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0102@c84c"
+          },
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0009@310d"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0166@bbcd"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0083@12de"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0010@6072"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0054@801e"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0008@440d"
+          },
+          {
+            "id": "R-0030@2248"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0099@0e8a"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 67855,
+      "elapsedMs": 12
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

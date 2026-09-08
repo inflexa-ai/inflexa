@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly routes the Salmon quant.sf files through tximport (type salmon, tx2gene.csv) into DESeqDataSetFromTximport, forbids manual rounding, and fits a two-group Wald model with apeglm and BH at 0.05, which fits the 6v6 unpaired single-batch design; the hedge between countsFromAbundance='lengthScaledTPM' and the default offset path is a minor ambiguity, and the annotation version and count of unmapped transcripts are not reported. QC is adequate (library size, vst PCA, correlation heatmap, explicit outlier policy). Weaknesses: no explicit low-count prefilter beyond leaving independent filtering on, size-factor normalization is never stated, the reference level is not set, and the |LFC|>1 cut is applied post hoc rather than as lfcThreshold in the test. Enrichment and immune deconvolution were not requested; the enrichment step names collections and a GSEA ranking metric but gives no ORA universe or size window, and the report omits package versions and the number of genes tested."
+}

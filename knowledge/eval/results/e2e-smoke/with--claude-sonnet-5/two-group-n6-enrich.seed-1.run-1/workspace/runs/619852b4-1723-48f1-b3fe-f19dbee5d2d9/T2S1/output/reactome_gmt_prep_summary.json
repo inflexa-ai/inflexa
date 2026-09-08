@@ -1,0 +1,11 @@
+{
+  "source_gmt": "/mnt/refs/managed/reactome-pathways/current/ReactomePathways.gmt",
+  "source_index": "/mnt/refs/managed/reactome-pathways/current/ReactomePathways.txt",
+  "release": "Reactome pathways, release 'current' (host-provisioned snapshot; Reactome overwrites this quarterly)",
+  "target_species": "Homo sapiens",
+  "n_pathways_raw_gmt": 2868,
+  "n_pathways_human_index": 2883,
+  "n_pathways_kept": 2868,
+  "n_pathways_dropped": 0,
+  "output_gmt": "output/reactome_pathways_human.gmt"
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core design: ~ sex + age + condition with age centered, explicit reference level and named treated/control contrast, DESeq2 Wald plus edgeR QL robustness, median-of-ratios/TMM inside the model with no pre-adjustment, a minimal justified pre-filter, BH at 0.05 and apeglm on the condition coefficient, and it tabulates sex/age balance by group with near-confounding flagged. QC is blind-vst PCA and distance heatmap colored by condition, sex, and age, but it omits the XIST/Y-linked sex check and library-size inspection, and states no explicit policy for what to do with an outlier or shallow sample. The 'test_against_threshold' constraint is listed without a stated LFC threshold, a small ambiguity. Enrichment is correctly omitted, and the report specification covers method, versions, design, thresholds, counts, and the design caveats."
+}

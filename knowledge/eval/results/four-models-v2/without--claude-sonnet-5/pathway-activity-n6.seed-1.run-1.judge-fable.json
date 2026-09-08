@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly routes the question through a DESeq2 contrast on raw counts, keeps the unshrunk Wald statistic as the decoupler input, and scores the human PROGENy model by mlm/ulm while labelling member-expression GSEA as a contrast baseline rather than the answer; the QC step quantifies sample_01, checks it on PCA, and demands a stated retain/exclude decision. It falls short on specifics: no explicit design formula or reference level, no stated low-count filter beyond DESeq2's independent filtering, no BH correction stated across the fourteen pathways, and no choice between mlm and ulm, number of top responsive genes, or PROGENy/MSigDB versions. The mention of sample 'weights' in DESeq2 and 'Wald/LRT' hedging are loose, and the per-sample activity matrix with limma on scores that would show replicate consistency is absent. The report step covers caveats and sensitivity but omits version and parameter reporting."
+}

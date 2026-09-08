@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: it counts events and censored samples and reports median follow-up before the model, filters with filterByExpr and normalizes with TMM to a log-CPM matrix, scores with UCell while reporting how many of the 20 genes are present, fits a Cox model with the standardized continuous score plus case/control status, reports HR per SD with 95% CI, checks proportional hazards with scaled Schoenfeld residuals, and keeps the KM-by-tertile plot as display only. The rms::cph substitution for survival::coxph is explicitly stated and methodologically equivalent. Minor gaps: the reference level of case/control is not named, the p-value is not specified as the likelihood-ratio test, the QC step flags outliers without stating a removal/retention policy, and the aside claiming DESeq2/edgeR inflate false positives at n=60/group is unsupported though inconsequential here. Enrichment is correctly and explicitly omitted, and the report step is thorough on versions, provenance, thresholds, and caveats."
+}

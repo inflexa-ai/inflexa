@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring question: DESeq2 size factors and blind VST feed GSVA (Gaussian kernel, gsvaParam API) over the human Hallmark collection with version 2026.1 named and a 10-500 set size window, then limma with ~condition (control as reference) on the 50x12 score matrix with BH at 0.05, plus a Wilcoxon robustness check. QC is explicit: library sizes, size factors, PCA, Spearman correlation heatmap, numeric PC-vs-log-depth correlation, and a stated keep-and-flag policy for sample_01, which is also carried as a heatmap column annotation. The filter (>=10 counts in >=6 samples) is justified by the smaller group size, coverage per set is reported, and the heatmap is row z-scored for display with unscaled effects in the table. Minor gaps: the PCA is not explicitly said to be colored by condition, and fold-change shrinkage is not applicable so the criterion is met only by reporting unscaled effect sizes; the writeup otherwise names versions, thresholds, adjusted vs raw counts, and appropriate caveats."
+}

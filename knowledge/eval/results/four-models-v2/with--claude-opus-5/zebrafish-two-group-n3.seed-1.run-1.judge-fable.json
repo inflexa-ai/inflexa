@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with apeglm on raw counts, design ~ condition with control set as reference and the contrast named as (condition, treated, control), a minimal >=10-counts-in->=3-samples filter, median-of-ratios/TMM inside the models, BH at 0.05 with lfcThreshold handled inside results() rather than post hoc, and an explicit power statement for n=3. QC is complete (blind VST, PCA on top 500, distance heatmap, library sizes, coloured by condition, outlier policy stated, batch noted as unassessable). Enrichment correctly states no zebrafish collection exists and takes both permitted routes — native org.Dr.eg.db GO with its thin coverage acknowledged, and human Hallmark via one-to-one orthologs (babelgene) with mapped share and many-to-one collapses reported — with the Wald statistic as ranking metric, a 15-500 window, and a tested-gene universe for any secondary ORA. The only gaps are that the specific Ensembl release number and the babelgene version are promised to be recorded rather than named in the plan, and the edgeR intersection is an addition beyond the reference rather than a flaw."
+}

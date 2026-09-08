@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 3,
+    "low_count_filter": 2,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames the question as a Cox PH model with the standardized score as a continuous term plus condition, reports HR per SD with CI, tests proportional hazards with Schoenfeld residuals with a stratified/time-varying remedy, counts events per arm, and relegates the median-split KM to display only, matching the reference on the core method. Weaknesses: no sample-structure QC (no PCA, sample distances, or outlier policy beyond a library-size glance), no low-count filter, and the normalization/scoring choice is left vague (CPM/TMM vs vst undecided, scoring method only implied as z-score mean rather than singscore/GSVA or a stated mean-z). The condition reference level and the p-value type (LR vs Wald) are not stated, and median follow-up is only implied by 'compare follow-up between arms'. Enrichment is correctly omitted, and the report lists versions, thresholds, gene presence, and appropriate caveats about the unpaired cohort and non-predictive claim."
+}

@@ -1,0 +1,410 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "zebrafish-two-group-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:31:46.271Z",
+  "elapsedMs": 108578,
+  "outcome": "plan_submitted",
+  "planId": "pln-60120789",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 DE: treated vs control larvae",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per arm gives low power; treat significance lists as hypothesis-generating, not definitive",
+          "Salmon-estimated counts may be non-integer; DESeq2 requires integer input (round, and state that rounding was applied)",
+          "If gene IDs are duplicated after rounding, aggregate them and report how many were collapsed"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "EnhancedVolcano",
+          "pheatmap",
+          "readr"
+        ],
+        "question": "Which genes differ between the 3 drug-treated and the 3 control zebrafish larva pools (treated vs control, unpaired, single batch)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Build a DESeq2 analysis on the 12000 x 6 zebrafish gene-level count matrix (3 treated vs 3 control whole-larvae pools, single batch, Salmon/Ensembl counts), run the treated-vs-control contrast, and produce the DE gene table plus QC plots.",
+        "acceptance_criteria": [
+          "DESeqDataSet built from counts.csv (12000 genes) with design ~ condition; zero/negative-count genes handled and low-count genes pre-filtered with the filter count reported",
+          "resultsNames() shows the treated-vs-control contrast; LFC shrinkage applied (apeglm) and a full shrunken results table (baseMean, log2FC, SE, stat, pvalue, padj) written to CSV with stable gene identifiers",
+          "DE gene counts reported at FDR<0.05 and at FDR<0.05 & |LFC|>=1, split by up/down direction",
+          "Sample QC: PCA on variance-stabilized counts and sample-to-sample distance heatmap saved; outlier check documented",
+          "Volcano plot of the treated-vs-control contrast saved"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "GO enrichment on zebrafish DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3v3 the DE list is short; expect few if any GO terms surviving FDR — report the result either way",
+          "Map identifiers once via bitr and use the mapped subset consistently as the universe for both ORA and GSEA to avoid biased enrichment statistics"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Dr.eg.db",
+          "GO.db",
+          "fgsea",
+          "GSEABase",
+          "ggplot2"
+        ],
+        "question": "Which GO biological processes and molecular functions are enriched among the genes differentially expressed between treated and control zebrafish larvae?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Translate the DE results into biology using the zebrafish organism annotation already installed in the sandbox: over-representation analysis of the DE gene lists and prereanked GSEA on the full gene ranking, both against GO BP/MF terms via org.Dr.eg.db. No network download is involved; the org.Dr.eg.db package is the offline reference.",
+        "acceptance_criteria": [
+          "enrichGO (BP and MF) run on up- and down-regulated DE gene lists (FDR<0.05, |LFC|>=1) with universe = all tested genes and BH adjustment; results tables with q-values written to CSV",
+          "clusterProfiler GSEA (or fgsea) run on all genes ranked by the signed Wald statistic (or shrunken LFC ranking with the choice stated), with a fixed random seed; enrichment plots for top pathways saved",
+          "Leading-edge / core-enrichment gene members exported for the significant pathways",
+          "If org.Dr.eg.db cannot map the dataset's identifiers, the mapping-failure rate is reported and the step falls back to what the installed resources support rather than failing silently"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Orthology-projected pathway enrichment (human WikiPathways/KEGG)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Human pathway hits are cross-species inferences, not zebrafish pathway measurements — label them as orthology-projected in all outputs",
+          "The MSigDB KEGG collection is the MEDICUS subset; set names/membership differ from legacy KEGG and must not be compared across releases"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "babelgene",
+          "clusterProfiler",
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which named canonical pathways (WikiPathways, KEGG MEDICUS) do the treated-vs-control DE genes point to, via human orthologs of the zebrafish genes?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Use the installed babelgene ortholog tables (Ensembl Compara, includes Danio rerio) to project zebrafish DE genes and the full ranked list onto human gene symbols, then run ORA and preranked GSEA against the WikiPathways human 2026-07-10 GMT and the MSigDB C2:CP KEGG MEDICUS human GMT that are staged as reference data. This is the only route to named pathways here: no zebrafish pathway GMT exists in the reference store.",
+        "acceptance_criteria": [
+          "Ortholog mapping coverage reported (n and % of DE genes and of the ranked list mapped to a unique human symbol); one-to-many orthologs resolved by a stated rule (e.g. best-supported or one-to-one only)",
+          "ORA on mapped up/down DE lists against the human WikiPathways 2026-07-10 GMT and the MSigDB C2:CP KEGG MEDICUS GMT, universe = mapped tested genes, BH-adjusted; results to CSV",
+          "Preranked GSEA on the mapped full ranking against both GMT collections with a fixed seed; top enriched pathways plotted",
+          "If babelgene carries no Danio rerio orthologs or mapping coverage is too low (<50% of DE genes), the step reports the coverage, states that pathway-level interpretation is restricted to the GO results, and still delivers the GO step's output unchanged"
+        ]
+      }
+    ],
+    "title": "DE and pathway analysis of drug-treated zebrafish larvae",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-16T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are 12,000 zebrafish gene-level counts (Salmon on the Ensembl Danio rerio annotation) for 6 whole-larvae pools: 3 drug-treated vs 3 control, unpaired, single batch. With n=3 per arm the analysis is deliberately simple and power-limited: (1) DESeq2 with a ~condition design and median-of-ratios size factors gives the treated-vs-control contrast and the DE gene table, with QC (PCA, sample distances) to confirm the groups separate and no outlier pool; (2) because no zebrafish pathway gene sets are staged in the reference store, biology is read out two ways: GO BP/MF enrichment directly in zebrafish via the installed org.Dr.eg.db (ORA on the DE lists plus prereanked GSEA on the full Wald-statistic ranking), and (3) projection of the zebrafish genes onto human orthologs with the installed babelgene tables, so the staged human WikiPathways 2026-07-10 and MSigDB C2:CP KEGG MEDICUS GMTs can be queried for named pathways. Step 3 is additive, not load-bearing: if ortholog coverage is poor the run still answers the question at GO level, and the step reports the coverage gap rather than failing."
+  },
+  "usage": {
+    "inputTokens": 103161,
+    "outputTokens": 4886,
+    "cacheReadInputTokens": 69376,
+    "reasoningTokens": 1637
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_8475a4c55e094755bdbdecd5",
+      "name": "list_available_refs",
+      "input": {
+        "query": "zebrafish",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 52
+    },
+    {
+      "toolUseId": "call_9c90aeb2ec204e5ba76915e6",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 51
+    },
+    {
+      "toolUseId": "call_c989b068ae3f49b9a4ee32ed",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "created_at": "2026-07-16T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "DESeqDataSet built from counts.csv (12000 genes) with design ~ condition; zero/negative-count genes handled and low-count genes pre-filtered with the filter count reported",
+                "resultsNames() shows the treated-vs-control contrast; LFC shrinkage applied (apeglm) and a full shrunken results table (baseMean, log2FC, SE, stat, pvalue, padj) written to CSV with stable gene identifiers",
+                "DE gene counts reported at FDR<0.05 and at FDR<0.05 & |LFC|>=1, split by up/down direction",
+                "Sample QC: PCA on variance-stabilized counts and sample-to-sample distance heatmap saved; outlier check documented",
+                "Volcano plot of the treated-vs-control contrast saved"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per arm gives low power; treat significance lists as hypothesis-generating, not definitive",
+                "Salmon-estimated counts may be non-integer; DESeq2 requires integer input (round, and state that rounding was applied)",
+                "If gene IDs are duplicated after rounding, aggregate them and report how many were collapsed"
+              ],
+              "depends_on": [],
+              "description": "Build a DESeq2 analysis on the 12000 x 6 zebrafish gene-level count matrix (3 treated vs 3 control whole-larvae pools, single batch, Salmon/Ensembl counts), run the treated-vs-control contrast, and produce the DE gene table plus QC plots.",
+              "id": "T1S1",
+              "name": "DESeq2 DE: treated vs control larvae",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "readr"
+              ],
+              "question": "Which genes differ between the 3 drug-treated and the 3 control zebrafish larva pools (treated vs control, unpaired, single batch)?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "enrichGO (BP and MF) run on up- and down-regulated DE gene lists (FDR<0.05, |LFC|>=1) with universe = all tested genes and BH adjustment; results tables with q-values written to CSV",
+                "clusterProfiler GSEA (or fgsea) run on all genes ranked by the signed Wald statistic (or shrunken LFC ranking with the choice stated), with a fixed random seed; enrichment plots for top pathways saved",
+                "Leading-edge / core-enrichment gene members exported for the significant pathways",
+                "If org.Dr.eg.db cannot map the dataset's identifiers, the mapping-failure rate is reported and the step falls back to what the installed resources support rather than failing silently"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "With 3v3 the DE list is short; expect few if any GO terms surviving FDR — report the result either way",
+                "Map identifiers once via bitr and use the mapped subset consistently as the universe for both ORA and GSEA to avoid biased enrichment statistics"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Translate the DE results into biology using the zebrafish organism annotation already installed in the sandbox: over-representation analysis of the DE gene lists and prereanked GSEA on the full gene ranking, both against GO BP/MF terms via org.Dr.eg.db. No network download is involved; the org.Dr.eg.db package is the offline reference.",
+              "id": "T1S2",
+              "name": "GO enrichment on zebrafish DE genes",
+              "packages": [
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "GO.db",
+                "fgsea",
+                "GSEABase",
+                "ggplot2"
+              ],
+              "question": "Which GO biological processes and molecular functions are enriched among the genes differentially expressed between treated and control zebrafish larvae?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Ortholog mapping coverage reported (n and % of DE genes and of the ranked list mapped to a unique human symbol); one-to-many orthologs resolved by a stated rule (e.g. best-supported or one-to-one only)",
+                "ORA on mapped up/down DE lists against the human WikiPathways 2026-07-10 GMT and the MSigDB C2:CP KEGG MEDICUS GMT, universe = mapped tested genes, BH-adjusted; results to CSV",
+                "Preranked GSEA on the mapped full ranking against both GMT collections with a fixed seed; top enriched pathways plotted",
+                "If babelgene carries no Danio rerio orthologs or mapping coverage is too low (<50% of DE genes), the step reports the coverage, states that pathway-level interpretation is restricted to the GO results, and still delivers the GO step's output unchanged"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Human pathway hits are cross-species inferences, not zebrafish pathway measurements — label them as orthology-projected in all outputs",
+                "The MSigDB KEGG collection is the MEDICUS subset; set names/membership differ from legacy KEGG and must not be compared across releases"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Use the installed babelgene ortholog tables (Ensembl Compara, includes Danio rerio) to project zebrafish DE genes and the full ranked list onto human gene symbols, then run ORA and preranked GSEA against the WikiPathways human 2026-07-10 GMT and the MSigDB C2:CP KEGG MEDICUS human GMT that are staged as reference data. This is the only route to named pathways here: no zebrafish pathway GMT exists in the reference store.",
+              "id": "T1S3",
+              "name": "Orthology-projected pathway enrichment (human WikiPathways/KEGG)",
+              "packages": [
+                "babelgene",
+                "clusterProfiler",
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which named canonical pathways (WikiPathways, KEGG MEDICUS) do the treated-vs-control DE genes point to, via human orthologs of the zebrafish genes?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "DE and pathway analysis of drug-treated zebrafish larvae"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_e081341248254e539cda8b4a",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The data are 12,000 zebrafish gene-level counts (Salmon on the Ensembl Danio rerio annotation) for 6 whole-larvae pools: 3 drug-treated vs 3 control, unpaired, single batch. With n=3 per arm the analysis is deliberately simple and power-limited: (1) DESeq2 with a ~condition design and median-of-ratios size factors gives the treated-vs-control contrast and the DE gene table, with QC (PCA, sample distances) to confirm the groups separate and no outlier pool; (2) because no zebrafish pathway gene sets are staged in the reference store, biology is read out two ways: GO BP/MF enrichment directly in zebrafish via the installed org.Dr.eg.db (ORA on the DE lists plus prereanked GSEA on the full Wald-statistic ranking), and (3) projection of the zebrafish genes onto human orthologs with the installed babelgene tables, so the staged human WikiPathways 2026-07-10 and MSigDB C2:CP KEGG MEDICUS GMTs can be queried for named pathways. Step 3 is additive, not load-bearing: if ortholog coverage is poor the run still answers the question at GO level, and the step reports the coverage gap rather than failing.",
+          "created_at": "2026-07-16T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "DESeqDataSet built from counts.csv (12000 genes) with design ~ condition; zero/negative-count genes handled and low-count genes pre-filtered with the filter count reported",
+                "resultsNames() shows the treated-vs-control contrast; LFC shrinkage applied (apeglm) and a full shrunken results table (baseMean, log2FC, SE, stat, pvalue, padj) written to CSV with stable gene identifiers",
+                "DE gene counts reported at FDR<0.05 and at FDR<0.05 & |LFC|>=1, split by up/down direction",
+                "Sample QC: PCA on variance-stabilized counts and sample-to-sample distance heatmap saved; outlier check documented",
+                "Volcano plot of the treated-vs-control contrast saved"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "n=3 per arm gives low power; treat significance lists as hypothesis-generating, not definitive",
+                "Salmon-estimated counts may be non-integer; DESeq2 requires integer input (round, and state that rounding was applied)",
+                "If gene IDs are duplicated after rounding, aggregate them and report how many were collapsed"
+              ],
+              "depends_on": [],
+              "description": "Build a DESeq2 analysis on the 12000 x 6 zebrafish gene-level count matrix (3 treated vs 3 control whole-larvae pools, single batch, Salmon/Ensembl counts), run the treated-vs-control contrast, and produce the DE gene table plus QC plots.",
+              "id": "T1S1",
+              "name": "DESeq2 DE: treated vs control larvae",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "EnhancedVolcano",
+                "pheatmap",
+                "readr"
+              ],
+              "question": "Which genes differ between the 3 drug-treated and the 3 control zebrafish larva pools (treated vs control, unpaired, single batch)?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "enrichGO (BP and MF) run on up- and down-regulated DE gene lists (FDR<0.05, |LFC|>=1) with universe = all tested genes and BH adjustment; results tables with q-values written to CSV",
+                "clusterProfiler GSEA (or fgsea) run on all genes ranked by the signed Wald statistic (or shrunken LFC ranking with the choice stated), with a fixed random seed; enrichment plots for top pathways saved",
+                "Leading-edge / core-enrichment gene members exported for the significant pathways",
+                "If org.Dr.eg.db cannot map the dataset's identifiers, the mapping-failure rate is reported and the step falls back to what the installed resources support rather than failing silently"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "With 3v3 the DE list is short; expect few if any GO terms surviving FDR — report the result either way",
+                "Map identifiers once via bitr and use the mapped subset consistently as the universe for both ORA and GSEA to avoid biased enrichment statistics"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Translate the DE results into biology using the zebrafish organism annotation already installed in the sandbox: over-representation analysis of the DE gene lists and prereanked GSEA on the full gene ranking, both against GO BP/MF terms via org.Dr.eg.db. No network download is involved; the org.Dr.eg.db package is the offline reference.",
+              "id": "T1S2",
+              "name": "GO enrichment on zebrafish DE genes",
+              "packages": [
+                "clusterProfiler",
+                "org.Dr.eg.db",
+                "GO.db",
+                "fgsea",
+                "GSEABase",
+                "ggplot2"
+              ],
+              "question": "Which GO biological processes and molecular functions are enriched among the genes differentially expressed between treated and control zebrafish larvae?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Ortholog mapping coverage reported (n and % of DE genes and of the ranked list mapped to a unique human symbol); one-to-many orthologs resolved by a stated rule (e.g. best-supported or one-to-one only)",
+                "ORA on mapped up/down DE lists against the human WikiPathways 2026-07-10 GMT and the MSigDB C2:CP KEGG MEDICUS GMT, universe = mapped tested genes, BH-adjusted; results to CSV",
+                "Preranked GSEA on the mapped full ranking against both GMT collections with a fixed seed; top enriched pathways plotted",
+                "If babelgene carries no Danio rerio orthologs or mapping coverage is too low (<50% of DE genes), the step reports the coverage, states that pathway-level interpretation is restricted to the GO results, and still delivers the GO step's output unchanged"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Human pathway hits are cross-species inferences, not zebrafish pathway measurements — label them as orthology-projected in all outputs",
+                "The MSigDB KEGG collection is the MEDICUS subset; set names/membership differ from legacy KEGG and must not be compared across releases"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Use the installed babelgene ortholog tables (Ensembl Compara, includes Danio rerio) to project zebrafish DE genes and the full ranked list onto human gene symbols, then run ORA and preranked GSEA against the WikiPathways human 2026-07-10 GMT and the MSigDB C2:CP KEGG MEDICUS human GMT that are staged as reference data. This is the only route to named pathways here: no zebrafish pathway GMT exists in the reference store.",
+              "id": "T1S3",
+              "name": "Orthology-projected pathway enrichment (human WikiPathways/KEGG)",
+              "packages": [
+                "babelgene",
+                "clusterProfiler",
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which named canonical pathways (WikiPathways, KEGG MEDICUS) do the treated-vs-control DE genes point to, via human orthologs of the zebrafish genes?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "DE and pathway analysis of drug-treated zebrafish larvae"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 37
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

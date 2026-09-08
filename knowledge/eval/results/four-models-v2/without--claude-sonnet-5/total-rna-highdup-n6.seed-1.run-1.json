@@ -1,0 +1,817 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "total-rna-highdup-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:07:01.218Z",
+  "elapsedMs": 98873,
+  "outcome": "plan_submitted",
+  "planId": "pln-f7756f6f",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and sample-level diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "matrixStats",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Given 6 treated vs 6 control heart samples with a flagged >60% duplication rate in most libraries and sample_01 at ~4x below median library size, what do library-size distribution, sample-sample correlation, and PCA on variance-stabilized counts show about outlier severity and whether sample_01 should be excluded or retained-with-caveat?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge_recommend tool attached in this session; QC step design follows standard DESeq2 vignette diagnostics (PCA on VST, sample-distance heatmap).",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports total counts per sample from counts.csv and confirms/quantifies sample_01's library size relative to the other 11 samples",
+          "Produces a PCA and a sample-sample correlation heatmap on VST or rlog-transformed counts, with samples colored by condition",
+          "States an explicit recommendation (exclude sample_01 vs retain with sensitivity analysis) grounded in whether sample_01 is an outlier on PCA/correlation, not library size alone",
+          "Does not attempt any per-read or per-gene duplicate removal, since duplication data live in the sequencing QC report, not in counts.csv, and libraries carry no UMIs"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which of the 12000 profiled genes are differentially expressed between treated (n=6) and control (n=6) heart samples, using raw Salmon gene-level counts modeled with a DESeq2 negative-binomial GLM?",
+        "grounding": {
+          "claims": [],
+          "reason": "No knowledge_recommend tool attached; DESeq2 Wald test + apeglm shrinkage is the standard bulk RNA-seq DE workflow for a 6v6 unpaired design.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Loads counts.csv (12000 genes x 12 samples) and metadata.csv (condition per sample), builds a DESeqDataSet with design ~ condition",
+          "Runs DESeq2's default Wald test and independent filtering; reports BH-adjusted p-values (padj) and log2FoldChange with apeglm or ashr shrinkage",
+          "Follows the QC step's recommendation on sample_01: if flagged as an outlier, run and report DE both with and without sample_01 as a sensitivity check; if not an outlier, run once and note this in the report",
+          "Produces a results table (gene, baseMean, log2FoldChange, lfcSE, padj) and a volcano/MA plot",
+          "Explicitly states in the output that duplication rate could not be corrected per-gene because counts.csv carries no read-level or per-gene duplication annotation, and that DESeq2's standard normalization (size factors) is the mitigation used for library-composition differences, not a duplication-specific correction"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Gene ID annotation of DE results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "rtracklayer",
+          "dplyr",
+          "readr"
+        ],
+        "question": "What HGNC symbols and gene biotypes correspond to the Ensembl gene IDs (or whatever identifier Salmon's counts.csv uses) in the DE results table, using the GENCODE v50 GRCh38 annotation?",
+        "grounding": {
+          "claims": [],
+          "reason": "Uses GENCODE v50 GTF confirmed present in the reference store; straightforward ID-join step.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "annotation",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Confirms the identifier space of counts.csv row names against GENCODE v50 gene_id field and reports the match rate",
+          "Adds gene_name (HGNC symbol) and gene_type columns to the DE results table from T1S2",
+          "Reports how many DE genes (padj < 0.05) fail to map and why (e.g., version mismatch, non-coding biotype filtered upstream)"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "dplyr"
+        ],
+        "question": "Which WikiPathways and MSigDB Hallmark gene sets are enriched among genes significantly up- or down-regulated (padj < 0.05) between treated and control heart samples?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard ORA/fgsea against curated pathway GMTs confirmed present (WikiPathways human, MSigDB Hallmark human).",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Runs over-representation (or fgsea rank-based) enrichment separately for up- and down-regulated DE gene sets against WikiPathways human and MSigDB Hallmark human gene sets from the reference store",
+          "Reports enriched terms with BH-adjusted p-values, gene overlap counts, and direction (up/down)",
+          "If padj<0.05 gene count from T1S2 is very small (underpowered), states this explicitly rather than reporting on an under-filled contingency table",
+          "Uses the annotated gene symbols from T1S3, not raw Ensembl IDs, to match GMT gene symbol space"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "PPI network context for top DE genes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "dplyr",
+          "readr"
+        ],
+        "question": "Do the significant DE genes (padj < 0.05) between treated and control heart samples form connected modules in the STRING human protein-protein interaction network, and which genes act as hubs?",
+        "grounding": {
+          "claims": [],
+          "reason": "Standard network-context step using the STRING human PPI reference confirmed present, restricted to high-confidence edges as documented.",
+          "status": "ungrounded",
+          "snapshot": "none"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Joins STRING v12.0 protein.info to protein.links (combined_score >= 700 high-confidence cut) to build a gene-symbol network restricted to DE genes and their first-degree neighbors",
+          "Reports connected component structure, degree distribution, and top hub genes among the DE set",
+          "States explicitly if the DE gene list is too small for meaningful network statistics",
+          "Uses gene symbols from T1S3, matched to STRING preferred_name"
+        ]
+      }
+    ],
+    "title": "Heart RNA-seq treated vs control DE with dup-rate QC",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 columns implying 12 samples + gene-id column) from human heart tissue, 6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA libraries without UMIs. Two data quality flags in the profile change the plan directly: (1) duplication rate >60% in most libraries, and (2) sample_01 has a library size ~4x below the median. Because the libraries carry no UMIs, PCR duplicates cannot be distinguished from natural over-sequencing of highly expressed transcripts (the standard rationale against blind deduplication of non-UMI RNA-seq, echoed in tools like dupRadar built for exactly this ambiguity) — so the plan does not attempt duplicate removal on the counts, which would strip real signal from highly expressed cardiac genes and bias the model. Instead the plan (a) profiles library size and duplication-associated features to decide whether sample_01 must be excluded or merely flagged, (b) runs a standard DESeq2 negative-binomial GLM with the raw Salmon counts (appropriate for total-RNA/no-UMI count data), (c) uses raw p-values/BH FDR from DESeq2's Wald test with default independent filtering rather than any duplication-based re-weighting, and (d) treats the duplication-rate caveat as a global sensitivity issue to be reported via diagnostics (dispersion plot, PCA, size-factor comparison) rather than a per-gene correction, since no per-gene duplication metric is available in the delivered counts.csv. Downstream, DE results are annotated against GENCODE v50 gene models, then interpreted mechanistically via WikiPathways/Hallmark enrichment and STRING network context, both scoped to human and available in the reference store."
+  },
+  "usage": {
+    "inputTokens": 2097119,
+    "outputTokens": 6818,
+    "cacheCreationInputTokens": 101167,
+    "cacheReadInputTokens": 1995472,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01PwQeNSSnSQKJrYKc7wE2vC",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode human gene annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01HDTL53uYGdx4EVaAeUJZjx",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano",
+          "pheatmap",
+          "fgsea",
+          "clusterProfiler"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_016YoJNp3Wa4Zn1NjYMEDETJ",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PCR duplication rate total RNA-seq differential expression duplicate removal recommendation",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 357
+    },
+    {
+      "toolUseId": "toolu_01FrQCErff4q1jLfTmMUuV4L",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq PCR duplicates without UMI should not remove differential expression",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 798
+    },
+    {
+      "toolUseId": "toolu_01VW6qqnzumm4uJR75dZHdmf",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "30001700"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 861
+    },
+    {
+      "toolUseId": "toolu_01HcLVbasVUogajpFsMBa88Y",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "high duplication rate RNA-seq gene expression quantification bias no UMI",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 453
+    },
+    {
+      "toolUseId": "toolu_01R6imkqHZZYt3a754S8Vurz",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "ENCODE guidelines RNA-seq duplicate reads not recommended remove without UMI",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 446
+    },
+    {
+      "toolUseId": "toolu_01UUoKVocTiioJpyexSgK1TR",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression duplication library complexity outlier sample size bias DESeq2",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 257
+    },
+    {
+      "toolUseId": "toolu_015ramnue3LW6F6L1gP4Xkqw",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "total RNA-seq ribosomal depletion duplication rate high heart differential expression",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 461
+    },
+    {
+      "toolUseId": "toolu_014HLu8CXA2sRNGTYhsrkQe2",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control outlier low library size sample exclusion differential expression pipeline",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 242
+    },
+    {
+      "toolUseId": "toolu_0149YwF1zmeGmhMvYzjVx6s4",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "DESeq2 differential expression analysis RNA-seq count data",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 927
+    },
+    {
+      "toolUseId": "toolu_01A22Vgn7MviZk3BWMkk1nx9",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq quality control metrics duplication rate high multiqc interpretation reasons",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 270
+    },
+    {
+      "toolUseId": "toolu_01U49gzTUzUBNhVXRYnaiwUh",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "read duplication level highly expressed genes RNA-seq not indicative technical artifact",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 742
+    },
+    {
+      "toolUseId": "toolu_01JsrMHjDp6KWo9MEkrHuACd",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "27769170"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 664
+    },
+    {
+      "toolUseId": "toolu_013ccSi8Kq9j5PuhgCqDrw6d",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Fu Wu Beane Zamore Weng computational removal PCR duplicates introduces bias RNA-seq mapping coordinates",
+        "maxResults": 3
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01Mjn4JgZmoosPZDXFCashkH",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome human pathway"
+      },
+      "outcome": "ok",
+      "durationMs": 50
+    },
+    {
+      "toolUseId": "toolu_01UEYvSdpiQnxG6uC2bmdHnM",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01JFPPURnui4hSPWMQRzT9tt",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GO gene ontology human"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_016VmnR5GUAcFiavMrhPZzup",
+      "name": "list_available_refs",
+      "input": {
+        "query": "heart cardiac normal expression"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01HhvCCTXY5SCXEXUiQdCNxG",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "toolu_017sRVmdzpzVoStg7wvzLmre",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "biomaRt",
+          "AnnotationDbi"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01DsBSnj8AnN5grzZ5YySDEg",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Hsapiens.v86"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_014bjpnpVXmFeFoh7JL2Vskn",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "arriba",
+          "rtracklayer",
+          "tximport"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01AuwEqKkQUyEH5CDnkcc85o",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "ComplexHeatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_015jREDocaCBJKB7PjXn4Nsv",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01Xf2Toscx14Tjqgj7BPWggV",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "deseq2",
+          "PCAtools",
+          "vsn",
+          "genefilter"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01FMdeXaXydLjDHrn5Dq3Ujy",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggplot2",
+          "dplyr",
+          "readr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01W2kDKrG7WSTJLkGxbCneXX",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "apeglm",
+          "ashr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01N4oQQ1jvLKEwNZoe75HZCA",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "preprocessCore",
+          "sva",
+          "matrixStats"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01EuyFs1oMZsnmks7Jq35C5o",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "Rsubread",
+          "GENESIS"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01VJ7VRC3sTxT8Qk59W3NoCn",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WikiPathways",
+          "rWikiPathways"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01UASzHKrtA2emCsLMDoM25q",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fgsea",
+          "GSEABase",
+          "enrichplot"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_014aHL7yiQ3qGhfMMi7UPcjX",
+      "name": "list_available_refs",
+      "input": {
+        "query": "chrom sizes human hg38"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01E7y4eC4PTPGfz5muqpLzss",
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      },
+      "outcome": "ok",
+      "durationMs": 55
+    },
+    {
+      "toolUseId": "toolu_0161tqesAqaab2Q6BsfCSf7A",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01JpRBGz53ibu24JKs2noFhu",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "toolu_01XxKzbVJRdxd2D5aNQJ39MU",
+      "name": "list_available_refs",
+      "input": {
+        "query": "Ensembl gene identifier mapping human GTF"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01RA63fitCiD4r44KwLs6Nhm",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene-identifiers",
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01KhLweGKqtTkZxm8ov8EZSz",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01TAXguH3RasoaCp77z3DnfT",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Heart RNA-seq treated vs control DE with dup-rate QC",
+          "analytical_narrative": "The dataset is bulk RNA-seq (Salmon gene-level counts, 12000 genes x 13 columns implying 12 samples + gene-id column) from human heart tissue, 6 treated vs 6 control, unpaired, single batch, rRNA-depleted total RNA libraries without UMIs. Two data quality flags in the profile change the plan directly: (1) duplication rate >60% in most libraries, and (2) sample_01 has a library size ~4x below the median. Because the libraries carry no UMIs, PCR duplicates cannot be distinguished from natural over-sequencing of highly expressed transcripts (the standard rationale against blind deduplication of non-UMI RNA-seq, echoed in tools like dupRadar built for exactly this ambiguity) — so the plan does not attempt duplicate removal on the counts, which would strip real signal from highly expressed cardiac genes and bias the model. Instead the plan (a) profiles library size and duplication-associated features to decide whether sample_01 must be excluded or merely flagged, (b) runs a standard DESeq2 negative-binomial GLM with the raw Salmon counts (appropriate for total-RNA/no-UMI count data), (c) uses raw p-values/BH FDR from DESeq2's Wald test with default independent filtering rather than any duplication-based re-weighting, and (d) treats the duplication-rate caveat as a global sensitivity issue to be reported via diagnostics (dispersion plot, PCA, size-factor comparison) rather than a per-gene correction, since no per-gene duplication metric is available in the delivered counts.csv. Downstream, DE results are annotated against GENCODE v50 gene models, then interpreted mechanistically via WikiPathways/Hallmark enrichment and STRING network context, both scoped to human and available in the reference store.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and sample-level diagnostics",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Given 6 treated vs 6 control heart samples with a flagged >60% duplication rate in most libraries and sample_01 at ~4x below median library size, what do library-size distribution, sample-sample correlation, and PCA on variance-stabilized counts show about outlier severity and whether sample_01 should be excluded or retained-with-caveat?",
+              "acceptance_criteria": [
+                "Reports total counts per sample from counts.csv and confirms/quantifies sample_01's library size relative to the other 11 samples",
+                "Produces a PCA and a sample-sample correlation heatmap on VST or rlog-transformed counts, with samples colored by condition",
+                "States an explicit recommendation (exclude sample_01 vs retain with sensitivity analysis) grounded in whether sample_01 is an outlier on PCA/correlation, not library size alone",
+                "Does not attempt any per-read or per-gene duplicate removal, since duplication data live in the sequencing QC report, not in counts.csv, and libraries carry no UMIs"
+              ],
+              "packages": [
+                "DESeq2",
+                "matrixStats",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "No knowledge_recommend tool attached in this session; QC step design follows standard DESeq2 vignette diagnostics (PCA on VST, sample-distance heatmap)."
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the 12000 profiled genes are differentially expressed between treated (n=6) and control (n=6) heart samples, using raw Salmon gene-level counts modeled with a DESeq2 negative-binomial GLM?",
+              "acceptance_criteria": [
+                "Loads counts.csv (12000 genes x 12 samples) and metadata.csv (condition per sample), builds a DESeqDataSet with design ~ condition",
+                "Runs DESeq2's default Wald test and independent filtering; reports BH-adjusted p-values (padj) and log2FoldChange with apeglm or ashr shrinkage",
+                "Follows the QC step's recommendation on sample_01: if flagged as an outlier, run and report DE both with and without sample_01 as a sensitivity check; if not an outlier, run once and note this in the report",
+                "Produces a results table (gene, baseMean, log2FoldChange, lfcSE, padj) and a volcano/MA plot",
+                "Explicitly states in the output that duplication rate could not be corrected per-gene because counts.csv carries no read-level or per-gene duplication annotation, and that DESeq2's standard normalization (size factors) is the mitigation used for library-composition differences, not a duplication-specific correction"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "No knowledge_recommend tool attached; DESeq2 Wald test + apeglm shrinkage is the standard bulk RNA-seq DE workflow for a 6v6 unpaired design."
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Gene ID annotation of DE results",
+              "track": "T1",
+              "step_type": "annotation",
+              "question": "What HGNC symbols and gene biotypes correspond to the Ensembl gene IDs (or whatever identifier Salmon's counts.csv uses) in the DE results table, using the GENCODE v50 GRCh38 annotation?",
+              "acceptance_criteria": [
+                "Confirms the identifier space of counts.csv row names against GENCODE v50 gene_id field and reports the match rate",
+                "Adds gene_name (HGNC symbol) and gene_type columns to the DE results table from T1S2",
+                "Reports how many DE genes (padj < 0.05) fail to map and why (e.g., version mismatch, non-coding biotype filtered upstream)"
+              ],
+              "packages": [
+                "rtracklayer",
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Uses GENCODE v50 GTF confirmed present in the reference store; straightforward ID-join step."
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways and MSigDB Hallmark gene sets are enriched among genes significantly up- or down-regulated (padj < 0.05) between treated and control heart samples?",
+              "acceptance_criteria": [
+                "Runs over-representation (or fgsea rank-based) enrichment separately for up- and down-regulated DE gene sets against WikiPathways human and MSigDB Hallmark human gene sets from the reference store",
+                "Reports enriched terms with BH-adjusted p-values, gene overlap counts, and direction (up/down)",
+                "If padj<0.05 gene count from T1S2 is very small (underpowered), states this explicitly rather than reporting on an under-filled contingency table",
+                "Uses the annotated gene symbols from T1S3, not raw Ensembl IDs, to match GMT gene symbol space"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard ORA/fgsea against curated pathway GMTs confirmed present (WikiPathways human, MSigDB Hallmark human)."
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "PPI network context for top DE genes",
+              "track": "T2",
+              "step_type": "network_analysis",
+              "question": "Do the significant DE genes (padj < 0.05) between treated and control heart samples form connected modules in the STRING human protein-protein interaction network, and which genes act as hubs?",
+              "acceptance_criteria": [
+                "Joins STRING v12.0 protein.info to protein.links (combined_score >= 700 high-confidence cut) to build a gene-symbol network restricted to DE genes and their first-degree neighbors",
+                "Reports connected component structure, degree distribution, and top hub genes among the DE set",
+                "States explicitly if the DE gene list is too small for meaningful network statistics",
+                "Uses gene symbols from T1S3, matched to STRING preferred_name"
+              ],
+              "packages": [
+                "dplyr",
+                "readr"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "network-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "none",
+                "claims": [],
+                "reason": "Standard network-context step using the STRING human PPI reference confirmed present, restricted to high-confidence edges as documented."
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

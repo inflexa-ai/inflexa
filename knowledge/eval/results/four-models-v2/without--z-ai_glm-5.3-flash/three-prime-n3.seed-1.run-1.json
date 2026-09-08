@@ -1,0 +1,309 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "three-prime-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:33:34.862Z",
+  "elapsedMs": 79095,
+  "outcome": "plan_submitted",
+  "planId": "pln-9acda941",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample QC, filtering, normalization, PCA",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts.csv is 12,000 genes — a pre-filtered/annotated gene set, so very low-count genes are likely already sparse; report what the filter actually removes",
+          "With n=3 per group PCA can show separation by condition even with zero technical problems — flag, do not over-interpret",
+          "Gene identifiers in counts.csv must be inspected (symbols vs Ensembl vs Entrez) and recorded; downstream enrichment depends on this"
+        ],
+        "context": "Files: counts.csv (12,000 rows x 7 cols, gene-level integer counts from STAR/featureCounts, first column gene identifiers) and metadata.csv (6 rows x 2 cols) under /eval-four-models-v2-without-three-prime-n3-s1-1/data/inputs/. Design: 3 treated vs 3 control, human liver, single batch, unpaired. Library is Lexogen QuantSeq FWD 3' tag-seq: one read per transcript molecule at the 3' end, so counts are not transcript-length dependent. DESeq2 1.52.0, edgeR 4.10.3, EnhancedVolcano, pheatmap, ggplot2 are installed.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "ggplot2",
+          "pheatmap",
+          "readr"
+        ],
+        "question": "Do the 3 treated and 3 control liver samples form clean groups with no outlier sample, and how many of the 12,000 genes carry enough counts for testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Start from the raw integer counts exactly as provided; round-trip any float coercion explicitly if needed",
+          "Use condition as the only design factor (single batch, no batch covariate available)",
+          "Do not apply transcript-length or gene-length correction at any point",
+          "Filtering threshold must be reported, not hidden"
+        ],
+        "description": "Import counts.csv and metadata.csv, verify sample-name agreement and condition labels (treated/control, n=3 each), inspect library sizes and per-sample gene detection, filter very low-count genes (e.g. keep genes with counts >= 10 in at least 3 samples, threshold reported in output), run DESeq2 size-factor normalization, variance-stabilizing transform, PCA, and a sample-to-sample distance heatmap, and flag any outlier sample.",
+        "acceptance_criteria": [
+          "Sample names in counts and metadata verified identical and sample order/condition assignment documented in the log",
+          "Pre- and post-filter gene counts reported (of 12,000 input genes)",
+          "PCA and sample-to-sample distance heatmap produced; any sample separated from its group on PC1/PC2 is flagged in the log, not silently dropped",
+          "Normalized (DESeq2 size-factor) and variance-stabilized matrices saved as artifacts",
+          "No length-based normalization (TPM/FPKM) used anywhere in the step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 vs 3 the test has limited power; wide lfcSEs and few significant genes are an expected outcome, not a failure — report it as such",
+          "Independent filtering by DESeq2 changes the tested set; report how many of the 12,000 genes were tested",
+          "If any gene rows were dropped in T1S1, the results table covers only the tested subset — state that explicitly"
+        ],
+        "context": "Same inputs as T1S1 plus the filtered, normalized DESeq2 object from T1S1. DESeq2 1.52.0 and apeglm 1.34.0 are installed. 3 treated vs 3 control liver samples, single batch, so the design is ~condition. The research question is a plain two-group contrast; no covariates, no pairing.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between treated and control liver samples, at what effect size and FDR, and how many go up vs down?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use DESeq2 Wald test with BH (Benjamini-Hochberg) adjustment at alpha = 0.05; not unadjusted p-values",
+          "Compute apeglm-shrunken log2FC for reporting effect sizes; small-n LFCs are noisy and shrinkage guards against genes with tiny counts and huge raw LFCs",
+          "Keep the full results table (all tested genes with their padj), not only significant genes",
+          "Report both the permissive DE call (padj < 0.05) and a stricter one (padj < 0.05 with |shrunken LFC| >= 1) rather than a single arbitrary cut"
+        ],
+        "description": "Fit DESeq2 with design ~condition (control as reference level) on the filtered counts, run the Wald test for treated vs control, apply Benjamini-Hochberg FDR, compute apeglm-shrunken log2 fold changes, and export the full results table plus DE gene subsets at stated thresholds, with MA plot, volcano plot, and a top-gene table.",
+        "acceptance_criteria": [
+          "Full DE results table (baseMean, log2FC raw and shrunk, lfcSE, stat, pvalue, padj) saved for all tested genes",
+          "Number of up-regulated and down-regulated genes at padj < 0.05 and at padj < 0.05 & |shrunken LFC| >= 1 reported explicitly",
+          "MA plot and volcano plot produced",
+          "Shrunken log2FC (apeglm) computed for every gene; rows where shrinkage is unavailable are marked, not dropped",
+          "Direction convention (treated vs control) stated in the output header/log",
+          "Reference level of the design factor is control"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "The GMT covers curated human pathways only — no KEGG/GO/Reactome here unless separately provisioned; do not substitute another species' pathway file",
+          "3-vs-3 DE rankings are noisy; treat pathway results as context for the gene-level answer, not as independent evidence"
+        ],
+        "context": "Input is the T1S2 results table (gene identifier, Wald statistic, shrunken log2FC, padj). Human reference: the WikiPathways Homo sapiens GMT is provisioned under /mnt/refs/managed/wikipathways-human (2026.07.10), one pathway per line with '%'-delimited descriptor and HGNC member symbols. fgsea 1.38.0 and GSEABase 1.74.0 are installed. If that reference file is absent at run time, the step reports its absence and ends without fabricating pathway calls.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among the genes shifted by drug treatment in treated vs control liver, and in which direction?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use fgseaMultilevel (permutation-based, padj by BH) on the statistic-ranked full gene list; do not run enrichment only on a pre-filtered significant-gene universe without the universe size recorded",
+          "For ORA, restrict the universe to genes that passed the T1S1 filter and were tested in T1S2; using all 12,000 or an implicit universe biases p-values",
+          "Match gene identifiers between the count matrix and the GMT (HGNC symbols); report the match fraction, and if it falls below ~70%, state that pathway results are unreliable",
+          "Report both NES direction (fgsea) and separate up/down ORA so activation vs suppression is unambiguous"
+        ],
+        "description": "Rank all tested genes by the DESeq2 Wald statistic (or shrunken log2FC) and run fgsea against the WikiPathways human gene set collection; additionally run over-representation analysis on the up-regulated and down-regulated DE gene sets and report significant pathways with leading-edge genes.",
+        "acceptance_criteria": [
+          "fgsea results table (pathway, NES, padj, size) exported for the ranked-gene run, with leading-edge genes for significant pathways",
+          "ORA p-values (BH-adjusted) for the up and down gene sets exported as the cross-check",
+          "Agreement or disagreement between fgsea NES direction and ORA on up/down sets noted in the log",
+          "Gene identifier mapping from counts.csv symbols to HGNC GMT members reported (fraction matched)",
+          "If the human pathway reference is not resolvable in the environment, the step records that explicitly and terminates after reporting the gap — gene-level results from T1S2 remain the deliverable"
+        ]
+      }
+    ],
+    "title": "QuantSeq 3' treated-vs-control DE and pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T12:00:00Z",
+    "analytical_narrative": "The data are raw integer gene-level counts (12,000 genes x 6 samples) from a Lexogen QuantSeq FWD 3' tag-seq run on human liver, 3 treated vs 3 control, unpaired, single batch. Because it is a 3' tag library (one read per molecule at the 3' end), analysis must start from raw counts and use count-based statistical models (DESeq2), never length-dependent normalization (TPM/FPKM/RPKM), and needs only library-size/composition normalization. The first step verifies the sample table against the count columns, filters very low-count genes (which in a 3' tag library are also the 3'-poor/undetected ones), applies DESeq2 median-of-ratios normalization, and checks sample quality (PCA, sample distances, outlier flagging). The second step runs the treated-vs-control Wald test with BH FDR control and apeglm log2FC shrinkage, producing the gene-level answer to the question with an explicit up/down tally, plus MA and volcano plots. The third step places the gene-level result in biological context by ranking all genes on the Wald statistic and running fgsea against the WikiPathways human gene sets (provisioned reference), with an over-representation test on the up and down sets as a cross-check; if the reference set file is absent the step reports that and the run still ends with valid gene-level results."
+  },
+  "usage": {
+    "inputTokens": 31219,
+    "outputTokens": 3983,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 1632
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_e27df3e2aaac40f8a7a06330",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The data are raw integer gene-level counts (12,000 genes x 6 samples) from a Lexogen QuantSeq FWD 3' tag-seq run on human liver, 3 treated vs 3 control, unpaired, single batch. Because it is a 3' tag library (one read per molecule at the 3' end), analysis must start from raw counts and use count-based statistical models (DESeq2), never length-dependent normalization (TPM/FPKM/RPKM), and needs only library-size/composition normalization. The first step verifies the sample table against the count columns, filters very low-count genes (which in a 3' tag library are also the 3'-poor/undetected ones), applies DESeq2 median-of-ratios normalization, and checks sample quality (PCA, sample distances, outlier flagging). The second step runs the treated-vs-control Wald test with BH FDR control and apeglm log2FC shrinkage, producing the gene-level answer to the question with an explicit up/down tally, plus MA and volcano plots. The third step places the gene-level result in biological context by ranking all genes on the Wald statistic and running fgsea against the WikiPathways human gene sets (provisioned reference), with an over-representation test on the up and down sets as a cross-check; if the reference set file is absent the step reports that and the run still ends with valid gene-level results.",
+          "created_at": "2026-07-22T12:00:00Z",
+          "omicsSubType": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Sample names in counts and metadata verified identical and sample order/condition assignment documented in the log",
+                "Pre- and post-filter gene counts reported (of 12,000 input genes)",
+                "PCA and sample-to-sample distance heatmap produced; any sample separated from its group on PC1/PC2 is flagged in the log, not silently dropped",
+                "Normalized (DESeq2 size-factor) and variance-stabilized matrices saved as artifacts",
+                "No length-based normalization (TPM/FPKM) used anywhere in the step"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Files: counts.csv (12,000 rows x 7 cols, gene-level integer counts from STAR/featureCounts, first column gene identifiers) and metadata.csv (6 rows x 2 cols) under /eval-four-models-v2-without-three-prime-n3-s1-1/data/inputs/. Design: 3 treated vs 3 control, human liver, single batch, unpaired. Library is Lexogen QuantSeq FWD 3' tag-seq: one read per transcript molecule at the 3' end, so counts are not transcript-length dependent. DESeq2 1.52.0, edgeR 4.10.3, EnhancedVolcano, pheatmap, ggplot2 are installed.",
+              "constraints": [
+                "Start from the raw integer counts exactly as provided; round-trip any float coercion explicitly if needed",
+                "Use condition as the only design factor (single batch, no batch covariate available)",
+                "Do not apply transcript-length or gene-length correction at any point",
+                "Filtering threshold must be reported, not hidden"
+              ],
+              "caveats": [
+                "Counts.csv is 12,000 genes — a pre-filtered/annotated gene set, so very low-count genes are likely already sparse; report what the filter actually removes",
+                "With n=3 per group PCA can show separation by condition even with zero technical problems — flag, do not over-interpret",
+                "Gene identifiers in counts.csv must be inspected (symbols vs Ensembl vs Entrez) and recorded; downstream enrichment depends on this"
+              ],
+              "depends_on": [],
+              "description": "Import counts.csv and metadata.csv, verify sample-name agreement and condition labels (treated/control, n=3 each), inspect library sizes and per-sample gene detection, filter very low-count genes (e.g. keep genes with counts >= 10 in at least 3 samples, threshold reported in output), run DESeq2 size-factor normalization, variance-stabilizing transform, PCA, and a sample-to-sample distance heatmap, and flag any outlier sample.",
+              "id": "T1S1",
+              "name": "Sample QC, filtering, normalization, PCA",
+              "packages": [
+                "DESeq2",
+                "ggplot2",
+                "pheatmap",
+                "readr"
+              ],
+              "question": "Do the 3 treated and 3 control liver samples form clean groups with no outlier sample, and how many of the 12,000 genes carry enough counts for testing?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Full DE results table (baseMean, log2FC raw and shrunk, lfcSE, stat, pvalue, padj) saved for all tested genes",
+                "Number of up-regulated and down-regulated genes at padj < 0.05 and at padj < 0.05 & |shrunken LFC| >= 1 reported explicitly",
+                "MA plot and volcano plot produced",
+                "Shrunken log2FC (apeglm) computed for every gene; rows where shrinkage is unavailable are marked, not dropped",
+                "Direction convention (treated vs control) stated in the output header/log",
+                "Reference level of the design factor is control"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Same inputs as T1S1 plus the filtered, normalized DESeq2 object from T1S1. DESeq2 1.52.0 and apeglm 1.34.0 are installed. 3 treated vs 3 control liver samples, single batch, so the design is ~condition. The research question is a plain two-group contrast; no covariates, no pairing.",
+              "constraints": [
+                "Use DESeq2 Wald test with BH (Benjamini-Hochberg) adjustment at alpha = 0.05; not unadjusted p-values",
+                "Compute apeglm-shrunken log2FC for reporting effect sizes; small-n LFCs are noisy and shrinkage guards against genes with tiny counts and huge raw LFCs",
+                "Keep the full results table (all tested genes with their padj), not only significant genes",
+                "Report both the permissive DE call (padj < 0.05) and a stricter one (padj < 0.05 with |shrunken LFC| >= 1) rather than a single arbitrary cut"
+              ],
+              "caveats": [
+                "With 3 vs 3 the test has limited power; wide lfcSEs and few significant genes are an expected outcome, not a failure — report it as such",
+                "Independent filtering by DESeq2 changes the tested set; report how many of the 12,000 genes were tested",
+                "If any gene rows were dropped in T1S1, the results table covers only the tested subset — state that explicitly"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 with design ~condition (control as reference level) on the filtered counts, run the Wald test for treated vs control, apply Benjamini-Hochberg FDR, compute apeglm-shrunken log2 fold changes, and export the full results table plus DE gene subsets at stated thresholds, with MA plot, volcano plot, and a top-gene table.",
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "ggplot2"
+              ],
+              "question": "Which genes differ between treated and control liver samples, at what effect size and FDR, and how many go up vs down?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "fgsea results table (pathway, NES, padj, size) exported for the ranked-gene run, with leading-edge genes for significant pathways",
+                "ORA p-values (BH-adjusted) for the up and down gene sets exported as the cross-check",
+                "Agreement or disagreement between fgsea NES direction and ORA on up/down sets noted in the log",
+                "Gene identifier mapping from counts.csv symbols to HGNC GMT members reported (fraction matched)",
+                "If the human pathway reference is not resolvable in the environment, the step records that explicitly and terminates after reporting the gap — gene-level results from T1S2 remain the deliverable"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Input is the T1S2 results table (gene identifier, Wald statistic, shrunken log2FC, padj). Human reference: the WikiPathways Homo sapiens GMT is provisioned under /mnt/refs/managed/wikipathways-human (2026.07.10), one pathway per line with '%'-delimited descriptor and HGNC member symbols. fgsea 1.38.0 and GSEABase 1.74.0 are installed. If that reference file is absent at run time, the step reports its absence and ends without fabricating pathway calls.",
+              "constraints": [
+                "Use fgseaMultilevel (permutation-based, padj by BH) on the statistic-ranked full gene list; do not run enrichment only on a pre-filtered significant-gene universe without the universe size recorded",
+                "For ORA, restrict the universe to genes that passed the T1S1 filter and were tested in T1S2; using all 12,000 or an implicit universe biases p-values",
+                "Match gene identifiers between the count matrix and the GMT (HGNC symbols); report the match fraction, and if it falls below ~70%, state that pathway results are unreliable",
+                "Report both NES direction (fgsea) and separate up/down ORA so activation vs suppression is unambiguous"
+              ],
+              "caveats": [
+                "The GMT covers curated human pathways only — no KEGG/GO/Reactome here unless separately provisioned; do not substitute another species' pathway file",
+                "3-vs-3 DE rankings are noisy; treat pathway results as context for the gene-level answer, not as independent evidence"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Rank all tested genes by the DESeq2 Wald statistic (or shrunken log2FC) and run fgsea against the WikiPathways human gene set collection; additionally run over-representation analysis on the up-regulated and down-regulated DE gene sets and report significant pathways with leading-edge genes.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of DE genes",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways are enriched among the genes shifted by drug treatment in treated vs control liver, and in which direction?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "QuantSeq 3' treated-vs-control DE and pathways"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 63
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

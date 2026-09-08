@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 7,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: a single DESeq2 fit with ~subject + condition, an LRT against ~subject for the omnibus 'either treatment' question, and three named Wald contrasts with ashr shrinkage and BH at 0.05 with control as the explicit reference level. QC is appropriate (blind VST PCA, distance heatmap, library sizes colored by subject and condition) but the outlier policy stops at flagging without stating what happens to a flagged sample. Normalization is never named explicitly (no mention of size factors or median-of-ratios), though the plan does correctly fit raw counts and avoids any pre-adjustment. The enrichment step is well specified (Wald-stat ranking, named collections with versions, 15-500 window, per-contrast BH) but was not asked for and adds scope beyond the reference; the report step is thorough, covering design, versions, thresholds, gene counts, and the length-offset caveat."
+}

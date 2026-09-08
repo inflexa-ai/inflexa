@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly refuses to refit the count model, ranks all 12,000 tested genes by the Wald statistic with a stated signed-log-p fallback and direction convention, and runs gseapy prerank offline against a named MSigDB Hallmark 2026.1 GMT with 15-500 set sizes, 1000 permutations, and a fixed seed, reporting NES, FDR, and leading edge. It loses credit for adding an ORA on padj<0.05 genes and then making GSEA/ORA concordance the criterion for a 'confident call', which discards the graded signal GSEA is designed to use, and for stating only that ties and NaNs must be absent rather than giving an explicit handling rule. QC is reasonable (library size, detected genes, VST PCA, explicit policy of keeping sample_01 and not re-running DE) though coloring by condition is not stated; filtering, normalization, formula, and shrinkage are largely moot given the precomputed table and are treated adequately but not explicitly. The report is well specified with versions, thresholds, set-loss accounting, and design caveats."
+}

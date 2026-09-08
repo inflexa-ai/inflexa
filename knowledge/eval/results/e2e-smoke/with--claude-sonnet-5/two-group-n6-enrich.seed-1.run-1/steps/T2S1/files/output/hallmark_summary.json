@@ -1,0 +1,29 @@
+{
+  "template": "tpl-fgsea-preranked@1.0.0",
+  "method": "fgsea multilevel preranked GSEA",
+  "inputs": {
+    "results_path": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/runs/619852b4-1723-48f1-b3fe-f19dbee5d2d9/T1S2/output/deseq2_results.csv",
+    "gmt_path": "/mnt/refs/managed/msigdb-hallmark-human/2026.1/h.all.v2026.1.Hs.symbols.gmt"
+  },
+  "database": "h.all.v2026.1.Hs.symbols.gmt",
+  "rank_metric": "stat",
+  "n_genes_input": 9782,
+  "n_genes_ranked": 9782,
+  "n_genes_in_sets": 3541,
+  "n_sets_input": 50,
+  "n_sets_tested": 50,
+  "n_significant": 17,
+  "n_up": 15,
+  "n_down": 2,
+  "n_main_pathways": 11,
+  "padj_cutoff": 0.05,
+  "min_size": 15,
+  "max_size": 500,
+  "eps": 0,
+  "seed": 42,
+  "versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "fgsea": "1.38.0",
+    "ggplot2": "4.0.3"
+  }
+}

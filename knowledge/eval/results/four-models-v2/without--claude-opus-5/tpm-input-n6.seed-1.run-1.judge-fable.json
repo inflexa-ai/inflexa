@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly recognises TPM is not a count, rejects DESeq2/edgeR/voom and count reconstruction, and fits limma-trend with robust eBayes on a log2(TPM+1) matrix with control as the reference level and BH at 0.05; QC (PCA, correlation heatmap, clustering, distributions) precedes testing and the filter uses the smallest group size. It does not explicitly request the raw counts or quantification directories from the core, only notes their absence. The added between-sample quantile normalization is not in the reference and its 'most genes unchanged' assumption is shaky in lesional psoriasis, which the plan itself concedes; the |log2FC|>1 cutoff is applied post hoc rather than inside the test. Enrichment was not asked for; it is reasonably specified (explicit universe, named collections, ranking metric, full ranked list) but lacks collection versions and a set-size window, and the report does not commit to stating package versions."
+}

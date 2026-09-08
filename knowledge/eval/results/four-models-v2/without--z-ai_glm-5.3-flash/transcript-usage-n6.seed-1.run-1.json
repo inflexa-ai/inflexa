@@ -1,0 +1,46 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "transcript-usage-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T07:07:13.436Z",
+  "elapsedMs": 66334,
+  "outcome": "clarification_needed",
+  "question": "The delivered counts are gene-level only (12,000 genes × 12 samples, Salmon at the gene level) — dominant-isoform switching cannot be computed from them. Is transcript-level quantification available (e.g., salmon quant.sf files or a transcript×sample count matrix), or should the plan be reframed as differential gene expression (treated vs control, 6 vs 6, with the shallow sample_01 handled) instead?",
+  "usage": {
+    "inputTokens": 31179,
+    "outputTokens": 1195,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 964
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_a8aad78b7cf747059685648e",
+      "name": "request_clarification",
+      "input": {
+        "question": "The delivered counts are gene-level only (12,000 genes × 12 samples, Salmon at the gene level) — dominant-isoform switching cannot be computed from them. Is transcript-level quantification available (e.g., salmon quant.sf files or a transcript×sample count matrix), or should the plan be reframed as differential gene expression (treated vs control, 6 vs 6, with the shallow sample_01 handled) instead?",
+        "questionContext": "Research question asks which genes switch their dominant isoform between treated and control, but the staged inputs contain only a gene-level counts matrix (counts.csv) and a 12-row metadata table (condition: 6 treated vs 6 control). Isoform switching / DTU analysis requires transcript-level counts or transcript usage estimates (isoform counts, TPM per transcript, or quant.sf), none of which are present. If transcript-level data cannot be provided, the closest answerable analysis is bulk differential expression + pathway enrichment, which would identify treatment-responsive genes but could not distinguish isoform switching from whole-gene expression changes."
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

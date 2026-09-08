@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: VST/log-CPM on filtered genes, PCA with covariate associations, consensus clustering k=2..8 with 80% sample/feature resampling and two base algorithms, PAC and delta-CDF plus per-cluster consensus, a permutation null, bootstrap Jaccard, cross-tabulation and ARI against condition, and library size/globin tabulated per cluster; the only gaps are 500 rather than 1000 iterations and k selected primarily by PAC minimum. QC and filtering are explicit and blood-specific (globin fraction), with a stated keep-and-flag outlier policy. The DE step gives a correct ~condition + cluster design with an LRT reduced model and shrunken LFCs, but the reference level is unstated and the |log2FC| > 0.5 cutoff is applied post hoc rather than as a tested threshold. Enrichment is only weakly warranted here; the plan names collections and reports mapping rate but omits the ranking metric, collection version, and gene-set size window, and package versions are not requested in the report."
+}

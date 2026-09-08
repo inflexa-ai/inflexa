@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 2,
+    "low_count_filter": 2,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 6
+  },
+  "rationale": "The core is right: VST-normalized counts, an unweighted z-score composite over the 20 genes with missing genes reported, a Cox model of Surv(time, event) ~ score + condition, a Schoenfeld PH check, event counts flagged as the power limit, and KM by tertile within strata as a display after the model. It falls short of the reference by not standardizing the score to report HR per SD, not reporting median follow-up, offering no stratified or time-dependent remedy for a PH violation, still reporting log-rank tests on median splits, and appending an ill-powered 12000-gene cross-validated elastic-net step on ~120 samples that adds little. There is no sample-structure QC (PCA, library sizes, outlier policy) and no low-count gene filter before VST. Enrichment is correctly omitted with justification; the report lacks package versions and a stated LR-vs-Wald p-value choice."
+}

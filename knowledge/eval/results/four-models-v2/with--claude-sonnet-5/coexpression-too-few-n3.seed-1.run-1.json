@@ -1,0 +1,1884 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:10:03.236Z",
+  "elapsedMs": 257641,
+  "outcome": "plan_submitted",
+  "planId": "pln-0040c942",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind VST, PCA, sample-distance heatmap)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With only 6 samples total, PCA structure is illustrative, not a formal test"
+        ],
+        "context": "Raw gene-level Salmon counts, 12000 genes x 6 samples (3 treated, 3 control), single batch.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 3 treated and 3 control liver samples separate on the top variable genes, and is there evidence of an outlier or unexpected batch effect within this single-batch design?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use vst(blind=TRUE), not the design-aware transform, for this exploratory step"
+        ],
+        "description": "Load the 12000x6 Salmon gene-level count matrix and the 6-sample metadata (condition: treated/control). Apply DESeq2's variance-stabilizing transformation blind to the design, compute PCA on the top 500 most-variable genes, and produce a Euclidean sample-distance heatmap. Color by condition. This establishes whether the 6 samples show the expected condition-driven structure before any test is run.",
+        "acceptance_criteria": [
+          "PCA plot and sample-distance heatmap produced for all 6 samples",
+          "Top 500 variable genes used per DESeq2 vst(blind=TRUE) convention",
+          "Any sample that fails to cluster with its condition group is flagged explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter and DESeq2 median-of-ratios normalization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "Raw Salmon gene counts; import correction state unknown so counts are treated as the DESeq2 input directly.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes among the 12000 profiled are expressed reliably enough (>=10 counts in at least 3 samples, the smallest group size) to enter both the differential expression test and the network-module analysis?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0026@9ab1"
+          ],
+          "reason": "Pre-filter and median-of-ratios normalization per R-0002@087b and R-0026@9ab1",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-two-group@1.1.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count=10, min_samples=3 (smallest group size)"
+        ],
+        "description": "Filter the count matrix to genes with at least 10 counts in at least 3 samples (the smallest group size, since both groups have n=3). Compute DESeq2 size factors via median-of-ratios on the filtered raw counts; do not pre-normalize before this step.",
+        "acceptance_criteria": [
+          "Filtered gene count and pre-filter gene count both reported",
+          "Size factors computed via median-of-ratios inside DESeq2, not by an external scaling step"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "DESeq2 Wald test: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 vs 3, the Wald test has low power for small effect sizes; treat the resulting ranking as the best available signal, not as a validated gene list"
+        ],
+        "context": "n=3 per group, unpaired, single batch, no covariates — the simplest two-group DESeq2 design.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between the 3 treated and 3 control liver samples?",
+        "grounding": {
+          "claims": [
+            "R-0026@9ab1"
+          ],
+          "reason": "Standard two-group DESeq2 Wald test with median-of-ratios normalization already established in T1S2",
+          "status": "grounded",
+          "settings": [],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "alpha=0.05",
+          "Report this comparison as underpowered given n=3/group; do not overstate significance of any single gene"
+        ],
+        "description": "Fit the DESeq2 negative-binomial model on the filtered, size-factor-normalized counts with a single condition term (treated vs control), run the Wald test, and apply independent filtering with alpha=0.05. Apply apeglm or normal shrinkage to the log2 fold changes for downstream ranking. Output a full results table (log2FoldChange, shrunken LFC, Wald statistic, p-value, BH-adjusted p-value) for every filtered gene — this table is the treatment signal that both the module-overlay step and the enrichment step consume.",
+        "acceptance_criteria": [
+          "Full DE results table with unshrunken and shrunken log2FC, Wald statistic, and BH-adjusted p-value for every gene that passed filtering",
+          "alpha=0.05 used for independent filtering",
+          "Results table exported for use by the network and enrichment steps"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "STRING PPI-derived module detection restricted to expressed genes (prior-network substitute for correlation-based co-expression)",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "A STRING-derived module reflects known protein interactions, not this dataset's co-expression — it is a structural prior, not evidence that these genes move together in these 6 samples",
+          "Genes with no STRING interaction partner among the expressed set are left unassigned to any module and should be reported as such, not discarded silently"
+        ],
+        "context": "STRING v12.0 human PPI network (9606.protein.links.v12.0.txt.gz, ~13.7M directed rows / ~237k edges at score>=700 over ~16,200 proteins) and its ID-mapping file (9606.protein.info.v12.0.txt.gz) are available in the reference store. The links file is space-delimited despite its .txt extension and every edge is duplicated (both directions); the info file's preferred_name column supplies gene symbols.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "pandas"
+        ],
+        "question": "Given that WGCNA-style correlation modules are not statistically reliable on 6 samples (rule: fewer than 15 samples makes a correlation network noise), what modules of putatively co-regulated genes emerge when the expressed gene set is placed on a literature-curated protein-protein interaction network instead?",
+        "grounding": {
+          "claims": [
+            "R-0140@3faf"
+          ],
+          "reason": "flagged by R-0140@3faf: cohort (n=6, 3 vs 3) is below the ~15-sample minimum for a reliable correlation-based co-expression network; the rule's prescribed remedy is to use a prior network (STRING PPI, offered explicitly in the rule text) in place of WGCNA",
+          "status": "flagged",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "combined_score cutoff = 700 (conventional STRING high-confidence threshold)",
+          "Deduplicate the reciprocal edges before building the undirected graph",
+          "Do not attempt WGCNA/correlation-based module detection on this 6-sample cohort — flagged as unreliable by the knowledge service (rule R-0140)"
+        ],
+        "description": "Load the STRING human protein-protein association network (v12.0) and its protein-info file to map STRING internal IDs to gene symbols. Restrict the network to high-confidence edges (combined_score >= 700). Subset the network to genes that passed the low-count filter in T1S2 (the ~expressed liver transcriptome). Run Louvain community detection (igraph cluster_louvain, or python-igraph community_multilevel) on this induced subgraph, weighted by combined_score, to define modules. Report module sizes, and exclude/flag singleton or near-trivial modules (<5 genes). This step explicitly substitutes for a WGCNA correlation network because the cohort (3 vs 3, 6 samples total) is below the ~15-20 sample minimum needed for a stable gene-gene correlation matrix; building WGCNA modules from the expression alone here would return noise, not shared regulation.",
+        "acceptance_criteria": [
+          "STRING network subset to combined_score>=700 and to genes in the T1S2 filtered set",
+          "Community/module assignment produced for every retained gene, with module sizes reported",
+          "The substitution of a PPI-prior network for a correlation network is stated explicitly in the output, with the sample count (n=6) as the reason"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Module-level treatment association from the DESeq2 signal",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This is an association between a module's known-interaction genes and this cohort's treatment signal, not a validated regulatory module; a module can rank highly by chance in a 6-sample study, so treat any single top module as a hypothesis for follow-up, not a proven finding"
+        ],
+        "context": "This step plays the role that eigengene-trait correlation plays in a standard WGCNA report, but on the PPI-prior module structure defined in T2S1, since the underlying gene-gene correlations are not being computed on this 6-sample cohort.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Which STRING-derived gene modules are enriched for the genes most associated with the treated-vs-control contrast?",
+        "grounding": {
+          "claims": [],
+          "reason": "No procedure rule covers module-trait association on a PPI-prior (non-WGCNA) module structure; devised from first principles as the closest analogue to the WGCNA eigengene-trait correlation step, using DESeq2 output already grounded in T1S3.",
+          "status": "ungrounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "State the random seed used for the resampling null",
+          "BH-adjust p-values across the number of modules tested, not across all genes"
+        ],
+        "description": "Join the DESeq2 Wald-test results (T1S3) onto the module assignments from T2S1 by gene symbol/ID. For each module with at least 5 genes, compute a module-level treatment-association statistic: mean |Wald statistic| (or mean shrunken log2FC magnitude) of module members compared to a null built by resampling same-sized random gene sets from the same background (the STRING-restricted expressed gene set), and report an empirical p-value per module. Also report, per module, the number and fraction of genes passing the DESeq2 adjusted-p-value threshold. Adjust module p-values for multiple testing across modules (BH). Rank modules by this treatment-association score.",
+        "acceptance_criteria": [
+          "Every module (size>=5) has a treatment-association statistic, an empirical p-value from resampling, and a BH-adjusted p-value across all tested modules",
+          "Number of resampling permutations and random seed are recorded for reproducibility",
+          "Output ranks modules from most to least treatment-associated, with module size and gene membership included"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Functional annotation of treatment-associated modules via WikiPathways enrichment",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "If WikiPathways gene sets do not cover a top module's genes well, report the coverage rather than reporting an empty or misleadingly non-significant result"
+        ],
+        "context": "WikiPathways human gene sets (2026.07.10 snapshot, HGNC gene symbols, GMT format) are available in the reference store for Homo sapiens.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "What biological pathways characterize the genes driving the treatment signal, and do the top treatment-associated modules from T2S2 correspond to coherent, named pathways?",
+        "grounding": {
+          "claims": [],
+          "reason": "Enrichment methods (fgsea preranked GSEA; over-representation with explicit universe) are the two methods the knowledge check confirmed as permitted for this situation",
+          "status": "grounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S3",
+          "T2S2"
+        ],
+        "constraints": [
+          "Preranked GSEA metric = DESeq2 Wald statistic",
+          "Over-representation analysis must declare an explicit universe (the expressed/filtered gene set from T1S2), not the whole genome"
+        ],
+        "description": "Run fgsea (preranked gene set enrichment analysis) on the full DESeq2 Wald statistic ranking from T1S3, against WikiPathways human gene sets, to characterize the overall treatment signal. Separately, run an over-representation test (with the STRING-restricted expressed gene set as the explicit background/universe) on the gene membership of each of the top treatment-associated modules from T2S2, again against WikiPathways human sets, to describe what each top module represents biologically.",
+        "acceptance_criteria": [
+          "Preranked fgsea run on the full Wald-statistic ranking with WikiPathways human gene sets, BH-adjusted p-values reported",
+          "Per-module over-representation results reported for the modules ranked highest in T2S2, using the expressed-gene background as the universe, not the whole genome",
+          "Gene symbols matched to WikiPathways HGNC identifiers; unmatched genes reported as a count, not silently dropped"
+        ]
+      },
+      {
+        "id": "T4S1",
+        "name": "Integrated report: modules, treatment association, and sample-size caveats",
+        "agent": "network-agent",
+        "track": "T4",
+        "status": "pending",
+        "caveats": [
+          "Do not present the top-ranked module as a validated treatment-response module; it is a hypothesis generated from a small cohort with a network-prior substitution for the correlation analysis that could not be run reliably"
+        ],
+        "context": "Final synthesis step drawing on the QC, DE, module-detection, module-association, and enrichment outputs.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the final answer to which gene modules exist and which track the drug treatment, stated with the reliability the 3-vs-3 design actually supports?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0151@c88b"
+          ],
+          "reason": "Reproducibility record and co-expression report content requirements per R-0086@becf and R-0151@c88b, adapted to the prior-network substitution actually used",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S2",
+          "T3S1"
+        ],
+        "constraints": [],
+        "description": "Assemble a report that states: the sample count (n=6, 3 vs 3) and why a correlation-based co-expression network was not built (R-0140); the STRING-derived module structure with sizes and the confidence threshold used; the DESeq2 treatment signal (numbers of genes up/down at adjusted p<0.05, acknowledging low power); the ranked module-level treatment-association results from T2S2 with their empirical and BH-adjusted p-values; the WikiPathways functional annotation of the overall signal and of the top modules; and a full reproducibility record (session info, package versions, random seeds used in the resampling null and in any stochastic community-detection step, and the STRING v12.0 / WikiPathways 2026.07.10 reference versions used).",
+        "acceptance_criteria": [
+          "Report explicitly states the sample size limitation and the PPI-prior substitution rationale before presenting any module results",
+          "Every module-treatment association is reported with both an empirical and a BH-adjusted p-value",
+          "Reproducibility record includes package versions, seeds, and reference dataset versions",
+          "Report distinguishes 'a module is a group of interacting genes' from 'a module is a proven co-regulated pathway in this cohort'"
+        ]
+      }
+    ],
+    "title": "Liver drug treatment: co-expression modules and treatment tracking",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The design is 3 treated vs 3 control liver samples, single batch, raw Salmon gene-level counts (12000 genes x 6 samples). The knowledge service flags that a correlation-based co-expression network (WGCNA) on only 6 samples is statistically unreliable — the module structure would reflect sampling noise in the correlation matrix, not shared regulation (rule R-0140). Per that guidance, this plan does NOT build a de novo WGCNA network. Instead it: (1) performs standard DESeq2 QC, filtering, normalization, and a Wald test for treated vs control to obtain a per-gene differential signal with a stable dispersion estimate (borrowing strength across all filtered genes, which partially compensates for n=3/group); (2) builds a literature-curated network structure — the STRING human protein-protein association network (score >=700) — restricted to the expressed gene set, and detects communities on that prior network (Louvain clustering) rather than inferring co-expression correlations from only 6 samples; (3) overlays the DESeq2 treatment signal (log2FC, Wald statistic, adjusted p-value) onto each STRING-derived module to ask which modules are enriched for treatment-associated genes (module-level enrichment test against the treated-vs-control statistic, analogous to how eigengene-trait correlation would be used with WGCNA, but here module 'activity' is summarized as the fraction/enrichment of significant genes or mean |stat| per module); (4) runs functional enrichment (fgsea preranked on the Wald statistic, WikiPathways human gene sets) to annotate what the treatment-associated modules represent biologically; (5) reports everything with the sample-size caveat stated explicitly, per the reporting rule for co-expression analyses (R-0151), adapted to the prior-network substitution actually used."
+  },
+  "usage": {
+    "inputTokens": 4410454,
+    "outputTokens": 13722,
+    "cacheCreationInputTokens": 267917,
+    "cacheReadInputTokens": 4142021,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Hd7mBHKP84xo7wBD8PW6Ld",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01CTSdwjfrhCjpELDmdVAFsq",
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_017233Jq3TTQ2Jg27RxyyDPp",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01KQBHvoPyuj29Sy7BwzFBG5",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network-guided module analysis using STRING PPI (network placement of DE genes, not de novo WGCNA correlation network) due to n=3 per group flag",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "string_score_cutoff",
+                "value": 700
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test treated vs control, used to define trait-correlated gene set for network placement",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "WikiPathways over-representation on module gene sets",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "module and treatment-tracking summary report",
+            "package": "none"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 7
+    },
+    {
+      "toolUseId": "toolu_0139aabLBN5bD76wbwYxPgWZ",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test treated vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network-guided module analysis: place DE/expressed genes on the STRING PPI network at combined_score>=700, detect communities (e.g. Louvain), rather than a de novo WGCNA correlation network, because n=3 per group is below the 15-sample minimum for stable correlation-based modules",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "string_score_cutoff",
+                "value": 700
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis with an explicit universe on module gene sets using WikiPathways gene sets",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "module and treatment-tracking summary report",
+            "package": "none"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 7
+    },
+    {
+      "toolUseId": "toolu_01Frfo7gEKCf8bH5azTB7vwB",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "coexpression",
+            "method": "STRING PPI network module placement (community detection on protein interaction network restricted to expressed genes) as a substitute for WGCNA correlation-based modules, because n=3 per group (6 total) is below the 15-sample minimum WGCNA requires for stable correlations",
+            "method_id": "M-0047",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "string_score_cutoff",
+                "value": 700
+              }
+            ],
+            "outcome": "too_few_samples_prior_network_or_stop"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "toolu_01145nyqSeNzZTdNhWxxXSF3",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "coexpression",
+            "method": "WGCNA signed co-expression network with module eigengenes and module membership",
+            "method_id": "M-0047",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "network_type",
+                "value": "signed"
+              }
+            ],
+            "outcome": "too_few_samples_prior_network_or_stop"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01PHDP5FMX1D3YV2LYWPXzCh",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene coexpression network small sample size prior network PPI guilt by association",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 488
+    },
+    {
+      "toolUseId": "toolu_018egt2cKhDvvwYpLkjEZTSR",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "co-expression network module detection small sample size prior PPI network guided",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9250
+    },
+    {
+      "toolUseId": "toolu_01A5KjktT6XYbcpkMByUjTrp",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING network module detection differentially expressed genes community detection RNA-seq",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9343
+    },
+    {
+      "toolUseId": "toolu_016unFp9hukkJ2LSQHtY5D2X",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "STRING network module detection differentially expressed genes community detection RNA-seq",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9579
+    },
+    {
+      "toolUseId": "toolu_01MUh3iS8nv7SQ2MfuG3hNtA",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "protein-protein interaction network module differentially expressed genes community detection",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 991
+    },
+    {
+      "toolUseId": "toolu_0198bvSMQ6JhKpLQbPYbPt5i",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "33552715",
+          "30168505"
+        ],
+        "maxAuthors": 2,
+        "maxMeshTerms": 3
+      },
+      "outcome": "ok",
+      "durationMs": 677
+    },
+    {
+      "toolUseId": "toolu_01NpRLr1kCiwaV73s1SnpgrE",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "MCODE clustering protein interaction network module extraction gene expression",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8860
+    },
+    {
+      "toolUseId": "toolu_01NnK4DyD1RSTXKqhBmSqq59",
+      "name": "search_github_repos",
+      "input": {
+        "query": "MCODE cytoscape python network module detection",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 341
+    },
+    {
+      "toolUseId": "toolu_013rrq5t6VC3nfVa4zyjDWBt",
+      "name": "search_github_repos",
+      "input": {
+        "query": "networkx louvain community detection gene network",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 222
+    },
+    {
+      "toolUseId": "toolu_01AQyEhiqUnMqJXpmer3NohS",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "networkx",
+          "python-louvain",
+          "cdlib",
+          "markov_clustering"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01NUgk8dDcdoDepFkNZAYoLH",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "fgsea",
+          "DESeq2",
+          "WGCNA",
+          "STRINGdb"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01FeZoPEymSaPrqM2mvuq61G",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "igraph python",
+        "query": "community detection louvain / walktrap on a weighted graph"
+      },
+      "outcome": "ok",
+      "durationMs": 384
+    },
+    {
+      "toolUseId": "toolu_01GBEGbqP8BVBryaMTtv7V2B",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/igraph/python-igraph",
+        "query": "community_multilevel or community detection on weighted graph, cluster membership"
+      },
+      "outcome": "ok",
+      "durationMs": 847
+    },
+    {
+      "toolUseId": "toolu_01LQc5XkcfjKkeUqMtMavemv",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/igraph/python-igraph",
+        "query": "community_multilevel community_walktrap community detection function name"
+      },
+      "outcome": "ok",
+      "durationMs": 885
+    },
+    {
+      "toolUseId": "toolu_01TuuXdDHcWBXEHA6BeWN9Ut",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "R igraph"
+        ],
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01Rh4wpDUzKF3h6PAw9z7UvT",
+      "name": "list_available_packages",
+      "input": {
+        "query": "igraph"
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_017STm3twdnohekbEEW75HcK",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "igraph R",
+        "query": "cluster_louvain community detection weighted undirected graph membership"
+      },
+      "outcome": "ok",
+      "durationMs": 1021
+    },
+    {
+      "toolUseId": "toolu_01EaUhw5qQBRePhZWZ3MG9KD",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/igraph/rigraph",
+        "query": "cluster_louvain community detection function, membership vector, modularity"
+      },
+      "outcome": "ok",
+      "durationMs": 1007
+    },
+    {
+      "toolUseId": "toolu_016LquNGQHUpK5MN8ZGgU9af",
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver drug expression atlas normal baseline"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "toolu_01LA1SH1dh22Q2K5d12kcqFr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifier mapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01W4pmoFiopFQ6cgwxnryYMw",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_017uHoFzAxGscYzX7zQ6mptW",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01Ru5DHJTo8xWB6UBa9vKt8R",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_01TZ6TaSzEsvx1nMfT1dyajb",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene symbol ensembl human annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01WUdSefVfjDGBeNJwRfPhq9",
+      "name": "list_available_refs",
+      "input": {
+        "query": "genome-annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_01Hd7b2pxErawHxbD22KCzUE",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_013frKDurCz3tMbtfvCKSrUg",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_012E8gxSCnKEF1jpUXZ5UK9Z",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome pathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01SSzDCstbKJgqFM1yLFKs6c",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/reactome-pathways"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01X6Bi9CkRpgCkf1FhXBkwtT",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "fgsea preranked GSEA WikiPathways liver drug treatment DESeq2",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 541
+    },
+    {
+      "toolUseId": "toolu_01G9jVELyguEbYZMxUXC9rQD",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "fgsea preranked gene set enrichment analysis Wald statistic RNA-seq",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 9275
+    },
+    {
+      "toolUseId": "toolu_01YR9xz85DqQ1huReD2HdqZs",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "fgsea fast gene set enrichment analysis method",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 945
+    },
+    {
+      "toolUseId": "toolu_016YG9fWnJJBTi4vSDKX5VJm",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Korotkevich Sergushichev fgsea preranked gene set enrichment analysis",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 448
+    },
+    {
+      "toolUseId": "toolu_01PF9N9i31ZczFySjE1DMPpQ",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "MCODE Bader Hogue algorithm detect molecular complexes protein interaction networks",
+        "maxResults": 3
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01H1cJx4mZseAvx6N2BbTBkL",
+      "name": "knowledge_check",
+      "input": {
+        "question": "full_plan",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "extra_analyses": [
+          "coexpression"
+        ],
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test treated vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea preranked GSEA on the Wald statistic with WikiPathways human gene sets",
+            "package": "fgsea"
+          },
+          {
+            "step_type": "report",
+            "method": "module and treatment-tracking summary report",
+            "package": "none"
+          }
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01FEjYS68LRsHSHDxAfwAPw6",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug treatment: co-expression modules and treatment tracking",
+          "analytical_narrative": "The design is 3 treated vs 3 control liver samples, single batch, raw Salmon gene-level counts (12000 genes x 6 samples). The knowledge service flags that a correlation-based co-expression network (WGCNA) on only 6 samples is statistically unreliable — the module structure would reflect sampling noise in the correlation matrix, not shared regulation (rule R-0140). Per that guidance, this plan does NOT build a de novo WGCNA network. Instead it: (1) performs standard DESeq2 QC, filtering, normalization, and a Wald test for treated vs control to obtain a per-gene differential signal with a stable dispersion estimate (borrowing strength across all filtered genes, which partially compensates for n=3/group); (2) builds a literature-curated network structure — the STRING human protein-protein association network (score >=700) — restricted to the expressed gene set, and detects communities on that prior network (Louvain clustering) rather than inferring co-expression correlations from only 6 samples; (3) overlays the DESeq2 treatment signal (log2FC, Wald statistic, adjusted p-value) onto each STRING-derived module to ask which modules are enriched for treatment-associated genes (module-level enrichment test against the treated-vs-control statistic, analogous to how eigengene-trait correlation would be used with WGCNA, but here module 'activity' is summarized as the fraction/enrichment of significant genes or mean |stat| per module); (4) runs functional enrichment (fgsea preranked on the Wald statistic, WikiPathways human gene sets) to annotate what the treatment-associated modules represent biologically; (5) reports everything with the sample-size caveat stated explicitly, per the reporting rule for co-expression analyses (R-0151), adapted to the prior-network substitution actually used.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind VST, PCA, sample-distance heatmap)",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 3 treated and 3 control liver samples separate on the top variable genes, and is there evidence of an outlier or unexpected batch effect within this single-batch design?",
+              "description": "Load the 12000x6 Salmon gene-level count matrix and the 6-sample metadata (condition: treated/control). Apply DESeq2's variance-stabilizing transformation blind to the design, compute PCA on the top 500 most-variable genes, and produce a Euclidean sample-distance heatmap. Color by condition. This establishes whether the 6 samples show the expected condition-driven structure before any test is run.",
+              "acceptance_criteria": [
+                "PCA plot and sample-distance heatmap produced for all 6 samples",
+                "Top 500 variable genes used per DESeq2 vst(blind=TRUE) convention",
+                "Any sample that fails to cluster with its condition group is flagged explicitly, not silently dropped"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw gene-level Salmon counts, 12000 genes x 6 samples (3 treated, 3 control), single batch.",
+              "constraints": [
+                "Use vst(blind=TRUE), not the design-aware transform, for this exploratory step"
+              ],
+              "caveats": [
+                "With only 6 samples total, PCA structure is illustrative, not a formal test"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "reason": "Sample structure QC: vst(blind), PCA, sample distances per R-0033@40bf",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter and DESeq2 median-of-ratios normalization",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes among the 12000 profiled are expressed reliably enough (>=10 counts in at least 3 samples, the smallest group size) to enter both the differential expression test and the network-module analysis?",
+              "description": "Filter the count matrix to genes with at least 10 counts in at least 3 samples (the smallest group size, since both groups have n=3). Compute DESeq2 size factors via median-of-ratios on the filtered raw counts; do not pre-normalize before this step.",
+              "acceptance_criteria": [
+                "Filtered gene count and pre-filter gene count both reported",
+                "Size factors computed via median-of-ratios inside DESeq2, not by an external scaling step"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw Salmon gene counts; import correction state unknown so counts are treated as the DESeq2 input directly.",
+              "constraints": [
+                "min_count=10, min_samples=3 (smallest group size)"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0026@9ab1"
+                ],
+                "reason": "Pre-filter and median-of-ratios normalization per R-0002@087b and R-0026@9ab1",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_count",
+                    "value": 10,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "vignette:DESeq2/1.52.0#pre-filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "size_factors",
+                    "value": "median_of_ratios_named_in_the_plan",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "DESeq2 Wald test: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between the 3 treated and 3 control liver samples?",
+              "description": "Fit the DESeq2 negative-binomial model on the filtered, size-factor-normalized counts with a single condition term (treated vs control), run the Wald test, and apply independent filtering with alpha=0.05. Apply apeglm or normal shrinkage to the log2 fold changes for downstream ranking. Output a full results table (log2FoldChange, shrunken LFC, Wald statistic, p-value, BH-adjusted p-value) for every filtered gene — this table is the treatment signal that both the module-overlay step and the enrichment step consume.",
+              "acceptance_criteria": [
+                "Full DE results table with unshrunken and shrunken log2FC, Wald statistic, and BH-adjusted p-value for every gene that passed filtering",
+                "alpha=0.05 used for independent filtering",
+                "Results table exported for use by the network and enrichment steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "n=3 per group, unpaired, single batch, no covariates — the simplest two-group DESeq2 design.",
+              "constraints": [
+                "alpha=0.05",
+                "Report this comparison as underpowered given n=3/group; do not overstate significance of any single gene"
+              ],
+              "caveats": [
+                "With 3 vs 3, the Wald test has low power for small effect sizes; treat the resulting ranking as the best available signal, not as a validated gene list"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0026@9ab1"
+                ],
+                "reason": "Standard two-group DESeq2 Wald test with median-of-ratios normalization already established in T1S2",
+                "settings": []
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "STRING PPI-derived module detection restricted to expressed genes (prior-network substitute for correlation-based co-expression)",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Given that WGCNA-style correlation modules are not statistically reliable on 6 samples (rule: fewer than 15 samples makes a correlation network noise), what modules of putatively co-regulated genes emerge when the expressed gene set is placed on a literature-curated protein-protein interaction network instead?",
+              "description": "Load the STRING human protein-protein association network (v12.0) and its protein-info file to map STRING internal IDs to gene symbols. Restrict the network to high-confidence edges (combined_score >= 700). Subset the network to genes that passed the low-count filter in T1S2 (the ~expressed liver transcriptome). Run Louvain community detection (igraph cluster_louvain, or python-igraph community_multilevel) on this induced subgraph, weighted by combined_score, to define modules. Report module sizes, and exclude/flag singleton or near-trivial modules (<5 genes). This step explicitly substitutes for a WGCNA correlation network because the cohort (3 vs 3, 6 samples total) is below the ~15-20 sample minimum needed for a stable gene-gene correlation matrix; building WGCNA modules from the expression alone here would return noise, not shared regulation.",
+              "acceptance_criteria": [
+                "STRING network subset to combined_score>=700 and to genes in the T1S2 filtered set",
+                "Community/module assignment produced for every retained gene, with module sizes reported",
+                "The substitution of a PPI-prior network for a correlation network is stated explicitly in the output, with the sample count (n=6) as the reason"
+              ],
+              "packages": [
+                "igraph",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent",
+              "context": "STRING v12.0 human PPI network (9606.protein.links.v12.0.txt.gz, ~13.7M directed rows / ~237k edges at score>=700 over ~16,200 proteins) and its ID-mapping file (9606.protein.info.v12.0.txt.gz) are available in the reference store. The links file is space-delimited despite its .txt extension and every edge is duplicated (both directions); the info file's preferred_name column supplies gene symbols.",
+              "constraints": [
+                "combined_score cutoff = 700 (conventional STRING high-confidence threshold)",
+                "Deduplicate the reciprocal edges before building the undirected graph",
+                "Do not attempt WGCNA/correlation-based module detection on this 6-sample cohort — flagged as unreliable by the knowledge service (rule R-0140)"
+              ],
+              "caveats": [
+                "A STRING-derived module reflects known protein interactions, not this dataset's co-expression — it is a structural prior, not evidence that these genes move together in these 6 samples",
+                "Genes with no STRING interaction partner among the expressed set are left unassigned to any module and should be reported as such, not discarded silently"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0140@3faf"
+                ],
+                "reason": "flagged by R-0140@3faf: cohort (n=6, 3 vs 3) is below the ~15-sample minimum for a reliable correlation-based co-expression network; the rule's prescribed remedy is to use a prior network (STRING PPI, offered explicitly in the rule text) in place of WGCNA",
+                "outcome": "too_few_samples_prior_network_or_stop"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Module-level treatment association from the DESeq2 signal",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which STRING-derived gene modules are enriched for the genes most associated with the treated-vs-control contrast?",
+              "description": "Join the DESeq2 Wald-test results (T1S3) onto the module assignments from T2S1 by gene symbol/ID. For each module with at least 5 genes, compute a module-level treatment-association statistic: mean |Wald statistic| (or mean shrunken log2FC magnitude) of module members compared to a null built by resampling same-sized random gene sets from the same background (the STRING-restricted expressed gene set), and report an empirical p-value per module. Also report, per module, the number and fraction of genes passing the DESeq2 adjusted-p-value threshold. Adjust module p-values for multiple testing across modules (BH). Rank modules by this treatment-association score.",
+              "acceptance_criteria": [
+                "Every module (size>=5) has a treatment-association statistic, an empirical p-value from resampling, and a BH-adjusted p-value across all tested modules",
+                "Number of resampling permutations and random seed are recorded for reproducibility",
+                "Output ranks modules from most to least treatment-associated, with module size and gene membership included"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "context": "This step plays the role that eigengene-trait correlation plays in a standard WGCNA report, but on the PPI-prior module structure defined in T2S1, since the underlying gene-gene correlations are not being computed on this 6-sample cohort.",
+              "constraints": [
+                "State the random seed used for the resampling null",
+                "BH-adjust p-values across the number of modules tested, not across all genes"
+              ],
+              "caveats": [
+                "This is an association between a module's known-interaction genes and this cohort's treatment signal, not a validated regulatory module; a module can rank highly by chance in a 6-sample study, so treat any single top module as a hypothesis for follow-up, not a proven finding"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [],
+                "reason": "No procedure rule covers module-trait association on a PPI-prior (non-WGCNA) module structure; devised from first principles as the closest analogue to the WGCNA eigengene-trait correlation step, using DESeq2 output already grounded in T1S3."
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Functional annotation of treatment-associated modules via WikiPathways enrichment",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological pathways characterize the genes driving the treatment signal, and do the top treatment-associated modules from T2S2 correspond to coherent, named pathways?",
+              "description": "Run fgsea (preranked gene set enrichment analysis) on the full DESeq2 Wald statistic ranking from T1S3, against WikiPathways human gene sets, to characterize the overall treatment signal. Separately, run an over-representation test (with the STRING-restricted expressed gene set as the explicit background/universe) on the gene membership of each of the top treatment-associated modules from T2S2, again against WikiPathways human sets, to describe what each top module represents biologically.",
+              "acceptance_criteria": [
+                "Preranked fgsea run on the full Wald-statistic ranking with WikiPathways human gene sets, BH-adjusted p-values reported",
+                "Per-module over-representation results reported for the modules ranked highest in T2S2, using the expressed-gene background as the universe, not the whole genome",
+                "Gene symbols matched to WikiPathways HGNC identifiers; unmatched genes reported as a count, not silently dropped"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S3",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "WikiPathways human gene sets (2026.07.10 snapshot, HGNC gene symbols, GMT format) are available in the reference store for Homo sapiens.",
+              "constraints": [
+                "Preranked GSEA metric = DESeq2 Wald statistic",
+                "Over-representation analysis must declare an explicit universe (the expressed/filtered gene set from T1S2), not the whole genome"
+              ],
+              "caveats": [
+                "If WikiPathways gene sets do not cover a top module's genes well, report the coverage rather than reporting an empty or misleadingly non-significant result"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [],
+                "reason": "Enrichment methods (fgsea preranked GSEA; over-representation with explicit universe) are the two methods the knowledge check confirmed as permitted for this situation"
+              }
+            },
+            {
+              "id": "T4S1",
+              "name": "Integrated report: modules, treatment association, and sample-size caveats",
+              "track": "T4",
+              "step_type": "report",
+              "question": "What is the final answer to which gene modules exist and which track the drug treatment, stated with the reliability the 3-vs-3 design actually supports?",
+              "description": "Assemble a report that states: the sample count (n=6, 3 vs 3) and why a correlation-based co-expression network was not built (R-0140); the STRING-derived module structure with sizes and the confidence threshold used; the DESeq2 treatment signal (numbers of genes up/down at adjusted p<0.05, acknowledging low power); the ranked module-level treatment-association results from T2S2 with their empirical and BH-adjusted p-values; the WikiPathways functional annotation of the overall signal and of the top modules; and a full reproducibility record (session info, package versions, random seeds used in the resampling null and in any stochastic community-detection step, and the STRING v12.0 / WikiPathways 2026.07.10 reference versions used).",
+              "acceptance_criteria": [
+                "Report explicitly states the sample size limitation and the PPI-prior substitution rationale before presenting any module results",
+                "Every module-treatment association is reported with both an empirical and a BH-adjusted p-value",
+                "Reproducibility record includes package versions, seeds, and reference dataset versions",
+                "Report distinguishes 'a module is a group of interacting genes' from 'a module is a proven co-regulated pathway in this cohort'"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S2",
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "network-agent",
+              "context": "Final synthesis step drawing on the QC, DE, module-detection, module-association, and enrichment outputs.",
+              "constraints": [],
+              "caveats": [
+                "Do not present the top-ranked module as a validated treatment-response module; it is a hypothesis generated from a small cohort with a network-prior substitution for the correlation analysis that could not be run reliably"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0151@c88b"
+                ],
+                "reason": "Reproducibility record and co-expression report content requirements per R-0086@becf and R-0151@c88b, adapted to the prior-network substitution actually used",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ]
+              }
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 62
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "coexpression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "coexpression"
+          ]
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "flag",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "coexpression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "coexpression"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "coexpression",
+            "method": {
+              "id": "M-0047"
+            },
+            "rules": [
+              "R-0140@3faf",
+              "R-0139@0008"
+            ],
+            "flags": [
+              {
+                "rule": "R-0140@3faf",
+                "severity": "flag",
+                "message": "If the cohort holds at most two groups of at most 7 samples, the total is below 15 samples, and a correlation across so few samples is unstable. Do not build a co-expression network from the expression alone on such a cohort, because the modules would reflect the noise of the correlations and not a shared regulation. State the sample count and the reason in the plan. Then either take a prior network, for example the STRING protein-protein associations of the reference store, as the structure and place the genes of interest on it, or stop and ask for a cohort of at least 15 to 20 samples.",
+                "outcome": "too_few_samples_prior_network_or_stop"
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf",
+              "R-0151@c88b"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0140@3faf"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0139@0008"
+          },
+          {
+            "id": "R-0151@c88b"
+          }
+        ],
+        "flags": [
+          {
+            "rule": "R-0140@3faf",
+            "severity": "flag",
+            "message": "If the cohort holds at most two groups of at most 7 samples, the total is below 15 samples, and a correlation across so few samples is unstable. Do not build a co-expression network from the expression alone on such a cohort, because the modules would reflect the noise of the correlations and not a shared regulation. State the sample count and the reason in the plan. Then either take a prior network, for example the STRING protein-protein associations of the reference store, as the structure and place the genes of interest on it, or stop and ask for a cohort of at least 15 to 20 samples.",
+            "outcome": "too_few_samples_prior_network_or_stop"
+          }
+        ],
+        "uncovered": []
+      },
+      "responseChars": 14210,
+      "elapsedMs": 9
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "coexpression"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network-guided module analysis using STRING PPI (network placement of DE genes, not de novo WGCNA correlation network) due to n=3 per group flag",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "string_score_cutoff",
+                "value": 700
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test treated vs control, used to define trait-correlated gene set for network placement",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "WikiPathways over-representation on module gene sets",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "module and treatment-tracking summary report",
+            "package": "none"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "coexpression",
+            "severity": "violation",
+            "rule": "R-0140@3faf",
+            "message": "WGCNA signed co-expression network with module eigengenes and module membership is forbidden in this situation.",
+            "permitted": [
+              "WGCNA signed co-expression network with module eigengenes and module membership"
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "severity": "violation",
+            "rule": "R-0098@d01b",
+            "message": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction is not a permitted method for enrichment in this situation.",
+            "permitted": [
+              "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark",
+              "Over-representation analysis with an explicit universe",
+              "camera competitive gene set test on the limma fit"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 878,
+      "elapsedMs": 7
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "coexpression"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 vst(blind) PCA and sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep genes with >=10 counts in >= smallest group size",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "DESeq2 median-of-ratios size factors",
+            "package": "DESeq2"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "DESeq2 Wald test treated vs control",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network-guided module analysis: place DE/expressed genes on the STRING PPI network at combined_score>=700, detect communities (e.g. Louvain), rather than a de novo WGCNA correlation network, because n=3 per group is below the 15-sample minimum for stable correlation-based modules",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "string_score_cutoff",
+                "value": 700
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "Over-representation analysis with an explicit universe on module gene sets using WikiPathways gene sets",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "module and treatment-tracking summary report",
+            "package": "none"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "coexpression",
+            "severity": "violation",
+            "rule": "R-0140@3faf",
+            "message": "WGCNA signed co-expression network with module eigengenes and module membership is forbidden in this situation.",
+            "permitted": [
+              "WGCNA signed co-expression network with module eigengenes and module membership"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 468,
+      "elapsedMs": 6
+    },
+    {
+      "seq": 4,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "full_plan",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "coexpression"
+          ]
+        },
+        "steps": [
+          {
+            "step_type": "coexpression",
+            "method": "STRING PPI network module placement (community detection on protein interaction network restricted to expressed genes) as a substitute for WGCNA correlation-based modules, because n=3 per group (6 total) is below the 15-sample minimum WGCNA requires for stable correlations",
+            "method_id": "M-0047",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "string_score_cutoff",
+                "value": 700
+              }
+            ],
+            "outcome": "too_few_samples_prior_network_or_stop"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "coexpression",
+            "severity": "violation",
+            "rule": "R-0140@3faf",
+            "message": "WGCNA signed co-expression network with module eigengenes and module membership is forbidden in this situation.",
+            "permitted": [
+              "WGCNA signed co-expression network with module eigengenes and module membership"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 468,
+      "elapsedMs": 3
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

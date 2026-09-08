@@ -1,0 +1,275 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "de-plus-tf-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:39:37.442Z",
+  "elapsedMs": 34364,
+  "outcome": "plan_submitted",
+  "planId": "pln-e419db33",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 differential expression: aldosterone vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The record does not confirm whether length/offset correction from Salmon was applied before delivery; if an offset matrix is not present, counts are used directly, which is standard when only gene-level counts (not txi) are provided",
+          "n=6 per group is modest power; borderline padj calls should be flagged as such, not overstated"
+        ],
+        "context": "Input: /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13, gene rows x 12 samples + gene id column) and /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2, sample + condition). Design is unpaired, 6 vs 6, single batch, raw Salmon gene-level counts (length-correction status unknown — treat as raw counts suitable for DESeq2's negative-binomial model, do not re-normalize by length).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm"
+        ],
+        "question": "Which genes are differentially expressed between aldosterone-treated (n=6) and vehicle-control (n=6) kidney samples in the raw Salmon gene-level count matrix (12000 genes x 12 samples)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 (not a Wald test on pre-normalized data) since counts are raw integers appropriate for its NB GLM",
+          "Set condition factor levels explicitly (control as reference) so fold-change direction is treated vs control",
+          "Do not filter genes on variance before DESeq2 — let its internal independent filtering handle low-count genes"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run on raw integer counts with design ~ condition using the metadata.csv condition column",
+          "Output table has log2FoldChange, p-value, and BH-adjusted p-value (padj) for all genes tested",
+          "Independent filtering / outlier handling left at DESeq2 defaults; results shrunk with lfcShrink (apeglm or normal) for reporting",
+          "A ranked gene list (by padj and by signed statistic) is saved, and the top 6 upregulated and top 6 downregulated significant genes (padj < 0.05, sorted by log2FoldChange) are explicitly reported",
+          "Counts and metadata sample IDs are checked to be in matching order before running DESeq2"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "TF activity inference from DE signature (CollecTRI, DoRothEA cross-check)",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "TF activity scores are inferred from bulk transcriptional signatures, not direct TF binding or phosphorylation state — interpret as 'regulon activity concordant with TF being active/repressed', not direct proof of TF activation",
+          "CollecTRI and DoRothEA are curated from different evidence bases and can disagree on individual TFs; discordance should be reported, not resolved by picking whichever supports a narrative"
+        ],
+        "context": "Uses the full DE results table (all tested genes with their signed test statistics/log2FC) from T1S1 as input signature. Reference networks: CollecTRI human regulon (CSV, source/target/weight columns, confirmed present) and DoRothEA human regulons (rda, tf/confidence/target/mor columns, confirmed present, filter to confidence A-C before use, rename to source/target/weight).",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "rpy2"
+        ],
+        "question": "Which transcription factors' regulons show significant activity change (inferred from the aldosterone-vs-vehicle DE gene signature) that explains the observed gene expression changes in kidney tissue?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not use a mouse or rat regulatory network — data is human (Homo sapiens, taxon 9606)",
+          "Require a minimum regulon size (e.g. >=5 targets present in the expression data) per TF before scoring, per decoupler defaults",
+          "If a reference network fails to load or is empty at run time, report that gap explicitly rather than silently dropping the cross-check"
+        ],
+        "acceptance_criteria": [
+          "TF activity inferred by running a univariate linear model (decoupler ulm, or equivalent) on the DE signature (signed statistic, e.g. Wald stat or -log10(p)*sign(log2FC)) from T1S1, using the CollecTRI human TF-target regulon as the primary network",
+          "DoRothEA human regulons (confidence levels A-C) used as a secondary network for cross-checking the top TF calls",
+          "Output is a ranked table of TFs by activity score (and associated p-value where the method provides one)",
+          "Top 6 TFs with the most positive (activated) and top 6 with the most negative (repressed) inferred activity are explicitly reported",
+          "Report notes which TFs are concordant between CollecTRI and DoRothEA results and flags any that are network-specific"
+        ]
+      }
+    ],
+    "title": "Aldosterone vs vehicle kidney DE + TF activity",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "Bulk RNA-seq (Salmon gene-level counts, 12000 genes x 12 samples, human kidney) compares 6 aldosterone-treated vs 6 vehicle-control samples, unpaired, single batch. Step 1 runs standard DESeq2 differential expression on raw counts with condition as the sole design factor, producing the ranked gene list with fold changes and adjusted p-values that answers 'which genes change'. Step 2 takes that DE result and infers transcription-factor activity using the CollecTRI human regulon (a literature-curated, signed TF-target network confirmed present in the reference store) via a univariate linear model (decoupler's ulm), the standard approach for converting a gene-level t-statistic/log2FC ranking into TF activity scores — this answers 'which transcription factors sit behind those changes'. DoRothEA human regulons (confidence A-C) serve as a fallback/cross-check network since both are available. No batch correction is needed (single batch, per profile). Six genes per group up/down and the top TFs by absolute activity score are reported as the final deliverable, consistent with the user's 'six per group' request."
+  },
+  "usage": {
+    "inputTokens": 287595,
+    "outputTokens": 2898,
+    "cacheCreationInputTokens": 85120,
+    "cacheReadInputTokens": 202403,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_017FNrUFg41GrqD8GfFzumeZ",
+      "name": "list_available_refs",
+      "input": {
+        "query": "TF target regulon human"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01JBPMGPYsJSN2DxMEtBfLui",
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01KytPf6Qqwjzc2EUJT8yJWA",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01UEXm1wUdrAWDihiAWCvju2",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01H74xY592oAYPs8Dp6aq6AS",
+      "name": "list_available_refs",
+      "input": {
+        "query": "collectri"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01FyQ7BJmDSth8GAeuSyQKMG",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_019iWS2caAFpfCNSomL3pR6R",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "pydeseq2",
+          "tximport",
+          "DESeq2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01EKBbm6jA6a5LbkckaT5m1B",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_0166YcifYByKecMrt8B9pJJV",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Aldosterone vs vehicle kidney DE + TF activity",
+          "analytical_narrative": "Bulk RNA-seq (Salmon gene-level counts, 12000 genes x 12 samples, human kidney) compares 6 aldosterone-treated vs 6 vehicle-control samples, unpaired, single batch. Step 1 runs standard DESeq2 differential expression on raw counts with condition as the sole design factor, producing the ranked gene list with fold changes and adjusted p-values that answers 'which genes change'. Step 2 takes that DE result and infers transcription-factor activity using the CollecTRI human regulon (a literature-curated, signed TF-target network confirmed present in the reference store) via a univariate linear model (decoupler's ulm), the standard approach for converting a gene-level t-statistic/log2FC ranking into TF activity scores — this answers 'which transcription factors sit behind those changes'. DoRothEA human regulons (confidence A-C) serve as a fallback/cross-check network since both are available. No batch correction is needed (single batch, per profile). Six genes per group up/down and the top TFs by absolute activity score are reported as the final deliverable, consistent with the user's 'six per group' request.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 differential expression: aldosterone vs vehicle",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between aldosterone-treated (n=6) and vehicle-control (n=6) kidney samples in the raw Salmon gene-level count matrix (12000 genes x 12 samples)?",
+              "acceptance_criteria": [
+                "DESeq2 run on raw integer counts with design ~ condition using the metadata.csv condition column",
+                "Output table has log2FoldChange, p-value, and BH-adjusted p-value (padj) for all genes tested",
+                "Independent filtering / outlier handling left at DESeq2 defaults; results shrunk with lfcShrink (apeglm or normal) for reporting",
+                "A ranked gene list (by padj and by signed statistic) is saved, and the top 6 upregulated and top 6 downregulated significant genes (padj < 0.05, sorted by log2FoldChange) are explicitly reported",
+                "Counts and metadata sample IDs are checked to be in matching order before running DESeq2"
+              ],
+              "context": "Input: /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/counts/counts.csv (12000 x 13, gene rows x 12 samples + gene id column) and /eval-four-models-v2-without-de-plus-tf-activity-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2, sample + condition). Design is unpaired, 6 vs 6, single batch, raw Salmon gene-level counts (length-correction status unknown — treat as raw counts suitable for DESeq2's negative-binomial model, do not re-normalize by length).",
+              "constraints": [
+                "Use DESeq2 (not a Wald test on pre-normalized data) since counts are raw integers appropriate for its NB GLM",
+                "Set condition factor levels explicitly (control as reference) so fold-change direction is treated vs control",
+                "Do not filter genes on variance before DESeq2 — let its internal independent filtering handle low-count genes"
+              ],
+              "caveats": [
+                "The record does not confirm whether length/offset correction from Salmon was applied before delivery; if an offset matrix is not present, counts are used directly, which is standard when only gene-level counts (not txi) are provided",
+                "n=6 per group is modest power; borderline padj calls should be flagged as such, not overstated"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "TF activity inference from DE signature (CollecTRI, DoRothEA cross-check)",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which transcription factors' regulons show significant activity change (inferred from the aldosterone-vs-vehicle DE gene signature) that explains the observed gene expression changes in kidney tissue?",
+              "acceptance_criteria": [
+                "TF activity inferred by running a univariate linear model (decoupler ulm, or equivalent) on the DE signature (signed statistic, e.g. Wald stat or -log10(p)*sign(log2FC)) from T1S1, using the CollecTRI human TF-target regulon as the primary network",
+                "DoRothEA human regulons (confidence levels A-C) used as a secondary network for cross-checking the top TF calls",
+                "Output is a ranked table of TFs by activity score (and associated p-value where the method provides one)",
+                "Top 6 TFs with the most positive (activated) and top 6 with the most negative (repressed) inferred activity are explicitly reported",
+                "Report notes which TFs are concordant between CollecTRI and DoRothEA results and flags any that are network-specific"
+              ],
+              "context": "Uses the full DE results table (all tested genes with their signed test statistics/log2FC) from T1S1 as input signature. Reference networks: CollecTRI human regulon (CSV, source/target/weight columns, confirmed present) and DoRothEA human regulons (rda, tf/confidence/target/mor columns, confirmed present, filter to confidence A-C before use, rename to source/target/weight).",
+              "constraints": [
+                "Do not use a mouse or rat regulatory network — data is human (Homo sapiens, taxon 9606)",
+                "Require a minimum regulon size (e.g. >=5 targets present in the expression data) per TF before scoring, per decoupler defaults",
+                "If a reference network fails to load or is empty at run time, report that gap explicitly rather than silently dropping the cross-check"
+              ],
+              "caveats": [
+                "TF activity scores are inferred from bulk transcriptional signatures, not direct TF binding or phosphorylation state — interpret as 'regulon activity concordant with TF being active/repressed', not direct proof of TF activation",
+                "CollecTRI and DoRothEA are curated from different evidence bases and can disagree on individual TFs; discordance should be reported, not resolved by picking whichever supports a narrative"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

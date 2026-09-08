@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: DESeq2 Wald on raw counts with median-of-ratios inside the model, a minimal 10-counts-in-3-samples pre-filter plus independent filtering, explicit ~condition design with control as reference and a treated-vs-control contrast, BH at 0.05 with apeglm shrinkage, and an explicit low-power statement at n=3 that keeps alpha unchanged. The edgeR QL replication and leave-one-out stability are optional but correctly framed (intersection, not union, as high-confidence). QC covers blind-vst PCA, sample distances, and library sizes colored by condition, but states only that an outlier verdict will be written without a policy for what happens to an outlier or shallow sample. The report step names methods, versions, design, thresholds, tested/DE counts, and design caveats, and enrichment is correctly omitted."
+}

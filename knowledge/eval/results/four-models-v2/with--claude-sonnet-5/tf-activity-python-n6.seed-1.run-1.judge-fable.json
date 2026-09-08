@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference core: PyDESeq2 Wald test on raw counts with median-of-ratios normalization, explicit vehicle reference and contrast, BH at 0.05 with shrinkage kept separate from the Wald statistic that feeds decoupler ulm on the locally staged, signed CollecTRI network with tmin=5, and it reports regulator counts, versions, and the inference caveat. It omits the per-sample activity matrix (ulm on VST/logCPM with a per-regulator test and heatmap) that the reference uses to show replicate consistency, and does not state that BH is applied across regulators. QC is diagnostic and well specified with an outlier policy; the filter is reasonable and justified though slightly stricter than minimal; the design formula is implied rather than written. Pathway GSEA is correctly specified (full ranked list, stat metric, named versioned collections, size window) but is an unrequested addition to a regulator-activity question, and the lengthy ARACNe/VIPER digression adds no value."
+}

@@ -1,0 +1,546 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "coexpression-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:44:27.465Z",
+  "elapsedMs": 108045,
+  "outcome": "plan_submitted",
+  "planId": "pln-1222ceed",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Filter and variance-stabilise counts for network input",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon gene-level counts may be non-integer; rounding must be recorded, not assumed.",
+          "Whole-blood expression is strongly influenced by globin and leukocyte-composition variation — note whether globin genes (HBB, HBA1/2) are among the highest-expressed features, as they can dominate the correlation structure.",
+          "The metadata carries only condition; no age, sex, or cell-count covariates exist, so residual confounding cannot be adjusted for."
+        ],
+        "context": "Bulk RNA-seq, Homo sapiens, whole blood, raw gene-level Salmon counts, 60 cases vs 60 controls, unpaired, single batch. WGCNA requires a homoscedastic, roughly normal-scale matrix; correlations computed on raw counts or CPM are dominated by the count mean-variance relationship and produce spurious modules of high-expression genes. blind=TRUE avoids leaking the case/control contrast into the transform used for unsupervised module discovery.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "SummarizedExperiment",
+          "matrixStats",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "After low-expression filtering and variance stabilisation, which genes and which of the 120 whole-blood samples are suitable input for co-expression network construction, and are there sample outliers among the 60 cases and 60 controls?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Use the two staged input CSVs verbatim; do not download anything.",
+          "Use DESeq2::vst with blind=TRUE for the network matrix; report the fitType actually used.",
+          "Apply low-expression filtering BEFORE the transform and report the surviving gene count out of 12,000.",
+          "Save the VST matrix as samples x genes (rows = 120 samples) for direct WGCNA use, and record the exact sample ordering used.",
+          "Report the number of samples per condition after any outlier removal; if any sample is removed, name it and give the numeric justification.",
+          "Do not perform batch correction — the design is a single batch and no batch variable exists in the metadata."
+        ],
+        "description": "Read /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 121 columns: gene identifier column plus 120 sample columns) and /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns, one row per sample with a condition column). Verify sample identifiers match one-to-one between the two files and reorder to a common order; report any mismatch rather than silently subsetting. Confirm the counts are integer-like and round if the Salmon-derived values are fractional (the data record does not state whether length correction was applied, so document what was found). Build a DESeq2 dataset with design ~condition, drop genes with low expression (e.g. count >= 10 in at least the smaller group size, ~60 samples worth of support; report how many of the 12,000 genes survive), and produce a variance-stabilising transform (vst, blind=TRUE for the unsupervised network input). Persist the VST matrix in samples x genes orientation for WGCNA plus a genes x samples copy. Screen for sample outliers with a sample dendrogram on Euclidean distance of the VST matrix and with PCA; report PC1/PC2 coordinates coloured by condition and any samples that are extreme (state the cut used). Do not drop samples automatically unless a sample is a clear dendrogram outlier — report the decision explicitly and record the final sample count and case/control split.",
+        "acceptance_criteria": [
+          "Sample identifiers in counts.csv and metadata.csv are reconciled and the number matched is reported (expected 120).",
+          "A VST-transformed expression matrix is written to disk in samples x genes orientation with the surviving gene count reported.",
+          "A sample clustering dendrogram and a PCA plot coloured by condition are produced, and any outlier calls are stated with the threshold used.",
+          "Final per-condition sample counts are reported."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "WGCNA signed network and module detection",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If scale-free fit never reaches 0.85, the network topology assumption is weak and modules should be reported as descriptive clusters — say so rather than forcing a power.",
+          "A very large grey module (>50% of genes) indicates weak co-expression structure and must be reported as such.",
+          "With only 12,000 genes retained, modules may be coarser than in a full-transcriptome network."
+        ],
+        "context": "12,000 genes x 120 samples is small enough for a single-block WGCNA run (no blockwise splitting needed at ~12k features). Signed networks are preferred over unsigned for interpretability because they separate positively and negatively correlated gene groups. n=120 is workable but on the low side for WGCNA, so module stability must be measured rather than assumed. The grey module is the 'unassigned' bin and must never be interpreted as a biological module.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "fastcluster",
+          "impute",
+          "preprocessCore",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What co-expression modules do the ~12,000 filtered genes form across the 120 whole-blood samples, and how many genes does each module contain?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the WGCNA R package on the T1S1 VST samples x genes matrix; do not recompute the transform.",
+          "networkType = 'signed' and corType = 'bicor' with maxPOutliers = 0.05; state the values used.",
+          "minModuleSize = 30, deepSplit = 2, mergeCutHeight = 0.25 — report both pre- and post-merge module counts.",
+          "Report the pickSoftThreshold table and justify the chosen power against scale-free R^2 >= 0.85 and mean connectivity.",
+          "Run as a single block (maxBlockSize >= number of filtered genes) so module assignment is not fragmented by blocking.",
+          "Exclude the grey module from all downstream biological interpretation and say how many genes fell into grey.",
+          "Set and report a random seed."
+        ],
+        "description": "Construct a weighted gene co-expression network on the VST samples x genes matrix from T1S1 using WGCNA. Run pickSoftThreshold over powers 1-30 and select the lowest power reaching scale-free topology fit R^2 >= 0.85 (report the full table and the chosen power; if no power reaches 0.85, fall back to the WGCNA default for a signed network at n=120, which is 12, and say so explicitly). Use a signed (or signed hybrid) network with biweight midcorrelation (maxPOutliers = 0.05) to limit outlier-driven correlations. Compute the topological overlap matrix, cluster genes with average-linkage hierarchical clustering on 1-TOM, and cut with cutreeDynamic (hybrid, deepSplit = 2, minModuleSize = 30). Merge modules whose eigengenes correlate above 0.75 (mergeCloseModules, cutHeight = 0.25) and report pre-merge and post-merge module counts. Emit: the module assignment per gene, the module eigengene matrix (120 samples x modules), module sizes including the unassigned grey module, the dendrogram with module colour bands, and an eigengene correlation heatmap/dendrogram. Assess module robustness by re-running module detection on 20 bootstrap resamples of the samples (or with WGCNA sampledBlockwiseModules if convenient) and reporting, per module, the median cross-tabulation-based preservation of gene membership; flag modules that are not reproducible.",
+        "acceptance_criteria": [
+          "A soft-threshold power is chosen with the scale-free fit table reported.",
+          "A per-gene module assignment table and a module eigengene matrix (samples x modules) are written to disk.",
+          "Module count and per-module gene counts, including grey, are reported.",
+          "Gene dendrogram with module colours and an eigengene relationship plot are produced.",
+          "A bootstrap/resampling stability summary is reported per module with unstable modules flagged."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Module eigengene association with case/control status",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Eigengene-status correlation is not evidence of causality or of cell-intrinsic regulation.",
+          "Whole-blood modules commonly correspond to blood cell types; without cell-count covariates this cannot be disentangled.",
+          "With 120 samples, modest module-trait correlations (|r| < 0.25) will not survive multiple testing — do not over-read borderline modules."
+        ],
+        "context": "This step is the direct answer to the second half of the research question. The design is unpaired and balanced (60 vs 60), so an unpaired two-group test on the eigengene is correct; no repeated measures or pairing exists. There are no covariates in the metadata beyond condition, so the model cannot be adjusted.",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "stats",
+          "ggplot2",
+          "pheatmap",
+          "data.table",
+          "rstatix"
+        ],
+        "question": "Which of the detected co-expression modules have eigengenes that differ significantly between the 60 cases and 60 controls, and which genes are the hubs of those modules?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use the eigengene matrix and module assignments produced by T1S2 — do not re-run module detection.",
+          "Test unpaired two-group contrasts only; the design has no pairing.",
+          "Report both raw and BH-adjusted p-values across all non-grey modules, and use FDR < 0.05 for the significance call.",
+          "Report effect sizes with confidence intervals, not p-values alone.",
+          "Exclude the grey module from the trait-association testing and from hub-gene extraction.",
+          "State explicitly that association is correlational and that cell-composition shifts are an unexcluded explanation in whole blood."
+        ],
+        "description": "Test each module eigengene from T1S2 against the binary condition variable from metadata.csv (60 cases vs 60 controls, unpaired). For each module compute (a) the point-biserial correlation between the eigengene and condition with its p-value, (b) a two-sided Wilcoxon rank-sum test on eigengene values between groups as a distribution-free confirmation, and (c) a standardised effect size (Cohen's d or rank-biserial r) with a 95% confidence interval. Correct p-values across modules with Benjamini-Hochberg and report both raw and adjusted values; call a module status-associated at FDR < 0.05. Produce a module-trait heatmap (modules x condition) annotated with correlation and adjusted p-value, and eigengene boxplots per module split by condition. For every status-associated module, compute per-gene module membership (kME, correlation of the gene with its module eigengene) and gene significance (absolute correlation of the gene with condition), plot MM vs GS, and rank hub genes by kME; export the top 25 hub genes per significant module with their kME, GS, and module assignment. Also report intramodular connectivity (kWithin) for those genes. Explicitly state that eigengene-status association in whole blood may reflect a shift in leukocyte composition rather than cell-intrinsic regulation, and check whether hub genes of significant modules are recognisable lineage markers (e.g. neutrophil, T cell, monocyte, platelet, erythroid) as a qualitative composition sanity check.",
+        "acceptance_criteria": [
+          "A module-trait association table with correlation, raw p, BH-adjusted p, and effect size for every non-grey module is produced.",
+          "A module-trait heatmap and per-module eigengene boxplots split by condition are produced.",
+          "For each FDR<0.05 module, a ranked hub-gene table (top 25 by kME, with GS and kWithin) is exported.",
+          "MM-vs-GS scatterplots are produced for each status-associated module.",
+          "If no module reaches FDR<0.05, that null result is reported plainly with the smallest adjusted p-value observed."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Gene-level differential expression, case vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "60 vs 60 gives good power for moderate effects but whole-blood biological variability is high; a small DE count is a real possible outcome, not a pipeline failure.",
+          "No covariates can be adjusted for, so any age/sex/composition imbalance between the case and control groups will inflate apparent DE."
+        ],
+        "context": "Gene-level DE provides the reference against which module-level findings are judged: a module that tracks status should be enriched for genes with individually significant or consistently directional changes. Running it on the same filtered gene set as the network keeps the two comparable.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "ggplot2",
+          "EnhancedVolcano",
+          "data.table"
+        ],
+        "question": "Which individual genes are differentially expressed between the 60 cases and 60 controls, and how does the gene-level signal compare with the module-level signal?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use raw (unnormalised) counts with DESeq2's internal size-factor normalisation — not the VST matrix.",
+          "Use the same gene filter as T1S1 so the DE gene universe matches the network gene universe.",
+          "Design is ~condition only; no other covariates exist in the metadata.",
+          "State the reference level explicitly so the direction of log2FoldChange is unambiguous.",
+          "Report the p-value histogram as a null-behaviour diagnostic, not just the significant-gene count."
+        ],
+        "description": "Run DESeq2 on the filtered raw count matrix from T1S1 with design ~condition, contrasting case versus control as specified in metadata.csv (use the control level as the reference and state which label was used as reference). Apply apeglm or ashr LFC shrinkage for effect-size ranking, and report the full results table with baseMean, log2FoldChange, shrunken LFC, lfcSE, p-value and BH-adjusted p-value. Report the number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 0.5. Produce an MA plot, a volcano plot, and a p-value histogram (the histogram is the diagnostic for whether the null behaves — a non-uniform or spiked histogram indicates unmodelled structure and must be reported). Export a condition-ranked gene statistic vector (e.g. the Wald statistic or -log10(p) signed by LFC) for downstream gene-set testing. This step is deliberately independent of the WGCNA track so the two views can be compared without circularity.",
+        "acceptance_criteria": [
+          "A full DESeq2 results table with shrunken LFCs is exported for the filtered gene set.",
+          "Counts of genes at padj<0.05 and at padj<0.05 with |log2FC|>0.5 are reported.",
+          "MA plot, volcano plot, and p-value histogram are produced.",
+          "A signed ranked gene statistic vector is exported for downstream enrichment."
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Functional annotation of status-associated modules",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "Over-representation on a co-expression module is sensitive to module size — very large modules will hit broad terms trivially, very small ones may hit nothing.",
+          "Enrichment of a blood module in a lineage-specific programme is compatible with a pure cell-composition shift and should not be reported as evidence of transcriptional regulation.",
+          "If T1S3 found no status-associated module, annotate the largest and most stable modules instead and report the analysis as descriptive."
+        ],
+        "context": "Modules are only interpretable once labelled. Whole-blood modules frequently map to interferon response, neutrophil degranulation, T/NK cytotoxicity, platelet activation, or erythroid/heme metabolism — which set a module lands in is the main clue to whether it reflects an activated programme or a composition shift. Human hallmark and GO BP symbol GMTs and a human UniProt identifier mapping table are present in the reference store; WikiPathways human is present too.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "GSEABase",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What biological processes and pathways characterise the co-expression modules that track case versus control status in whole blood?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T2S1"
+        ],
+        "constraints": [
+          "Use the filtered gene set from T1S1 as the enrichment background universe, never the full genome default.",
+          "Use human gene sets only — the data are Homo sapiens whole blood; do not use the mouse or rat collections that are also present.",
+          "Report BH-adjusted p-values and the overlapping genes for every reported set.",
+          "Collapse redundant GO parent/child hits before reporting a headline enriched-set count.",
+          "Test the grey module only as a negative control, if at all, and label it as such.",
+          "If the gene identifiers are not symbols, report the identifier type and the mapping rate before enrichment; if fewer than 70% of genes map, report the enrichment as unreliable.",
+          "If any gene-set collection is absent at run time, report which one was missing and proceed with the remaining collections rather than failing."
+        ],
+        "description": "For each module from T1S2 — with priority on those called status-associated at FDR<0.05 in T1S3 — run over-representation analysis of the module's gene symbols against the gene universe of all genes retained after T1S1 filtering (not the whole genome). Test against human hallmark gene sets and human GO biological process gene sets, both of which are provisioned as symbol-based GMT collections for Homo sapiens in this environment; also test against the human curated pathway collection (WikiPathways human) if it resolves. Apply BH correction within each collection and report gene sets at adjusted p < 0.05 with their overlap gene counts and the overlapping genes. Because GO is a nested hierarchy, collapse redundant parent/child hits (semantic-similarity reduction or simple overlap-based collapsing) before reporting a headline count. Separately, run a rank-based gene-set test (fgsea) on the signed ranked gene statistic from T2S1 against the same hallmark collection, so the module-level over-representation result can be compared against the gene-level ranked result. Produce a compact table per status-associated module giving its size, its eigengene-status effect from T1S3, its top hub genes from T1S3, and its top enriched sets — this is the interpretive summary of the analysis. Confirm the counts.csv identifiers are HGNC symbols before testing; if they are Ensembl or Entrez identifiers, map them using the provisioned human identifier mapping resource and report the mapping rate and how many genes were lost.",
+        "acceptance_criteria": [
+          "Enrichment results with BH-adjusted p-values are produced for every status-associated module against hallmark and GO BP.",
+          "Gene identifier type and, where mapping was needed, the mapping rate are reported.",
+          "A redundancy-collapsed summary of enriched terms per module is produced.",
+          "An fgsea result on the T2S1 ranked statistic against hallmark is produced for comparison with the module-level result.",
+          "A single integrated table per status-associated module (size, eigengene effect, hub genes, top enriched sets) is exported."
+        ]
+      }
+    ],
+    "title": "Blood WGCNA modules vs case/control status",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is co-expression module discovery on a 12,000-gene x 120-sample bulk RNA-seq whole-blood count matrix (counts.csv, Salmon gene-level counts as delivered) with a 120 x 2 metadata table giving an unpaired 60-case / 60-control design in a single batch. Module detection is a correlation-structure problem, so the pipeline is: (T1S1) build a variance-stabilised, outlier-screened expression matrix from raw counts — VST is required because WGCNA correlations on raw or CPM counts are dominated by the mean-variance trend; (T1S2) fit a signed WGCNA network on the resulting samples x genes matrix, choosing soft-thresholding power by scale-free topology fit and cutting the TOM dendrogram into modules with eigengene merging; (T1S3) relate module eigengenes to case/control status with the correct test for an unpaired two-group design (point-biserial correlation / Wilcoxon, BH-corrected across modules) plus per-gene module membership and gene significance, which is the direct answer to 'which modules track status'; (T2S1) run a conventional gene-level differential expression on the same design so that module-level signal can be checked against gene-level signal and hub genes of significant modules can be cross-referenced; (T3S1) functionally annotate the status-associated modules against human hallmark and GO gene sets so each module gets a biological label rather than a colour. The single batch and balanced design mean no batch covariate is available or needed; the metadata carries only condition, so no other covariates can be modelled and residual confounding (age, sex, cell composition) cannot be excluded — whole blood module structure is strongly driven by leukocyte composition, and that caveat is stated in the interpretation steps rather than silently ignored. 120 samples is a modest but workable n for WGCNA (above the ~15-20 minimum, below the ~200 where module stability is comfortable), so module stability must be assessed by permutation/resampling preservation rather than assumed."
+  },
+  "usage": {
+    "inputTokens": 93094,
+    "outputTokens": 7524,
+    "cacheCreationInputTokens": 74108,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01CGkeMR6hJk9vHwuzzxFZYU",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "pyWGCNA",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "hdWGCNA",
+          "dynamicTreeCut",
+          "fastcluster",
+          "impute",
+          "preprocessCore",
+          "clusterProfiler",
+          "fgsea",
+          "decoupleR"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01S6yf3DGxDimnr9kd9C6fsX",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 19
+    },
+    {
+      "toolUseId": "toolu_01SpMWenBVUJdRUTqYHkbHFc",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Blood WGCNA modules vs case/control status",
+          "analytical_narrative": "The question is co-expression module discovery on a 12,000-gene x 120-sample bulk RNA-seq whole-blood count matrix (counts.csv, Salmon gene-level counts as delivered) with a 120 x 2 metadata table giving an unpaired 60-case / 60-control design in a single batch. Module detection is a correlation-structure problem, so the pipeline is: (T1S1) build a variance-stabilised, outlier-screened expression matrix from raw counts — VST is required because WGCNA correlations on raw or CPM counts are dominated by the mean-variance trend; (T1S2) fit a signed WGCNA network on the resulting samples x genes matrix, choosing soft-thresholding power by scale-free topology fit and cutting the TOM dendrogram into modules with eigengene merging; (T1S3) relate module eigengenes to case/control status with the correct test for an unpaired two-group design (point-biserial correlation / Wilcoxon, BH-corrected across modules) plus per-gene module membership and gene significance, which is the direct answer to 'which modules track status'; (T2S1) run a conventional gene-level differential expression on the same design so that module-level signal can be checked against gene-level signal and hub genes of significant modules can be cross-referenced; (T3S1) functionally annotate the status-associated modules against human hallmark and GO gene sets so each module gets a biological label rather than a colour. The single batch and balanced design mean no batch covariate is available or needed; the metadata carries only condition, so no other covariates can be modelled and residual confounding (age, sex, cell composition) cannot be excluded — whole blood module structure is strongly driven by leukocyte composition, and that caveat is stated in the interpretation steps rather than silently ignored. 120 samples is a modest but workable n for WGCNA (above the ~15-20 minimum, below the ~200 where module stability is comfortable), so module stability must be assessed by permutation/resampling preservation rather than assumed.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Filter and variance-stabilise counts for network input",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After low-expression filtering and variance stabilisation, which genes and which of the 120 whole-blood samples are suitable input for co-expression network construction, and are there sample outliers among the 60 cases and 60 controls?",
+              "description": "Read /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/counts/counts.csv (12,000 genes x 121 columns: gene identifier column plus 120 sample columns) and /eval-four-models-v2-without-coexpression-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns, one row per sample with a condition column). Verify sample identifiers match one-to-one between the two files and reorder to a common order; report any mismatch rather than silently subsetting. Confirm the counts are integer-like and round if the Salmon-derived values are fractional (the data record does not state whether length correction was applied, so document what was found). Build a DESeq2 dataset with design ~condition, drop genes with low expression (e.g. count >= 10 in at least the smaller group size, ~60 samples worth of support; report how many of the 12,000 genes survive), and produce a variance-stabilising transform (vst, blind=TRUE for the unsupervised network input). Persist the VST matrix in samples x genes orientation for WGCNA plus a genes x samples copy. Screen for sample outliers with a sample dendrogram on Euclidean distance of the VST matrix and with PCA; report PC1/PC2 coordinates coloured by condition and any samples that are extreme (state the cut used). Do not drop samples automatically unless a sample is a clear dendrogram outlier — report the decision explicitly and record the final sample count and case/control split.",
+              "context": "Bulk RNA-seq, Homo sapiens, whole blood, raw gene-level Salmon counts, 60 cases vs 60 controls, unpaired, single batch. WGCNA requires a homoscedastic, roughly normal-scale matrix; correlations computed on raw counts or CPM are dominated by the count mean-variance relationship and produce spurious modules of high-expression genes. blind=TRUE avoids leaking the case/control contrast into the transform used for unsupervised module discovery.",
+              "constraints": [
+                "Use the two staged input CSVs verbatim; do not download anything.",
+                "Use DESeq2::vst with blind=TRUE for the network matrix; report the fitType actually used.",
+                "Apply low-expression filtering BEFORE the transform and report the surviving gene count out of 12,000.",
+                "Save the VST matrix as samples x genes (rows = 120 samples) for direct WGCNA use, and record the exact sample ordering used.",
+                "Report the number of samples per condition after any outlier removal; if any sample is removed, name it and give the numeric justification.",
+                "Do not perform batch correction — the design is a single batch and no batch variable exists in the metadata."
+              ],
+              "acceptance_criteria": [
+                "Sample identifiers in counts.csv and metadata.csv are reconciled and the number matched is reported (expected 120).",
+                "A VST-transformed expression matrix is written to disk in samples x genes orientation with the surviving gene count reported.",
+                "A sample clustering dendrogram and a PCA plot coloured by condition are produced, and any outlier calls are stated with the threshold used.",
+                "Final per-condition sample counts are reported."
+              ],
+              "caveats": [
+                "Salmon gene-level counts may be non-integer; rounding must be recorded, not assumed.",
+                "Whole-blood expression is strongly influenced by globin and leukocyte-composition variation — note whether globin genes (HBB, HBA1/2) are among the highest-expressed features, as they can dominate the correlation structure.",
+                "The metadata carries only condition; no age, sex, or cell-count covariates exist, so residual confounding cannot be adjusted for."
+              ],
+              "packages": [
+                "DESeq2",
+                "SummarizedExperiment",
+                "matrixStats",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "WGCNA signed network and module detection",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What co-expression modules do the ~12,000 filtered genes form across the 120 whole-blood samples, and how many genes does each module contain?",
+              "description": "Construct a weighted gene co-expression network on the VST samples x genes matrix from T1S1 using WGCNA. Run pickSoftThreshold over powers 1-30 and select the lowest power reaching scale-free topology fit R^2 >= 0.85 (report the full table and the chosen power; if no power reaches 0.85, fall back to the WGCNA default for a signed network at n=120, which is 12, and say so explicitly). Use a signed (or signed hybrid) network with biweight midcorrelation (maxPOutliers = 0.05) to limit outlier-driven correlations. Compute the topological overlap matrix, cluster genes with average-linkage hierarchical clustering on 1-TOM, and cut with cutreeDynamic (hybrid, deepSplit = 2, minModuleSize = 30). Merge modules whose eigengenes correlate above 0.75 (mergeCloseModules, cutHeight = 0.25) and report pre-merge and post-merge module counts. Emit: the module assignment per gene, the module eigengene matrix (120 samples x modules), module sizes including the unassigned grey module, the dendrogram with module colour bands, and an eigengene correlation heatmap/dendrogram. Assess module robustness by re-running module detection on 20 bootstrap resamples of the samples (or with WGCNA sampledBlockwiseModules if convenient) and reporting, per module, the median cross-tabulation-based preservation of gene membership; flag modules that are not reproducible.",
+              "context": "12,000 genes x 120 samples is small enough for a single-block WGCNA run (no blockwise splitting needed at ~12k features). Signed networks are preferred over unsigned for interpretability because they separate positively and negatively correlated gene groups. n=120 is workable but on the low side for WGCNA, so module stability must be measured rather than assumed. The grey module is the 'unassigned' bin and must never be interpreted as a biological module.",
+              "constraints": [
+                "Use the WGCNA R package on the T1S1 VST samples x genes matrix; do not recompute the transform.",
+                "networkType = 'signed' and corType = 'bicor' with maxPOutliers = 0.05; state the values used.",
+                "minModuleSize = 30, deepSplit = 2, mergeCutHeight = 0.25 — report both pre- and post-merge module counts.",
+                "Report the pickSoftThreshold table and justify the chosen power against scale-free R^2 >= 0.85 and mean connectivity.",
+                "Run as a single block (maxBlockSize >= number of filtered genes) so module assignment is not fragmented by blocking.",
+                "Exclude the grey module from all downstream biological interpretation and say how many genes fell into grey.",
+                "Set and report a random seed."
+              ],
+              "acceptance_criteria": [
+                "A soft-threshold power is chosen with the scale-free fit table reported.",
+                "A per-gene module assignment table and a module eigengene matrix (samples x modules) are written to disk.",
+                "Module count and per-module gene counts, including grey, are reported.",
+                "Gene dendrogram with module colours and an eigengene relationship plot are produced.",
+                "A bootstrap/resampling stability summary is reported per module with unstable modules flagged."
+              ],
+              "caveats": [
+                "If scale-free fit never reaches 0.85, the network topology assumption is weak and modules should be reported as descriptive clusters — say so rather than forcing a power.",
+                "A very large grey module (>50% of genes) indicates weak co-expression structure and must be reported as such.",
+                "With only 12,000 genes retained, modules may be coarser than in a full-transcriptome network."
+              ],
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "fastcluster",
+                "impute",
+                "preprocessCore",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Module eigengene association with case/control status",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the detected co-expression modules have eigengenes that differ significantly between the 60 cases and 60 controls, and which genes are the hubs of those modules?",
+              "description": "Test each module eigengene from T1S2 against the binary condition variable from metadata.csv (60 cases vs 60 controls, unpaired). For each module compute (a) the point-biserial correlation between the eigengene and condition with its p-value, (b) a two-sided Wilcoxon rank-sum test on eigengene values between groups as a distribution-free confirmation, and (c) a standardised effect size (Cohen's d or rank-biserial r) with a 95% confidence interval. Correct p-values across modules with Benjamini-Hochberg and report both raw and adjusted values; call a module status-associated at FDR < 0.05. Produce a module-trait heatmap (modules x condition) annotated with correlation and adjusted p-value, and eigengene boxplots per module split by condition. For every status-associated module, compute per-gene module membership (kME, correlation of the gene with its module eigengene) and gene significance (absolute correlation of the gene with condition), plot MM vs GS, and rank hub genes by kME; export the top 25 hub genes per significant module with their kME, GS, and module assignment. Also report intramodular connectivity (kWithin) for those genes. Explicitly state that eigengene-status association in whole blood may reflect a shift in leukocyte composition rather than cell-intrinsic regulation, and check whether hub genes of significant modules are recognisable lineage markers (e.g. neutrophil, T cell, monocyte, platelet, erythroid) as a qualitative composition sanity check.",
+              "context": "This step is the direct answer to the second half of the research question. The design is unpaired and balanced (60 vs 60), so an unpaired two-group test on the eigengene is correct; no repeated measures or pairing exists. There are no covariates in the metadata beyond condition, so the model cannot be adjusted.",
+              "constraints": [
+                "Use the eigengene matrix and module assignments produced by T1S2 — do not re-run module detection.",
+                "Test unpaired two-group contrasts only; the design has no pairing.",
+                "Report both raw and BH-adjusted p-values across all non-grey modules, and use FDR < 0.05 for the significance call.",
+                "Report effect sizes with confidence intervals, not p-values alone.",
+                "Exclude the grey module from the trait-association testing and from hub-gene extraction.",
+                "State explicitly that association is correlational and that cell-composition shifts are an unexcluded explanation in whole blood."
+              ],
+              "acceptance_criteria": [
+                "A module-trait association table with correlation, raw p, BH-adjusted p, and effect size for every non-grey module is produced.",
+                "A module-trait heatmap and per-module eigengene boxplots split by condition are produced.",
+                "For each FDR<0.05 module, a ranked hub-gene table (top 25 by kME, with GS and kWithin) is exported.",
+                "MM-vs-GS scatterplots are produced for each status-associated module.",
+                "If no module reaches FDR<0.05, that null result is reported plainly with the smallest adjusted p-value observed."
+              ],
+              "caveats": [
+                "Eigengene-status correlation is not evidence of causality or of cell-intrinsic regulation.",
+                "Whole-blood modules commonly correspond to blood cell types; without cell-count covariates this cannot be disentangled.",
+                "With 120 samples, modest module-trait correlations (|r| < 0.25) will not survive multiple testing — do not over-read borderline modules."
+              ],
+              "packages": [
+                "WGCNA",
+                "stats",
+                "ggplot2",
+                "pheatmap",
+                "data.table",
+                "rstatix"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Gene-level differential expression, case vs control",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which individual genes are differentially expressed between the 60 cases and 60 controls, and how does the gene-level signal compare with the module-level signal?",
+              "description": "Run DESeq2 on the filtered raw count matrix from T1S1 with design ~condition, contrasting case versus control as specified in metadata.csv (use the control level as the reference and state which label was used as reference). Apply apeglm or ashr LFC shrinkage for effect-size ranking, and report the full results table with baseMean, log2FoldChange, shrunken LFC, lfcSE, p-value and BH-adjusted p-value. Report the number of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 0.5. Produce an MA plot, a volcano plot, and a p-value histogram (the histogram is the diagnostic for whether the null behaves — a non-uniform or spiked histogram indicates unmodelled structure and must be reported). Export a condition-ranked gene statistic vector (e.g. the Wald statistic or -log10(p) signed by LFC) for downstream gene-set testing. This step is deliberately independent of the WGCNA track so the two views can be compared without circularity.",
+              "context": "Gene-level DE provides the reference against which module-level findings are judged: a module that tracks status should be enriched for genes with individually significant or consistently directional changes. Running it on the same filtered gene set as the network keeps the two comparable.",
+              "constraints": [
+                "Use raw (unnormalised) counts with DESeq2's internal size-factor normalisation — not the VST matrix.",
+                "Use the same gene filter as T1S1 so the DE gene universe matches the network gene universe.",
+                "Design is ~condition only; no other covariates exist in the metadata.",
+                "State the reference level explicitly so the direction of log2FoldChange is unambiguous.",
+                "Report the p-value histogram as a null-behaviour diagnostic, not just the significant-gene count."
+              ],
+              "acceptance_criteria": [
+                "A full DESeq2 results table with shrunken LFCs is exported for the filtered gene set.",
+                "Counts of genes at padj<0.05 and at padj<0.05 with |log2FC|>0.5 are reported.",
+                "MA plot, volcano plot, and p-value histogram are produced.",
+                "A signed ranked gene statistic vector is exported for downstream enrichment."
+              ],
+              "caveats": [
+                "60 vs 60 gives good power for moderate effects but whole-blood biological variability is high; a small DE count is a real possible outcome, not a pipeline failure.",
+                "No covariates can be adjusted for, so any age/sex/composition imbalance between the case and control groups will inflate apparent DE."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "ggplot2",
+                "EnhancedVolcano",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Functional annotation of status-associated modules",
+              "track": "T3",
+              "step_type": "enrichment",
+              "question": "What biological processes and pathways characterise the co-expression modules that track case versus control status in whole blood?",
+              "description": "For each module from T1S2 — with priority on those called status-associated at FDR<0.05 in T1S3 — run over-representation analysis of the module's gene symbols against the gene universe of all genes retained after T1S1 filtering (not the whole genome). Test against human hallmark gene sets and human GO biological process gene sets, both of which are provisioned as symbol-based GMT collections for Homo sapiens in this environment; also test against the human curated pathway collection (WikiPathways human) if it resolves. Apply BH correction within each collection and report gene sets at adjusted p < 0.05 with their overlap gene counts and the overlapping genes. Because GO is a nested hierarchy, collapse redundant parent/child hits (semantic-similarity reduction or simple overlap-based collapsing) before reporting a headline count. Separately, run a rank-based gene-set test (fgsea) on the signed ranked gene statistic from T2S1 against the same hallmark collection, so the module-level over-representation result can be compared against the gene-level ranked result. Produce a compact table per status-associated module giving its size, its eigengene-status effect from T1S3, its top hub genes from T1S3, and its top enriched sets — this is the interpretive summary of the analysis. Confirm the counts.csv identifiers are HGNC symbols before testing; if they are Ensembl or Entrez identifiers, map them using the provisioned human identifier mapping resource and report the mapping rate and how many genes were lost.",
+              "context": "Modules are only interpretable once labelled. Whole-blood modules frequently map to interferon response, neutrophil degranulation, T/NK cytotoxicity, platelet activation, or erythroid/heme metabolism — which set a module lands in is the main clue to whether it reflects an activated programme or a composition shift. Human hallmark and GO BP symbol GMTs and a human UniProt identifier mapping table are present in the reference store; WikiPathways human is present too.",
+              "constraints": [
+                "Use the filtered gene set from T1S1 as the enrichment background universe, never the full genome default.",
+                "Use human gene sets only — the data are Homo sapiens whole blood; do not use the mouse or rat collections that are also present.",
+                "Report BH-adjusted p-values and the overlapping genes for every reported set.",
+                "Collapse redundant GO parent/child hits before reporting a headline enriched-set count.",
+                "Test the grey module only as a negative control, if at all, and label it as such.",
+                "If the gene identifiers are not symbols, report the identifier type and the mapping rate before enrichment; if fewer than 70% of genes map, report the enrichment as unreliable.",
+                "If any gene-set collection is absent at run time, report which one was missing and proceed with the remaining collections rather than failing."
+              ],
+              "acceptance_criteria": [
+                "Enrichment results with BH-adjusted p-values are produced for every status-associated module against hallmark and GO BP.",
+                "Gene identifier type and, where mapping was needed, the mapping rate are reported.",
+                "A redundancy-collapsed summary of enriched terms per module is produced.",
+                "An fgsea result on the T2S1 ranked statistic against hallmark is produced for comparison with the module-level result.",
+                "A single integrated table per status-associated module (size, eigengene effect, hub genes, top enriched sets) is exported."
+              ],
+              "caveats": [
+                "Over-representation on a co-expression module is sensitive to module size — very large modules will hit broad terms trivially, very small ones may hit nothing.",
+                "Enrichment of a blood module in a lineage-specific programme is compatible with a pure cell-composition shift and should not be reported as evidence of transcriptional regulation.",
+                "If T1S3 found no status-associated module, annotate the largest and most stable modules instead and report the analysis as descriptive."
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "GSEABase",
+                "org.Hs.eg.db",
+                "rrvgo",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 55
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,636 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "qwen/qwen3.8-27b",
+  "task": "no-replicates-1v1",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T08:51:18.643Z",
+  "elapsedMs": 163101,
+  "outcome": "plan_submitted",
+  "planId": "pln-ae21bea9",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 2 samples the PCA and distance heatmap are near-degenerate (one pairwise distance); interpret them only as checks on library size and overall similarity, not as evidence of group separation.",
+          "The count table is a Salmon gene-level export without per-sample quantification files; QC here is on the counts as delivered."
+        ],
+        "context": "Inputs: /eval-four-models-v2-with-no-replicates-1v1-s1-1/data/inputs/counts/counts.csv (gene-level counts from salmon as delivered, 12,000 genes x 2 samples, gene ID column + 2 sample columns) and /eval-four-models-v2-with-no-replicates-1v1-s1-1/data/inputs/metadata/metadata.csv (one row per sample with a condition column; one treated, one control). Organism: Homo sapiens, tissue: liver. Only 2 samples exist, so this is a sanity check (library sizes, overall similarity, label consistency), not a grouping test; no sample can be excluded with only one per group — report findings, do not drop samples.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the two liver samples (the treated sample and the control sample) look structurally sound before any comparison — are library sizes in the same order of magnitude, and does the sample structure match the condition labels in metadata.csv?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC on the raw counts: vst(blind), PCA on the top 500 variable genes, sample distance heatmap, per R-0033@40bf.",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the condition column of metadata.csv as the design factor; keep sample names as delivered.",
+          "Apply vst with blind=TRUE; PCA on the top 500 most variable genes (n_top_genes = 500); sample distance heatmap; report library sizes per sample.",
+          "Color plots by condition only; there is no batch factor.",
+          "Do not scale, transform, or normalize the counts before the model; do not exclude any sample.",
+          "Save plots and the library-size table to the step output directory."
+        ],
+        "description": "Build a DESeqDataSet from counts.csv and the condition column of metadata.csv; apply the variance-stabilizing transformation blind to the design; compute PCA on the 500 most variable genes and a sample-distance heatmap, colored by condition; report per-sample library sizes. Produces QC plots and a library-size table.",
+        "acceptance_criteria": [
+          "PCA plot, sample distance heatmap, and a library-size table are generated and saved.",
+          "Both samples are loaded with their condition labels from metadata.csv and the gene-by-sample matrix matches the 12,000 x 2 shape of counts.csv.",
+          "No sample is dropped."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Descriptive log fold changes only, no inferential test",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If any group holds one sample, do no inferential differential expression test. Without within-group replication no dispersion can be estimated, and a p-value from such a design has no inferential basis. Report normalized counts and descriptive log2 fold changes, state that the design has no replication, and name the design that supports inference.",
+          "The quantifier name alone does not establish that the length correction occurred. The counts are a Salmon gene-level table with no per-sample quantification files and no average transcript length table, so the import state is not established. Fit on the counts as delivered with no length offset and state in the report that the length offset is lost and that a change in isoform usage can show as differential expression. Do not run tximport on a gene table and do not invent a length input.",
+          "Genes with zero counts in one sample have undefined fold changes; handle explicitly (e.g., report as zero normalized count with no finite log2FC, or apply a clearly stated small count prior) and state the choice in the output."
+        ],
+        "context": "Design: one treated vs one control liver sample, no biological replication. Rule R-0003@6b3a forbids an inferential DE test for this design (flagged, outcome: descriptive_only). Counts are a Salmon gene-level table (counts.csv) with no per-sample quantification files (quant.sf / abundance.h5) and no average-transcript-length table, so the import state is not established: fit on the counts as delivered with no length offset. Condition factor: the condition column of metadata.csv; set the reference level explicitly to control so a positive log2FC means higher expression in the treated sample; contrast named as factor, numerator, denominator: (condition, treated, control).",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes show the largest descriptive expression differences between the treated sample and the control sample, and what are the size-factor-normalized counts for each gene in each sample?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0026@9ab1",
+            "R-0169@18ab",
+            "R-0036@9786",
+            "R-0003@6b3a"
+          ],
+          "reason": "Flagged by R-0003@6b3a: one sample per condition means no inferential differential expression test; report size-factor-normalized counts and descriptive log2FC only. Salmon gene table without per-sample quantification files: fit on counts as delivered with no length offset (R-0169@18ab); no tximport on a gene table.",
+          "status": "flagged",
+          "settings": [
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            },
+            {
+              "name": "import",
+              "step": "model_design",
+              "value": "gene_counts_without_length_offset",
+              "source": "doi:10.12688/f1000research.7563.2"
+            },
+            {
+              "name": "missing_input",
+              "step": "model_design",
+              "value": "quantification_directories_or_avg_tx_length_table",
+              "source": "vignette:tximport/2026-04-28#import-transcript-level-estimates"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-descriptive-no-replicates@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Pre-filter: keep genes with at least 10 counts in at least as many samples as the smallest group holds (smallest group size is 1, so >=10 counts in >=1 sample); record the gene count before and after filtering.",
+          "Do not run tximport: it imports transcript-level estimates, and no length input exists; do not invent a length input.",
+          "Do not scale, transform, or normalize the counts before the model.",
+          "Compute size factors with the median-of-ratios method from the counts as delivered; report the size factor per sample.",
+          "Set the condition factor reference level explicitly to control before building the model; name the contrast as (condition, treated, control).",
+          "For every filtered gene compute the descriptive log2FC = log2(normalized count in treated / normalized count in control) from the size-factor-normalized counts.",
+          "Do not run any inferential test: no Wald test, no likelihood-ratio test, no quasi-likelihood test, no p-values, no adjusted p-values, no significance labels, no LFC shrinkage.",
+          "Output one row per filtered gene: gene ID, normalized count per sample, log2FC; sorted by |log2FC| descending. Report the number of genes tested after the filter."
+        ],
+        "description": "Pre-filter low-count genes, compute median-of-ratios size factors on the counts as delivered (no length offset), and for every remaining gene report the normalized count in each sample and the descriptive log2 fold change (treated vs control), ranked by |log2FC|. No inferential test of any kind: no p-values, no adjusted p-values, no LFC shrinkage. Produces the full descriptive gene table and the size-factor record.",
+        "acceptance_criteria": [
+          "A results table covering every filtered gene with gene ID, normalized counts per sample, and log2FC is produced, sorted by |log2FC|.",
+          "The table contains no p-value, adjusted p-value, or significance column.",
+          "The gene counts before and after the low-count filter are recorded, and the size factor per sample is reported."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The report fields 'n_de' and fold-change significance thresholds do not apply here (descriptive only); report the top |log2FC| list and the number of tested genes instead, and label it as descriptive."
+        ],
+        "context": "Inputs are the artifacts of T1S1 (QC plots, library sizes) and T1S2 (descriptive gene table, size factors, filter counts). No enrichment or functional annotation was requested; do not add any.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Does the final report state what was computed, why no statistical test was run, how the missing length offset affects the interpretation, and what design would support inference?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "No rule covers this step; the report fields follow the returned settings for method, versions, design, thresholds, n_tested, and session information with a reproducibility record.",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "State that the design has no biological replication (one treated vs one control) and that no inferential differential expression test was run because per-gene dispersion cannot be estimated without within-group replication.",
+          "Name the design that supports inference (independent biological replicates per condition; a design with at least 3 replicates per group supports standard DESeq2/edgeR inference).",
+          "State that the counts are a Salmon gene-level table with no per-sample quantification files and no average transcript length table, that the model was fitted with no length offset, and that the lost length offset means a change in isoform usage can appear as differential expression.",
+          "Include: method, version of each package, design formula and the named contrast, the filter thresholds, the number of genes tested after the filter, the top |log2FC| gene table, and the full session information.",
+          "Include the reproducibility record: sessionInfo output, package versions, and the random seed of any step that uses randomness.",
+          "Do not present any gene as statistically differentially expressed; the only quantitative claims allowed are normalized counts and descriptive log2FC values."
+        ],
+        "description": "Write the final report: method (DESeq2 1.52.0, descriptive-only workflow), package versions, design (condition factor, explicit reference level control, contrast (condition, treated, control)), the low-count filter threshold, the number of genes tested after the filter, the size factors, the top descriptive |log2FC| genes, session information, and the reproducibility record. It must state that the design has no biological replication and therefore no inferential test was run, name the design that supports inference, and state that the Salmon length offset is lost and a change in isoform usage can appear as differential expression.",
+        "acceptance_criteria": [
+          "A report file exists containing all required fields: method, versions, design and contrast, thresholds, n_tested, top descriptive gene table, session information, and the reproducibility record.",
+          "The report explicitly states the no-replication limitation, the missing Salmon length offset, and the design that would support inference.",
+          "No p-value, adjusted p-value, or 'significantly different' claim appears anywhere in the report."
+        ]
+      }
+    ],
+    "title": "Liver treated vs control descriptive DE, no replicates",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a human liver bulk RNA-seq count table (counts.csv, 12,000 genes x 2 samples) plus a sample table (metadata.csv) with one treated and one control sample. The design has no biological replication — one sample per condition — so per rule R-0003@6b3a no inferential differential expression test is admissible: per-gene dispersion cannot be estimated and a p-value from this design has no inferential basis. The plan therefore produces (1) a sample-structure QC (blind variance-stabilizing transform, PCA on the 500 most variable genes, sample-distance heatmap, library sizes), (2) a descriptive analysis that pre-filters low-count genes (>=10 counts in at least as many samples as the smallest group holds), normalizes with median-of-ratios size factors, and reports size-factor-normalized counts and descriptive log2 fold changes (treated vs control) for every filtered gene, ranked by |log2FC|, with no p-values, no adjusted p-values, and no LFC shrinkage (both dropped by the flag). The counts are a Salmon gene-level table with no per-sample quantification files or average-transcript-length table, so the import state is not established: the model is fitted on the counts as delivered with no length offset, and the report must state that the length offset is lost and that a change in isoform usage can appear as differential expression; tximport is not run on the gene table. The final step writes a report naming the method, versions, design, contrast, thresholds, number of tested genes, session information, and the reproducibility record, and states the design that would support inference."
+  },
+  "usage": {
+    "inputTokens": 130164,
+    "outputTokens": 11144,
+    "cacheReadInputTokens": 81664,
+    "reasoningTokens": 6718
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_02f2276ec49541829bf0af68",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none"
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    },
+    {
+      "toolUseId": "call_960305be9d0842d7a8ab9065",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 1,
+        "n_per_group_max": 1,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind=TRUE), PCA on top 500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "descriptive log2 fold change on median-of-ratios normalized counts, no inferential test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": "10"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ],
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "report",
+            "method": "written report with reproducibility record",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "call_2008b012627d4025bf666dad",
+      "name": "submit_plan",
+      "input": {
+        "plan": "{\"title\": \"Liver treated vs control descriptive DE, no replicates\", \"analytical_narrative\": \"The input is a human liver bulk RNA-seq count table (counts.csv, 12,000 genes x 2 samples) plus a sample table (metadata.csv) with one treated and one control sample. The design has no biological replication — one sample per condition — so per rule R-0003@6b3a no inferential differential expression test is admissible: per-gene dispersion cannot be estimated and a p-value from this design has no inferential basis. The plan therefore produces (1) a sample-structure QC (blind variance-stabilizing transform, PCA on the 500 most variable genes, sample-distance heatmap, library sizes), (2) a descriptive analysis that pre-filters low-count genes (>=10 counts in at least as many samples as the smallest group holds), normalizes with median-of-ratios size factors, and reports size-factor-normalized counts and descriptive log2 fold changes (treated vs control) for every filtered gene, ranked by |log2FC|, with no p-values, no adjusted p-values, and no LFC shrinkage (both dropped by the flag). The counts are a Salmon gene-level table with no per-sample quantification files or average-transcript-length table, so the import state is not established: the model is fitted on the counts as delivered with no length offset, and the report must state that the length offset is lost and that a change in isoform usage can appear as differential expression; tximport is not run on the gene table. The final step writes a report naming the method, versions, design, contrast, thresholds, number of tested genes, session information, and the reproducibility record, and states the design that would support inference.\", \"created_at\": \"2026-09-07T12:00:00Z\", \"omicsType\": \"transcriptomics\", \"omicsSubtype\": \"bulk-rna-seq\", \"steps\": [{\"id\": \"T1S1\", \"name\": \"Sample structure QC\", \"track\": \"T1\", \"step_type\": \"qc\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Do the two liver samples (the treated sample and the control sample) look structurally sound before any comparison — are library sizes in the same order of magnitude, and does the sample structure match the condition labels in metadata.csv?\", \"description\": \"Build a DESeqDataSet from counts.csv and the condition column of metadata.csv; apply the variance-stabilizing transformation blind to the design; compute PCA on the 500 most variable genes and a sample-distance heatmap, colored by condition; report per-sample library sizes. Produces QC plots and a library-size table.\", \"context\": \"Inputs: /eval-four-models-v2-with-no-replicates-1v1-s1-1/data/inputs/counts/counts.csv (gene-level counts from salmon as delivered, 12,000 genes x 2 samples, gene ID column + 2 sample columns) and /eval-four-models-v2-with-no-replicates-1v1-s1-1/data/inputs/metadata/metadata.csv (one row per sample with a condition column; one treated, one control). Organism: Homo sapiens, tissue: liver. Only 2 samples exist, so this is a sanity check (library sizes, overall similarity, label consistency), not a grouping test; no sample can be excluded with only one per group — report findings, do not drop samples.\", \"constraints\": [\"Use the condition column of metadata.csv as the design factor; keep sample names as delivered.\", \"Apply vst with blind=TRUE; PCA on the top 500 most variable genes (n_top_genes = 500); sample distance heatmap; report library sizes per sample.\", \"Color plots by condition only; there is no batch factor.\", \"Do not scale, transform, or normalize the counts before the model; do not exclude any sample.\", \"Save plots and the library-size table to the step output directory.\"], \"acceptance_criteria\": [\"PCA plot, sample distance heatmap, and a library-size table are generated and saved.\", \"Both samples are loaded with their condition labels from metadata.csv and the gene-by-sample matrix matches the 12,000 x 2 shape of counts.csv.\", \"No sample is dropped.\"], \"caveats\": [\"With 2 samples the PCA and distance heatmap are near-degenerate (one pairwise distance); interpret them only as checks on library size and overall similarity, not as evidence of group separation.\", \"The count table is a Salmon gene-level export without per-sample quantification files; QC here is on the counts as delivered.\"], \"packages\": [\"DESeq2\"], \"depends_on\": [], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"grounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0033@40bf\"], \"template\": \"tpl-qc-eda@1.0.0\", \"settings\": [{\"step\": \"qc_sample_structure\", \"name\": \"n_top_genes\", \"value\": 500, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"qc_sample_structure\", \"name\": \"transform\", \"value\": \"vst_blind\", \"source\": \"vignette:DESeq2/1.52.0#blind-dispersion-estimation\"}], \"reason\": \"Sample structure QC on the raw counts: vst(blind), PCA on the top 500 variable genes, sample distance heatmap, per R-0033@40bf.\"}}, {\"id\": \"T1S2\", \"name\": \"Descriptive log fold changes only, no inferential test\", \"track\": \"T1\", \"step_type\": \"analysis\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Which genes show the largest descriptive expression differences between the treated sample and the control sample, and what are the size-factor-normalized counts for each gene in each sample?\", \"description\": \"Pre-filter low-count genes, compute median-of-ratios size factors on the counts as delivered (no length offset), and for every remaining gene report the normalized count in each sample and the descriptive log2 fold change (treated vs control), ranked by |log2FC|. No inferential test of any kind: no p-values, no adjusted p-values, no LFC shrinkage. Produces the full descriptive gene table and the size-factor record.\", \"context\": \"Design: one treated vs one control liver sample, no biological replication. Rule R-0003@6b3a forbids an inferential DE test for this design (flagged, outcome: descriptive_only). Counts are a Salmon gene-level table (counts.csv) with no per-sample quantification files (quant.sf / abundance.h5) and no average-transcript-length table, so the import state is not established: fit on the counts as delivered with no length offset. Condition factor: the condition column of metadata.csv; set the reference level explicitly to control so a positive log2FC means higher expression in the treated sample; contrast named as factor, numerator, denominator: (condition, treated, control).\", \"constraints\": [\"Pre-filter: keep genes with at least 10 counts in at least as many samples as the smallest group holds (smallest group size is 1, so >=10 counts in >=1 sample); record the gene count before and after filtering.\", \"Do not run tximport: it imports transcript-level estimates, and no length input exists; do not invent a length input.\", \"Do not scale, transform, or normalize the counts before the model.\", \"Compute size factors with the median-of-ratios method from the counts as delivered; report the size factor per sample.\", \"Set the condition factor reference level explicitly to control before building the model; name the contrast as (condition, treated, control).\", \"For every filtered gene compute the descriptive log2FC = log2(normalized count in treated / normalized count in control) from the size-factor-normalized counts.\", \"Do not run any inferential test: no Wald test, no likelihood-ratio test, no quasi-likelihood test, no p-values, no adjusted p-values, no significance labels, no LFC shrinkage.\", \"Output one row per filtered gene: gene ID, normalized count per sample, log2FC; sorted by |log2FC| descending. Report the number of genes tested after the filter.\"], \"acceptance_criteria\": [\"A results table covering every filtered gene with gene ID, normalized counts per sample, and log2FC is produced, sorted by |log2FC|.\", \"The table contains no p-value, adjusted p-value, or significance column.\", \"The gene counts before and after the low-count filter are recorded, and the size factor per sample is reported.\"], \"caveats\": [\"If any group holds one sample, do no inferential differential expression test. Without within-group replication no dispersion can be estimated, and a p-value from such a design has no inferential basis. Report normalized counts and descriptive log2 fold changes, state that the design has no replication, and name the design that supports inference.\", \"The quantifier name alone does not establish that the length correction occurred. The counts are a Salmon gene-level table with no per-sample quantification files and no average transcript length table, so the import state is not established. Fit on the counts as delivered with no length offset and state in the report that the length offset is lost and that a change in isoform usage can show as differential expression. Do not run tximport on a gene table and do not invent a length input.\", \"Genes with zero counts in one sample have undefined fold changes; handle explicitly (e.g., report as zero normalized count with no finite log2FC, or apply a clearly stated small count prior) and state the choice in the output.\"], \"packages\": [\"DESeq2\"], \"depends_on\": [\"T1S1\"], \"resources\": {\"cpu\": 2, \"memoryGb\": 4}, \"grounding\": {\"status\": \"flagged\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0002@087b\", \"R-0026@9ab1\", \"R-0169@18ab\", \"R-0036@9786\", \"R-0003@6b3a\"], \"template\": \"tpl-descriptive-no-replicates@1.0.0\", \"settings\": [{\"step\": \"filter_low_counts\", \"name\": \"min_count\", \"value\": 10, \"source\": \"doi:10.12688/f1000research.7035.1\"}, {\"step\": \"filter_low_counts\", \"name\": \"min_samples\", \"value\": \"smallest_group_size\", \"source\": \"vignette:DESeq2/1.52.0#pre-filtering\"}, {\"step\": \"normalize\", \"name\": \"size_factors\", \"value\": \"median_of_ratios_named_in_the_plan\", \"source\": \"doi:10.1186/s13059-014-0550-8\"}, {\"step\": \"model_design\", \"name\": \"import\", \"value\": \"gene_counts_without_length_offset\", \"source\": \"doi:10.12688/f1000research.7563.2\"}, {\"step\": \"model_design\", \"name\": \"missing_input\", \"value\": \"quantification_directories_or_avg_tx_length_table\", \"source\": \"vignette:tximport/2026-04-28#import-transcript-level-estimates\"}, {\"step\": \"model_design\", \"name\": \"reference_level\", \"value\": \"explicit\", \"source\": \"vignette:DESeq2/1.52.0#note-on-factor-levels\"}, {\"step\": \"model_design\", \"name\": \"contrast_form\", \"value\": \"factor_numerator_denominator\", \"source\": \"vignette:DESeq2/1.52.0#contrasts\"}], \"reason\": \"Flagged by R-0003@6b3a: one sample per condition means no inferential differential expression test; report size-factor-normalized counts and descriptive log2FC only. Salmon gene table without per-sample quantification files: fit on counts as delivered with no length offset (R-0169@18ab); no tximport on a gene table.\"}}, {\"id\": \"T1S3\", \"name\": \"Report\", \"track\": \"T1\", \"step_type\": \"report\", \"agent\": \"bulk-transcriptomics-agent\", \"question\": \"Does the final report state what was computed, why no statistical test was run, how the missing length offset affects the interpretation, and what design would support inference?\", \"description\": \"Write the final report: method (DESeq2 1.52.0, descriptive-only workflow), package versions, design (condition factor, explicit reference level control, contrast (condition, treated, control)), the low-count filter threshold, the number of genes tested after the filter, the size factors, the top descriptive |log2FC| genes, session information, and the reproducibility record. It must state that the design has no biological replication and therefore no inferential test was run, name the design that supports inference, and state that the Salmon length offset is lost and a change in isoform usage can appear as differential expression.\", \"context\": \"Inputs are the artifacts of T1S1 (QC plots, library sizes) and T1S2 (descriptive gene table, size factors, filter counts). No enrichment or functional annotation was requested; do not add any.\", \"constraints\": [\"State that the design has no biological replication (one treated vs one control) and that no inferential differential expression test was run because per-gene dispersion cannot be estimated without within-group replication.\", \"Name the design that supports inference (independent biological replicates per condition; a design with at least 3 replicates per group supports standard DESeq2/edgeR inference).\", \"State that the counts are a Salmon gene-level table with no per-sample quantification files and no average transcript length table, that the model was fitted with no length offset, and that the lost length offset means a change in isoform usage can appear as differential expression.\", \"Include: method, version of each package, design formula and the named contrast, the filter thresholds, the number of genes tested after the filter, the top |log2FC| gene table, and the full session information.\", \"Include the reproducibility record: sessionInfo output, package versions, and the random seed of any step that uses randomness.\", \"Do not present any gene as statistically differentially expressed; the only quantitative claims allowed are normalized counts and descriptive log2FC values.\"], \"acceptance_criteria\": [\"A report file exists containing all required fields: method, versions, design and contrast, thresholds, n_tested, top descriptive gene table, session information, and the reproducibility record.\", \"The report explicitly states the no-replication limitation, the missing Salmon length offset, and the design that would support inference.\", \"No p-value, adjusted p-value, or 'significantly different' claim appears anywhere in the report.\"], \"caveats\": [\"The report fields 'n_de' and fold-change significance thresholds do not apply here (descriptive only); report the top |log2FC| list and the number of tested genes instead, and label it as descriptive.\"], \"packages\": [], \"depends_on\": [\"T1S2\"], \"resources\": {\"cpu\": 1, \"memoryGb\": 2}, \"grounding\": {\"status\": \"ungrounded\", \"snapshot\": \"sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8\", \"claims\": [\"R-0041@059a\", \"R-0086@becf\"], \"settings\": [{\"step\": \"report\", \"name\": \"report_fields\", \"value\": [\"method\", \"versions\", \"design\", \"thresholds\", \"n_tested\", \"n_de\", \"session_info\"], \"source\": \"doi:10.1093/bib/bbz124\"}, {\"step\": \"report\", \"name\": \"reproducibility_record\", \"value\": [\"session_info\", \"seed\", \"package_versions\", \"collection_version\", \"annotation_release\"], \"source\": \"doi:10.1371/journal.pcbi.1003285\"}], \"reason\": \"No rule covers this step; the report fields follow the returned settings for method, versions, design, thresholds, n_tested, and session information with a reproducibility record.\"}}]}"
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 1,
+          "n_per_group_max": 1,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "flag",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 1,
+          "n_per_group_max": 1,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "rules": [
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0169@18ab",
+              "R-0036@9786"
+            ],
+            "flags": [
+              {
+                "rule": "R-0169@18ab",
+                "severity": "warn",
+                "message": "A quantifier name alone does not establish that the length correction occurred. If the counts come from Salmon, kallisto, or RSEM as a gene-level table, with no per-sample quantification files and no average transcript length table, the import state is not established. Ask for the per-sample quantification files, quant.sf, abundance.h5, or genes.results, or for the average transcript length table per gene and sample. If neither arrives, fit the count model on the counts as delivered, with no length offset, and state in the plan and in the report that the length offset is lost and that a change in isoform use can show as differential expression. Do not run tximport on a gene table, because tximport imports transcript estimates, and do not invent a length input.",
+                "outcome": "report_missing_length_input"
+              }
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0015"
+            },
+            "template": "tpl-descriptive-no-replicates@1.0.0",
+            "rules": [
+              "R-0003@6b3a"
+            ],
+            "flags": [
+              {
+                "rule": "R-0003@6b3a",
+                "severity": "flag",
+                "message": "If any group holds one sample, do no inferential differential expression test. Without within-group replication no dispersion can be estimated, and a p-value from such a design has no inferential basis. Report normalized counts and descriptive log2 fold changes, state that the design has no replication, and name the design that supports inference.",
+                "outcome": "descriptive_only"
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0169@18ab"
+          },
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0003@6b3a"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          }
+        ],
+        "flags": [
+          {
+            "rule": "R-0003@6b3a",
+            "severity": "flag",
+            "message": "If any group holds one sample, do no inferential differential expression test. Without within-group replication no dispersion can be estimated, and a p-value from such a design has no inferential basis. Report normalized counts and descriptive log2 fold changes, state that the design has no replication, and name the design that supports inference.",
+            "outcome": "descriptive_only"
+          }
+        ],
+        "dropped": [
+          "shrink_lfc",
+          "multiple_testing"
+        ],
+        "uncovered": []
+      },
+      "responseChars": 15597,
+      "elapsedMs": 18
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 1,
+          "n_per_group_max": 1,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "vst(blind=TRUE), PCA on top 500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": "500"
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "descriptive log2 fold change on median-of-ratios normalized counts, no inferential test",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": "10"
+              },
+              {
+                "name": "min_samples",
+                "value": "smallest_group_size"
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios_named_in_the_plan"
+              },
+              {
+                "name": "import",
+                "value": "gene_counts_without_length_offset"
+              },
+              {
+                "name": "reference_level",
+                "value": "explicit"
+              },
+              {
+                "name": "contrast_form",
+                "value": "factor_numerator_denominator"
+              }
+            ],
+            "outcome": "descriptive_only"
+          },
+          {
+            "step_type": "report",
+            "method": "written report with reproducibility record",
+            "parameters": [
+              {
+                "name": "report_fields",
+                "value": "method, versions, design, thresholds, n_tested, n_de, session_info"
+              },
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 31
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "ionstream/fp8",
+      "akashml/fp8",
+      "coreweave/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

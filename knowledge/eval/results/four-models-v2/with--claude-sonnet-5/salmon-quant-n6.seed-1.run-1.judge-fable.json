@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the essential point: tximport at gene level with the named tx2gene.csv, countsFromAbundance='no', the average-transcript-length offset carried into the DESeqDataSet, fractional NumReads left unrounded, and a report of transcripts unmatched between the map and quant.sf. The two-group Wald model with Control as explicit reference, median-of-ratios inside DESeq2, a minimal 10-counts-in-6-samples filter, BH at alpha 0.05 with independent filtering, and apeglm shrinkage are all stated precisely, with blind-VST PCA, distance heatmap, library sizes and an explicit outlier/flag policy preceding the test. Enrichment was not requested but is executed correctly (full Wald-stat ranking, tie rule, 15-500 window, per-collection BH, versions pinned). The only gap is that the annotation version of the transcript-to-gene map is never named, which the reference requires and which weakens the import and report sections slightly."
+}

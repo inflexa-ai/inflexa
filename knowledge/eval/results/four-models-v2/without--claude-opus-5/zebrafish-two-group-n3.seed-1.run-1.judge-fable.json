@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "DESeq2 Wald with ~condition, control as reference, median-of-ratios inside the model, BH at 0.05, apeglm shrinkage, and an explicit no-post-hoc-relaxation rule fit the 3 vs 3 unpaired single-batch design, with power caveats stated. QC is thorough (library size, detected genes, VST PCA, correlation heatmap, dendrogram) with a clear do-not-drop-outlier policy and a check of PC1 against depth. The plan explicitly declines a minimal pre-filter and leans entirely on independent filtering, which is defensible but not the minimal justified filter the reference asks for. Enrichment correctly states the absence of zebrafish collections, builds a versioned babelgene ortholog bridge with coverage reported, uses the full shrunken-LFC ranking and a 15-500 size window with an explicit tested-gene universe, though it admits 'best-scoring' rather than strictly 1:1 orthologs and does not name the MSigDB version. The report omits the Ensembl release and DESeq2 version, and does not explicitly flag the thinness of zebrafish GO annotation."
+}

@@ -1,0 +1,362 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:14:57.150Z",
+  "elapsedMs": 232987,
+  "outcome": "plan_submitted",
+  "planId": "pln-4d8c6cd1",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample QC and exploratory check of the 3x4 liver count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1-differential-expression",
+        "status": "pending",
+        "caveats": [
+          "counts.csv has 13 columns: confirm which column is the gene identifier and that the remaining 12 match metadata sample ids exactly before any analysis",
+          "if the metadata condition column encodes groups differently than control/treated_a/treated_b, report the actual labels and use them consistently downstream"
+        ],
+        "context": "Input files: /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns, first column is the gene identifier) and /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample id and condition). Counts are raw Salmon gene-level output; single batch; 3 groups x 4 replicates.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13",
+          "RColorBrewer==1.1-3"
+        ],
+        "question": "Do the 12 liver samples (control / treated_a / treated_b, 4 each) align with the metadata, cluster by condition, and which of the 12,000 genes carry enough counts for differential testing?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "use only the staged counts.csv and metadata.csv; no network access",
+          "do not remove or reassign any sample without writing the statistical evidence into the report"
+        ],
+        "description": "Load the 12,000-gene x 12-sample Salmon count matrix and the 12-row metadata table, verify sample-condition correspondence, compute per-sample library sizes and expression summaries, filter genes with insufficient counts (e.g. CPM-like threshold keeping genes with >=10 raw counts in at least 4 samples), and run PCA/hierarchical clustering on variance-stabilized values to check that replicates group by condition and no sample is an outlier. Also test whether the count matrix contains non-integer values (Salmon length-correction dependent) and record the outcome for the DE step.",
+        "acceptance_criteria": [
+          "counts.csv parses to a 12,000-row gene x 12-sample integer-or-numeric matrix with no dropped samples",
+          "metadata joined 1:1 to sample columns; 3 condition levels with exactly 4 samples each verified",
+          "per-sample library-size table and PCA (colored by condition) written; filtered gene count reported",
+          "any sample flagged as a PCA/-distance outlier is reported with its evidence and retained unless obviously failed (no silent removal)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 omnibus LRT plus per-treatment Wald contrasts vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1-differential-expression",
+        "status": "pending",
+        "caveats": [
+          "with n=4 per group power is limited; effect-size (shrunk lfc) magnitude and direction must accompany every significant call, and the report must state the low-power caveat rather than overclaiming",
+          "if non-integer counts are present: either round for DESeq2 with the rounding documented, or switch the whole step to edgeR quasi-likelihood (edgeR 4.10.3 is installed and accepts fractional counts); do not silently mix both"
+        ],
+        "context": "Same 12-sample / 12,000-gene liver dataset. R DESeq2 1.52.0 and apeglm 1.34.0 are installed. Metadata has exactly one covariate (condition) with three levels.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0",
+          "edgeR==4.10.3"
+        ],
+        "question": "Which genes differ across control/treated_a/treated_b at all (LRT), and which genes does treated_a change vs control and treated_b change vs control (shrunk Wald contrasts)?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "design is ~condition only (single batch, no covariates available in the 2-column metadata)",
+          "all three tests use the same filtered gene set and the same fitted dispersion estimates where the DESeq2 workflow allows",
+          "multiple testing correction: Benjamini-Hochberg via DESeq2 results(), default alpha 0.05, stated explicitly in outputs"
+        ],
+        "description": "Fit DESeq2 (~condition) on the filtered count matrix from T1S1. (a) Omnibus: likelihood-ratio test, full ~condition vs reduced ~1, to answer 'which genes differ across the three groups at all'. (b) Two Wald contrasts, condition treated_a vs control and treated_b vs control, with apeglm lfcShrink. Export full per-gene tables (baseMean, log2FC, lfcSE, stat, p, BH padj) for each of the three tests plus a compact summary of up/down counts at FDR<0.05. If counts are non-integer (from T1S1), round to nearest integer for DESeq2 and record this; alternatively run edgeR quasi-likelihood as the primary test if that is cleaner - but one documented choice, not both.",
+        "acceptance_criteria": [
+          "three result tables exported (LRT omnibus; treated_a vs control; treated_b vs control) with gene id, log2FC (shrunk for contrasts), stat, p-value, BH padj",
+          "integer-handling of non-integer Salmon counts documented in the output report",
+          "DE gene counts at FDR<0.05 reported per comparison, split by up/down direction",
+          "no genes dropped between the filtered matrix and the result tables other than by DESeq2's independent filtering, which is reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Visualization and cross-treatment comparison of DE results",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1-differential-expression",
+        "status": "pending",
+        "caveats": [
+          "with ~12,000 genes the top-N heatmap can be dominated by a few high-effect genes; cap N (e.g. 50 per comparison) and say so in the caption"
+        ],
+        "context": "12,000-gene human liver matrix, 3 groups x 4; result tables from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "EnhancedVolcano==1.30.0",
+          "ggplot2==4.0.3",
+          "pheatmap==1.0.13",
+          "ComplexUpset==1.3.3"
+        ],
+        "question": "How do the treated_a and treated_b signatures compare, and what do the top DE genes look like across the three liver groups?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "label every figure with the comparison it shows and the FDR threshold used",
+          "keep the two contrasts as the primary display; the LRT result feeds the heatmap gene selection, not a separate volcano"
+        ],
+        "description": "Produce volcano plots (EnhancedVolcano) and MA plots for treated_a vs control and treated_b vs control; a heatmap of the top DE genes (variance-stabilized values, samples ordered by condition) for the omnibus LRT set; an upset/Venn comparison of DE gene sets between the two treatments; and a scatter of treated_a vs treated_b shrunk log2FCs for the union DE set to show concordant vs treatment-specific responses. Write a compact tabular summary (per comparison: n_up, n_down, n_shared) next to the figures.",
+        "acceptance_criteria": [
+          "one volcano and one MA plot per contrast, plus the omnibus set represented in the heatmap",
+          "treated_a-vs-treated_b shared/unique/opcode DE counts tabulated and plotted",
+          "top-DE heatmaps show the per-gene condition grouping visually consistent with the DE calls",
+          "all figures and the summary table written to the step's output directory"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "WikiPathways enrichment of each treatment signature",
+        "agent": "enrichment-agent",
+        "track": "T2-interpretation",
+        "status": "pending",
+        "caveats": [
+          "the counts matrix gene-identifier space is not recorded; inspect it first and only map if it is not already HGNC symbols",
+          "this step enriches interpretation only; the DE answer is complete without it"
+        ],
+        "context": "Reference data staged at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC gene symbols) and /mnt/refs/managed/uniprot-idmapping-human/current/HUMAN_9606_idmapping_selected.tab.gz (positioned columns incl. Entrez GeneID col 3, Ensembl col 19). DE result tables from T1S2.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "GSEABase==1.74.0",
+          "data.table==1.18.4",
+          "ggplot2==4.0.3"
+        ],
+        "question": "Which pathways are enriched among the genes changed by treated_a vs control and by treated_b vs control in the liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "species must be human to match the Homo sapiens dataset; never substitute the staged rat or mouse GMTs",
+          "rank by signed statistic (shrunk log2FC or Wald stat) so enrichment is direction-aware",
+          "min pathway size 10, max 500, BH adjustment at 0.05"
+        ],
+        "description": "Run fgsea on the ranked DE statistics of each treatment-vs-control contrast (and the omnibus LRT set as an over-representation check) against the staged human WikiPathways GMT. Gene symbols in the counts matrix may not be HGNC symbols; if they are Ensembl or Entrez, map via the staged UniProt human idmapping table and report the mapping rate. If identifiers cannot be mapped with the staged resources, report that and end the step - the DE results from T1S2/T1S3 stand alone.",
+        "acceptance_criteria": [
+          "fgsea runs on the ranked signed-statistic list of each contrast against the human WikiPathways GMT",
+          "enrichment table per contrast (pathway, NES, p, padj, leading-edge size) exported",
+          "if identifier mapping is required, the mapping source and mapping rate are reported; unmapped-rate above ~30% triggers an explicit low-coverage warning rather than silent results",
+          "if the GMT cannot be joined to the gene identifiers at all, the step reports the failure and exits without blocking the pipeline"
+        ]
+      }
+    ],
+    "title": "Three-group liver RNA-seq omnibus and per-treatment DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are raw gene-level Salmon counts for 12 human liver samples in three conditions (control, treated_a, treated_b; 4 replicates each, unpaired, single batch, 12,000 genes), with a 12-row metadata table. The question is two-layered: (1) an omnibus test of whether any gene differs across the three groups at all, and (2) treatment-specific effects vs control. This maps directly onto a DESeq2 design ~condition with a likelihood-ratio test against the intercept-only model for the omnibus question, followed by two Wald contrasts (treated_a vs control, treated_b vs control) with log-fold-change shrinkage, which is the appropriate small-replicate (n=4/group) handling. A QC step first verifies the sample x condition mapping, filters low-expression genes, and checks sample clustering, because with 4 replicates per group a single outlier dominates inference. A final visualization step makes the per-treatment signatures comparable and quantifies shared vs treatment-specific responses. A supporting pathway step interprets each treatment's signature against the staged human WikiPathways gene sets; it is designed to degrade gracefully (report and skip) if gene identifiers in the counts matrix do not map to HGNC symbols. Because Salmon-derived gene counts may be non-integer depending on the (unrecorded) length correction, the DE step must check integrality and document how it handled it."
+  },
+  "usage": {
+    "inputTokens": 31170,
+    "outputTokens": 4834,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 2119
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c20ea4f757ca48b195132c05",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The data are raw gene-level Salmon counts for 12 human liver samples in three conditions (control, treated_a, treated_b; 4 replicates each, unpaired, single batch, 12,000 genes), with a 12-row metadata table. The question is two-layered: (1) an omnibus test of whether any gene differs across the three groups at all, and (2) treatment-specific effects vs control. This maps directly onto a DESeq2 design ~condition with a likelihood-ratio test against the intercept-only model for the omnibus question, followed by two Wald contrasts (treated_a vs control, treated_b vs control) with log-fold-change shrinkage, which is the appropriate small-replicate (n=4/group) handling. A QC step first verifies the sample x condition mapping, filters low-expression genes, and checks sample clustering, because with 4 replicates per group a single outlier dominates inference. A final visualization step makes the per-treatment signatures comparable and quantifies shared vs treatment-specific responses. A supporting pathway step interprets each treatment's signature against the staged human WikiPathways gene sets; it is designed to degrade gracefully (report and skip) if gene identifiers in the counts matrix do not map to HGNC symbols. Because Salmon-derived gene counts may be non-integer depending on the (unrecorded) length correction, the DE step must check integrality and document how it handled it.",
+          "created_at": "2026-07-15T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "counts.csv parses to a 12,000-row gene x 12-sample integer-or-numeric matrix with no dropped samples",
+                "metadata joined 1:1 to sample columns; 3 condition levels with exactly 4 samples each verified",
+                "per-sample library-size table and PCA (colored by condition) written; filtered gene count reported",
+                "any sample flagged as a PCA/-distance outlier is reported with its evidence and retained unless obviously failed (no silent removal)"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "use only the staged counts.csv and metadata.csv; no network access",
+                "do not remove or reassign any sample without writing the statistical evidence into the report"
+              ],
+              "context": "Input files: /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns, first column is the gene identifier) and /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/metadata/metadata.csv (12 rows x 2 columns: sample id and condition). Counts are raw Salmon gene-level output; single batch; 3 groups x 4 replicates.",
+              "caveats": [
+                "counts.csv has 13 columns: confirm which column is the gene identifier and that the remaining 12 match metadata sample ids exactly before any analysis",
+                "if the metadata condition column encodes groups differently than control/treated_a/treated_b, report the actual labels and use them consistently downstream"
+              ],
+              "depends_on": [],
+              "description": "Load the 12,000-gene x 12-sample Salmon count matrix and the 12-row metadata table, verify sample-condition correspondence, compute per-sample library sizes and expression summaries, filter genes with insufficient counts (e.g. CPM-like threshold keeping genes with >=10 raw counts in at least 4 samples), and run PCA/hierarchical clustering on variance-stabilized values to check that replicates group by condition and no sample is an outlier. Also test whether the count matrix contains non-integer values (Salmon length-correction dependent) and record the outcome for the DE step.",
+              "id": "T1S1",
+              "name": "Sample QC and exploratory check of the 3x4 liver count matrix",
+              "packages": [
+                "DESeq2==1.52.0",
+                "ggplot2==4.0.3",
+                "pheatmap==1.0.13",
+                "RColorBrewer==1.1-3"
+              ],
+              "question": "Do the 12 liver samples (control / treated_a / treated_b, 4 each) align with the metadata, cluster by condition, and which of the 12,000 genes carry enough counts for differential testing?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1-differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "three result tables exported (LRT omnibus; treated_a vs control; treated_b vs control) with gene id, log2FC (shrunk for contrasts), stat, p-value, BH padj",
+                "integer-handling of non-integer Salmon counts documented in the output report",
+                "DE gene counts at FDR<0.05 reported per comparison, split by up/down direction",
+                "no genes dropped between the filtered matrix and the result tables other than by DESeq2's independent filtering, which is reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "design is ~condition only (single batch, no covariates available in the 2-column metadata)",
+                "all three tests use the same filtered gene set and the same fitted dispersion estimates where the DESeq2 workflow allows",
+                "multiple testing correction: Benjamini-Hochberg via DESeq2 results(), default alpha 0.05, stated explicitly in outputs"
+              ],
+              "context": "Same 12-sample / 12,000-gene liver dataset. R DESeq2 1.52.0 and apeglm 1.34.0 are installed. Metadata has exactly one covariate (condition) with three levels.",
+              "caveats": [
+                "with n=4 per group power is limited; effect-size (shrunk lfc) magnitude and direction must accompany every significant call, and the report must state the low-power caveat rather than overclaiming",
+                "if non-integer counts are present: either round for DESeq2 with the rounding documented, or switch the whole step to edgeR quasi-likelihood (edgeR 4.10.3 is installed and accepts fractional counts); do not silently mix both"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 (~condition) on the filtered count matrix from T1S1. (a) Omnibus: likelihood-ratio test, full ~condition vs reduced ~1, to answer 'which genes differ across the three groups at all'. (b) Two Wald contrasts, condition treated_a vs control and treated_b vs control, with apeglm lfcShrink. Export full per-gene tables (baseMean, log2FC, lfcSE, stat, p, BH padj) for each of the three tests plus a compact summary of up/down counts at FDR<0.05. If counts are non-integer (from T1S1), round to nearest integer for DESeq2 and record this; alternatively run edgeR quasi-likelihood as the primary test if that is cleaner - but one documented choice, not both.",
+              "id": "T1S2",
+              "name": "DESeq2 omnibus LRT plus per-treatment Wald contrasts vs control",
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0",
+                "edgeR==4.10.3"
+              ],
+              "question": "Which genes differ across control/treated_a/treated_b at all (LRT), and which genes does treated_a change vs control and treated_b change vs control (shrunk Wald contrasts)?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1-differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "one volcano and one MA plot per contrast, plus the omnibus set represented in the heatmap",
+                "treated_a-vs-treated_b shared/unique/opcode DE counts tabulated and plotted",
+                "top-DE heatmaps show the per-gene condition grouping visually consistent with the DE calls",
+                "all figures and the summary table written to the step's output directory"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "constraints": [
+                "label every figure with the comparison it shows and the FDR threshold used",
+                "keep the two contrasts as the primary display; the LRT result feeds the heatmap gene selection, not a separate volcano"
+              ],
+              "context": "12,000-gene human liver matrix, 3 groups x 4; result tables from T1S2.",
+              "caveats": [
+                "with ~12,000 genes the top-N heatmap can be dominated by a few high-effect genes; cap N (e.g. 50 per comparison) and say so in the caption"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Produce volcano plots (EnhancedVolcano) and MA plots for treated_a vs control and treated_b vs control; a heatmap of the top DE genes (variance-stabilized values, samples ordered by condition) for the omnibus LRT set; an upset/Venn comparison of DE gene sets between the two treatments; and a scatter of treated_a vs treated_b shrunk log2FCs for the union DE set to show concordant vs treatment-specific responses. Write a compact tabular summary (per comparison: n_up, n_down, n_shared) next to the figures.",
+              "id": "T1S3",
+              "name": "Visualization and cross-treatment comparison of DE results",
+              "packages": [
+                "EnhancedVolcano==1.30.0",
+                "ggplot2==4.0.3",
+                "pheatmap==1.0.13",
+                "ComplexUpset==1.3.3"
+              ],
+              "question": "How do the treated_a and treated_b signatures compare, and what do the top DE genes look like across the three liver groups?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1-differential-expression"
+            },
+            {
+              "acceptance_criteria": [
+                "fgsea runs on the ranked signed-statistic list of each contrast against the human WikiPathways GMT",
+                "enrichment table per contrast (pathway, NES, p, padj, leading-edge size) exported",
+                "if identifier mapping is required, the mapping source and mapping rate are reported; unmapped-rate above ~30% triggers an explicit low-coverage warning rather than silent results",
+                "if the GMT cannot be joined to the gene identifiers at all, the step reports the failure and exits without blocking the pipeline"
+              ],
+              "agent": "enrichment-agent",
+              "constraints": [
+                "species must be human to match the Homo sapiens dataset; never substitute the staged rat or mouse GMTs",
+                "rank by signed statistic (shrunk log2FC or Wald stat) so enrichment is direction-aware",
+                "min pathway size 10, max 500, BH adjustment at 0.05"
+              ],
+              "context": "Reference data staged at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt (HGNC gene symbols) and /mnt/refs/managed/uniprot-idmapping-human/current/HUMAN_9606_idmapping_selected.tab.gz (positioned columns incl. Entrez GeneID col 3, Ensembl col 19). DE result tables from T1S2.",
+              "caveats": [
+                "the counts matrix gene-identifier space is not recorded; inspect it first and only map if it is not already HGNC symbols",
+                "this step enriches interpretation only; the DE answer is complete without it"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run fgsea on the ranked DE statistics of each treatment-vs-control contrast (and the omnibus LRT set as an over-representation check) against the staged human WikiPathways GMT. Gene symbols in the counts matrix may not be HGNC symbols; if they are Ensembl or Entrez, map via the staged UniProt human idmapping table and report the mapping rate. If identifiers cannot be mapped with the staged resources, report that and end the step - the DE results from T1S2/T1S3 stand alone.",
+              "id": "T2S1",
+              "name": "WikiPathways enrichment of each treatment signature",
+              "packages": [
+                "fgsea==1.38.0",
+                "GSEABase==1.74.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3"
+              ],
+              "question": "Which pathways are enriched among the genes changed by treated_a vs control and by treated_b vs control in the liver samples?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2-interpretation"
+            }
+          ],
+          "title": "Three-group liver RNA-seq omnibus and per-treatment DE"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 61
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

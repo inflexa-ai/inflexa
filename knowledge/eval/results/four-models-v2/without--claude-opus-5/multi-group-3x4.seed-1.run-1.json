@@ -1,0 +1,386 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "multi-group-3x4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:18:24.162Z",
+  "elapsedMs": 92471,
+  "outcome": "plan_submitted",
+  "planId": "pln-22ac9ef0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "DESeq2 model: omnibus LRT + treatment vs control contrasts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=4 per group is low power; genes with real but modest effects will be missed and absence of significance is not evidence of no change",
+          "The 12,000-gene matrix is a reduced feature space, not a full transcriptome — say so wherever a proportion of genes is reported",
+          "If the counts turn out to be length-corrected, DESeq2 results remain usable after rounding but the provenance caveat must travel with the results",
+          "independentFiltering interacts with the LRT and Wald tables differently; report the filtering threshold DESeq2 chose for each"
+        ],
+        "context": "Human liver bulk RNA-seq, 3 groups x 4 replicates, unpaired, single batch, raw gene-level counts from Salmon. The research question has an omnibus part and a per-treatment part; both are served by one DESeq2 fit rather than separate runs, which keeps dispersion estimation pooled across all 12 samples.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "SummarizedExperiment",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "Which of the 12,000 genes differ anywhere among control, treated_a and treated_b (omnibus LRT), and what is each gene's fold change for treated_a vs control and treated_b vs control?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Use DESeq2 in R on the raw count matrix — do not run DE on TPM, CPM or VST values",
+          "Set control as the reference level explicitly; do not rely on alphabetical ordering",
+          "Fit one DESeq2 object for all four tests so dispersions and size factors are shared",
+          "Use BH FDR at 0.05 as the significance threshold and report it with every count",
+          "Do not add a batch or covariate term — the design is recorded as single batch with no other sample annotation",
+          "Do not drop any sample without stating the diagnostic that justified it"
+        ],
+        "description": "Load /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene-level Salmon counts) and /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition). Match count columns to metadata sample IDs by name and fail loudly on any mismatch rather than reordering by position. Build a DESeq2 dataset with design ~condition, relevelling condition so that 'control' is the reference. Because the record does not state whether the Salmon gene-level counts carry a length correction, first test whether the matrix is integer: if it is not, round to integer, and record in the output that counts were non-integer and were rounded (this is the expected handling for length-scaled counts, but it must be reported, not hidden). Prefilter to genes with at least 10 counts in at least 4 samples (the smallest group size) and report how many of the 12,000 genes survive. Fit once with DESeq(..., test='LRT', reduced=~1) to get the omnibus across-group statistic, and extract the pairwise Wald contrasts treated_a vs control, treated_b vs control, and (secondary) treated_b vs treated_a from the same fitted object using nbinomWaldTest on the same dispersion estimates, so all contrasts share one normalisation and one variance model. Apply apeglm or ashr LFC shrinkage to each pairwise contrast for effect-size reporting, keeping unshrunken values alongside. Emit: size factors per sample, dispersion plot, VST matrix, PCA of VST (coloured by condition), sample-sample correlation heatmap, and four result tables (LRT, and the three Wald contrasts) with baseMean, log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj. Significance threshold: BH-adjusted p < 0.05 throughout; report counts at padj<0.05 with and without an additional |log2FC| >= 1 filter.",
+        "acceptance_criteria": [
+          "Count columns and metadata sample IDs are matched by name; the number matched (expected 12) is reported and any mismatch aborts the step",
+          "Reference level is explicitly control; the contrast direction of every result table is stated as treatment-over-control",
+          "Whether the input counts were integer or were rounded is stated explicitly in the output",
+          "Number of genes retained after low-count prefiltering out of 12,000 is reported",
+          "LRT result table (~condition vs ~1) is written with padj, and the number of genes at padj<0.05 is reported",
+          "Wald result tables for treated_a vs control, treated_b vs control and treated_b vs treated_a are written, each with raw and shrunken log2FC, and per-contrast counts at padj<0.05 and at padj<0.05 & |log2FC|>=1",
+          "PCA of VST values and a sample-sample correlation heatmap are produced, and the text states whether samples group by condition or whether any sample looks like an outlier — without asserting the design is clean if the plot does not support it"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Shared vs treatment-specific gene sets and direction concordance",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Set-difference logic on thresholded lists is unstable at n=4; the concordance scatter over all tested genes is more informative than the Venn counts and should be given equal weight in the report",
+          "With only 12 samples the top-gene heatmap will look cleaner than the underlying evidence warrants — it is a display, not a validation"
+        ],
+        "context": "T1S1 produces per-contrast statistics; this step is the bookkeeping that answers 'across all three groups' versus 'per treatment' as two separable questions, and quantifies whether treated_a and treated_b act alike.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "ggplot2",
+          "ComplexHeatmap",
+          "ComplexUpset",
+          "EnhancedVolcano",
+          "dplyr"
+        ],
+        "question": "Of the genes significant in the omnibus LRT, which are changed by treated_a only, by treated_b only, or by both relative to control — and do the shared genes move in the same direction under the two treatments?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not call a gene 'treatment_a-specific' on the basis of a threshold crossing alone — report its effect size and padj in the other contrast alongside, so a near-miss is visible as a near-miss",
+          "Use the shrunken log2FC for all effect-size comparisons and plots; use unshrunken values only where a raw statistic is required",
+          "Keep the same padj<0.05 threshold used in T1S1 — do not introduce a second threshold here"
+        ],
+        "description": "Take the four result tables from T1S1 and resolve them into the sets the research question asks for. Define: L = genes with LRT padj<0.05; A = genes with treated_a vs control padj<0.05; B = genes with treated_b vs control padj<0.05. Report |L|, |A|, |B|, the intersections A∩B, A\\B, B\\A, and how many of A and B fall inside L (a gene significant in a pairwise contrast but not in the LRT, and vice versa, is expected at the margin and should be reported rather than explained away). For A∩B, correlate the shrunken log2FC of treated_a vs control against treated_b vs control (Pearson and Spearman) and count same-direction versus opposite-direction genes, so the report can say whether the two treatments produce a shared response or divergent ones. Produce: a Venn/UpSet of L, A, B; volcano plots for each treatment contrast; a scatter of treated_a log2FC vs treated_b log2FC over all tested genes with A∩B highlighted; a heatmap of VST z-scores across all 12 samples for the top LRT genes by padj (cap at 50), annotated by condition. Write four gene lists to disk — LRT-significant, treated_a-specific, treated_b-specific, shared — each with gene ID, both log2FCs and both padj values, for the enrichment step.",
+        "acceptance_criteria": [
+          "Set sizes |L|, |A|, |B| and all pairwise intersections are tabulated with the padj<0.05 threshold stated",
+          "Genes significant in a pairwise Wald contrast but not in the LRT (and vice versa) are counted and reported rather than silently dropped",
+          "log2FC concordance between the two treatments over A∩B is quantified (correlation coefficient plus same/opposite direction counts)",
+          "Volcano plots for both treatment-vs-control contrasts and a treated_a vs treated_b log2FC scatter are produced",
+          "Heatmap of top LRT genes across all 12 samples is annotated by condition (control, treated_a, treated_b)",
+          "Four gene lists are written as files with gene ID, both shrunken log2FCs and both padj values"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the treatment response gene sets",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "GO is a nested hierarchy — parent and child terms will co-occur; collapse redundant terms before quoting a count of enriched processes",
+          "With a 12,000-gene background, set sizes are truncated relative to the published collections and enrichment statistics are correspondingly less comparable to literature values",
+          "Short input lists (likely at n=4) make ORA underpowered; weight the GSEA result more heavily when the two disagree"
+        ],
+        "context": "Downstream interpretation of the DE results from T1S1/T1S2. Tissue is human liver, so liver-relevant metabolic and xenobiotic-response terms are plausible hits, but the step must not pre-select terms to fit that expectation.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "GSEABase",
+          "data.table",
+          "ggplot2",
+          "dplyr"
+        ],
+        "question": "Which biological processes and pathways are enriched among the genes changed by treated_a vs control, by treated_b vs control, and among the genes shared by both — in human liver?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use human gene sets only; do not substitute a mouse or rat collection",
+          "Use the tested-gene universe for ORA, never the full genome, because the input is a 12,000-gene subset",
+          "Report enrichment as annotation of the DE result, not as evidence of mechanism or of drug action",
+          "Do not filter gene sets to a liver-specific or expectation-driven subset before testing"
+        ],
+        "description": "Run functional enrichment on the gene sets and rankings produced by T1S2, for Homo sapiens. Two complementary tests: (1) over-representation analysis on the treated_a-significant, treated_b-significant and shared gene lists, using as universe ONLY the genes that survived T1S1's prefilter and were actually tested — not the whole genome, since the input matrix carries 12,000 genes rather than a full transcriptome; (2) rank-based GSEA (fgsea) on each treatment's full gene ranking by shrunken log2FC, which does not depend on the significance threshold and is the more reliable readout at n=4. Reference data needed: human gene-set collections — a hallmark collection, GO biological process sets, and a curated pathway collection (Reactome and/or WikiPathways); the environment lists human versions of all of these, and the Reactome file is multi-species so it must be filtered to Homo sapiens via its pathway index before use. Resolve the collections at run time and state which ones were used. Gene identifiers in the count matrix must be checked before mapping: if they are Ensembl IDs or Entrez IDs, map to HGNC symbols (org.Hs.eg.db, or the staged human UniProt ID mapping table) and report the mapping rate; if the mapping rate is below ~70%, say so and treat the enrichment as unreliable rather than reporting the top hits as findings. Output per collection and per gene set: enrichment table with set name, set size, overlap/leading-edge genes, NES (GSEA) or fold enrichment (ORA), p and BH-adjusted p; plus dot plots of the top terms per treatment and a side-by-side comparison of terms shared between treated_a and treated_b.",
+        "acceptance_criteria": [
+          "The gene-set collections actually used are named, with organism confirmed as Homo sapiens; if a collection could not be resolved the step reports which and proceeds with the remainder",
+          "Identifier type of the count matrix rows is stated and the symbol-mapping rate is reported",
+          "ORA universe is explicitly the set of genes tested in T1S1, and this is stated in the output",
+          "Enrichment tables for treated_a, treated_b and the shared set are produced with BH-adjusted p values",
+          "GSEA on the full shrunken-log2FC ranking is run for both treatment contrasts, with NES and leading-edge genes reported",
+          "Terms enriched in both treatments versus in only one are presented side by side",
+          "If no gene set reaches padj<0.05, that is reported plainly as a negative result — top nominal terms may be listed but must be labelled as not passing FDR"
+        ]
+      }
+    ],
+    "title": "Liver RNA-seq: treated_a/treated_b vs control DE + pathways",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment: gene-level Salmon counts (12,000 genes x 12 samples, counts.csv) with a sample table (metadata.csv) defining three unpaired groups — control, treated_a, treated_b — at n=4 each, human liver. The research question has two distinct statistical parts and the plan mirrors them exactly.\n\nPart 1 (\"which genes differ across the three groups at all\") is an omnibus question, answered by a DESeq2 likelihood-ratio test of ~condition against the intercept-only reduced model. This is a single test per gene, so it does not need multiplicity correction across contrasts and it is the correct object to report as 'differs anywhere among the three groups'. Part 2 (\"which genes does each treatment change relative to control\") is two pre-specified pairwise Wald contrasts, treated_a vs control and treated_b vs control, fitted from the same dispersion estimates in the same DESeq2 object so the two treatments are compared against a common control on a common variance model rather than in two separately re-normalised runs. treated_a vs treated_b is not asked for but is cheap and is included as a secondary contrast; it is reported separately so it does not inflate the headline counts.\n\nT1S1 builds the DESeq2 object once: it reconciles counts.csv column names with metadata.csv sample IDs, sets control as the reference level, applies a low-count prefilter, runs the LRT and the Wald contrasts in one object, and emits VST-transformed values plus PCA and sample-correlation diagnostics. The data profile flags that it is not recorded whether the Salmon gene-level counts carry a length correction; that matters because DESeq2 requires counts on the raw count scale. The step therefore checks integrality and, when values are non-integer (the expected shape if these came through tximport lengthScaledTPM or similar), rounds and records that fact, since DESeq2's own model assumptions still hold for rounded length-scaled counts but the provenance must be stated. No batch term is included — the design is recorded as single-batch — but the PCA is what would expose an unmodelled structure, and the step is required to say so rather than assert cleanliness.\n\nT1S2 turns the three result tables into the answer the question asks for: how the LRT set relates to the two treatment sets, which genes are shared between treatments versus specific to one, and whether the two treatments move shared genes in the same or opposite direction (log2FC concordance). With n=4 per group this is the honest ceiling of what the design supports — the step must report effect sizes and counts, not claim treatment-specific biology from a gene that merely crossed threshold in one arm and missed in the other.\n\nT2S1 is functional interpretation, run only on the gene sets T1S2 defines, using human gene-set collections resolved from the environment (hallmark, GO biological process, Reactome/WikiPathways are all present for Homo sapiens). It uses both an over-representation test on the significant sets and a rank-based GSEA on the full shrunken-LFC ranking per treatment, because with 12,000 genes and n=4 the ORT lists can be short and the ranked test does not depend on a threshold. Enrichment is annotation, not evidence of mechanism, and the step is told to report it that way; if a collection is missing at run time it reports which ones it used and proceeds with the rest.\n\nCaveat carried through the whole plan: n=4 per group in a single batch gives limited power, the 12,000-gene matrix is already a reduced feature space (so it is not a full transcriptome and enrichment backgrounds must be the tested genes, not the genome), and nothing here supports a causal or dose-ordering claim between treated_a and treated_b."
+  },
+  "usage": {
+    "inputTokens": 268007,
+    "outputTokens": 6171,
+    "cacheCreationInputTokens": 135932,
+    "cacheReadInputTokens": 132027,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Dk8p2fDNpXEDCmXLohyZgy",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "clusterProfiler",
+          "fgsea",
+          "msigdbr",
+          "org.Hs.eg.db",
+          "edgeR",
+          "limma",
+          "pheatmap",
+          "EnhancedVolcano",
+          "ComplexHeatmap",
+          "tximport",
+          "decoupleR"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01Ngx7t5Mmh8UFNBP9sTmQXv",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human",
+        "limit": 60
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01Bw2qDoXCvwYzKsg58eAH6z",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01L2ZVaADvCQqPbUpcBafpZ1",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gmt",
+        "limit": 40
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_01Q4u9xnc3ThjxiJtvmU9fQx",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver RNA-seq: treated_a/treated_b vs control DE + pathways",
+          "analytical_narrative": "The input is a single-batch bulk RNA-seq experiment: gene-level Salmon counts (12,000 genes x 12 samples, counts.csv) with a sample table (metadata.csv) defining three unpaired groups — control, treated_a, treated_b — at n=4 each, human liver. The research question has two distinct statistical parts and the plan mirrors them exactly.\n\nPart 1 (\"which genes differ across the three groups at all\") is an omnibus question, answered by a DESeq2 likelihood-ratio test of ~condition against the intercept-only reduced model. This is a single test per gene, so it does not need multiplicity correction across contrasts and it is the correct object to report as 'differs anywhere among the three groups'. Part 2 (\"which genes does each treatment change relative to control\") is two pre-specified pairwise Wald contrasts, treated_a vs control and treated_b vs control, fitted from the same dispersion estimates in the same DESeq2 object so the two treatments are compared against a common control on a common variance model rather than in two separately re-normalised runs. treated_a vs treated_b is not asked for but is cheap and is included as a secondary contrast; it is reported separately so it does not inflate the headline counts.\n\nT1S1 builds the DESeq2 object once: it reconciles counts.csv column names with metadata.csv sample IDs, sets control as the reference level, applies a low-count prefilter, runs the LRT and the Wald contrasts in one object, and emits VST-transformed values plus PCA and sample-correlation diagnostics. The data profile flags that it is not recorded whether the Salmon gene-level counts carry a length correction; that matters because DESeq2 requires counts on the raw count scale. The step therefore checks integrality and, when values are non-integer (the expected shape if these came through tximport lengthScaledTPM or similar), rounds and records that fact, since DESeq2's own model assumptions still hold for rounded length-scaled counts but the provenance must be stated. No batch term is included — the design is recorded as single-batch — but the PCA is what would expose an unmodelled structure, and the step is required to say so rather than assert cleanliness.\n\nT1S2 turns the three result tables into the answer the question asks for: how the LRT set relates to the two treatment sets, which genes are shared between treatments versus specific to one, and whether the two treatments move shared genes in the same or opposite direction (log2FC concordance). With n=4 per group this is the honest ceiling of what the design supports — the step must report effect sizes and counts, not claim treatment-specific biology from a gene that merely crossed threshold in one arm and missed in the other.\n\nT2S1 is functional interpretation, run only on the gene sets T1S2 defines, using human gene-set collections resolved from the environment (hallmark, GO biological process, Reactome/WikiPathways are all present for Homo sapiens). It uses both an over-representation test on the significant sets and a rank-based GSEA on the full shrunken-LFC ranking per treatment, because with 12,000 genes and n=4 the ORT lists can be short and the ranked test does not depend on a threshold. Enrichment is annotation, not evidence of mechanism, and the step is told to report it that way; if a collection is missing at run time it reports which ones it used and proceeds with the rest.\n\nCaveat carried through the whole plan: n=4 per group in a single batch gives limited power, the 12,000-gene matrix is already a reduced feature space (so it is not a full transcriptome and enrichment backgrounds must be the tested genes, not the genome), and nothing here supports a causal or dose-ordering claim between treated_a and treated_b.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "DESeq2 model: omnibus LRT + treatment vs control contrasts",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes differ anywhere among control, treated_a and treated_b (omnibus LRT), and what is each gene's fold change for treated_a vs control and treated_b vs control?",
+              "description": "Load /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene-level Salmon counts) and /eval-four-models-v2-without-multi-group-3x4-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample, condition). Match count columns to metadata sample IDs by name and fail loudly on any mismatch rather than reordering by position. Build a DESeq2 dataset with design ~condition, relevelling condition so that 'control' is the reference. Because the record does not state whether the Salmon gene-level counts carry a length correction, first test whether the matrix is integer: if it is not, round to integer, and record in the output that counts were non-integer and were rounded (this is the expected handling for length-scaled counts, but it must be reported, not hidden). Prefilter to genes with at least 10 counts in at least 4 samples (the smallest group size) and report how many of the 12,000 genes survive. Fit once with DESeq(..., test='LRT', reduced=~1) to get the omnibus across-group statistic, and extract the pairwise Wald contrasts treated_a vs control, treated_b vs control, and (secondary) treated_b vs treated_a from the same fitted object using nbinomWaldTest on the same dispersion estimates, so all contrasts share one normalisation and one variance model. Apply apeglm or ashr LFC shrinkage to each pairwise contrast for effect-size reporting, keeping unshrunken values alongside. Emit: size factors per sample, dispersion plot, VST matrix, PCA of VST (coloured by condition), sample-sample correlation heatmap, and four result tables (LRT, and the three Wald contrasts) with baseMean, log2FC, shrunken log2FC, lfcSE, stat, pvalue, padj. Significance threshold: BH-adjusted p < 0.05 throughout; report counts at padj<0.05 with and without an additional |log2FC| >= 1 filter.",
+              "context": "Human liver bulk RNA-seq, 3 groups x 4 replicates, unpaired, single batch, raw gene-level counts from Salmon. The research question has an omnibus part and a per-treatment part; both are served by one DESeq2 fit rather than separate runs, which keeps dispersion estimation pooled across all 12 samples.",
+              "acceptance_criteria": [
+                "Count columns and metadata sample IDs are matched by name; the number matched (expected 12) is reported and any mismatch aborts the step",
+                "Reference level is explicitly control; the contrast direction of every result table is stated as treatment-over-control",
+                "Whether the input counts were integer or were rounded is stated explicitly in the output",
+                "Number of genes retained after low-count prefiltering out of 12,000 is reported",
+                "LRT result table (~condition vs ~1) is written with padj, and the number of genes at padj<0.05 is reported",
+                "Wald result tables for treated_a vs control, treated_b vs control and treated_b vs treated_a are written, each with raw and shrunken log2FC, and per-contrast counts at padj<0.05 and at padj<0.05 & |log2FC|>=1",
+                "PCA of VST values and a sample-sample correlation heatmap are produced, and the text states whether samples group by condition or whether any sample looks like an outlier — without asserting the design is clean if the plot does not support it"
+              ],
+              "constraints": [
+                "Use DESeq2 in R on the raw count matrix — do not run DE on TPM, CPM or VST values",
+                "Set control as the reference level explicitly; do not rely on alphabetical ordering",
+                "Fit one DESeq2 object for all four tests so dispersions and size factors are shared",
+                "Use BH FDR at 0.05 as the significance threshold and report it with every count",
+                "Do not add a batch or covariate term — the design is recorded as single batch with no other sample annotation",
+                "Do not drop any sample without stating the diagnostic that justified it"
+              ],
+              "caveats": [
+                "n=4 per group is low power; genes with real but modest effects will be missed and absence of significance is not evidence of no change",
+                "The 12,000-gene matrix is a reduced feature space, not a full transcriptome — say so wherever a proportion of genes is reported",
+                "If the counts turn out to be length-corrected, DESeq2 results remain usable after rounding but the provenance caveat must travel with the results",
+                "independentFiltering interacts with the LRT and Wald tables differently; report the filtering threshold DESeq2 chose for each"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "SummarizedExperiment",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Shared vs treatment-specific gene sets and direction concordance",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Of the genes significant in the omnibus LRT, which are changed by treated_a only, by treated_b only, or by both relative to control — and do the shared genes move in the same direction under the two treatments?",
+              "description": "Take the four result tables from T1S1 and resolve them into the sets the research question asks for. Define: L = genes with LRT padj<0.05; A = genes with treated_a vs control padj<0.05; B = genes with treated_b vs control padj<0.05. Report |L|, |A|, |B|, the intersections A∩B, A\\B, B\\A, and how many of A and B fall inside L (a gene significant in a pairwise contrast but not in the LRT, and vice versa, is expected at the margin and should be reported rather than explained away). For A∩B, correlate the shrunken log2FC of treated_a vs control against treated_b vs control (Pearson and Spearman) and count same-direction versus opposite-direction genes, so the report can say whether the two treatments produce a shared response or divergent ones. Produce: a Venn/UpSet of L, A, B; volcano plots for each treatment contrast; a scatter of treated_a log2FC vs treated_b log2FC over all tested genes with A∩B highlighted; a heatmap of VST z-scores across all 12 samples for the top LRT genes by padj (cap at 50), annotated by condition. Write four gene lists to disk — LRT-significant, treated_a-specific, treated_b-specific, shared — each with gene ID, both log2FCs and both padj values, for the enrichment step.",
+              "context": "T1S1 produces per-contrast statistics; this step is the bookkeeping that answers 'across all three groups' versus 'per treatment' as two separable questions, and quantifies whether treated_a and treated_b act alike.",
+              "acceptance_criteria": [
+                "Set sizes |L|, |A|, |B| and all pairwise intersections are tabulated with the padj<0.05 threshold stated",
+                "Genes significant in a pairwise Wald contrast but not in the LRT (and vice versa) are counted and reported rather than silently dropped",
+                "log2FC concordance between the two treatments over A∩B is quantified (correlation coefficient plus same/opposite direction counts)",
+                "Volcano plots for both treatment-vs-control contrasts and a treated_a vs treated_b log2FC scatter are produced",
+                "Heatmap of top LRT genes across all 12 samples is annotated by condition (control, treated_a, treated_b)",
+                "Four gene lists are written as files with gene ID, both shrunken log2FCs and both padj values"
+              ],
+              "constraints": [
+                "Do not call a gene 'treatment_a-specific' on the basis of a threshold crossing alone — report its effect size and padj in the other contrast alongside, so a near-miss is visible as a near-miss",
+                "Use the shrunken log2FC for all effect-size comparisons and plots; use unshrunken values only where a raw statistic is required",
+                "Keep the same padj<0.05 threshold used in T1S1 — do not introduce a second threshold here"
+              ],
+              "caveats": [
+                "Set-difference logic on thresholded lists is unstable at n=4; the concordance scatter over all tested genes is more informative than the Venn counts and should be given equal weight in the report",
+                "With only 12 samples the top-gene heatmap will look cleaner than the underlying evidence warrants — it is a display, not a validation"
+              ],
+              "packages": [
+                "data.table",
+                "ggplot2",
+                "ComplexHeatmap",
+                "ComplexUpset",
+                "EnhancedVolcano",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the treatment response gene sets",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological processes and pathways are enriched among the genes changed by treated_a vs control, by treated_b vs control, and among the genes shared by both — in human liver?",
+              "description": "Run functional enrichment on the gene sets and rankings produced by T1S2, for Homo sapiens. Two complementary tests: (1) over-representation analysis on the treated_a-significant, treated_b-significant and shared gene lists, using as universe ONLY the genes that survived T1S1's prefilter and were actually tested — not the whole genome, since the input matrix carries 12,000 genes rather than a full transcriptome; (2) rank-based GSEA (fgsea) on each treatment's full gene ranking by shrunken log2FC, which does not depend on the significance threshold and is the more reliable readout at n=4. Reference data needed: human gene-set collections — a hallmark collection, GO biological process sets, and a curated pathway collection (Reactome and/or WikiPathways); the environment lists human versions of all of these, and the Reactome file is multi-species so it must be filtered to Homo sapiens via its pathway index before use. Resolve the collections at run time and state which ones were used. Gene identifiers in the count matrix must be checked before mapping: if they are Ensembl IDs or Entrez IDs, map to HGNC symbols (org.Hs.eg.db, or the staged human UniProt ID mapping table) and report the mapping rate; if the mapping rate is below ~70%, say so and treat the enrichment as unreliable rather than reporting the top hits as findings. Output per collection and per gene set: enrichment table with set name, set size, overlap/leading-edge genes, NES (GSEA) or fold enrichment (ORA), p and BH-adjusted p; plus dot plots of the top terms per treatment and a side-by-side comparison of terms shared between treated_a and treated_b.",
+              "context": "Downstream interpretation of the DE results from T1S1/T1S2. Tissue is human liver, so liver-relevant metabolic and xenobiotic-response terms are plausible hits, but the step must not pre-select terms to fit that expectation.",
+              "acceptance_criteria": [
+                "The gene-set collections actually used are named, with organism confirmed as Homo sapiens; if a collection could not be resolved the step reports which and proceeds with the remainder",
+                "Identifier type of the count matrix rows is stated and the symbol-mapping rate is reported",
+                "ORA universe is explicitly the set of genes tested in T1S1, and this is stated in the output",
+                "Enrichment tables for treated_a, treated_b and the shared set are produced with BH-adjusted p values",
+                "GSEA on the full shrunken-log2FC ranking is run for both treatment contrasts, with NES and leading-edge genes reported",
+                "Terms enriched in both treatments versus in only one are presented side by side",
+                "If no gene set reaches padj<0.05, that is reported plainly as a negative result — top nominal terms may be listed but must be labelled as not passing FDR"
+              ],
+              "constraints": [
+                "Use human gene sets only; do not substitute a mouse or rat collection",
+                "Use the tested-gene universe for ORA, never the full genome, because the input is a 12,000-gene subset",
+                "Report enrichment as annotation of the DE result, not as evidence of mechanism or of drug action",
+                "Do not filter gene sets to a liver-specific or expectation-driven subset before testing"
+              ],
+              "caveats": [
+                "GO is a nested hierarchy — parent and child terms will co-occur; collapse redundant terms before quoting a count of enriched processes",
+                "With a 12,000-gene background, set sizes are truncated relative to the published collections and enrichment statistics are correspondingly less comparable to literature values",
+                "Short input lists (likely at n=4) make ORA underpowered; weight the GSEA result more heavily when the two disagree"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "GSEABase",
+                "data.table",
+                "ggplot2",
+                "dplyr"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

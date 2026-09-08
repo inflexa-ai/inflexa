@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 3,
+    "low_count_filter": 2,
+    "normalization": 2,
+    "model_formula_contrasts": 3,
+    "fdr_shrinkage": 1,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 2
+  },
+  "rationale": "The planner reached the correct outcome: it recognized that a gene-level count matrix carries no isoform information and stopped to request transcript-level quantification (quant.sf or a transcript-by-sample matrix) rather than fitting DESeq2/edgeR and mislabeling DEGs as switches. It fell short of the reference by not requesting the transcript-to-gene map with annotation version or the effective lengths, and by not sketching the method of record (tximport scaledTPM/dtuScaledTPM, DRIMSeq or DEXSeq with dmFilter, stageR at overall FDR 0.05, proportion-based reporting) that would apply once the files arrive. Because no plan was submitted, the QC, filtering, normalization, contrast, and FDR criteria are essentially unstated; the only design-specific content is the 6 vs 6 treated-vs-control framing and an acknowledgment that sample_01 needs handling, without a stated policy. Enrichment was correctly not proposed for a transcript-usage question."
+}

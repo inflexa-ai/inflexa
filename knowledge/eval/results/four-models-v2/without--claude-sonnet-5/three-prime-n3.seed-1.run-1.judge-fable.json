@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes the 3' tag-seq nature, refuses any TPM/FPKM or length correction, feeds raw counts into DESeq2 with median-of-ratios normalization inside the model, uses ~condition for a single-batch unpaired 3v3, applies apeglm/ashr shrinkage and BH at 0.05, and flags low power. Weaknesses: the low-count filter is left as an unspecified 'standard rule' rather than a tag-seq-appropriate floor (e.g. ~5 counts in >=3 samples); PCA/distance plots appear as post-hoc QC of the contrast rather than preceding the test, with no coloring or outlier policy stated; the reference level and LFC threshold are deferred rather than fixed. Enrichment was not asked for and is added anyway, with named versioned collections but no explicit ORA universe, no set-size window, and an unresolved ORA-vs-GSEA/ranking-metric choice. The report omits software versions and does not explicitly commit to reporting the number of genes tested versus significant."
+}

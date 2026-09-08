@@ -1,0 +1,367 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "outlier-n5",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:18:50.146Z",
+  "elapsedMs": 176009,
+  "outcome": "plan_submitted",
+  "planId": "pln-b6cb3019",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Primary DE: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Counts are Salmon gene-level as delivered; whether length correction was applied is not recorded, so treat results as conditional on this matrix.",
+          "n=5 per group is small; wide confidence intervals and limited power are expected and must be stated in the output.",
+          "sample_03 is a known outlier; primary-model genes driven by it will be resolved in the downstream sensitivity step."
+        ],
+        "context": "Data: /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/counts/counts.csv (12000 genes x 11 columns, Salmon gene-level counts) and /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows: sample id + condition, treated vs control). Human muscle, unpaired, single batch. Known QC signal: sample_03 separates from every other sample. With only 5 replicates per group, DESeq2's automatic outlier replacement does not trigger (it needs >=7 replicates), so Cook's-distance-flagged genes must be surfaced manually. The count matrix is gene-level Salmon output of unknown length-correction status; do not claim TPM- or length-corrected properties for the results.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which genes differ between treated and control across all 10 muscle samples under the primary model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Builds the primary DESeq2 contrast (treated vs control, n=5 vs 5) on the Salmon gene-level counts, screens sample-level and gene-level outliers (Cook's distance), and produces the primary differential-expression table with shrunken log2 fold changes.",
+        "acceptance_criteria": [
+          "All 10 samples from metadata.csv (5 treated, 5 control) match the counts.csv columns with no dropped or reordered samples",
+          "PCA and sample-distance heatmap on VST-transformed counts are produced, with sample_03's position relative to its condition explicitly reported",
+          "Results table written with gene, baseMean, log2FoldChange (apeglm-shrunk), lfcSE, stat, pvalue, padj",
+          "Genes whose counts trigger Cook's-distance flags at any sample are listed separately rather than silently retained",
+          "Volcano and MA plots for treated vs control are produced"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Sensitivity: DE without sample_03",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "context": "sample_03 separates from all other samples on PCA and sample distances. Its condition membership is known only from metadata.csv at run time. The comparison design: primary DESeq2 model from T1S1 (all 10 samples) vs identical model on 9 samples. Report which genes are calls of the suspect sample rather than of the treatment.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ggplot2",
+          "ComplexUpset"
+        ],
+        "question": "Do the treated-vs-control DE genes survive exclusion of the outlier sample_03, and which calls depend on it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Re-runs the identical DESeq2 contrast with sample_03 excluded and compares DE calls, fold changes, and ranked gene lists against the 10-sample primary model to separate treatment effects from a single-sample artefact.",
+        "acceptance_criteria": [
+          "Second DESeq2 run on 9 samples (4 treated vs 5 control or 5 vs 4, as metadata dictates) with the same model, filtering, and shrinkage settings as T1S1",
+          "Overlap (Jaccard and raw counts) of DE genes (padj < 0.05) between the 10-sample and 9-sample models reported",
+          "Correlation of log2FoldChange estimates between the two models reported for the union of genes",
+          "Genes called DE only when sample_03 is included, and genes gained when it is excluded, are listed explicitly",
+          "A written verdict: whether the treated-vs-control conclusion is robust to excluding sample_03, and which gene list downstream steps should use"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment on DE rankings",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "context": "Input: the two ranked DE gene lists from T1S1 and T1S2 (signed statistics as ranking metric). Reference data: a curated human (HGNC symbol) pathway gene-set collection, confirmed present in this environment as WikiPathways Homo sapiens GMT, 2026.07.10 build. Count-row identifiers must be reconciled to HGNC symbols (UniProt human ID mapping is staged in the environment if the counts carry non-HGNC keys); report how many DE genes mapped before interpreting enrichment.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "GSEABase",
+          "data.table",
+          "ggplot2"
+        ],
+        "question": "Which biological pathways are enriched among genes differing between treated and control, and are they robust to excluding sample_03?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S2"
+        ],
+        "description": "Runs gene-set enrichment (FGSEA, pre-ranked) on the treated-vs-control ranked gene lists from both the primary and the outlier-excluded models against the WikiPathways human gene-set collection, and reports which enriched pathways are robust to the sample_03 sensitivity comparison.",
+        "acceptance_criteria": [
+          "Gene-to-HGNC symbol coverage of the DE list is quantified and reported before enrichment",
+          "FGSEA pre-ranked on the Wald statistic (or shrunken LFC) using the WikiPathways human gene sets, with standard-gene-size filtering (minSize ~10, maxSize ~500)",
+          "Pathway results reported separately for the 10-sample ranking and the 9-sample (sample_03-excluded) ranking, with pathways changing significance flagged",
+          "Results table: pathway name, WikiPathways ID, NES, padj/BH q-value, leading-edge size",
+          "If the human gene-set collection is absent at run time, the step reports the gap and stops at the DE tables rather than substituting a non-human set"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE with outlier sensitivity",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12,000 human muscle gene-level counts from Salmon for 5 treated vs 5 control samples (single batch, unpaired). The profile flags sample_03 as separating from all other samples on PCA and on the sample-distance heatmap, so a single primary DE call would silently depend on whether that sample drives or masks the treatment signal. The plan therefore runs one primary DESeq2 analysis on all 10 samples with Cook's-distance screening, then re-runs the identical contrast without sample_03 and quantifies how the gene set changes. Genes that survive both analyses are reported as the robust differential set, which is the input to pathway enrichment on WikiPathways human gene sets. One caveat is carried through: the Salmon counts are gene-level as delivered and the record does not state whether length correction was applied, so the DE results are conditional on this count matrix and no cross-dataset effect-size claims are made."
+  },
+  "usage": {
+    "inputTokens": 65854,
+    "outputTokens": 4710,
+    "cacheReadInputTokens": 34048,
+    "reasoningTokens": 1395
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_f951c2ebd6cb4009a67c46f7",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is 12,000 human muscle gene-level counts from Salmon for 5 treated vs 5 control samples (single batch, unpaired). The profile flags sample_03 as separating from all other samples on PCA and on the sample-distance heatmap, so a single primary DE call would silently depend on whether that sample drives or masks the treatment signal. The plan therefore runs one primary DESeq2 analysis on all 10 samples with Cook's-distance screening, then re-runs the identical contrast without sample_03 and quantifies how the gene set changes. Genes that survive both analyses are reported as the robust differential set, which is the input to pathway enrichment on WikiPathways human gene sets. One caveat is carried through: the Salmon counts are gene-level as delivered and the record does not state whether length correction was applied, so the DE results are conditional on this count matrix and no cross-dataset effect-size claims are made.",
+          "created_at": "2026-07-15T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 10 samples from metadata.csv (5 treated, 5 control) match the counts.csv columns with no dropped or reordered samples",
+                "PCA and sample-distance heatmap on VST-transformed counts are produced, with sample_03's position relative to its condition explicitly reported",
+                "Results table written with gene, baseMean, log2FoldChange (apeglm-shrunk), lfcSE, stat, pvalue, padj",
+                "Genes whose counts trigger Cook's-distance flags at any sample are listed separately rather than silently retained",
+                "Volcano and MA plots for treated vs control are produced"
+              ],
+              "context": "Data: /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/counts/counts.csv (12000 genes x 11 columns, Salmon gene-level counts) and /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows: sample id + condition, treated vs control). Human muscle, unpaired, single batch. Known QC signal: sample_03 separates from every other sample. With only 5 replicates per group, DESeq2's automatic outlier replacement does not trigger (it needs >=7 replicates), so Cook's-distance-flagged genes must be surfaced manually. The count matrix is gene-level Salmon output of unknown length-correction status; do not claim TPM- or length-corrected properties for the results.",
+              "caveats": [
+                "Counts are Salmon gene-level as delivered; whether length correction was applied is not recorded, so treat results as conditional on this matrix.",
+                "n=5 per group is small; wide confidence intervals and limited power are expected and must be stated in the output.",
+                "sample_03 is a known outlier; primary-model genes driven by it will be resolved in the downstream sensitivity step."
+              ],
+              "depends_on": [],
+              "description": "Builds the primary DESeq2 contrast (treated vs control, n=5 vs 5) on the Salmon gene-level counts, screens sample-level and gene-level outliers (Cook's distance), and produces the primary differential-expression table with shrunken log2 fold changes.",
+              "id": "T1S1",
+              "name": "Primary DE: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "question": "Which genes differ between treated and control across all 10 muscle samples under the primary model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Second DESeq2 run on 9 samples (4 treated vs 5 control or 5 vs 4, as metadata dictates) with the same model, filtering, and shrinkage settings as T1S1",
+                "Overlap (Jaccard and raw counts) of DE genes (padj < 0.05) between the 10-sample and 9-sample models reported",
+                "Correlation of log2FoldChange estimates between the two models reported for the union of genes",
+                "Genes called DE only when sample_03 is included, and genes gained when it is excluded, are listed explicitly",
+                "A written verdict: whether the treated-vs-control conclusion is robust to excluding sample_03, and which gene list downstream steps should use"
+              ],
+              "context": "sample_03 separates from all other samples on PCA and sample distances. Its condition membership is known only from metadata.csv at run time. The comparison design: primary DESeq2 model from T1S1 (all 10 samples) vs identical model on 9 samples. Report which genes are calls of the suspect sample rather than of the treatment.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Re-runs the identical DESeq2 contrast with sample_03 excluded and compares DE calls, fold changes, and ranked gene lists against the 10-sample primary model to separate treatment effects from a single-sample artefact.",
+              "id": "T1S2",
+              "name": "Sensitivity: DE without sample_03",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "question": "Do the treated-vs-control DE genes survive exclusion of the outlier sample_03, and which calls depend on it?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Gene-to-HGNC symbol coverage of the DE list is quantified and reported before enrichment",
+                "FGSEA pre-ranked on the Wald statistic (or shrunken LFC) using the WikiPathways human gene sets, with standard-gene-size filtering (minSize ~10, maxSize ~500)",
+                "Pathway results reported separately for the 10-sample ranking and the 9-sample (sample_03-excluded) ranking, with pathways changing significance flagged",
+                "Results table: pathway name, WikiPathways ID, NES, padj/BH q-value, leading-edge size",
+                "If the human gene-set collection is absent at run time, the step reports the gap and stops at the DE tables rather than substituting a non-human set"
+              ],
+              "context": "Input: the two ranked DE gene lists from T1S1 and T1S2 (signed statistics as ranking metric). Reference data: a curated human (HGNC symbol) pathway gene-set collection, confirmed present in this environment as WikiPathways Homo sapiens GMT, 2026.07.10 build. Count-row identifiers must be reconciled to HGNC symbols (UniProt human ID mapping is staged in the environment if the counts carry non-HGNC keys); report how many DE genes mapped before interpreting enrichment.",
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Runs gene-set enrichment (FGSEA, pre-ranked) on the treated-vs-control ranked gene lists from both the primary and the outlier-excluded models against the WikiPathways human gene-set collection, and reports which enriched pathways are robust to the sample_03 sensitivity comparison.",
+              "id": "T2S1",
+              "name": "Pathway enrichment on DE rankings",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways are enriched among genes differing between treated and control, and are they robust to excluding sample_03?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Treated vs control muscle DE with outlier sensitivity"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_bce2fbf2cc93420da3f46ddd",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is 12,000 human muscle gene-level counts from Salmon for 5 treated vs 5 control samples (single batch, unpaired). The profile flags sample_03 as separating from all other samples on PCA and on the sample-distance heatmap, so a single primary DE call would silently depend on whether that sample drives or masks the treatment signal. The plan therefore runs one primary DESeq2 analysis on all 10 samples with Cook's-distance screening, then re-runs the identical contrast without sample_03 and quantifies how the gene set changes. Genes that survive both analyses are reported as the robust differential set, which is the input to pathway enrichment on WikiPathways human gene sets. One caveat is carried through: the Salmon counts are gene-level as delivered and the record does not state whether length correction was applied, so the DE results are conditional on this count matrix and no cross-dataset effect-size claims are made.",
+          "created_at": "2026-07-15T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 10 samples from metadata.csv (5 treated, 5 control) match the counts.csv columns with no dropped or reordered samples",
+                "PCA and sample-distance heatmap on VST-transformed counts are produced, with sample_03's position relative to its condition explicitly reported",
+                "Results table written with gene, baseMean, log2FoldChange (apeglm-shrunk), lfcSE, stat, pvalue, padj",
+                "Genes whose counts trigger Cook's-distance flags at any sample are listed separately rather than silently retained",
+                "Volcano and MA plots for treated vs control are produced"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/counts/counts.csv (12000 genes x 11 columns, Salmon gene-level counts) and /eval-four-models-v2-without-outlier-n5-s1-1/data/inputs/metadata/metadata.csv (10 rows: sample id + condition, treated vs control). Human muscle, unpaired, single batch. Known QC signal: sample_03 separates from every other sample. With only 5 replicates per group, DESeq2's automatic outlier replacement does not trigger (it needs >=7 replicates), so Cook's-distance-flagged genes must be surfaced manually. The count matrix is gene-level Salmon output of unknown length-correction status; do not claim TPM- or length-corrected properties for the results.",
+              "caveats": [
+                "Counts are Salmon gene-level as delivered; whether length correction was applied is not recorded, so treat results as conditional on this matrix.",
+                "n=5 per group is small; wide confidence intervals and limited power are expected and must be stated in the output.",
+                "sample_03 is a known outlier; primary-model genes driven by it will be resolved in the downstream sensitivity step."
+              ],
+              "depends_on": [],
+              "description": "Builds the primary DESeq2 contrast (treated vs control, n=5 vs 5) on the Salmon gene-level counts, screens sample-level and gene-level outliers (Cook's distance), and produces the primary differential-expression table with shrunken log2 fold changes.",
+              "id": "T1S1",
+              "name": "Primary DE: treated vs control",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "question": "Which genes differ between treated and control across all 10 muscle samples under the primary model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Second DESeq2 run on 9 samples (4 treated vs 5 control or 5 vs 4, as metadata dictates) with the same model, filtering, and shrinkage settings as T1S1",
+                "Overlap (Jaccard and raw counts) of DE genes (padj < 0.05) between the 10-sample and 9-sample models reported",
+                "Correlation of log2FoldChange estimates between the two models reported for the union of genes",
+                "Genes called DE only when sample_03 is included, and genes gained when it is excluded, are listed explicitly",
+                "A written verdict: whether the treated-vs-control conclusion is robust to excluding sample_03, and which gene list downstream steps should use"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "sample_03 separates from all other samples on PCA and sample distances. Its condition membership is known only from metadata.csv at run time. The comparison design: primary DESeq2 model from T1S1 (all 10 samples) vs identical model on 9 samples. Report which genes are calls of the suspect sample rather than of the treatment.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Re-runs the identical DESeq2 contrast with sample_03 excluded and compares DE calls, fold changes, and ranked gene lists against the 10-sample primary model to separate treatment effects from a single-sample artefact.",
+              "id": "T1S2",
+              "name": "Sensitivity: DE without sample_03",
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ggplot2",
+                "ComplexUpset"
+              ],
+              "question": "Do the treated-vs-control DE genes survive exclusion of the outlier sample_03, and which calls depend on it?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Gene-to-HGNC symbol coverage of the DE list is quantified and reported before enrichment",
+                "FGSEA pre-ranked on the Wald statistic (or shrunken LFC) using the WikiPathways human gene sets, with standard-gene-size filtering (minSize ~10, maxSize ~500)",
+                "Pathway results reported separately for the 10-sample ranking and the 9-sample (sample_03-excluded) ranking, with pathways changing significance flagged",
+                "Results table: pathway name, WikiPathways ID, NES, padj/BH q-value, leading-edge size",
+                "If the human gene-set collection is absent at run time, the step reports the gap and stops at the DE tables rather than substituting a non-human set"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Input: the two ranked DE gene lists from T1S1 and T1S2 (signed statistics as ranking metric). Reference data: a curated human (HGNC symbol) pathway gene-set collection, confirmed present in this environment as WikiPathways Homo sapiens GMT, 2026.07.10 build. Count-row identifiers must be reconciled to HGNC symbols (UniProt human ID mapping is staged in the environment if the counts carry non-HGNC keys); report how many DE genes mapped before interpreting enrichment.",
+              "depends_on": [
+                "T1S1",
+                "T1S2"
+              ],
+              "description": "Runs gene-set enrichment (FGSEA, pre-ranked) on the treated-vs-control ranked gene lists from both the primary and the outlier-excluded models against the WikiPathways human gene-set collection, and reports which enriched pathways are robust to the sample_03 sensitivity comparison.",
+              "id": "T2S1",
+              "name": "Pathway enrichment on DE rankings",
+              "packages": [
+                "fgsea",
+                "GSEABase",
+                "data.table",
+                "ggplot2"
+              ],
+              "question": "Which biological pathways are enriched among genes differing between treated and control, and are they robust to excluding sample_03?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Treated vs control muscle DE with outlier sensitivity"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 42
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

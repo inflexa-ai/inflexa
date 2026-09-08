@@ -1,0 +1,64 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "tf-activity-python-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T07:19:40.527Z",
+  "elapsedMs": 262609,
+  "outcome": "error",
+  "error": "Plan generation failed: Provider call failed for analysis:eval-four-models-v2-without-tf-activity-python-n6-s1-1: Upstream idle timeout exceeded",
+  "usage": {
+    "inputTokens": 65985,
+    "outputTokens": 1325,
+    "cacheReadInputTokens": 10880,
+    "reasoningTokens": 1267
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "chatcmpl-tool-9e82af956afe0a52",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "chatcmpl-tool-b496e9307c179d1b",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "call_e96e20a1271540f299974010",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "run TF activity inference ulm with a CollecTRI network on a bulk expression matrix"
+      },
+      "outcome": "error",
+      "durationMs": 1683
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

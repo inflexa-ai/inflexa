@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly identifies the perfect confounding, refuses to add batch or apply ComBat/SVA/RUV, fits ~condition only, and labels every output as treatment+batch combined, which matches the reference. QC has PCA and distance heatmap on VST counts but omits library-size checks and any outlier/shallow-sample policy; the low-count filter is stated only as 'min 10 mapped reads' without a sample-count rule or justification, and size-factor normalization is implied by DESeq2 rather than stated. BH at alpha=0.05 and apeglm shrinkage are explicit, but the |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold in the test. Enrichment names the collection and version and uses the tested-gene universe but gives no set-size window, and its use as a batch-vs-biology diagnostic is a weak inferential device; the housekeeping-gene shift is likewise an informal yardstick. Reporting is strong: versions, design, thresholds, up/down counts, and confounding caveats are all specified."
+}

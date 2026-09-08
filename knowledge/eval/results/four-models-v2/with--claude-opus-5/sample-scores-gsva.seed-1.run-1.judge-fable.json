@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring question, runs GSVA (Gaussian kernel) on a blind VST matrix derived from DESeq2 median-of-ratios size factors, tests the 50x12 score matrix with limma under ~condition (control reference, inflamed minus control) with BH, and draws a condition-annotated hallmark heatmap, matching the reference design. QC is thorough and design-specific: PCA, distance heatmap, library size and detected genes, with an explicit keep-and-inspect policy for sample_01 plus a sensitivity rerun if it sits apart. The filter (>=10 counts in >=6 samples) is tied to the smallest group, and the hallmark collection is named with version (MSigDB 2026.1), human symbols, coverage reporting, and a 10-member floor. The main gap is that no significance alpha is stated for the BH-adjusted score test, so 'sets that pass the test' is left undefined; the report otherwise covers methods, versions, seeds, and design caveats well."
+}

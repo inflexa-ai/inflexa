@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 1,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly fits DESeq2 with ~ sex + age + condition, tabulates sex and age by group before modeling, and explicitly handles rank deficiency if a covariate lines up with condition, but it never states age centering or the reference level. QC lists library sizes and a sex/age balance table but PCA colored by condition, sex, and age is only mentioned in passing and there is no XIST/Y-linked sex check or stated outlier policy. No low-count filter is described, size-factor normalization is left implicit, BH is not named, and apeglm is only conditional. Enrichment is not warranted by the question and the ORA lacks an explicit universe or size window, though the collection and version are named; the report specifies thresholds and significant-gene counts but omits software versions."
+}

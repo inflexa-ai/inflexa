@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits one ~condition model on all twelve samples, answers the omnibus question with a DESeq2 LRT against ~1 (plus an edgeR QL F-test over both coefficients as a second method) and the pairwise question with two named contrasts against an explicit control reference, ashr-shrunken, BH at 0.05 within each contrast, with LRT and contrast tables kept separate. The low count filter (>=10 in >=4, smallest group) and normalization (median-of-ratios, TMM inside the models, no pre-scaling) are stated and justified, and the report names method, versions, design, thresholds, tested and significant counts, and design caveats including the lost length offset. Minor deductions: the plan does not state that the Wald contrasts require a separate Wald fit rather than results() on the LRT object, the QC step flags outliers but gives no stated policy for keeping or dropping one, and presenting the two-method intersection as the 'high-confidence' set is a debatable framing rather than a standard practice."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits a single ~condition model on all twelve samples, answers the omnibus question with the DESeq2 LRT against ~1 and the pairwise question with named treated_a/treated_b vs control contrasts, and correctly notes that a Wald refit is required so LRT p-values are never reported beside a pairwise fold change. QC (blind VST PCA, distance heatmap, library sizes, explicit no-drop outlier policy), the 10-counts-in-4-samples filter, in-model median-of-ratios normalization, explicit relevel to control, ashr shrinkage for multi-level contrasts, and BH at 0.05 within each contrast are all stated and justified for this design. The report step names method, versions, design, thresholds, tested/DE counts, and the two honest caveats (missing length offset, n=4 power). Enrichment was not requested; the plan adds it as secondary context but specifies it properly (full Wald-ranked list, named collections with releases, 15-500 window, universe, seed), so it loses only a little for scope beyond the question."
+}

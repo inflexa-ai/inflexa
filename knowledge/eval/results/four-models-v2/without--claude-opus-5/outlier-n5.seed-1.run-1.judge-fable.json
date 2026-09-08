@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald with ~condition on raw counts, explicit reference level and direction, a justified minimal filter (10 counts in 5 samples), BH at 0.05 with apeglm shrinkage, and sample_03 characterised by library size, detection, Cook's distance, PCA variance and distances before both fits (with and without) are reported with concordance metrics. The exclusion decision is evidence-based but the plan does not fix a numeric criterion (e.g. MAD threshold) before the test, only a metric-backed recommendation, which is a small gap against the reference. Enrichment was not asked for; the added GSEA is well specified on ranking metric and universe but lacks a stated collection version and set-size window. Report completeness is strong on design, thresholds, counts and caveats but does not explicitly require package versions to be reported."
+}

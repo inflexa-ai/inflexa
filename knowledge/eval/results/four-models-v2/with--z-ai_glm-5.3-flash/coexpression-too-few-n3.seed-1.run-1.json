@@ -1,0 +1,1391 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T04:19:09.769Z",
+  "elapsedMs": 491929,
+  "outcome": "plan_submitted",
+  "planId": "pln-88d5acea",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC (blind vst, PCA, distances)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 3 vs 3 the PCA axes are dominated by the largest expression shifts; treat grouping as descriptive, not a test",
+          "If the counts.csv columns do not match the metadata row names exactly, reconcile by order and report the mapping"
+        ],
+        "context": "Files: data/inputs/counts/counts.csv (12000 x 7, gene x sample counts from Salmon) and data/inputs/metadata/metadata.csv (6 x 2, condition with 3 treated vs 3 control). Single batch, unpaired. With 3 samples per arm, no inferential DE is planned; QC is descriptive.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Do the 3 treated vs 3 control liver samples separate by condition on blind vst PCA, and is any sample an outlier that would distort a 6-sample network?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Sample structure QC on raw counts: blind vst, PCA on 500 top-variance genes, sample-distance heatmap per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-eda@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+          "transform = vst, blind = TRUE (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+          "Color every QC plot by condition; there is a single batch, so no batch coloring is possible"
+        ],
+        "description": "Blind variance-stabilizing transform of the raw counts, PCA on the top-500 variable genes, sample-distance heatmap, library-size summary. Output feeds the filter step and contextualizes all module results.",
+        "acceptance_criteria": [
+          "Counts matrix (12000 genes x 6 samples) and metadata (condition column, 3 vs 3) load and are verified key-compatible",
+          "PCA on the 500 highest-variance blind-vst genes, colored by condition, is produced",
+          "Euclidean sample-distance heatmap colored by condition is produced",
+          "Per-sample library sizes and size-factor sanity are reported; any sample departing from its group is flagged by name",
+          "Plots and a short QC verdict (grouping yes/no, outliers yes/no) are saved"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count filter, size factors, vst matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the matrix turns out to be TPM/FPKM-like rather than counts, stop and report: median-of-ratios size factors and the vst assume a count matrix",
+          "Rounded estimated counts propagate Salmon's uncertainty; acceptable here because the downstream use (edge weighting, eigengenes) is descriptive"
+        ],
+        "context": "Counts are Salmon gene-level estimates as delivered; the record does not state whether the length correction occurred, so the step verifies the value type itself and states what it did.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Which genes are expressed strongly enough to enter the module analysis, and what is the normalized expression matrix on which prior-network edges are weighted and eigengenes are computed?",
+        "grounding": {
+          "claims": [
+            "R-0002@087b",
+            "R-0026@9ab1"
+          ],
+          "reason": "Filter + median-of-ratios normalization + vst matrix per R-0002@087b and R-0026@9ab1; DE model not run because the question is module detection, not differential expression",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "min_count",
+              "step": "filter_low_counts",
+              "value": 10,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "vignette:DESeq2/1.52.0#pre-filtering"
+            },
+            {
+              "name": "size_factors",
+              "step": "normalize",
+              "value": "median_of_ratios_named_in_the_plan",
+              "source": "doi:10.1186/s13059-014-0550-8"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-deseq2-two-group@1.1.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "min_count = 10 (doi:10.12688/f1000research.7035.1)",
+          "min_samples = smallest_group_size = 3 (vignette:DESeq2/1.52.0#pre-filtering)",
+          "size_factors = median-of-ratios, estimated inside DESeq2; counts are not scaled, transformed, or normalized before the model (doi:10.1186/s13059-014-0550-8)",
+          "The vst for downstream module work uses blind = FALSE with design ~ condition, per R-0139@0008 (variance-stabilized counts after the low-count filter)"
+        ],
+        "description": "Applies the pre-filter, estimates DESeq2 median-of-ratios size factors, and produces the variance-stabilized gene x sample matrix that T2S1/T2S2 consume. No DE test is fitted — the question is module detection, not differential expression.",
+        "acceptance_criteria": [
+          "Gene filter applied: keep a gene with at least 10 counts in at least 3 samples (the smallest group size); filtered gene count reported",
+          "Matrix checked for fractional values (Salmon-estimated counts); if fractional, counts are rounded to integer for DESeq2 and the rounding is recorded in the output",
+          "Median-of-ratios size factors estimated and reported per sample; a size factor below ~0.5 or above ~2 is flagged",
+          "Variance-stabilized matrix (design ~ condition, blind = FALSE) on the filtered genes saved for the module steps",
+          "No scaling or pre-normalization of the counts before the model"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "STRING prior-network co-expression modules and eigengenes",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "knowledge_check false-matched this step_type to the forbidden expression-only WGCNA method twice; the violation is documented here — the step implements R-0140@3faf's own sanctioned alternative (prior network as structure), which the checker cannot express",
+          "Module boundaries depend on the STRING prior topology, not on this cohort's correlations alone; a module may contain genes whose expression does not co-vary here — the kME values show which members actually co-vary",
+          "If gene symbols in counts.csv and STRING preferred_name overlap poorly (<50% of filtered genes matched), report the match rate and stop before interpreting modules"
+        ],
+        "context": "The reference store holds STRING 12.0 human: 9606.protein.links.v12.0.txt.gz (~13.7M rows, SPACE-delimited, every edge duplicated per direction, combined_score 0-1000) and 9606.protein.info.v12.0.txt.gz whose preferred_name column maps STRING ids to gene symbols. The conventional high-confidence cut is combined_score >= 700 (~237k edges, ~16.2k proteins). With 6 samples, an expression-derived network is forbidden by rule R-0140@3faf; this step is that rule's sanctioned prior-network alternative, not the forbidden method.",
+        "maxSteps": 200,
+        "packages": [
+          "igraph",
+          "WGCNA",
+          "data.table"
+        ],
+        "question": "Which modules do the expressed liver genes form when module structure is anchored on the STRING prior network, and which genes are each module's hubs?",
+        "grounding": {
+          "claims": [
+            "R-0140@3faf",
+            "R-0139@0008"
+          ],
+          "reason": "Flagged by R-0140@3faf: 6 samples < 15, so no expression-derived co-expression network; the rule's sanctioned alternative is taken — STRING prior network as structure, expression for edge weighting, eigengenes and kME per R-0139@0008",
+          "status": "flagged",
+          "settings": [
+            {
+              "name": "network_type",
+              "step": "coexpression",
+              "value": "signed",
+              "source": "doi:10.1186/1471-2105-9-559"
+            },
+            {
+              "name": "module_detection",
+              "step": "coexpression",
+              "value": "string_prior_network_community_detection",
+              "source": "R-0140@3faf sanctioned alternative (doi:10.1186/1471-2105-9-559)"
+            },
+            {
+              "name": "string_score_threshold",
+              "step": "coexpression",
+              "value": 700,
+              "source": "STRING reference-store data note"
+            },
+            {
+              "name": "min_module_size",
+              "step": "coexpression",
+              "value": 30,
+              "source": "doi:10.1186/1471-2105-9-559"
+            },
+            {
+              "name": "hub_ranking",
+              "step": "coexpression",
+              "value": "module_membership_kME",
+              "source": "doi:10.1186/1471-2105-9-559"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "network_type = signed: only positive expression-correlation mass contributes to edge weights (doi:10.1186/1471-2105-9-559)",
+          "module_detection = community detection on the STRING prior graph (changed from topological-overlap dynamic tree cut, which presumes an expression-derived network; changed value recorded here per R-0140@3faf)",
+          "string_score_threshold = 700 (conventional high-confidence cut, per the reference-store data note)",
+          "min_module_size = 30 (doi:10.1186/1471-2105-9-559)",
+          "hub_ranking = module membership kME (doi:10.1186/1471-2105-9-559)",
+          "The links file is space-delimited and gzipped: parse with a space separator, do not expect tabs",
+          "Collapse duplicated directed edges to unique undirected pairs before weighting"
+        ],
+        "description": "Builds the co-expression modules on the STRING 12.0 human protein-association prior network from the reference store (links file joined to the info file for gene symbols), weights prior edges by vst expression correlation, detects communities, and computes module eigengenes and kME hubs. This is the substitution the few-samples flag requires: structure from prior knowledge, expression only for weighting and scoring.",
+        "acceptance_criteria": [
+          "No co-expression network is derived from the expression matrix; the module structure comes from the STRING prior network (rule R-0140@3faf)",
+          "STRING edges filtered to combined_score >= 700 and restricted to the filtered expressed genes; counts of nodes/edges before and after restriction reported",
+          "Gene identifiers reconciled: STRING internal ids mapped to symbols via the STRING info file; counts.csv gene ids (symbols or Ensembl) matched; the unmatched fraction reported",
+          "Edge weight = STRING confidence (score/1000) x the positive part of the Pearson correlation of vst expression across the 6 samples (signed weighting)",
+          "Modules detected by community detection on the weighted prior graph; modules smaller than 30 genes merged into an unassigned 'grey' set; module sizes reported",
+          "Module eigengene (first PC of the scaled vst expression of module members) computed per module; hub genes ranked by module membership kME and top hubs listed",
+          "n = 6 stated beside every module in the output"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Which module eigengenes track the treatment",
+        "agent": "network-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "At 3 vs 3, no eigengene-condition association can reach strong evidence; a non-significant result is the expected outcome, not a failure",
+          "Eigengene-condition correlation conflates treatment with any unrecorded sample attribute; the metadata has only condition, so no covariate adjustment is possible"
+        ],
+        "context": "Six samples give 4 residual degrees of freedom; with 3 vs 3 the smallest possible permutation p is 1/20 for exact enumeration, so 10,000 random shuffles give the discrete minimum ~5e-4. Significance here is a ranking device, not proof of regulation.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Which of the STRING-anchored module eigengenes differ between the 3 treated and 3 control liver samples, i.e. which modules track the drug treatment?",
+        "grounding": {
+          "claims": [
+            "R-0140@3faf",
+            "R-0139@0008"
+          ],
+          "reason": "Flagged by R-0140@3faf: eigengene-trait associations at 6 samples are unstable; carried out as R-0139@0008 prescribes (eigengene vs trait) with permutation p and BH adjustment, reported as exploratory",
+          "status": "flagged",
+          "settings": [
+            {
+              "name": "multiple_testing",
+              "step": "coexpression",
+              "value": "BH",
+              "source": "doi:10.1186/1471-2105-9-559"
+            },
+            {
+              "name": "permutation",
+              "step": "coexpression",
+              "value": "group_label_shuffle",
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            },
+            {
+              "name": "n_permutations",
+              "step": "coexpression",
+              "value": 10000,
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "multiple_testing = BH across the modules tested (doi:10.1186/1471-2105-9-559 framework)",
+          "permutation = group_label_shuffle with the seed written before the step runs (doi:10.1371/journal.pcbi.1003285)",
+          "n_permutations = 10000",
+          "Report both raw and adjusted p; do not call a module treatment-tracking without the adjusted p"
+        ],
+        "description": "Correlates each module eigengene from T2S1 with the binary treatment label, uses permutation of the group labels for exact-ish p-values at n = 6, and adjusts across modules. Ranks modules by adjusted significance for the report.",
+        "acceptance_criteria": [
+          "Each module eigengene correlated with condition (treated = 1, control = 0): Pearson and Spearman coefficients with signs reported",
+          "p-values from a group-label permutation test (10,000 shuffles of the 6 condition labels, fixed seed recorded in the script)",
+          "BH adjustment across modules reported (adjusted p); a module 'tracks treatment' only if BH-adjusted permutation p < 0.05",
+          "Effect direction (up in treated vs down in treated) stated for every module",
+          "Every module row carries the n = 6 / df = 4 instability statement and all results are labelled exploratory"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Co-expression report with reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not state the scale-free fit or soft-threshold power; the prior-network route has no soft threshold",
+          "Keep the exploratory label on every module-treatment claim"
+        ],
+        "context": "Inputs: T1S1 QC outputs, T1S2 filtered/normalized matrix, T2S1 module and kME tables, T2S2 eigengene-treatment table.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the complete, judgeable account of which modules the genes form and which modules track the drug treatment in the 3 treated vs 3 control liver cohort?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf",
+            "R-0151@c88b"
+          ],
+          "reason": "No rule covers this step; report elements per R-0151@c88b and reproducibility record per R-0086@becb, adapted to the prior-network route",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            },
+            {
+              "name": "coexpression_report",
+              "step": "report",
+              "value": [
+                "n_samples",
+                "n_genes",
+                "network_type",
+                "soft_threshold_power",
+                "scale_free_fit",
+                "module_sizes",
+                "gene_module_table",
+                "module_membership",
+                "eigengene_trait_correlations",
+                "adjusted_p_values"
+              ],
+              "source": "doi:10.1186/1471-2105-9-559"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T2S2"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+          "report: coexpression_report = n_samples, n_genes, network_type, soft_threshold_power, scale_free_fit, module_sizes, gene_module_table, module_membership, eigengene_trait_correlations, adjusted_p_values (doi:10.1186/1471-2105-9-559)",
+          "For this prior-network run, the soft-threshold fields are reported as 'not applicable — prior network structure (R-0140@3faf)' instead of fabricated values"
+        ],
+        "description": "Assembles QC verdicts, the gene-to-module table, eigengene-treatment associations, the reproducibility record, and the methods note explaining the R-0140@3faf substitution into the final report.",
+        "acceptance_criteria": [
+          "Report states n_samples = 6, n_genes entering the network, prior-network provenance (STRING 12.0, score >= 700), community method, module count and sizes with color labels",
+          "Full gene-to-module table with kME per gene is delivered as a file; hub genes per module listed",
+          "Eigengene-treatment table: correlation, direction, permutation p, BH-adjusted p for every module",
+          "Explicit statement beside every module that n = 6 makes modules and associations unstable, that a module is a group of correlated genes and not a proven pathway, and that module-treatment correlations are associations in this cohort only",
+          "Reproducibility record stored with the results: sessionInfo, package versions, the random seed of the permutation, STRING release version",
+          "The rejected expression-only network route and the prior-network substitution are documented in the report's methods section"
+        ]
+      }
+    ],
+    "title": "STRING-anchored co-expression modules tracking drug treatment (3v3 liver)",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-07T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The cohort is 3 treated vs 3 control human liver samples with 12000 genes of Salmon-derived gene-level counts — 6 samples total, below the ~15-sample floor at which a co-expression network built from expression correlations alone reflects noise rather than shared regulation (rule R-0140@3faf). The plan therefore does NOT build an expression-only WGCNA network. Instead it takes the rule's sanctioned alternative: modules are communities of the STRING 12.0 prior protein-association network (high-confidence edges, score >= 700) restricted to the expressed, filtered genes, with the DESeq2 variance-stabilized expression used only to weight prior edges and to compute module eigengenes. The pipeline: QC the sample structure on blind vst (T1S1), filter low counts and produce size factors plus the vst matrix (T1S2), build the prior-network modules and their eigengenes (T2S1), test which module eigengenes track the treatment with group-label permutation and BH adjustment (T2S2), and report everything with the n=6 instability stated beside every module (T1S3). Salmon counts carry no statement of length correction, so T1S2 verifies the matrix and rounds fractional values if present before the median-of-ratios size factors."
+  },
+  "usage": {
+    "inputTokens": 169071,
+    "outputTokens": 12947,
+    "cacheReadInputTokens": 140480,
+    "reasoningTokens": 7007
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_e64da0e3c28441a3b15d16d5",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      },
+      "outcome": "ok",
+      "durationMs": 63
+    },
+    {
+      "toolUseId": "call_b884c9d1065545bd972dabe9",
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind vst, PCA on top-500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size; median-of-ratios size factors; vst matrix for network",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "transform",
+                "value": "vst"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network anchored co-expression modules: STRING high-confidence subgraph of filtered genes, edges weighted by expression correlation, community detection, module eigengenes",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "network_source",
+                "value": "string_combined_score_700"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "hub_ranking",
+                "value": "kME"
+              },
+              {
+                "name": "expression_input",
+                "value": "vst_matrix"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Module eigengene vs treatment association, group-label permutation p, BH adjustment across modules",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "multiple_testing",
+                "value": "BH"
+              },
+              {
+                "name": "permutation",
+                "value": "group_label_shuffle"
+              },
+              {
+                "name": "n_permutations",
+                "value": 10000
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "co-expression report with reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples_genes_network_params_modules_eigengene_trait_corr"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 48
+    },
+    {
+      "toolUseId": "call_c3788beb94e4425696593404",
+      "name": "knowledge_check",
+      "input": {
+        "question": "coexpression",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 3,
+        "n_per_group_max": 3,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind vst, PCA on top-500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size; median-of-ratios size factors; vst matrix for module scoring",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "transform",
+                "value": "vst"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "R-0140 sanctioned prior-network route: modules are communities of the STRING prior network (not an expression-derived network); expression correlations are only used to weight prior edges and compute eigengenes",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "network_source",
+                "value": "prior_string_combined_score_700"
+              },
+              {
+                "name": "expression_network",
+                "value": "not_built"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "hub_ranking",
+                "value": "kME"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "co-expression report with reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples_genes_network_params_modules_eigengene_trait_corr"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "call_413b6d09431a4d6e8a09df78",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "STRING-anchored co-expression modules tracking drug treatment (3v3 liver)",
+          "analytical_narrative": "The cohort is 3 treated vs 3 control human liver samples with 12000 genes of Salmon-derived gene-level counts — 6 samples total, below the ~15-sample floor at which a co-expression network built from expression correlations alone reflects noise rather than shared regulation (rule R-0140@3faf). The plan therefore does NOT build an expression-only WGCNA network. Instead it takes the rule's sanctioned alternative: modules are communities of the STRING 12.0 prior protein-association network (high-confidence edges, score >= 700) restricted to the expressed, filtered genes, with the DESeq2 variance-stabilized expression used only to weight prior edges and to compute module eigengenes. The pipeline: QC the sample structure on blind vst (T1S1), filter low counts and produce size factors plus the vst matrix (T1S2), build the prior-network modules and their eigengenes (T2S1), test which module eigengenes track the treatment with group-label permutation and BH adjustment (T2S2), and report everything with the n=6 instability stated beside every module (T1S3). Salmon counts carry no statement of length correction, so T1S2 verifies the matrix and rounds fractional values if present before the median-of-ratios size factors.",
+          "created_at": "2026-09-07T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC (blind vst, PCA, distances)",
+              "track": "T1",
+              "step_type": "qc",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Do the 3 treated vs 3 control liver samples separate by condition on blind vst PCA, and is any sample an outlier that would distort a 6-sample network?",
+              "acceptance_criteria": [
+                "Counts matrix (12000 genes x 6 samples) and metadata (condition column, 3 vs 3) load and are verified key-compatible",
+                "PCA on the 500 highest-variance blind-vst genes, colored by condition, is produced",
+                "Euclidean sample-distance heatmap colored by condition is produced",
+                "Per-sample library sizes and size-factor sanity are reported; any sample departing from its group is flagged by name",
+                "Plots and a short QC verdict (grouping yes/no, outliers yes/no) are saved"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "description": "Blind variance-stabilizing transform of the raw counts, PCA on the top-500 variable genes, sample-distance heatmap, library-size summary. Output feeds the filter step and contextualizes all module results.",
+              "context": "Files: data/inputs/counts/counts.csv (12000 x 7, gene x sample counts from Salmon) and data/inputs/metadata/metadata.csv (6 x 2, condition with 3 treated vs 3 control). Single batch, unpaired. With 3 samples per arm, no inferential DE is planned; QC is descriptive.",
+              "constraints": [
+                "n_top_genes = 500 (doi:10.12688/f1000research.7035.1)",
+                "transform = vst, blind = TRUE (vignette:DESeq2/1.52.0#blind-dispersion-estimation)",
+                "Color every QC plot by condition; there is a single batch, so no batch coloring is possible"
+              ],
+              "caveats": [
+                "With 3 vs 3 the PCA axes are dominated by the largest expression shifts; treat grouping as descriptive, not a test",
+                "If the counts.csv columns do not match the metadata row names exactly, reconcile by order and report the mapping"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-eda@1.0.0",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  }
+                ],
+                "reason": "Sample structure QC on raw counts: blind vst, PCA on 500 top-variance genes, sample-distance heatmap per R-0033@40bf"
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count filter, size factors, vst matrix",
+              "track": "T1",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Which genes are expressed strongly enough to enter the module analysis, and what is the normalized expression matrix on which prior-network edges are weighted and eigengenes are computed?",
+              "acceptance_criteria": [
+                "Gene filter applied: keep a gene with at least 10 counts in at least 3 samples (the smallest group size); filtered gene count reported",
+                "Matrix checked for fractional values (Salmon-estimated counts); if fractional, counts are rounded to integer for DESeq2 and the rounding is recorded in the output",
+                "Median-of-ratios size factors estimated and reported per sample; a size factor below ~0.5 or above ~2 is flagged",
+                "Variance-stabilized matrix (design ~ condition, blind = FALSE) on the filtered genes saved for the module steps",
+                "No scaling or pre-normalization of the counts before the model"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "description": "Applies the pre-filter, estimates DESeq2 median-of-ratios size factors, and produces the variance-stabilized gene x sample matrix that T2S1/T2S2 consume. No DE test is fitted — the question is module detection, not differential expression.",
+              "context": "Counts are Salmon gene-level estimates as delivered; the record does not state whether the length correction occurred, so the step verifies the value type itself and states what it did.",
+              "constraints": [
+                "min_count = 10 (doi:10.12688/f1000research.7035.1)",
+                "min_samples = smallest_group_size = 3 (vignette:DESeq2/1.52.0#pre-filtering)",
+                "size_factors = median-of-ratios, estimated inside DESeq2; counts are not scaled, transformed, or normalized before the model (doi:10.1186/s13059-014-0550-8)",
+                "The vst for downstream module work uses blind = FALSE with design ~ condition, per R-0139@0008 (variance-stabilized counts after the low-count filter)"
+              ],
+              "caveats": [
+                "If the matrix turns out to be TPM/FPKM-like rather than counts, stop and report: median-of-ratios size factors and the vst assume a count matrix",
+                "Rounded estimated counts propagate Salmon's uncertainty; acceptable here because the downstream use (edge weighting, eigengenes) is descriptive"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0002@087b",
+                  "R-0026@9ab1"
+                ],
+                "template": "tpl-deseq2-two-group@1.1.0",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_count",
+                    "value": 10,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "vignette:DESeq2/1.52.0#pre-filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "size_factors",
+                    "value": "median_of_ratios_named_in_the_plan",
+                    "source": "doi:10.1186/s13059-014-0550-8"
+                  }
+                ],
+                "reason": "Filter + median-of-ratios normalization + vst matrix per R-0002@087b and R-0026@9ab1; DE model not run because the question is module detection, not differential expression"
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "STRING prior-network co-expression modules and eigengenes",
+              "track": "T2",
+              "step_type": "analysis",
+              "agent": "network-agent",
+              "question": "Which modules do the expressed liver genes form when module structure is anchored on the STRING prior network, and which genes are each module's hubs?",
+              "acceptance_criteria": [
+                "No co-expression network is derived from the expression matrix; the module structure comes from the STRING prior network (rule R-0140@3faf)",
+                "STRING edges filtered to combined_score >= 700 and restricted to the filtered expressed genes; counts of nodes/edges before and after restriction reported",
+                "Gene identifiers reconciled: STRING internal ids mapped to symbols via the STRING info file; counts.csv gene ids (symbols or Ensembl) matched; the unmatched fraction reported",
+                "Edge weight = STRING confidence (score/1000) x the positive part of the Pearson correlation of vst expression across the 6 samples (signed weighting)",
+                "Modules detected by community detection on the weighted prior graph; modules smaller than 30 genes merged into an unassigned 'grey' set; module sizes reported",
+                "Module eigengene (first PC of the scaled vst expression of module members) computed per module; hub genes ranked by module membership kME and top hubs listed",
+                "n = 6 stated beside every module in the output"
+              ],
+              "packages": [
+                "igraph",
+                "WGCNA",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "description": "Builds the co-expression modules on the STRING 12.0 human protein-association prior network from the reference store (links file joined to the info file for gene symbols), weights prior edges by vst expression correlation, detects communities, and computes module eigengenes and kME hubs. This is the substitution the few-samples flag requires: structure from prior knowledge, expression only for weighting and scoring.",
+              "context": "The reference store holds STRING 12.0 human: 9606.protein.links.v12.0.txt.gz (~13.7M rows, SPACE-delimited, every edge duplicated per direction, combined_score 0-1000) and 9606.protein.info.v12.0.txt.gz whose preferred_name column maps STRING ids to gene symbols. The conventional high-confidence cut is combined_score >= 700 (~237k edges, ~16.2k proteins). With 6 samples, an expression-derived network is forbidden by rule R-0140@3faf; this step is that rule's sanctioned prior-network alternative, not the forbidden method.",
+              "constraints": [
+                "network_type = signed: only positive expression-correlation mass contributes to edge weights (doi:10.1186/1471-2105-9-559)",
+                "module_detection = community detection on the STRING prior graph (changed from topological-overlap dynamic tree cut, which presumes an expression-derived network; changed value recorded here per R-0140@3faf)",
+                "string_score_threshold = 700 (conventional high-confidence cut, per the reference-store data note)",
+                "min_module_size = 30 (doi:10.1186/1471-2105-9-559)",
+                "hub_ranking = module membership kME (doi:10.1186/1471-2105-9-559)",
+                "The links file is space-delimited and gzipped: parse with a space separator, do not expect tabs",
+                "Collapse duplicated directed edges to unique undirected pairs before weighting"
+              ],
+              "caveats": [
+                "knowledge_check false-matched this step_type to the forbidden expression-only WGCNA method twice; the violation is documented here — the step implements R-0140@3faf's own sanctioned alternative (prior network as structure), which the checker cannot express",
+                "Module boundaries depend on the STRING prior topology, not on this cohort's correlations alone; a module may contain genes whose expression does not co-vary here — the kME values show which members actually co-vary",
+                "If gene symbols in counts.csv and STRING preferred_name overlap poorly (<50% of filtered genes matched), report the match rate and stop before interpreting modules"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0140@3faf",
+                  "R-0139@0008"
+                ],
+                "settings": [
+                  {
+                    "step": "coexpression",
+                    "name": "network_type",
+                    "value": "signed",
+                    "source": "doi:10.1186/1471-2105-9-559"
+                  },
+                  {
+                    "step": "coexpression",
+                    "name": "module_detection",
+                    "value": "string_prior_network_community_detection",
+                    "source": "R-0140@3faf sanctioned alternative (doi:10.1186/1471-2105-9-559)"
+                  },
+                  {
+                    "step": "coexpression",
+                    "name": "string_score_threshold",
+                    "value": 700,
+                    "source": "STRING reference-store data note"
+                  },
+                  {
+                    "step": "coexpression",
+                    "name": "min_module_size",
+                    "value": 30,
+                    "source": "doi:10.1186/1471-2105-9-559"
+                  },
+                  {
+                    "step": "coexpression",
+                    "name": "hub_ranking",
+                    "value": "module_membership_kME",
+                    "source": "doi:10.1186/1471-2105-9-559"
+                  }
+                ],
+                "reason": "Flagged by R-0140@3faf: 6 samples < 15, so no expression-derived co-expression network; the rule's sanctioned alternative is taken — STRING prior network as structure, expression for edge weighting, eigengenes and kME per R-0139@0008"
+              }
+            },
+            {
+              "id": "T2S2",
+              "name": "Which module eigengenes track the treatment",
+              "track": "T2",
+              "step_type": "analysis",
+              "agent": "network-agent",
+              "question": "Which of the STRING-anchored module eigengenes differ between the 3 treated and 3 control liver samples, i.e. which modules track the drug treatment?",
+              "acceptance_criteria": [
+                "Each module eigengene correlated with condition (treated = 1, control = 0): Pearson and Spearman coefficients with signs reported",
+                "p-values from a group-label permutation test (10,000 shuffles of the 6 condition labels, fixed seed recorded in the script)",
+                "BH adjustment across modules reported (adjusted p); a module 'tracks treatment' only if BH-adjusted permutation p < 0.05",
+                "Effect direction (up in treated vs down in treated) stated for every module",
+                "Every module row carries the n = 6 / df = 4 instability statement and all results are labelled exploratory"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "description": "Correlates each module eigengene from T2S1 with the binary treatment label, uses permutation of the group labels for exact-ish p-values at n = 6, and adjusts across modules. Ranks modules by adjusted significance for the report.",
+              "context": "Six samples give 4 residual degrees of freedom; with 3 vs 3 the smallest possible permutation p is 1/20 for exact enumeration, so 10,000 random shuffles give the discrete minimum ~5e-4. Significance here is a ranking device, not proof of regulation.",
+              "constraints": [
+                "multiple_testing = BH across the modules tested (doi:10.1186/1471-2105-9-559 framework)",
+                "permutation = group_label_shuffle with the seed written before the step runs (doi:10.1371/journal.pcbi.1003285)",
+                "n_permutations = 10000",
+                "Report both raw and adjusted p; do not call a module treatment-tracking without the adjusted p"
+              ],
+              "caveats": [
+                "At 3 vs 3, no eigengene-condition association can reach strong evidence; a non-significant result is the expected outcome, not a failure",
+                "Eigengene-condition correlation conflates treatment with any unrecorded sample attribute; the metadata has only condition, so no covariate adjustment is possible"
+              ],
+              "grounding": {
+                "status": "flagged",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0140@3faf",
+                  "R-0139@0008"
+                ],
+                "settings": [
+                  {
+                    "step": "coexpression",
+                    "name": "multiple_testing",
+                    "value": "BH",
+                    "source": "doi:10.1186/1471-2105-9-559"
+                  },
+                  {
+                    "step": "coexpression",
+                    "name": "permutation",
+                    "value": "group_label_shuffle",
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  },
+                  {
+                    "step": "coexpression",
+                    "name": "n_permutations",
+                    "value": 10000,
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ],
+                "reason": "Flagged by R-0140@3faf: eigengene-trait associations at 6 samples are unstable; carried out as R-0139@0008 prescribes (eigengene vs trait) with permutation p and BH adjustment, reported as exploratory"
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Co-expression report with reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "What is the complete, judgeable account of which modules the genes form and which modules track the drug treatment in the 3 treated vs 3 control liver cohort?",
+              "acceptance_criteria": [
+                "Report states n_samples = 6, n_genes entering the network, prior-network provenance (STRING 12.0, score >= 700), community method, module count and sizes with color labels",
+                "Full gene-to-module table with kME per gene is delivered as a file; hub genes per module listed",
+                "Eigengene-treatment table: correlation, direction, permutation p, BH-adjusted p for every module",
+                "Explicit statement beside every module that n = 6 makes modules and associations unstable, that a module is a group of correlated genes and not a proven pathway, and that module-treatment correlations are associations in this cohort only",
+                "Reproducibility record stored with the results: sessionInfo, package versions, the random seed of the permutation, STRING release version",
+                "The rejected expression-only network route and the prior-network substitution are documented in the report's methods section"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "description": "Assembles QC verdicts, the gene-to-module table, eigengene-treatment associations, the reproducibility record, and the methods note explaining the R-0140@3faf substitution into the final report.",
+              "context": "Inputs: T1S1 QC outputs, T1S2 filtered/normalized matrix, T2S1 module and kME tables, T2S2 eigengene-treatment table.",
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release (doi:10.1371/journal.pcbi.1003285)",
+                "report: coexpression_report = n_samples, n_genes, network_type, soft_threshold_power, scale_free_fit, module_sizes, gene_module_table, module_membership, eigengene_trait_correlations, adjusted_p_values (doi:10.1186/1471-2105-9-559)",
+                "For this prior-network run, the soft-threshold fields are reported as 'not applicable — prior network structure (R-0140@3faf)' instead of fabricated values"
+              ],
+              "caveats": [
+                "Do not state the scale-free fit or soft-threshold power; the prior-network route has no soft threshold",
+                "Keep the exploratory label on every module-treatment claim"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf",
+                  "R-0151@c88b"
+                ],
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  },
+                  {
+                    "step": "report",
+                    "name": "coexpression_report",
+                    "value": [
+                      "n_samples",
+                      "n_genes",
+                      "network_type",
+                      "soft_threshold_power",
+                      "scale_free_fit",
+                      "module_sizes",
+                      "gene_module_table",
+                      "module_membership",
+                      "eigengene_trait_correlations",
+                      "adjusted_p_values"
+                    ],
+                    "source": "doi:10.1186/1471-2105-9-559"
+                  }
+                ],
+                "reason": "No rule covers this step; report elements per R-0151@c88b and reproducibility record per R-0086@becb, adapted to the prior-network route"
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 73
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "coexpression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
+      },
+      "response": {
+        "match": "flag",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "coexpression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-eda@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0007"
+            },
+            "template": "tpl-deseq2-two-group@1.1.0",
+            "rules": [
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0008"
+            },
+            "rules": [
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "coexpression",
+            "method": {
+              "id": "M-0047"
+            },
+            "rules": [
+              "R-0140@3faf",
+              "R-0139@0008"
+            ],
+            "flags": [
+              {
+                "rule": "R-0140@3faf",
+                "severity": "flag",
+                "message": "If the cohort holds at most two groups of at most 7 samples, the total is below 15 samples, and a correlation across so few samples is unstable. Do not build a co-expression network from the expression alone on such a cohort, because the modules would reflect the noise of the correlations and not a shared regulation. State the sample count and the reason in the plan. Then either take a prior network, for example the STRING protein-protein associations of the reference store, as the structure and place the genes of interest on it, or stop and ask for a cohort of at least 15 to 20 samples.",
+                "outcome": "too_few_samples_prior_network_or_stop"
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf",
+              "R-0151@c88b"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0140@3faf"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0139@0008"
+          },
+          {
+            "id": "R-0151@c88b"
+          }
+        ],
+        "flags": [
+          {
+            "rule": "R-0140@3faf",
+            "severity": "flag",
+            "message": "If the cohort holds at most two groups of at most 7 samples, the total is below 15 samples, and a correlation across so few samples is unstable. Do not build a co-expression network from the expression alone on such a cohort, because the modules would reflect the noise of the correlations and not a shared regulation. State the sample count and the reason in the plan. Then either take a prior network, for example the STRING protein-protein associations of the reference store, as the structure and place the genes of interest on it, or stop and ask for a cohort of at least 15 to 20 samples.",
+            "outcome": "too_few_samples_prior_network_or_stop"
+          }
+        ],
+        "uncovered": []
+      },
+      "responseChars": 14176,
+      "elapsedMs": 26
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "coexpression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind vst, PCA on top-500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size; median-of-ratios size factors; vst matrix for network",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "transform",
+                "value": "vst"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Prior-network anchored co-expression modules: STRING high-confidence subgraph of filtered genes, edges weighted by expression correlation, community detection, module eigengenes",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "network_source",
+                "value": "string_combined_score_700"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "hub_ranking",
+                "value": "kME"
+              },
+              {
+                "name": "expression_input",
+                "value": "vst_matrix"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "Module eigengene vs treatment association, group-label permutation p, BH adjustment across modules",
+            "package": "WGCNA",
+            "parameters": [
+              {
+                "name": "multiple_testing",
+                "value": "BH"
+              },
+              {
+                "name": "permutation",
+                "value": "group_label_shuffle"
+              },
+              {
+                "name": "n_permutations",
+                "value": 10000
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "co-expression report with reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples_genes_network_params_modules_eigengene_trait_corr"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "coexpression",
+            "severity": "violation",
+            "rule": "R-0140@3faf",
+            "message": "WGCNA signed co-expression network with module eigengenes and module membership is forbidden in this situation.",
+            "permitted": [
+              "WGCNA signed co-expression network with module eigengenes and module membership"
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "severity": "violation",
+            "rule": "R-0140@3faf",
+            "message": "WGCNA signed co-expression network with module eigengenes and module membership is forbidden in this situation.",
+            "permitted": [
+              "WGCNA signed co-expression network with module eigengenes and module membership"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 761,
+      "elapsedMs": 47
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "coexpression",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 3,
+          "n_per_group_max": 3,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "DESeq2 blind vst, PCA on top-500 variable genes, sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "keep gene with >=10 counts in >= smallest group size; median-of-ratios size factors; vst matrix for module scoring",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "min_count",
+                "value": 10
+              },
+              {
+                "name": "min_samples",
+                "value": 3
+              },
+              {
+                "name": "size_factors",
+                "value": "median_of_ratios"
+              },
+              {
+                "name": "transform",
+                "value": "vst"
+              }
+            ]
+          },
+          {
+            "step_type": "coexpression",
+            "method": "R-0140 sanctioned prior-network route: modules are communities of the STRING prior network (not an expression-derived network); expression correlations are only used to weight prior edges and compute eigengenes",
+            "package": "igraph",
+            "parameters": [
+              {
+                "name": "network_source",
+                "value": "prior_string_combined_score_700"
+              },
+              {
+                "name": "expression_network",
+                "value": "not_built"
+              },
+              {
+                "name": "min_module_size",
+                "value": 30
+              },
+              {
+                "name": "hub_ranking",
+                "value": "kME"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "co-expression report with reproducibility record",
+            "parameters": [
+              {
+                "name": "coexpression_report",
+                "value": "n_samples_genes_network_params_modules_eigengene_trait_corr"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "coexpression",
+            "severity": "violation",
+            "rule": "R-0140@3faf",
+            "message": "WGCNA signed co-expression network with module eigengenes and module membership is forbidden in this situation.",
+            "permitted": [
+              "WGCNA signed co-expression network with module eigengenes and module membership"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 468,
+      "elapsedMs": 20
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

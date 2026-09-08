@@ -1,0 +1,1426 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "log-normalized-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:05:05.615Z",
+  "elapsedMs": 82269,
+  "outcome": "plan_submitted",
+  "planId": "pln-ec30eac8",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2 expression",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Matrix holds normalized log2 values, not counts — do not apply any count-based variance-stabilizing transform"
+        ],
+        "context": "Input: /eval-four-models-v2-with-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 genes x 12 samples, log2(TPM+1) as delivered by the core facility) and metadata.csv (12 samples, condition: treated/control, single batch, unpaired).",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Do the 6 treated and 6 control muscle samples in log_expr.csv separate on PCA/MDS, and are there outlier samples or batch-like structure that must be flagged before modeling treated vs control?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "Sample structure QC on log abundance values per R-0071@e4e2, method M-0026",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "log2_plus_1_unless_already_log",
+              "source": "guide:limma/2026-05-19#data-exploration"
+            },
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Use the log2 values as delivered; do not re-log-transform",
+          "n_top_genes = 500 for the MDS/PCA per the sourced default"
+        ],
+        "acceptance_criteria": [
+          "PCA or MDS plot computed on the 500 most variable genes of the log2(TPM+1) matrix, colored by condition",
+          "Sample-to-sample distance heatmap produced",
+          "Detected-gene count per sample reported",
+          "Any outlier sample or unexpected clustering explicitly flagged in the output"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-trend differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "No count-based model (DESeq2/edgeR/voom) may be used — data is log-normalized, not counts",
+          "No fold-change threshold was requested; genes selected purely on BH-adjusted p<0.05"
+        ],
+        "context": "log2(TPM+1) matrix, 12000 genes x 12 samples, 6 treated vs 6 control, unpaired, single batch. No counts were delivered, so a count model (DESeq2/edgeR) is not applicable; limma-trend is the grounded method for log-scale input.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control muscle samples, fitting a limma linear model directly on the log2(TPM+1) values delivered by the core facility?",
+        "grounding": {
+          "claims": [
+            "R-0075@4d16",
+            "R-0074@06b0",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0019@251d",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "limma linear model on log-scale expression values per R-0019/R-0075/R-0093/R-0043/R-0044",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter_statistic",
+              "step": "filter_low_counts",
+              "value": "mean_log_expression",
+              "source": "guide:limma/2026-05-19#filtering"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "guide:limma/2026-05-19#filtering"
+            },
+            {
+              "name": "normalization",
+              "step": "normalize",
+              "value": "none_already_normalized",
+              "source": "guide:limma/2026-05-19#normalization"
+            },
+            {
+              "name": "value_range_check",
+              "step": "normalize",
+              "value": "required",
+              "source": "rule:R-0074"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "robust",
+              "step": "differential_expression",
+              "value": true,
+              "source": "doi:10.1214/16-AOAS920"
+            },
+            {
+              "name": "trend",
+              "step": "differential_expression",
+              "value": true,
+              "source": "doi:10.1093/nar/gkv007"
+            },
+            {
+              "name": "filter_results_by",
+              "step": "multiple_testing",
+              "value": "adjusted_pvalue",
+              "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "guide:limma/2026-05-19#statistics-for-differential-expression"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter_statistic = mean_log_expression",
+          "filter_low_counts: min_samples = smallest_group_size (6)",
+          "normalize: normalization = none_already_normalized; value_range_check required",
+          "model_design: reference_level = explicit (control)",
+          "model_design: contrast_form = factor_numerator_denominator (treated vs control)",
+          "differential_expression: robust = true, trend = true",
+          "multiple_testing: filter_results_by = adjusted_pvalue; adjustment = BH"
+        ],
+        "acceptance_criteria": [
+          "Low-abundance genes filtered by mean log expression with a floor independent of the condition label, minimum detected in at least 6 samples (smallest group size)",
+          "No further normalization applied beyond a documented value-range sanity check confirming the data is on a log2 scale (range ~0-20, fractional)",
+          "Design matrix uses explicit factor levels (control as reference) with a named contrast treated-control",
+          "eBayes fit with trend=TRUE and robust=TRUE",
+          "Results extracted via topTable with BH adjustment; gene list reported at adjusted p < 0.05",
+          "Number of genes tested after filtering and number of DE genes at padj<0.05 both reported"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Gene identifier annotation and muscle tissue expression check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "HPA reference is human protein-atlas normal tissue data, not GTEx; use it as the tissue-identity reference actually staged in this environment"
+        ],
+        "context": "Human (9606) muscle tissue samples. Reference data available in this environment for the tissue check: Human Protein Atlas per-gene tissue expression table (/mnt/refs/managed/hpa-proteinatlas/current/proteinatlas.tsv.zip, containing proteinatlas.tsv with Ensembl/Gene columns and tissue expression annotations).",
+        "maxSteps": 200,
+        "packages": [
+          "AnnotationDbi",
+          "org.Hs.eg.db"
+        ],
+        "question": "What are the stable gene identifiers (Ensembl/Entrez/symbol) for the differentially expressed genes, and do the top expressed genes in these muscle samples match genes expected to be enriched in skeletal/muscle tissue?",
+        "grounding": {
+          "claims": [
+            "R-0161@cdaf",
+            "R-0160@d858"
+          ],
+          "reason": "Gene identifier annotation with the organism package and HPA tissue reference per R-0160/R-0161",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "tissue_reference",
+              "step": "annotation",
+              "value": "hpa_and_gtex_with_release",
+              "source": "doi:10.1126/science.1260419"
+            },
+            {
+              "name": "tissue_identity_check",
+              "step": "annotation",
+              "value": "top_expressed_genes_against_tissue_enriched_genes",
+              "source": "doi:10.1126/science.1260419"
+            },
+            {
+              "name": "id_map_source",
+              "step": "annotation",
+              "value": "organism_package_and_ncbi_gene_info_with_release",
+              "source": "doi:10.1038/nprot.2009.97"
+            },
+            {
+              "name": "identifier_space",
+              "step": "annotation",
+              "value": "one_space_per_column_stable_id_as_key",
+              "source": "doi:10.1038/nprot.2009.97"
+            },
+            {
+              "name": "unmapped_share",
+              "step": "annotation",
+              "value": "report_unmapped_and_one_to_many",
+              "source": "doi:10.1016/j.xinn.2021.100141"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-annotation-map@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "annotation",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "annotation: id_map_source = organism_package_and_ncbi_gene_info_with_release",
+          "annotation: identifier_space = one_space_per_column_stable_id_as_key",
+          "annotation: unmapped_share = report_unmapped_and_one_to_many",
+          "annotation: tissue_reference = hpa_with_release; tissue_identity_check = top_expressed_genes_against_tissue_enriched_genes"
+        ],
+        "acceptance_criteria": [
+          "Result table gene symbols mapped to Entrez and Ensembl IDs using the human organism annotation package, one identifier space per column",
+          "Share of unmapped and one-to-many mapped identifiers reported",
+          "Top expressed genes per sample compared against muscle-tissue-enriched genes from the Human Protein Atlas reference to confirm tissue identity; any sample whose profile looks non-muscle is flagged",
+          "If the Human Protein Atlas reference file is unavailable in the environment at run time, this tissue-identity check is skipped and reported as skipped rather than failing the step"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "camera competitive gene set testing on WikiPathways",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "camera output depends on the design/contrast fitted in T1S2; must reuse the same design matrix and contrast"
+        ],
+        "context": "Pathway gene sets: WikiPathways human, HGNC gene symbols, GMT-format collection (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt), matched to the human (9606) muscle expression data. fgsea preranked GSEA was checked against the knowledge service and is not a permitted method for this design; camera is the sourced alternative that uses the fitted model's inter-gene correlation.",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes changed between treated and control muscle samples, tested competitively on the fitted limma model?",
+        "grounding": {
+          "claims": [
+            "R-0048@500d"
+          ],
+          "reason": "camera competitive gene set test on the limma fit is the permitted enrichment method for this design (fgsea preranked forbidden per rule R-0048)",
+          "status": "grounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use camera (limma) rather than fgsea preranked GSEA, per the knowledge service's rule for this design",
+          "Gene symbols in the expression matrix must be matched to WikiPathways HGNC symbols before testing"
+        ],
+        "acceptance_criteria": [
+          "camera() run on the limma fit and treated-vs-control contrast against WikiPathways human gene sets",
+          "Gene sets ranked by camera FDR with direction of change reported",
+          "If the WikiPathways human GMT is unavailable at run time, the step reports the enrichment as not performed rather than failing"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Differential expression summary report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [],
+        "context": "Final consolidated report of the treated vs control muscle DE analysis on log2(TPM+1) core-facility-normalized data.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the full, reproducible summary of the treated-vs-control muscle differential expression analysis: method, design, thresholds, number of genes tested, number differentially expressed, and pathway enrichment results?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "Report content requirements per R-0041/R-0086",
+          "status": "grounded",
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3",
+          "T1S4"
+        ],
+        "constraints": [
+          "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info",
+          "reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release"
+        ],
+        "acceptance_criteria": [
+          "Report states method (limma-trend), package versions, design formula and named contrast, adjusted p-value threshold (0.05), number of genes tested after filtering, number of DE genes",
+          "Report includes session info, random seed if any randomization used, and the WikiPathways collection version used",
+          "Report includes the QC findings from T1S1 and the tissue-identity check outcome from T1S3"
+        ]
+      }
+    ],
+    "title": "Treated vs control muscle DE on log2 expression (limma-trend)",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The core facility delivered log2(TPM+1) normalized expression (12000 genes x 12 samples: 6 treated, 6 control, muscle tissue, single batch, unpaired) rather than raw counts, so a count-based model (DESeq2/edgeR) is inapplicable per the knowledge service's rule R-0019: log-scale values require limma-trend, not a negative-binomial count model. The plan is: (1) QC sample structure on the log2 matrix as delivered (PCA/MDS, sample distances, detected genes per sample) to check for outliers and confirm treated/control separation before modeling; (2) filter low-abundance genes by mean log expression with a floor independent of group labels; (3) confirm no further normalization is needed (values are already log2(TPM+1), so only a range sanity check is performed, per R-0074); (4) fit a limma linear model (~0 + condition) with an explicit reference level and named contrast (treated - control), moderated t-statistics via eBayes(trend=TRUE, robust=TRUE) per R-0093/R-0019; (5) extract results via topTable with BH-adjusted p-values (R-0043/R-0044), reporting genes at padj < 0.05; (6) map result gene identifiers (symbol/Ensembl/Entrez) using the human organism annotation package, with an HPA-based muscle-tissue expression sanity check on top expressed genes per R-0161; (7) run camera competitive gene set testing on the limma fit against WikiPathways human pathway gene sets (the pathway reference actually available in this environment) since fgsea preranked GSEA is forbidden for this design by the knowledge service and camera is the permitted alternative; (8) produce a final report with design, thresholds, package versions, n tested/n DE genes, and session info. No batch correction is needed (single batch), and no fold-change threshold was requested by the user, so the standard BH-adjusted-p threshold is used without a TREAT effect-size test."
+  },
+  "usage": {
+    "inputTokens": 1064101,
+    "outputTokens": 8537,
+    "cacheCreationInputTokens": 149102,
+    "cacheReadInputTokens": 914819,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_012purGEHiuDyk7FkZq3Mn5Q",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "extra_analyses": [
+          "annotation"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01VgYXSaZbN1nUeecptLYkEP",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GTEx muscle tissue expression human"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01R4DVc2BDQTfENfzWNni2UR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark gene sets human msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_019cc7J2YnDNKmpnwWgnwwCc",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01Li7t6Zx4TufUaSvtCGhfxP",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_01VZ5mFYhusk1twYvQoyZgbs",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01FQyJLHsdozUpwpaAvU2w4Q",
+      "name": "list_available_refs",
+      "input": {
+        "query": "HPA"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_019uyz832BzqcFUQDiYMbsKr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathways",
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_019KvyT8gJCCjjw6AiaCVd6v",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01YJZZhxe7xQFcdkXAPp1xNi",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01KtnrGdzHgNFBn7DVTq6caN",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human NCBI GENCODE gtf"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01TtBES7EuZYeNRAYEecPexg",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 2
+    },
+    {
+      "toolUseId": "toolu_01GqDmQN8F5gGRX8qTWupjPt",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human",
+        "limit": 50
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "toolu_01VxiS1uJqdnfdCarU6ioWEe",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers",
+        "query": "human"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_014GwLsx3E4P5qNCqkrmszg5",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "limma",
+          "matrixStats",
+          "AnnotationDbi",
+          "clusterProfiler",
+          "fgsea"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "toolu_012oKn4rJ3DRQxMy6fPe7whZ",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "MDS/PCA on log2 values",
+            "package": "limma",
+            "method_id": "M-0000"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "mean log expression filter",
+            "package": "limma"
+          },
+          {
+            "step_type": "normalize",
+            "method": "none, already normalized, range check",
+            "package": "limma"
+          },
+          {
+            "step_type": "model_design",
+            "method": "explicit factor levels, contrast numerator/denominator",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend lmFit + eBayes(trend=TRUE, robust=TRUE)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust.method",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "org.Hs.eg.db identifier mapping plus HPA tissue check",
+            "package": "AnnotationDbi"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea on WikiPathways human gene sets ranked by limma t-statistic",
+            "package": "fgsea"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with session info",
+            "package": "limma"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01J5EXPtr8c485SMwHCx6kMf",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "log_normalized",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "ranked_list",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes",
+            "package": "limma",
+            "method_id": "M-0026"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM, FPKM, or log expression values",
+            "package": "limma"
+          },
+          {
+            "step_type": "normalize",
+            "method": "none, already normalized, range check",
+            "package": "limma"
+          },
+          {
+            "step_type": "model_design",
+            "method": "explicit factor levels, contrast numerator/denominator",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust.method",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "org.Hs.eg.db identifier mapping plus HPA tissue check",
+            "package": "AnnotationDbi"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on the limma fit",
+            "package": "limma"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with session info",
+            "package": "limma"
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "toolu_01AuLUqXBpVPdXxHVt9aybqp",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Treated vs control muscle DE on log2 expression (limma-trend)",
+          "analytical_narrative": "The core facility delivered log2(TPM+1) normalized expression (12000 genes x 12 samples: 6 treated, 6 control, muscle tissue, single batch, unpaired) rather than raw counts, so a count-based model (DESeq2/edgeR) is inapplicable per the knowledge service's rule R-0019: log-scale values require limma-trend, not a negative-binomial count model. The plan is: (1) QC sample structure on the log2 matrix as delivered (PCA/MDS, sample distances, detected genes per sample) to check for outliers and confirm treated/control separation before modeling; (2) filter low-abundance genes by mean log expression with a floor independent of group labels; (3) confirm no further normalization is needed (values are already log2(TPM+1), so only a range sanity check is performed, per R-0074); (4) fit a limma linear model (~0 + condition) with an explicit reference level and named contrast (treated - control), moderated t-statistics via eBayes(trend=TRUE, robust=TRUE) per R-0093/R-0019; (5) extract results via topTable with BH-adjusted p-values (R-0043/R-0044), reporting genes at padj < 0.05; (6) map result gene identifiers (symbol/Ensembl/Entrez) using the human organism annotation package, with an HPA-based muscle-tissue expression sanity check on top expressed genes per R-0161; (7) run camera competitive gene set testing on the limma fit against WikiPathways human pathway gene sets (the pathway reference actually available in this environment) since fgsea preranked GSEA is forbidden for this design by the knowledge service and camera is the permitted alternative; (8) produce a final report with design, thresholds, package versions, n tested/n DE genes, and session info. No batch correction is needed (single batch), and no fold-change threshold was requested by the user, so the standard BH-adjusted-p threshold is used without a TREAT effect-size test.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2 expression",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 treated and 6 control muscle samples in log_expr.csv separate on PCA/MDS, and are there outlier samples or batch-like structure that must be flagged before modeling treated vs control?",
+              "acceptance_criteria": [
+                "PCA or MDS plot computed on the 500 most variable genes of the log2(TPM+1) matrix, colored by condition",
+                "Sample-to-sample distance heatmap produced",
+                "Detected-gene count per sample reported",
+                "Any outlier sample or unexpected clustering explicitly flagged in the output"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input: /eval-four-models-v2-with-log-normalized-n6-s1-1/data/inputs/expression/log_expr.csv (12000 genes x 12 samples, log2(TPM+1) as delivered by the core facility) and metadata.csv (12 samples, condition: treated/control, single batch, unpaired).",
+              "constraints": [
+                "Use the log2 values as delivered; do not re-log-transform",
+                "n_top_genes = 500 for the MDS/PCA per the sourced default"
+              ],
+              "caveats": [
+                "Matrix holds normalized log2 values, not counts — do not apply any count-based variance-stabilizing transform"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "reason": "Sample structure QC on log abundance values per R-0071@e4e2, method M-0026",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "log2_plus_1_unless_already_log",
+                    "source": "guide:limma/2026-05-19#data-exploration"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-trend differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12000 genes are differentially expressed between the 6 treated and 6 control muscle samples, fitting a limma linear model directly on the log2(TPM+1) values delivered by the core facility?",
+              "acceptance_criteria": [
+                "Low-abundance genes filtered by mean log expression with a floor independent of the condition label, minimum detected in at least 6 samples (smallest group size)",
+                "No further normalization applied beyond a documented value-range sanity check confirming the data is on a log2 scale (range ~0-20, fractional)",
+                "Design matrix uses explicit factor levels (control as reference) with a named contrast treated-control",
+                "eBayes fit with trend=TRUE and robust=TRUE",
+                "Results extracted via topTable with BH adjustment; gene list reported at adjusted p < 0.05",
+                "Number of genes tested after filtering and number of DE genes at padj<0.05 both reported"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "log2(TPM+1) matrix, 12000 genes x 12 samples, 6 treated vs 6 control, unpaired, single batch. No counts were delivered, so a count model (DESeq2/edgeR) is not applicable; limma-trend is the grounded method for log-scale input.",
+              "constraints": [
+                "filter_low_counts: filter_statistic = mean_log_expression",
+                "filter_low_counts: min_samples = smallest_group_size (6)",
+                "normalize: normalization = none_already_normalized; value_range_check required",
+                "model_design: reference_level = explicit (control)",
+                "model_design: contrast_form = factor_numerator_denominator (treated vs control)",
+                "differential_expression: robust = true, trend = true",
+                "multiple_testing: filter_results_by = adjusted_pvalue; adjustment = BH"
+              ],
+              "caveats": [
+                "No count-based model (DESeq2/edgeR/voom) may be used — data is log-normalized, not counts",
+                "No fold-change threshold was requested; genes selected purely on BH-adjusted p<0.05"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0075@4d16",
+                  "R-0074@06b0",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0019@251d",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "reason": "limma linear model on log-scale expression values per R-0019/R-0075/R-0093/R-0043/R-0044",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "filter_statistic",
+                    "value": "mean_log_expression",
+                    "source": "guide:limma/2026-05-19#filtering"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "guide:limma/2026-05-19#filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "normalization",
+                    "value": "none_already_normalized",
+                    "source": "guide:limma/2026-05-19#normalization"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "value_range_check",
+                    "value": "required",
+                    "source": "rule:R-0074"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "reference_level",
+                    "value": "explicit",
+                    "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "contrast_form",
+                    "value": "factor_numerator_denominator",
+                    "source": "vignette:DESeq2/1.52.0#contrasts"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "robust",
+                    "value": true,
+                    "source": "doi:10.1214/16-AOAS920"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "trend",
+                    "value": true,
+                    "source": "doi:10.1093/nar/gkv007"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "filter_results_by",
+                    "value": "adjusted_pvalue",
+                    "source": "doi:10.1111/j.2517-6161.1995.tb02031.x"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "adjustment",
+                    "value": "BH",
+                    "source": "guide:limma/2026-05-19#statistics-for-differential-expression"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Gene identifier annotation and muscle tissue expression check",
+              "track": "T1",
+              "step_type": "annotation",
+              "question": "What are the stable gene identifiers (Ensembl/Entrez/symbol) for the differentially expressed genes, and do the top expressed genes in these muscle samples match genes expected to be enriched in skeletal/muscle tissue?",
+              "acceptance_criteria": [
+                "Result table gene symbols mapped to Entrez and Ensembl IDs using the human organism annotation package, one identifier space per column",
+                "Share of unmapped and one-to-many mapped identifiers reported",
+                "Top expressed genes per sample compared against muscle-tissue-enriched genes from the Human Protein Atlas reference to confirm tissue identity; any sample whose profile looks non-muscle is flagged",
+                "If the Human Protein Atlas reference file is unavailable in the environment at run time, this tissue-identity check is skipped and reported as skipped rather than failing the step"
+              ],
+              "packages": [
+                "AnnotationDbi",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Human (9606) muscle tissue samples. Reference data available in this environment for the tissue check: Human Protein Atlas per-gene tissue expression table (/mnt/refs/managed/hpa-proteinatlas/current/proteinatlas.tsv.zip, containing proteinatlas.tsv with Ensembl/Gene columns and tissue expression annotations).",
+              "constraints": [
+                "annotation: id_map_source = organism_package_and_ncbi_gene_info_with_release",
+                "annotation: identifier_space = one_space_per_column_stable_id_as_key",
+                "annotation: unmapped_share = report_unmapped_and_one_to_many",
+                "annotation: tissue_reference = hpa_with_release; tissue_identity_check = top_expressed_genes_against_tissue_enriched_genes"
+              ],
+              "caveats": [
+                "HPA reference is human protein-atlas normal tissue data, not GTEx; use it as the tissue-identity reference actually staged in this environment"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0161@cdaf",
+                  "R-0160@d858"
+                ],
+                "template": "tpl-annotation-map@1.0.0",
+                "reason": "Gene identifier annotation with the organism package and HPA tissue reference per R-0160/R-0161",
+                "settings": [
+                  {
+                    "step": "annotation",
+                    "name": "tissue_reference",
+                    "value": "hpa_and_gtex_with_release",
+                    "source": "doi:10.1126/science.1260419"
+                  },
+                  {
+                    "step": "annotation",
+                    "name": "tissue_identity_check",
+                    "value": "top_expressed_genes_against_tissue_enriched_genes",
+                    "source": "doi:10.1126/science.1260419"
+                  },
+                  {
+                    "step": "annotation",
+                    "name": "id_map_source",
+                    "value": "organism_package_and_ncbi_gene_info_with_release",
+                    "source": "doi:10.1038/nprot.2009.97"
+                  },
+                  {
+                    "step": "annotation",
+                    "name": "identifier_space",
+                    "value": "one_space_per_column_stable_id_as_key",
+                    "source": "doi:10.1038/nprot.2009.97"
+                  },
+                  {
+                    "step": "annotation",
+                    "name": "unmapped_share",
+                    "value": "report_unmapped_and_one_to_many",
+                    "source": "doi:10.1016/j.xinn.2021.100141"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S4",
+              "name": "camera competitive gene set testing on WikiPathways",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways human pathways are enriched among genes changed between treated and control muscle samples, tested competitively on the fitted limma model?",
+              "acceptance_criteria": [
+                "camera() run on the limma fit and treated-vs-control contrast against WikiPathways human gene sets",
+                "Gene sets ranked by camera FDR with direction of change reported",
+                "If the WikiPathways human GMT is unavailable at run time, the step reports the enrichment as not performed rather than failing"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Pathway gene sets: WikiPathways human, HGNC gene symbols, GMT-format collection (/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt), matched to the human (9606) muscle expression data. fgsea preranked GSEA was checked against the knowledge service and is not a permitted method for this design; camera is the sourced alternative that uses the fitted model's inter-gene correlation.",
+              "constraints": [
+                "Use camera (limma) rather than fgsea preranked GSEA, per the knowledge service's rule for this design",
+                "Gene symbols in the expression matrix must be matched to WikiPathways HGNC symbols before testing"
+              ],
+              "caveats": [
+                "camera output depends on the design/contrast fitted in T1S2; must reuse the same design matrix and contrast"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0048@500d"
+                ],
+                "reason": "camera competitive gene set test on the limma fit is the permitted enrichment method for this design (fgsea preranked forbidden per rule R-0048)"
+              }
+            },
+            {
+              "id": "T1S5",
+              "name": "Differential expression summary report",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the full, reproducible summary of the treated-vs-control muscle differential expression analysis: method, design, thresholds, number of genes tested, number differentially expressed, and pathway enrichment results?",
+              "acceptance_criteria": [
+                "Report states method (limma-trend), package versions, design formula and named contrast, adjusted p-value threshold (0.05), number of genes tested after filtering, number of DE genes",
+                "Report includes session info, random seed if any randomization used, and the WikiPathways collection version used",
+                "Report includes the QC findings from T1S1 and the tissue-identity check outcome from T1S3"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T1S2",
+                "T1S3",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Final consolidated report of the treated vs control muscle DE analysis on log2(TPM+1) core-facility-normalized data.",
+              "constraints": [
+                "report_fields = method, versions, design, thresholds, n_tested, n_de, session_info",
+                "reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release"
+              ],
+              "caveats": [],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "Report content requirements per R-0041/R-0086"
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 58
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "extra_analyses": [
+            "annotation"
+          ],
+          "enrichment_input": "ranked_list"
+        },
+        "response_format": "concise"
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list",
+          "extra_analyses": [
+            "annotation"
+          ]
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0026"
+            },
+            "template": "tpl-qc-log-abundance@1.0.0",
+            "rules": [
+              "R-0071@e4e2"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0027"
+            },
+            "rules": [
+              "R-0075@4d16"
+            ]
+          },
+          {
+            "step": "normalize",
+            "rules": [
+              "R-0074@06b0"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0036@9786"
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0005"
+            },
+            "template": "tpl-limma-trend-logvalues@1.0.0",
+            "rules": [
+              "R-0093@4fa4",
+              "R-0019@251d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "rules": [
+              "R-0037@e6d8",
+              "R-0043@4f55",
+              "R-0044@1777"
+            ]
+          },
+          {
+            "step": "annotation",
+            "method": {
+              "id": "M-0057"
+            },
+            "template": "tpl-annotation-map@1.0.0",
+            "rules": [
+              "R-0161@cdaf",
+              "R-0160@d858"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0093@4fa4"
+          },
+          {
+            "id": "R-0161@cdaf"
+          },
+          {
+            "id": "R-0019@251d"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0044@1777"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0071@e4e2"
+          },
+          {
+            "id": "R-0074@06b0"
+          },
+          {
+            "id": "R-0075@4d16"
+          },
+          {
+            "id": "R-0160@d858"
+          }
+        ],
+        "flags": [],
+        "uncovered": [
+          "shrink_lfc"
+        ]
+      },
+      "responseChars": 21511,
+      "elapsedMs": 5
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "MDS/PCA on log2 values",
+            "method_id": "M-0000",
+            "package": "limma"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "mean log expression filter",
+            "package": "limma"
+          },
+          {
+            "step_type": "normalize",
+            "method": "none, already normalized, range check",
+            "package": "limma"
+          },
+          {
+            "step_type": "model_design",
+            "method": "explicit factor levels, contrast numerator/denominator",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend lmFit + eBayes(trend=TRUE, robust=TRUE)",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust.method",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "org.Hs.eg.db identifier mapping plus HPA tissue check",
+            "package": "AnnotationDbi"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "fgsea on WikiPathways human gene sets ranked by limma t-statistic",
+            "package": "fgsea"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with session info",
+            "package": "limma"
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0071@e4e2",
+            "message": "method_id M-0000 is not in the snapshot. The rules for this step name: Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes (M-0026).",
+            "permitted": [
+              "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes"
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0075@4d16",
+            "message": "limma linear model on log-scale expression values is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low abundance filter on TPM, FPKM, or log expression values"
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "severity": "violation",
+            "rule": "R-0093@4fa4",
+            "message": "limma-voom with duplicateCorrelation for a blocking factor is forbidden in this situation.",
+            "permitted": [
+              "limma linear model on log-scale expression values"
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "severity": "violation",
+            "rule": "R-0048@500d",
+            "message": "fgsea preranked on the limma moderated t-statistic with the MSigDB Hallmark collection is not a permitted method for enrichment in this situation.",
+            "permitted": [
+              "Over-representation analysis with an explicit universe",
+              "camera competitive gene set test on the limma fit"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 1433,
+      "elapsedMs": 8
+    },
+    {
+      "seq": 3,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "log_normalized",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "ranked_list"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes",
+            "method_id": "M-0026",
+            "package": "limma"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "Low abundance filter on TPM, FPKM, or log expression values",
+            "package": "limma"
+          },
+          {
+            "step_type": "normalize",
+            "method": "none, already normalized, range check",
+            "package": "limma"
+          },
+          {
+            "step_type": "model_design",
+            "method": "explicit factor levels, contrast numerator/denominator",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma linear model on log-scale expression values",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "trend",
+                "value": true
+              },
+              {
+                "name": "robust",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust.method",
+                "value": "BH"
+              }
+            ]
+          },
+          {
+            "step_type": "annotation",
+            "method": "org.Hs.eg.db identifier mapping plus HPA tissue check",
+            "package": "AnnotationDbi"
+          },
+          {
+            "step_type": "enrichment",
+            "method": "camera competitive gene set test on the limma fit",
+            "package": "limma"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with session info",
+            "package": "limma"
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 4
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

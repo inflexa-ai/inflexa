@@ -1,0 +1,366 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:05:16.540Z",
+  "elapsedMs": 53546,
+  "outcome": "plan_submitted",
+  "planId": "pln-14c91a46",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC, normalization, and cluster-vs-condition characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the PCA-cluster split is perfectly collinear with treatment (i.e., each cluster = all-treated or all-control), a batch-adjusted model is not identifiable and this must be reported rather than forced",
+          "Gene-level counts from Salmon may need tximport-style summarization already done — confirm the counts.csv is integer or near-integer gene counts suitable for DESeq2 directly",
+          "Do not assume the split is technical batch; state it as a surrogate/latent grouping since no batch was recorded"
+        ],
+        "context": "Gene-level Salmon counts (12000 x 13 incl. gene id column), 12 samples, 6 treated/6 control, unpaired, no recorded batch. The data context explicitly flags that PCA shows two 6-sample clusters not following condition. This step must establish whether that split can serve as a batch covariate (crosses condition) or represents a confound (aligns with condition), since that determines whether DE adjustment is even statistically valid.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "In the 12-sample (6 treated vs 6 control) kidney Salmon gene-count matrix, do the two PCA-visible clusters of six samples align with treatment condition, or do they cross condition roughly 3v3, indicating an unrecorded technical/biological batch orthogonal to treatment?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts (12000 genes x 12 samples) and metadata (12 x 2) are loaded and sample IDs are matched between files",
+          "Low-count genes are filtered (e.g. CPM-based filter) before normalization",
+          "A DESeq2 or equivalent size-factor normalization (e.g. rlog/vst) is applied and PCA is recomputed to confirm the two six-sample clusters reported in the data context",
+          "A contingency table of PCA-cluster membership x treatment condition is produced and a Fisher's exact test or equivalent is reported to quantify whether the split is confounded with treatment or crosses it",
+          "A binary cluster label (surrogate batch) per sample is written out for use by the DE step",
+          "Report explicitly states whether the design is estimable (i.e., cluster is not perfectly collinear with condition) before any DE model is proposed"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: treated vs control, adjusted for latent cluster structure",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "SVA requires specifying the full model (~condition) and null model (~1) correctly to avoid removing condition-associated variance",
+          "Small n (6 vs 6) limits power to estimate multiple surrogate variables reliably — cap at 1-2 SVs and justify",
+          "Report genes that flip significance status between models as the ones most sensitive to the batch decision, not as more or less 'true'"
+        ],
+        "context": "Building on the cluster-vs-condition characterization in T1S1. Because no batch was recorded, the safest and most defensible route is either (a) using the empirically observed PCA-cluster label as a covariate if it demonstrably crosses condition, or (b) estimating hidden surrogate variables via SVA (protecting the condition variable) if the cluster label is ambiguous or continuous rather than clearly binary. Comparing adjusted vs naive results makes clear how much the confound was driving or masking apparent treatment effects.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "sva",
+          "pandas",
+          "matplotlib"
+        ],
+        "question": "Which genes are differentially expressed between treated and control kidney samples when the model includes the PCA-derived surrogate cluster covariate (or an SVA-estimated surrogate variable) alongside condition, compared to a naive condition-only model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 is run with design ~ cluster + condition (or ~ SV1 + condition if SVA is used) on the filtered/normalized counts from T1S1, contingent on T1S1 confirming the design is estimable",
+          "A parallel naive model with design ~ condition alone is also run for comparison",
+          "Both models report the treated-vs-control contrast: log2FoldChange, p-value, BH-adjusted p-value per gene, at padj < 0.05",
+          "The two DE gene lists (adjusted vs naive) are compared explicitly (overlap count, genes gained/lost) so the effect of the batch adjustment on the DE call set is transparent",
+          "If SVA is used instead of the cluster label, the number of surrogate variables estimated and their correlation with the cluster label is reported",
+          "Output includes a full results table and an MA-plot or volcano plot for the adjusted model"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment on batch-adjusted DE gene list",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Gene identifiers in counts.csv must be mapped to HGNC symbols matching the WikiPathways GMT before overlap-based enrichment; confirm the counts matrix's gene ID type first",
+          "With 12000 genes profiled (likely already filtered/annotated), background gene set for ORA should be the full tested (post-filter) gene list, not a generic genome-wide background"
+        ],
+        "context": "Downstream functional interpretation of the treated-vs-control gene list, using the WikiPathways human GMT file (HGNC gene symbols) present in this environment's managed reference store. This step operationalizes the DE result into biological pathways rather than leaving a bare gene list.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "pandas"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the latent cluster/batch structure identified in T1S1-T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Enrichment (ORA or GSEA-style ranked by DESeq2 stat) is run separately on the batch-adjusted DE result from T1S2 using the human WikiPathways gene sets available in this environment",
+          "Report includes pathway name, WikiPathways ID, gene overlap/leading-edge genes, and BH-adjusted p-value",
+          "If the WikiPathways human GMT reference cannot be located at run time, the step reports this explicitly rather than silently skipping enrichment",
+          "Enrichment is run on the adjusted model's gene list as primary result, with the naive model's list reported alongside only as a sensitivity comparison"
+        ]
+      }
+    ],
+    "title": "Kidney treated vs control DE with hidden batch adjustment",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The data context reports a PCA where 12 kidney samples (6 treated, 6 control) split into two clusters of six that do NOT follow condition, with no recorded processing batch. This is the classic signature of an unrecorded technical batch (or a confound like sex, sample source, or processing date) that is orthogonal to or crossed with treatment. Running a naive two-group DESeq2 model without accounting for this structure risks either (a) the batch dominating the DE result if it happens to correlate with condition, or (b) inflated residual variance masking true treatment effects if it does not. The plan first characterizes the cluster structure quantitatively (does the 6/6 PCA split correspond to a balanced 3v3 crossing of treatment, or does it align with treatment itself, which would mean confounding rather than a correctable batch), then treats the surrogate cluster label as a latent batch by including it (or an SVA-estimated surrogate variable) as a covariate in the differential expression model. Results are compared with and without batch adjustment to make the impact of this decision transparent, followed by pathway enrichment on the batch-adjusted gene list using the human WikiPathways reference held in this environment."
+  },
+  "usage": {
+    "inputTokens": 90303,
+    "outputTokens": 5651,
+    "cacheCreationInputTokens": 71181,
+    "cacheReadInputTokens": 19098,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01EauFPbBB1SXGNHoKdTpu18",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with hidden batch adjustment",
+          "analytical_narrative": "The data context reports a PCA where 12 kidney samples (6 treated, 6 control) split into two clusters of six that do NOT follow condition, with no recorded processing batch. This is the classic signature of an unrecorded technical batch (or a confound like sex, sample source, or processing date) that is orthogonal to or crossed with treatment. Running a naive two-group DESeq2 model without accounting for this structure risks either (a) the batch dominating the DE result if it happens to correlate with condition, or (b) inflated residual variance masking true treatment effects if it does not. The plan first characterizes the cluster structure quantitatively (does the 6/6 PCA split correspond to a balanced 3v3 crossing of treatment, or does it align with treatment itself, which would mean confounding rather than a correctable batch), then treats the surrogate cluster label as a latent batch by including it (or an SVA-estimated surrogate variable) as a covariate in the differential expression model. Results are compared with and without batch adjustment to make the impact of this decision transparent, followed by pathway enrichment on the batch-adjusted gene list using the human WikiPathways reference held in this environment.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and cluster-vs-condition characterization",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In the 12-sample (6 treated vs 6 control) kidney Salmon gene-count matrix, do the two PCA-visible clusters of six samples align with treatment condition, or do they cross condition roughly 3v3, indicating an unrecorded technical/biological batch orthogonal to treatment?",
+              "acceptance_criteria": [
+                "Counts (12000 genes x 12 samples) and metadata (12 x 2) are loaded and sample IDs are matched between files",
+                "Low-count genes are filtered (e.g. CPM-based filter) before normalization",
+                "A DESeq2 or equivalent size-factor normalization (e.g. rlog/vst) is applied and PCA is recomputed to confirm the two six-sample clusters reported in the data context",
+                "A contingency table of PCA-cluster membership x treatment condition is produced and a Fisher's exact test or equivalent is reported to quantify whether the split is confounded with treatment or crosses it",
+                "A binary cluster label (surrogate batch) per sample is written out for use by the DE step",
+                "Report explicitly states whether the design is estimable (i.e., cluster is not perfectly collinear with condition) before any DE model is proposed"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Gene-level Salmon counts (12000 x 13 incl. gene id column), 12 samples, 6 treated/6 control, unpaired, no recorded batch. The data context explicitly flags that PCA shows two 6-sample clusters not following condition. This step must establish whether that split can serve as a batch covariate (crosses condition) or represents a confound (aligns with condition), since that determines whether DE adjustment is even statistically valid.",
+              "caveats": [
+                "If the PCA-cluster split is perfectly collinear with treatment (i.e., each cluster = all-treated or all-control), a batch-adjusted model is not identifiable and this must be reported rather than forced",
+                "Gene-level counts from Salmon may need tximport-style summarization already done — confirm the counts.csv is integer or near-integer gene counts suitable for DESeq2 directly",
+                "Do not assume the split is technical batch; state it as a surrogate/latent grouping since no batch was recorded"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control, adjusted for latent cluster structure",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control kidney samples when the model includes the PCA-derived surrogate cluster covariate (or an SVA-estimated surrogate variable) alongside condition, compared to a naive condition-only model?",
+              "acceptance_criteria": [
+                "DESeq2 is run with design ~ cluster + condition (or ~ SV1 + condition if SVA is used) on the filtered/normalized counts from T1S1, contingent on T1S1 confirming the design is estimable",
+                "A parallel naive model with design ~ condition alone is also run for comparison",
+                "Both models report the treated-vs-control contrast: log2FoldChange, p-value, BH-adjusted p-value per gene, at padj < 0.05",
+                "The two DE gene lists (adjusted vs naive) are compared explicitly (overlap count, genes gained/lost) so the effect of the batch adjustment on the DE call set is transparent",
+                "If SVA is used instead of the cluster label, the number of surrogate variables estimated and their correlation with the cluster label is reported",
+                "Output includes a full results table and an MA-plot or volcano plot for the adjusted model"
+              ],
+              "packages": [
+                "DESeq2",
+                "sva",
+                "pandas",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Building on the cluster-vs-condition characterization in T1S1. Because no batch was recorded, the safest and most defensible route is either (a) using the empirically observed PCA-cluster label as a covariate if it demonstrably crosses condition, or (b) estimating hidden surrogate variables via SVA (protecting the condition variable) if the cluster label is ambiguous or continuous rather than clearly binary. Comparing adjusted vs naive results makes clear how much the confound was driving or masking apparent treatment effects.",
+              "caveats": [
+                "SVA requires specifying the full model (~condition) and null model (~1) correctly to avoid removing condition-associated variance",
+                "Small n (6 vs 6) limits power to estimate multiple surrogate variables reliably — cap at 1-2 SVs and justify",
+                "Report genes that flip significance status between models as the ones most sensitive to the batch decision, not as more or less 'true'"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment on batch-adjusted DE gene list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the latent cluster/batch structure identified in T1S1-T1S2?",
+              "acceptance_criteria": [
+                "Enrichment (ORA or GSEA-style ranked by DESeq2 stat) is run separately on the batch-adjusted DE result from T1S2 using the human WikiPathways gene sets available in this environment",
+                "Report includes pathway name, WikiPathways ID, gene overlap/leading-edge genes, and BH-adjusted p-value",
+                "If the WikiPathways human GMT reference cannot be located at run time, the step reports this explicitly rather than silently skipping enrichment",
+                "Enrichment is run on the adjusted model's gene list as primary result, with the naive model's list reported alongside only as a sensitivity comparison"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Downstream functional interpretation of the treated-vs-control gene list, using the WikiPathways human GMT file (HGNC gene symbols) present in this environment's managed reference store. This step operationalizes the DE result into biological pathways rather than leaving a bare gene list.",
+              "caveats": [
+                "Gene identifiers in counts.csv must be mapped to HGNC symbols matching the WikiPathways GMT before overlap-based enrichment; confirm the counts matrix's gene ID type first",
+                "With 12000 genes profiled (likely already filtered/annotated), background gene set for ORA should be the full tested (post-filter) gene list, not a generic genome-wide background"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "toolu_01NhBGqVBf7wf48gSBbVWyJN",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated vs control DE with hidden batch adjustment",
+          "created_at": "2026-09-08T00:00:00Z",
+          "analytical_narrative": "The data context reports a PCA where 12 kidney samples (6 treated, 6 control) split into two clusters of six that do NOT follow condition, with no recorded processing batch. This is the classic signature of an unrecorded technical batch (or a confound like sex, sample source, or processing date) that is orthogonal to or crossed with treatment. Running a naive two-group DESeq2 model without accounting for this structure risks either (a) the batch dominating the DE result if it happens to correlate with condition, or (b) inflated residual variance masking true treatment effects if it does not. The plan first characterizes the cluster structure quantitatively (does the 6/6 PCA split correspond to a balanced 3v3 crossing of treatment, or does it align with treatment itself, which would mean confounding rather than a correctable batch), then treats the surrogate cluster label as a latent batch by including it (or an SVA-estimated surrogate variable) as a covariate in the differential expression model. Results are compared with and without batch adjustment to make the impact of this decision transparent, followed by pathway enrichment on the batch-adjusted gene list using the human WikiPathways reference held in this environment.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC, normalization, and cluster-vs-condition characterization",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "In the 12-sample (6 treated vs 6 control) kidney Salmon gene-count matrix, do the two PCA-visible clusters of six samples align with treatment condition, or do they cross condition roughly 3v3, indicating an unrecorded technical/biological batch orthogonal to treatment?",
+              "acceptance_criteria": [
+                "Counts (12000 genes x 12 samples) and metadata (12 x 2) are loaded and sample IDs are matched between files",
+                "Low-count genes are filtered (e.g. CPM-based filter) before normalization",
+                "A DESeq2 or equivalent size-factor normalization (e.g. rlog/vst) is applied and PCA is recomputed to confirm the two six-sample clusters reported in the data context",
+                "A contingency table of PCA-cluster membership x treatment condition is produced and a Fisher's exact test or equivalent is reported to quantify whether the split is confounded with treatment or crosses it",
+                "A binary cluster label (surrogate batch) per sample is written out for use by the DE step",
+                "Report explicitly states whether the design is estimable (i.e., cluster is not perfectly collinear with condition) before any DE model is proposed"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "matplotlib"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Gene-level Salmon counts (12000 x 13 incl. gene id column), 12 samples, 6 treated/6 control, unpaired, no recorded batch. The data context explicitly flags that PCA shows two 6-sample clusters not following condition. This step must establish whether that split can serve as a batch covariate (crosses condition) or represents a confound (aligns with condition), since that determines whether DE adjustment is even statistically valid.",
+              "caveats": [
+                "If the PCA-cluster split is perfectly collinear with treatment (i.e., each cluster = all-treated or all-control), a batch-adjusted model is not identifiable and this must be reported rather than forced",
+                "Gene-level counts from Salmon may need tximport-style summarization already done — confirm the counts.csv is integer or near-integer gene counts suitable for DESeq2 directly",
+                "Do not assume the split is technical batch; state it as a surrogate/latent grouping since no batch was recorded"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: treated vs control, adjusted for latent cluster structure",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which genes are differentially expressed between treated and control kidney samples when the model includes the PCA-derived surrogate cluster covariate (or an SVA-estimated surrogate variable) alongside condition, compared to a naive condition-only model?",
+              "acceptance_criteria": [
+                "DESeq2 is run with design ~ cluster + condition (or ~ SV1 + condition if SVA is used) on the filtered/normalized counts from T1S1, contingent on T1S1 confirming the design is estimable",
+                "A parallel naive model with design ~ condition alone is also run for comparison",
+                "Both models report the treated-vs-control contrast: log2FoldChange, p-value, BH-adjusted p-value per gene, at padj < 0.05",
+                "The two DE gene lists (adjusted vs naive) are compared explicitly (overlap count, genes gained/lost) so the effect of the batch adjustment on the DE call set is transparent",
+                "If SVA is used instead of the cluster label, the number of surrogate variables estimated and their correlation with the cluster label is reported",
+                "Output includes a full results table and an MA-plot or volcano plot for the adjusted model"
+              ],
+              "packages": [
+                "DESeq2",
+                "sva",
+                "pandas",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Building on the cluster-vs-condition characterization in T1S1. Because no batch was recorded, the safest and most defensible route is either (a) using the empirically observed PCA-cluster label as a covariate if it demonstrably crosses condition, or (b) estimating hidden surrogate variables via SVA (protecting the condition variable) if the cluster label is ambiguous or continuous rather than clearly binary. Comparing adjusted vs naive results makes clear how much the confound was driving or masking apparent treatment effects.",
+              "caveats": [
+                "SVA requires specifying the full model (~condition) and null model (~1) correctly to avoid removing condition-associated variance",
+                "Small n (6 vs 6) limits power to estimate multiple surrogate variables reliably — cap at 1-2 SVs and justify",
+                "Report genes that flip significance status between models as the ones most sensitive to the batch decision, not as more or less 'true'"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment on batch-adjusted DE gene list",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which WikiPathways human pathways are enriched among genes differentially expressed between treated and control kidney samples after adjusting for the latent cluster/batch structure identified in T1S1-T1S2?",
+              "acceptance_criteria": [
+                "Enrichment (ORA or GSEA-style ranked by DESeq2 stat) is run separately on the batch-adjusted DE result from T1S2 using the human WikiPathways gene sets available in this environment",
+                "Report includes pathway name, WikiPathways ID, gene overlap/leading-edge genes, and BH-adjusted p-value",
+                "If the WikiPathways human GMT reference cannot be located at run time, the step reports this explicitly rather than silently skipping enrichment",
+                "Enrichment is run on the adjusted model's gene list as primary result, with the naive model's list reported alongside only as a sensitivity comparison"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "Downstream functional interpretation of the treated-vs-control gene list, using the WikiPathways human GMT file (HGNC gene symbols) present in this environment's managed reference store. This step operationalizes the DE result into biological pathways rather than leaving a bare gene list.",
+              "caveats": [
+                "Gene identifiers in counts.csv must be mapped to HGNC symbols matching the WikiPathways GMT before overlap-based enrichment; confirm the counts matrix's gene ID type first",
+                "With 12000 genes profiled (likely already filtered/annotated), background gene set for ORA should be the full tested (post-filter) gene list, not a generic genome-wide background"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 51
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

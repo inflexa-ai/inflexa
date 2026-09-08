@@ -1,0 +1,85 @@
+{
+  "n_hallmark_representative_significant": 11,
+  "n_reactome_representative_significant": 25,
+  "n_pathway_pairs_compared": 275,
+  "n_pairs_with_any_shared_leading_edge_gene": 147,
+  "fraction_overlapping_pairs_with_concordant_nes_sign": 1.0,
+  "jaccard_threshold_for_strong_pair": 0.15,
+  "n_strong_pairs_ge_threshold": 11,
+  "top_10_pairs_by_jaccard": [
+    {
+      "hallmark_pathway": "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+      "reactome_pathway": "Aerobic respiration and respiratory electron transport",
+      "jaccard_index": 0.5632183908045977,
+      "n_shared_leading_edge_genes": 49,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+      "reactome_pathway": "Cytokine Signaling in Immune system",
+      "jaccard_index": 0.30538922155688625,
+      "n_shared_leading_edge_genes": 51,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+      "reactome_pathway": "Mitochondrial protein degradation",
+      "jaccard_index": 0.21348314606741572,
+      "n_shared_leading_edge_genes": 19,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+      "reactome_pathway": "Signaling by Interleukins",
+      "jaccard_index": 0.20689655172413793,
+      "n_shared_leading_edge_genes": 30,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+      "reactome_pathway": "Signaling by Interleukins",
+      "jaccard_index": 0.19863013698630136,
+      "n_shared_leading_edge_genes": 29,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_INFLAMMATORY_RESPONSE",
+      "reactome_pathway": "Signaling by Interleukins",
+      "jaccard_index": 0.19230769230769232,
+      "n_shared_leading_edge_genes": 20,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+      "reactome_pathway": "Cytokine Signaling in Immune system",
+      "jaccard_index": 0.18478260869565216,
+      "n_shared_leading_edge_genes": 34,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_INFLAMMATORY_RESPONSE",
+      "reactome_pathway": "Cytokine Signaling in Immune system",
+      "jaccard_index": 0.176056338028169,
+      "n_shared_leading_edge_genes": 25,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+      "reactome_pathway": "Adaptive Immune System",
+      "jaccard_index": 0.16981132075471697,
+      "n_shared_leading_edge_genes": 27,
+      "nes_sign_agree": true
+    },
+    {
+      "hallmark_pathway": "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+      "reactome_pathway": "Innate Immune System",
+      "jaccard_index": 0.16770186335403728,
+      "n_shared_leading_edge_genes": 27,
+      "nes_sign_agree": true
+    }
+  ],
+  "hallmark_leading_edge_gene_union_size": 437,
+  "reactome_leading_edge_gene_union_size": 433,
+  "leading_edge_gene_union_jaccard_hallmark_vs_reactome": 0.4055,
+  "n_leading_edge_genes_shared_across_collections": 251
+}

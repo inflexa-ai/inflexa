@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan is specific to the 2x4 time-course design, fits the correct DESeq2 formula ~ condition + time + condition:time with explicit reference levels, keeps normalization inside the model, uses a minimal justified filter, BH at 0.05 with apeglm/ashr shrinkage, and omits enrichment appropriately. Its main departure from the reference is that it never runs the joint interaction test (LRT of full vs reduced ~ condition + time) that directly answers 'which genes show a treatment-specific change over the four time points'; instead it tests three separate condition:time Wald coefficients and explicitly refuses to combine them, so a gene diverging across the course is not tested as a single hypothesis and the per-contrast BH is looser as a joint answer. The simple-effect contrasts and descriptive profile clustering are a sound supporting view. QC and reporting are thorough, with sensible outlier, power, and length-offset caveats."
+}

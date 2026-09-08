@@ -1,0 +1,375 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "deconvolution-mouse-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T07:30:32.300Z",
+  "elapsedMs": 69567,
+  "outcome": "plan_submitted",
+  "planId": "pln-f22e702c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Count QC, normalization, PCA",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "qc-normalization",
+        "status": "pending",
+        "caveats": [
+          "The metadata has only 2 columns; if the condition column uses labels other than 'anti-PD-1'/'isotype control', map from the actual values and report the mapping.",
+          "A ~4x lower library size is within-normal for tumor bulk RNA-seq; it distorts compositional deconvolution more than score-based methods — do not exclude it, flag it."
+        ],
+        "context": "Input files: /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns = 1 gene-symbol ID column + 12 samples, raw Salmon gene-level counts, Mus musculus) and /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2; column names not recorded — inspect them and map sample IDs to counts columns explicitly, erroring loudly on any mismatch). Known caveat: sample_01 has library size ~4x below the median. Salmon counts may be estimated (non-integer) counts — tolerate that in DESeq2/edgeR input (round or cast, and say which was done).",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "data.table",
+          "readr",
+          "ggplot2"
+        ],
+        "question": "Are the 12 tumor libraries comparable in depth and structure, and what normalized log-expression matrix should deconvolution consume? Specifically: does sample_01 (library size ~4x below median) look like a technical outlier or just a smaller tumor, and do samples align 6 anti-PD-1 vs 6 isotype control as the metadata claims?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Read both input files; join counts columns to metadata rows on sample ID and verify 6 anti-PD-1 vs 6 isotype control before any computation.",
+          "Quantify the depth disparity (library sizes, and sample_01 relative to median); include sample_01 in the main analysis but mark it for the downstream sensitivity analysis rather than silently dropping it.",
+          "Filter low-expression genes (e.g. keep genes with CPM > 1 in at least 6 samples); report gene counts before/after filtering.",
+          "Compute TMM-normalized logCPM (edgeR) and a variance-stabilized matrix (DESeq2 VST on size-factor-normalized counts) and save both as TSV with gene symbols as the first column.",
+          "PCA (or MDS) on the top-variable genes from the VST matrix, colored by condition, with sample_01 visually flagged; save as plot plus PC loadings table.",
+          "Everything reproducible from the two input CSVs; no downloads."
+        ],
+        "acceptance_criteria": [
+          "Output TSVs contain one normalized log-expression matrix (TMM logCPM) and one VST matrix for the filtered gene set across all 12 samples with gene symbols preserved.",
+          "QC report states: gene counts before/after filtering, per-sample library sizes, the sample_01/median ratio, and whether sample_01 is a PCA outlier.",
+          "Sample-to-condition mapping is verified and printed (6 vs 6), with a hard error if any counts column fails to map."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "MCP-counter + EPIC deconvolution",
+        "agent": "immune-profiling-agent",
+        "track": "deconvolution",
+        "status": "pending",
+        "caveats": [
+          "mMCP-counter scores are relative units — a population can be 'higher in treated' without being 'more abundant in absolute terms'; EPIC fractions are compositional and confounded with tumor content.",
+          "EPIC TRef was built on tumor data; check that its output covers the stromal populations (CAF, endothelial) the question asks about — if not, note that stromal estimates come from mMCP-counter only.",
+          "Deconvolution from bulk assumes the reference populations are represented in these tumors; a poor cross-method correlation is a finding to report, not a bug to tune away."
+        ],
+        "context": "Consumes the TMM logCPM matrix and VST matrix from T1S1. Primary method: mMCPcounter (mouse MCP-counter) on the logCPM matrix — returns mouse immune AND stromal population scores (arbitrary units, valid for between-group comparison, not fractions). Second method: EPIC with the mouse TRef tumor reference (EPIC::EPIC(expr, reference=\"TRef\")) on an expression matrix in a scale EPIC expects (non-negative, roughly log2-CPM or TPM-like; verify against package documentation and state the choice) — returns per-sample fractions including tumor/other cells and immune/stromal populations. Both methods use the mouse gene symbols already present in the counts matrix; verify identifier compatibility (symbol vs Entrez) against each package's reference before running and report any gene-loss from the join.",
+        "maxSteps": 200,
+        "packages": [
+          "mMCPcounter",
+          "EPIC",
+          "data.table"
+        ],
+        "question": "What immune and stromal cell populations (CD8 T, CD4 T, NK, B, monocytes/macrophages, neutrophils, fibroblasts, endothelial cells, etc.) does each of the 12 subcutaneous tumors contain, estimated by two independent mouse-compatible methods whose shared populations can be cross-checked?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Run mMCP-counter on all 12 samples; emit a genes(sample) x population score table and the per-population marker gene set sizes actually used.",
+          "Run EPIC (TRef mouse reference) on all 12 samples; emit per-sample cell-type fractions; check fractions are non-negative and that within-sample cell fractions are consistent with EPIC's model (tumor/other fraction reported alongside).",
+          "Cross-method agreement: Spearman correlation between mMCP-counter scores and EPIC fractions for every population name both methods cover; report the matrix.",
+          "If one method cannot be run (reference mismatch, package API difference), report precisely why, proceed with the other, and mark the result as single-method.",
+          "Do not interpret or test treatment differences in this step — that is T3S1."
+        ],
+        "acceptance_criteria": [
+          "Two per-sample composition tables (mMCP-counter scores; EPIC fractions) covering all 12 samples, with population names, method units, and the sample_01 flag carried in the output.",
+          "A cross-method Spearman correlation table for shared populations with a plain-language note on agreement.",
+          "A short methods note stating the EPIC input matrix and reference used, and the mMCP-counter marker-set coverage of the filtered gene set."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Ortholog-projected TME signature scoring",
+        "agent": "immune-profiling-agent",
+        "track": "deconvolution",
+        "status": "pending",
+        "caveats": [
+          "Human-to-mouse ortholog projection loses markers and can shift specificity; this view is corroborative, and disagreements with T2S1 should be reported, not reconciled by hand.",
+          "The staged scGate signatures were built for gating single-cell data; using them as bulk signatures is an approximation — say so in the methods note."
+        ],
+        "context": "Consumes the TMM logCPM matrix from T1S1. Marker sets come from the staged scGate human TME gating signatures (/mnt/refs/managed/scgate-human-tme/v0.17/master_table.tsv, human gene symbols, '-' suffix marks negative markers) plus the per-population model files beside it. Convert human signatures to mouse 1:1 orthologs with babelgene, intersect with the 12,000-gene filtered matrix, and score per sample with UCell (rank-based, robust to library size and to the sample_01 depth disparity). This step only enriches the analysis — if ortholog coverage or the staged signatures are unusable, report that and stop without failing the run.",
+        "maxSteps": 200,
+        "packages": [
+          "UCell",
+          "babelgene",
+          "data.table"
+        ],
+        "question": "Do the tumors differ in canonical TME marker-signature activity (T cell, NK, myeloid, B, fibroblast, endothelial, checkpoint-bearing populations) as scored gene-set-wise — a third, marker-based view independent of both reference-matrix deconvolutions?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Parse master_table.tsv: split semicolon-separated markers, strip the trailing '-' from negative markers and keep the sign; expand per-population signature membership from the model files if needed.",
+          "Project each human signature to mouse via babelgene 1:1 orthologs; report per-signature coverage (projected markers / input markers) and drop signatures below 50% coverage with a note.",
+          "Score with UCell on the logCPM matrix for all 12 samples; emit a sample x signature score table; if a scored signature's distribution is degenerate (e.g. all-zero due to gene loss), report it rather than imputing.",
+          "No group testing here — T3S1 consumes these scores."
+        ],
+        "acceptance_criteria": [
+          "A sample x signature UCell score matrix for all 12 samples with the signature gene-set sizes and ortholog coverage fractions recorded.",
+          "Explicit statement of which signatures were dropped and why, or an explicit 'all signatures scored' statement.",
+          "UCell's size-factor robustness is noted as the reason this step is robust to the sample_01 depth caveat."
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Treatment-contrast statistics on composition",
+        "agent": "statistical-modeling-agent",
+        "track": "group-comparison",
+        "status": "pending",
+        "caveats": [
+          "6 vs 6 gives no power for interaction-level claims; any 'responder vs non-responder' framing is out of scope — there are no response labels in the metadata.",
+          "MCP-counter scores and UCell scores are not fractions: between-group comparison is valid, absolute-abundance language is not.",
+          "A single batch and no covariates beyond condition means the model is condition-only; do not invent covariates."
+        ],
+        "context": "Consumes all three composition outputs from T2S1 and T2S2 (mMCP-counter scores, EPIC fractions, UCell signature scores) for 12 samples, 6 vs 6, unpaired, single batch. For each population/signature: Welch two-sample t-test and exact Mann-Whitney U on treated vs control; effect sizes (Hedges' g and Cliff's delta) with bootstrap 95% CIs (e.g. 10,000 resamples); BH-FDR across populations within each method's table. EPIC fractions are compositional — additionally logit-transform cell fractions before testing and report both. Sensitivity: repeat all tests excluding sample_01 and flag any population whose direction or significance changes. Heatmap of the z-scored composition matrix with samples annotated by condition, and a summary table of populations consistently changed across methods.",
+        "maxSteps": 200,
+        "packages": [
+          "data.table",
+          "ggplot2",
+          "pheatmap",
+          "limma"
+        ],
+        "question": "Which immune and stromal populations differ between the 6 anti-PD-1-treated and 6 isotype-control tumors, by how much, and is the pattern robust to the low-depth sample_01?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T2S1",
+          "T2S2"
+        ],
+        "constraints": [
+          "Test every population/signature from every method table; no cherry-picking — the BH-FDR scope is the full population set per method.",
+          "With n=6 vs 6, report effect size with CI first and p-values second; explicitly state that the study is powered only to detect large effects and that nominal (unadjusted) results must be labeled as exploratory.",
+          "Include the sample_01-excluded sensitivity results alongside, never as a replacement.",
+          "Use limma (moderated t, no covariates) as a complementary check on the logCPM-derived scores if desired, but the primary tests are the distribution-free and Welch tests above.",
+          "State method units in every table (score units vs fractions) so cross-method results are never mixed numerically."
+        ],
+        "acceptance_criteria": [
+          "One results table per method: population, treated mean, control mean, effect size with 95% CI, raw p, BH-adjusted p, direction, and the sample_01-excluded versions of each.",
+          "A heatmap of z-scored per-sample composition annotated by treatment group, with sample_01 visibly flagged.",
+          "A concluding summary distinguishing (a) populations consistently changed across methods with effect-size support, (b) method-specific signals, and (c) no-difference populations — with the low-power caveat attached to (a) and (b)."
+        ]
+      }
+    ],
+    "title": "Anti-PD-1 vs isotype tumor immune-stromal deconvolution",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is mouse (Mus musculus) bulk RNA-seq of subcutaneous tumors: 12 samples, 6 anti-PD-1-treated vs 6 isotype-control, unpaired, single batch, raw gene-level Salmon counts for 12,000 genes (counts.csv, 12000 x 13 with a gene-symbol ID column) plus a 12 x 2 metadata table. The question — what immune and stromal populations each sample contains and whether composition differs by treatment — is a bulk-tumor-microenvironment deconvolution problem, not a differential-expression problem. The plan therefore: (1) QC and normalize the counts (flagging sample_01, whose library size is ~4x below the median, which matters for compositional methods), (2) estimate per-sample immune and stromal cell composition with two independent mouse-compatible approaches that triangulate each other — mMCP-counter (mouse-specific immune + stromal population scores) and EPIC with the mouse TRef reference (absolute fractions incl. tumor cells, CAF, endothelial, macrophages), plus UCell marker-signature scoring of human TME signatures ortholog-projected to mouse — and (3) test treated-vs-control differences per population with effect sizes, multiple-testing correction, and a sensitivity analysis excluding the low-depth sample. With n=6 vs 6 the study is underpowered for small effects, so the statistics step reports effect sizes and CIs rather than leaning on p-values alone. No external reference download is required: mMCP-counter and EPIC/TRef ship their own mouse signatures, and the scGate human TME signature tables staged under /mnt/refs supply the marker sets for the third view."
+  },
+  "usage": {
+    "inputTokens": 31199,
+    "outputTokens": 6818,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 3597
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_a7d38f3e028e4d788cd9d5f9",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Anti-PD-1 vs isotype tumor immune-stromal deconvolution",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-07-10T12:00:00Z",
+          "analytical_narrative": "The dataset is mouse (Mus musculus) bulk RNA-seq of subcutaneous tumors: 12 samples, 6 anti-PD-1-treated vs 6 isotype-control, unpaired, single batch, raw gene-level Salmon counts for 12,000 genes (counts.csv, 12000 x 13 with a gene-symbol ID column) plus a 12 x 2 metadata table. The question — what immune and stromal populations each sample contains and whether composition differs by treatment — is a bulk-tumor-microenvironment deconvolution problem, not a differential-expression problem. The plan therefore: (1) QC and normalize the counts (flagging sample_01, whose library size is ~4x below the median, which matters for compositional methods), (2) estimate per-sample immune and stromal cell composition with two independent mouse-compatible approaches that triangulate each other — mMCP-counter (mouse-specific immune + stromal population scores) and EPIC with the mouse TRef reference (absolute fractions incl. tumor cells, CAF, endothelial, macrophages), plus UCell marker-signature scoring of human TME signatures ortholog-projected to mouse — and (3) test treated-vs-control differences per population with effect sizes, multiple-testing correction, and a sensitivity analysis excluding the low-depth sample. With n=6 vs 6 the study is underpowered for small effects, so the statistics step reports effect sizes and CIs rather than leaning on p-values alone. No external reference download is required: mMCP-counter and EPIC/TRef ship their own mouse signatures, and the scGate human TME signature tables staged under /mnt/refs supply the marker sets for the third view.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Count QC, normalization, PCA",
+              "track": "qc-normalization",
+              "step_type": "analysis",
+              "agent": "bulk-transcriptomics-agent",
+              "question": "Are the 12 tumor libraries comparable in depth and structure, and what normalized log-expression matrix should deconvolution consume? Specifically: does sample_01 (library size ~4x below median) look like a technical outlier or just a smaller tumor, and do samples align 6 anti-PD-1 vs 6 isotype control as the metadata claims?",
+              "context": "Input files: /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 columns = 1 gene-symbol ID column + 12 samples, raw Salmon gene-level counts, Mus musculus) and /eval-four-models-v2-without-deconvolution-mouse-n6-s1-1/data/inputs/metadata/metadata.csv (12 x 2; column names not recorded — inspect them and map sample IDs to counts columns explicitly, erroring loudly on any mismatch). Known caveat: sample_01 has library size ~4x below the median. Salmon counts may be estimated (non-integer) counts — tolerate that in DESeq2/edgeR input (round or cast, and say which was done).",
+              "constraints": [
+                "Read both input files; join counts columns to metadata rows on sample ID and verify 6 anti-PD-1 vs 6 isotype control before any computation.",
+                "Quantify the depth disparity (library sizes, and sample_01 relative to median); include sample_01 in the main analysis but mark it for the downstream sensitivity analysis rather than silently dropping it.",
+                "Filter low-expression genes (e.g. keep genes with CPM > 1 in at least 6 samples); report gene counts before/after filtering.",
+                "Compute TMM-normalized logCPM (edgeR) and a variance-stabilized matrix (DESeq2 VST on size-factor-normalized counts) and save both as TSV with gene symbols as the first column.",
+                "PCA (or MDS) on the top-variable genes from the VST matrix, colored by condition, with sample_01 visually flagged; save as plot plus PC loadings table.",
+                "Everything reproducible from the two input CSVs; no downloads."
+              ],
+              "acceptance_criteria": [
+                "Output TSVs contain one normalized log-expression matrix (TMM logCPM) and one VST matrix for the filtered gene set across all 12 samples with gene symbols preserved.",
+                "QC report states: gene counts before/after filtering, per-sample library sizes, the sample_01/median ratio, and whether sample_01 is a PCA outlier.",
+                "Sample-to-condition mapping is verified and printed (6 vs 6), with a hard error if any counts column fails to map."
+              ],
+              "packages": [
+                "edgeR",
+                "DESeq2",
+                "data.table",
+                "readr",
+                "ggplot2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "caveats": [
+                "The metadata has only 2 columns; if the condition column uses labels other than 'anti-PD-1'/'isotype control', map from the actual values and report the mapping.",
+                "A ~4x lower library size is within-normal for tumor bulk RNA-seq; it distorts compositional deconvolution more than score-based methods — do not exclude it, flag it."
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "MCP-counter + EPIC deconvolution",
+              "track": "deconvolution",
+              "step_type": "analysis",
+              "agent": "immune-profiling-agent",
+              "question": "What immune and stromal cell populations (CD8 T, CD4 T, NK, B, monocytes/macrophages, neutrophils, fibroblasts, endothelial cells, etc.) does each of the 12 subcutaneous tumors contain, estimated by two independent mouse-compatible methods whose shared populations can be cross-checked?",
+              "context": "Consumes the TMM logCPM matrix and VST matrix from T1S1. Primary method: mMCPcounter (mouse MCP-counter) on the logCPM matrix — returns mouse immune AND stromal population scores (arbitrary units, valid for between-group comparison, not fractions). Second method: EPIC with the mouse TRef tumor reference (EPIC::EPIC(expr, reference=\"TRef\")) on an expression matrix in a scale EPIC expects (non-negative, roughly log2-CPM or TPM-like; verify against package documentation and state the choice) — returns per-sample fractions including tumor/other cells and immune/stromal populations. Both methods use the mouse gene symbols already present in the counts matrix; verify identifier compatibility (symbol vs Entrez) against each package's reference before running and report any gene-loss from the join.",
+              "constraints": [
+                "Run mMCP-counter on all 12 samples; emit a genes(sample) x population score table and the per-population marker gene set sizes actually used.",
+                "Run EPIC (TRef mouse reference) on all 12 samples; emit per-sample cell-type fractions; check fractions are non-negative and that within-sample cell fractions are consistent with EPIC's model (tumor/other fraction reported alongside).",
+                "Cross-method agreement: Spearman correlation between mMCP-counter scores and EPIC fractions for every population name both methods cover; report the matrix.",
+                "If one method cannot be run (reference mismatch, package API difference), report precisely why, proceed with the other, and mark the result as single-method.",
+                "Do not interpret or test treatment differences in this step — that is T3S1."
+              ],
+              "acceptance_criteria": [
+                "Two per-sample composition tables (mMCP-counter scores; EPIC fractions) covering all 12 samples, with population names, method units, and the sample_01 flag carried in the output.",
+                "A cross-method Spearman correlation table for shared populations with a plain-language note on agreement.",
+                "A short methods note stating the EPIC input matrix and reference used, and the mMCP-counter marker-set coverage of the filtered gene set."
+              ],
+              "packages": [
+                "mMCPcounter",
+                "EPIC",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "caveats": [
+                "mMCP-counter scores are relative units — a population can be 'higher in treated' without being 'more abundant in absolute terms'; EPIC fractions are compositional and confounded with tumor content.",
+                "EPIC TRef was built on tumor data; check that its output covers the stromal populations (CAF, endothelial) the question asks about — if not, note that stromal estimates come from mMCP-counter only.",
+                "Deconvolution from bulk assumes the reference populations are represented in these tumors; a poor cross-method correlation is a finding to report, not a bug to tune away."
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Ortholog-projected TME signature scoring",
+              "track": "deconvolution",
+              "step_type": "analysis",
+              "agent": "immune-profiling-agent",
+              "question": "Do the tumors differ in canonical TME marker-signature activity (T cell, NK, myeloid, B, fibroblast, endothelial, checkpoint-bearing populations) as scored gene-set-wise — a third, marker-based view independent of both reference-matrix deconvolutions?",
+              "context": "Consumes the TMM logCPM matrix from T1S1. Marker sets come from the staged scGate human TME gating signatures (/mnt/refs/managed/scgate-human-tme/v0.17/master_table.tsv, human gene symbols, '-' suffix marks negative markers) plus the per-population model files beside it. Convert human signatures to mouse 1:1 orthologs with babelgene, intersect with the 12,000-gene filtered matrix, and score per sample with UCell (rank-based, robust to library size and to the sample_01 depth disparity). This step only enriches the analysis — if ortholog coverage or the staged signatures are unusable, report that and stop without failing the run.",
+              "constraints": [
+                "Parse master_table.tsv: split semicolon-separated markers, strip the trailing '-' from negative markers and keep the sign; expand per-population signature membership from the model files if needed.",
+                "Project each human signature to mouse via babelgene 1:1 orthologs; report per-signature coverage (projected markers / input markers) and drop signatures below 50% coverage with a note.",
+                "Score with UCell on the logCPM matrix for all 12 samples; emit a sample x signature score table; if a scored signature's distribution is degenerate (e.g. all-zero due to gene loss), report it rather than imputing.",
+                "No group testing here — T3S1 consumes these scores."
+              ],
+              "acceptance_criteria": [
+                "A sample x signature UCell score matrix for all 12 samples with the signature gene-set sizes and ortholog coverage fractions recorded.",
+                "Explicit statement of which signatures were dropped and why, or an explicit 'all signatures scored' statement.",
+                "UCell's size-factor robustness is noted as the reason this step is robust to the sample_01 depth caveat."
+              ],
+              "packages": [
+                "UCell",
+                "babelgene",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "caveats": [
+                "Human-to-mouse ortholog projection loses markers and can shift specificity; this view is corroborative, and disagreements with T2S1 should be reported, not reconciled by hand.",
+                "The staged scGate signatures were built for gating single-cell data; using them as bulk signatures is an approximation — say so in the methods note."
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Treatment-contrast statistics on composition",
+              "track": "group-comparison",
+              "step_type": "analysis",
+              "agent": "statistical-modeling-agent",
+              "question": "Which immune and stromal populations differ between the 6 anti-PD-1-treated and 6 isotype-control tumors, by how much, and is the pattern robust to the low-depth sample_01?",
+              "context": "Consumes all three composition outputs from T2S1 and T2S2 (mMCP-counter scores, EPIC fractions, UCell signature scores) for 12 samples, 6 vs 6, unpaired, single batch. For each population/signature: Welch two-sample t-test and exact Mann-Whitney U on treated vs control; effect sizes (Hedges' g and Cliff's delta) with bootstrap 95% CIs (e.g. 10,000 resamples); BH-FDR across populations within each method's table. EPIC fractions are compositional — additionally logit-transform cell fractions before testing and report both. Sensitivity: repeat all tests excluding sample_01 and flag any population whose direction or significance changes. Heatmap of the z-scored composition matrix with samples annotated by condition, and a summary table of populations consistently changed across methods.",
+              "constraints": [
+                "Test every population/signature from every method table; no cherry-picking — the BH-FDR scope is the full population set per method.",
+                "With n=6 vs 6, report effect size with CI first and p-values second; explicitly state that the study is powered only to detect large effects and that nominal (unadjusted) results must be labeled as exploratory.",
+                "Include the sample_01-excluded sensitivity results alongside, never as a replacement.",
+                "Use limma (moderated t, no covariates) as a complementary check on the logCPM-derived scores if desired, but the primary tests are the distribution-free and Welch tests above.",
+                "State method units in every table (score units vs fractions) so cross-method results are never mixed numerically."
+              ],
+              "acceptance_criteria": [
+                "One results table per method: population, treated mean, control mean, effect size with 95% CI, raw p, BH-adjusted p, direction, and the sample_01-excluded versions of each.",
+                "A heatmap of z-scored per-sample composition annotated by treatment group, with sample_01 visibly flagged.",
+                "A concluding summary distinguishing (a) populations consistently changed across methods with effect-size support, (b) method-specific signals, and (c) no-difference populations — with the low-power caveat attached to (a) and (b)."
+              ],
+              "packages": [
+                "data.table",
+                "ggplot2",
+                "pheatmap",
+                "limma"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "caveats": [
+                "6 vs 6 gives no power for interaction-level claims; any 'responder vs non-responder' framing is out of scope — there are no response labels in the metadata.",
+                "MCP-counter scores and UCell scores are not fractions: between-group comparison is valid, absolute-abundance language is not.",
+                "A single batch and no covariates beyond condition means the model is condition-only; do not invent covariates."
+              ]
+            }
+          ],
+          "title_note": ""
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 68
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

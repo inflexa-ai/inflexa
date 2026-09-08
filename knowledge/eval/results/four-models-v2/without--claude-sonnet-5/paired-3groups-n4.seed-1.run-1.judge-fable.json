@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 4,
+    "low_count_filter": 7,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly fits one DESeq2 model with ~ subject + condition and pulls the three pairwise contrasts from that single fit, respecting the pairing and shared dispersion, but it omits the omnibus LRT against ~ subject that the reference specifies as the first test for any condition effect. QC is limited to library sizes with no PCA or sample distances colored by subject and condition and no stated outlier policy. The filter (>=10 counts in >=4 samples) is stated and reasonable; normalization is implied by using raw counts in DESeq2 but the narrative's 'normalization runs first' is ambiguous and size factors are never named. FDR uses padj<0.05 without naming BH, and shrinkage is hedged between apeglm and ashr even though apeglm cannot handle the A-vs-B contrast directly. Enrichment was not requested and is added anyway with no universe, no version, no ranking metric, and an unresolved ORA-vs-GSEA choice; the report plan lacks versions and design caveats."
+}

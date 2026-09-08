@@ -1,0 +1,243 @@
+{
+  "status": "completed",
+  "error": null,
+  "startedAt": "2026-09-07T13:04:27.794Z",
+  "completedAt": "2026-09-07T13:06:12.788Z",
+  "result": {
+    "domain": "transcriptomics",
+    "groups": [
+      {
+        "id": "gene-count-matrix",
+        "name": "gene count matrix",
+        "role": "data",
+        "count": 1,
+        "slots": [
+          {
+            "id": "set-1.slot-1",
+            "index": 0,
+            "location": "name",
+            "tokenClass": "word",
+            "sampleValues": [
+              "counts"
+            ],
+            "distinctValues": 1
+          }
+        ],
+        "reason": "The two members of set-1 are different substrates consumed differently downstream: counts.csv is the numeric measurement matrix (expression-matrix/data), metadata.csv is the sample-to-group lookup table (sample-annotation/metadata). They share a naming template but not a role or category, so the substrate test calls for a split rather than one group.",
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "expression-matrix",
+        "fileCount": 1,
+        "totalBytes": 570381,
+        "description": "Raw (non-normalized) integer gene-level read counts, 12,000 genes x 12 samples (sample_01..sample_12), one CSV with genes as rows and samples as columns.",
+        "displayPattern": "data/inputs/local/<word>.csv",
+        "memberRepresents": "the gene x sample raw RNA-seq read-count matrix for all 12 samples"
+      },
+      {
+        "id": "sample-sheet",
+        "name": "sample sheet",
+        "role": "metadata",
+        "count": 1,
+        "slots": [
+          {
+            "id": "set-1.slot-1",
+            "index": 0,
+            "location": "name",
+            "tokenClass": "word",
+            "sampleValues": [
+              "metadata"
+            ],
+            "distinctValues": 1
+          }
+        ],
+        "reason": "The two members of set-1 are different substrates consumed differently downstream: counts.csv is the numeric measurement matrix (expression-matrix/data), metadata.csv is the sample-to-group lookup table (sample-annotation/metadata). They share a naming template but not a role or category, so the substrate test calls for a split rather than one group.",
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "sample-annotation",
+        "fileCount": 1,
+        "totalBytes": 285,
+        "description": "Sample-to-condition mapping for all 12 samples: sample id plus its assigned 'condition' (control/treated), the design/grouping key for the comparison.",
+        "displayPattern": "data/inputs/local/<word>.csv",
+        "memberRepresents": "the condition assignment for one sample"
+      },
+      {
+        "id": "gene-length-reference",
+        "name": "gene length reference",
+        "role": "reference",
+        "count": 1,
+        "formats": [
+          {
+            "count": 1,
+            "format": "csv"
+          }
+        ],
+        "category": "reference-data",
+        "fileCount": 1,
+        "totalBytes": 184945,
+        "description": "A two-column reference table (gene, length) giving the length in bp for every one of the same 12,000 genes present in the count matrix (verified exact gene-set match, 0 discrepancies). Consumed, not produced, by this analysis — an input for length-normalized metrics (e.g. TPM/FPKM/RPKM) rather than a measurement itself.",
+        "displayPattern": "data/inputs/local/gene_lengths.csv",
+        "memberRepresents": "one gene's length in base pairs, used for length-based normalization of the count matrix"
+      }
+    ],
+    "probes": [
+      {
+        "probe": "subject",
+        "reason": "metadata.csv carries only 'sample' and 'condition' columns; no separate subject/donor identifier links samples to a shared individual, so subject and sample cannot be distinguished here.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      },
+      {
+        "probe": "sample",
+        "outcome": "found",
+        "dimension": "sample"
+      },
+      {
+        "probe": "cohort-arm",
+        "outcome": "found",
+        "dimension": "condition (control vs treated)"
+      },
+      {
+        "probe": "timepoint",
+        "reason": "No visit/day/cycle column or timepoint token exists in the sample sheet; design is a single-timepoint two-group comparison.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      },
+      {
+        "probe": "batch",
+        "reason": "No plate, lane, run-date, or centre column exists in the sample sheet or filenames.",
+        "outcome": "not-found",
+        "searched": [
+          "data/inputs/local/metadata.csv"
+        ]
+      }
+    ],
+    "recipe": [
+      {
+        "op": "split",
+        "groupIds": [
+          "gene-count-matrix",
+          "sample-sheet"
+        ],
+        "slotIndex": 0,
+        "templates": [
+          "data/inputs/local/<word>.csv"
+        ],
+        "valueMapping": [
+          {
+            "values": [
+              "counts"
+            ],
+            "groupId": "gene-count-matrix"
+          },
+          {
+            "values": [
+              "metadata"
+            ],
+            "groupId": "sample-sheet"
+          }
+        ]
+      },
+      {
+        "op": "group",
+        "paths": [
+          "data/inputs/local/gene_lengths.csv"
+        ],
+        "groupIds": [
+          "gene-length-reference"
+        ],
+        "templates": []
+      }
+    ],
+    "tissue": null,
+    "caveats": [
+      "Counts in counts.csv are raw, non-normalized integer read counts (verified by inspection) — any comparison across samples/genes requires library-size normalization (and length normalization if using gene_lengths.csv) before use.",
+      "No subject/donor identifier exists separate from 'sample' in metadata.csv — cannot confirm samples are independent biological replicates versus repeated measures on fewer subjects.",
+      "No batch, lane, run-date, or other technical-batch field is present anywhere in the inputs, so batch effects cannot be assessed or adjusted for.",
+      "Organism is not stated by any input (no metadata column, document, or accession); it is left null rather than inferred from gene-symbol casing alone, per instructions — a planner must confirm species before choosing a genome/annotation reference.",
+      "No public accessions (GEO/SRA/etc.) appear anywhere in the input filenames or file contents."
+    ],
+    "subtype": "bulk-rna-seq",
+    "summary": "The dataset is a bulk RNA-seq gene-level count matrix from a two-group (control vs treated) experiment, plus its sample sheet and a gene-length reference table. counts.csv holds raw integer read counts for 12,000 genes across 12 samples (sample_01–sample_12); metadata.csv assigns each sample to one of two conditions, \"control\" (sample_01–06) and \"treated\" (sample_07–12), a balanced n=6/n=6 design; gene_lengths.csv gives a length in bp for every one of the same 12,000 genes (gene sets between counts.csv and gene_lengths.csv match exactly, 0 discrepancies), i.e. it is a companion reference for length-based normalization (TPM/FPKM/RPKM), not a measurement itself. No document, README, or explicit organism/species field is present anywhere in the input tree (only these 3 files exist). Gene symbols (ABCA1, ABCB8, ACAA2, ACADL, …) are written in the all-caps style conventionally used for human HGNC symbols, but per instructions this is not treated as organism proof — gene-symbol content/casing alone does not establish species, since many mammalian orthologs share or resemble these symbols. Organism is therefore left unset; a planner should confirm species (most likely human given symbol convention) before selecting genome-build-specific references. The data supports a standard two-group differential expression analysis (e.g., DESeq2/edgeR/limma-voom) between control and treated samples, optionally followed by length-normalized secondary metrics or downstream gene-set enrichment using the paired gene-length table.",
+    "cellType": null,
+    "organism": null,
+    "condition": null,
+    "partition": {
+      "groups": 3,
+      "keptFiles": 3,
+      "quarantine": {
+        "count": 0,
+        "sample": [],
+        "reasons": [],
+        "totalBytes": 0
+      },
+      "keptMembers": 3,
+      "scannedFiles": 3,
+      "unclassifiedFiles": 0,
+      "unclassifiedMembers": 0
+    },
+    "accessions": [],
+    "dimensions": [
+      {
+        "label": "condition (control vs treated)",
+        "scope": "biological",
+        "category": "cohort-arm",
+        "description": "Two-level, design-assigned grouping of the 12 samples: 6 control, 6 treated. This is the study's primary comparison axis for differential expression.",
+        "observations": [
+          {
+            "kind": "column",
+            "path": "data/inputs/local/metadata.csv",
+            "column": "condition",
+            "exampleValues": [
+              "control",
+              "treated"
+            ],
+            "distinctValues": 2
+          }
+        ]
+      },
+      {
+        "label": "sample",
+        "scope": "biological",
+        "category": "sample",
+        "description": "12 individually identified RNA-seq samples (sample_01..sample_12), each a column of the count matrix and a row of the sample sheet; nests under the condition/cohort-arm assignment (6 per arm). No subject-level identifier distinct from sample is present.",
+        "observations": [
+          {
+            "kind": "column",
+            "path": "data/inputs/local/metadata.csv",
+            "column": "sample",
+            "exampleValues": [
+              "sample_01",
+              "sample_07",
+              "sample_12"
+            ],
+            "distinctValues": 12
+          }
+        ]
+      }
+    ],
+    "profiledAt": "2026-09-07T13:06:12.639Z",
+    "inputSignature": {
+      "count": 3,
+      "digest": "abda4e0390969b730b8116c381d28e76b2263262453048cd24738ca50a438ec0"
+    },
+    "experimentalDesign": "Two-group, unpaired bulk RNA-seq design: 6 \"control\" samples vs 6 \"treated\" samples (sample_01–06 vs sample_07–12), balanced n=6/arm. Assignment is by the \"condition\" column in metadata.csv, i.e. a designed comparison rather than an observed diagnosis. No subject identifiers, pairing, batch, lane, or timepoint information is present, so samples are presumed to be independent biological replicates (unconfirmed by metadata) measured at a single timepoint. Measurement is raw (non-normalized) gene-level integer read counts, one row per gene, one column per sample; a companion gene-length table (same 12,000-gene universe) is available for length-based normalization if needed."
+  },
+  "workflowId": "dataprofile:eval-u25-live-with-two-group-n6-enrich-s1-1:31c4dae5-a8da-4441-81cd-dd133e3b0627",
+  "seedInputFileIds": [
+    "3nhhddlxj87km",
+    "y6p3tvpd06ed",
+    "17euvfks1ko8i"
+  ]
+}

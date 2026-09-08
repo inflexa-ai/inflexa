@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly reads the two balanced clusters as an estimable hidden structure, estimates surrogate variables with sva (number chosen by the estimator) with condition in the model, adds them as covariates in ~ SVs + condition, checks SV-condition correlation, and explicitly refuses to test on batch-adjusted counts, with a documented confounded-case fallback. It loses points for not first asking the analyst for the unrecorded processing variable, for not naming svaseq or the intercept-only null model, and for not stating TMM for the edgeR sensitivity fit. QC on blind VST with PCA, distances, library sizes and a pre-specified outlier policy is thorough; the filter (>=10 counts in >=6 samples, then independent filtering) is minimal and justified; BH at 0.05 with apeglm shrinkage, in-model lfcThreshold, and a p-value histogram check are all stated. Enrichment is correctly omitted, and the report specifies versions, design, contrast, thresholds, gene counts, batch accounting, and design caveats."
+}

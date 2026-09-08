@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly picks the species-matched mMCP-counter on log-CPM, avoids human matrices, runs one Wilcoxon per population with BH across the 16 populations and reports effect sizes, and flags rather than silently drops sample_01 with a both-ways sensitivity run. It errs in treating MCP-counter scores as compositions: stacked bars and a Bray-Curtis PERMANOVA imply cross-population comparability that these scores do not have, and the plan never states that caution. Sample-level QC lacks an expression PCA or distance check in Step 1 (PCA appears only on the score matrix), no gene filter policy is stated, alpha is not stated, and the report omits tool versions and the share of marker genes present."
+}

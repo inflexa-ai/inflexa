@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan fits the paired design exactly: DESeq2 with ~ subject + condition, subject as a factor blocking term, explicit control reference level and (condition, treated, control) contrast, with an edgeR QL refit on the identical blocked design as a robustness check. QC precedes the model with library sizes, size factors, blind VST, PCA and distance heatmap labelled by subject and condition, a pairing integrity check, and a stated flag-don't-drop policy, though the downstream handling of a flagged outlier or shallow sample is left slightly open. Filtering is minimal and justified (>=10 counts in >=5 samples plus independent filtering), normalization is internal median-of-ratios/TMM with an explicit ban on pre-normalized inputs, BH at alpha 0.05 with apeglm shrinkage and lfcThreshold-in-test are all stated, enrichment is correctly omitted, and the report spec includes method, design, contrast, thresholds, counts tested and DE, sessionInfo, and the 5-pair power and df caveats."
+}

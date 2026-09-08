@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly uses PyDESeq2 on raw counts with median-of-ratios size factors, a minimal near-zero filter, and a sensible keep-plus-sensitivity policy for sample_01, all in Python. QC is limited to library sizes and detected genes with no PCA or sample distance heatmap, so the sample structure check is incomplete. The design is stated as condition only, but the reference level is not set explicitly, no fold change shrinkage is mentioned, and the |log2FC|>=1 cutoff is applied post hoc rather than in the test. GSEA names the Hallmark version and uses the full ranked list, but hedges on the ranking statistic and FDR threshold and omits a size window and seed; the report lacks package versions."
+}

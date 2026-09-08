@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan fits the 6 vs 6 unpaired single-batch design with a PyDESeq2 Wald test, an explicit ~condition formula with vehicle as reference, median-of-ratios normalization inside the model, a justified minimal filter (>=10 counts in the smallest group size), BH at 0.05, and apeglm-equivalent shrinkage kept out of the test and out of the TF input. QC is complete (blind VST, top-500 PCA, distance heatmap, library sizes, flagging policy) and the report block names method, versions, design, thresholds, n tested/DE, CollecTRI version, estimator, minimum regulon size, regulators tested, and the inference caution. The TF step uses decoupler ulm on signed CollecTRI from the local CSV with min size 5 and statsmodels BH, but it only specifies the per-sample log2 CPM route in its acceptance criteria rather than the contrast-level ulm on the full Wald statistic that the reference treats as the primary inference, and the rpy2 read of the DoRothEA .rda depends on an R runtime, which strains the Python-only constraint."
+}

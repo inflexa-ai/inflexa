@@ -1,0 +1,20 @@
+field,value
+rank_metric,"DESeq2 Wald statistic (stat column), primary contrast treated vs control"
+universe_n_genes_ranked_total,10071
+universe_n_genes_with_resolvable_HGNC_symbol,3669
+universe_n_genes_unmapped_retained_in_rank,6402
+universe_unmapped_share,0.6357
+size_window_min,15
+size_window_max,500
+significance_threshold,BH padj < 0.05
+fgsea_method,"fgseaMultilevel, eps=0, seed=42, nproc=2"
+hallmark_database,"MSigDB Hallmark human, release 2026.1 (h.all.v2026.1.Hs.symbols.gmt)"
+hallmark_n_sets_shipped,50
+hallmark_n_sets_in_size_window,50
+hallmark_n_significant_padj0.05,15
+reactome_database,"Reactome Pathways, 'current' release as staged in the reference store (quarterly rolling snapshot, no immutable version tag; restricted to Homo sapiens via ReactomePathways.txt)"
+reactome_n_sets_shipped_all_species,2868
+reactome_n_sets_human,2868
+reactome_n_sets_in_size_window,804
+reactome_n_significant_padj0.05,92
+annotation_release_org.Hs.eg.db,"3.23.1 (alias resolution, unambiguous aliases only)"

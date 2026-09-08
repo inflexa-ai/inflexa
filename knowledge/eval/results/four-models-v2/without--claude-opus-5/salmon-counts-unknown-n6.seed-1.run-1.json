@@ -1,0 +1,523 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "salmon-counts-unknown-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:36:34.914Z",
+  "elapsedMs": 103254,
+  "outcome": "plan_submitted",
+  "planId": "pln-870ec154",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Determine count-table provenance and scale",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Length-scaled counts from tximport are fractional but ARE on a count scale — fractional values alone do not mean the table is normalized. Use column sums and the mean-variance relationship together.",
+          "Salmon raw estimated counts are also fractional. Integer values would suggest rounding was already applied upstream, which is itself information about provenance.",
+          "A table of TPM values rounded to integers can mimic counts on the integer test alone; the ~1e6 column-sum test is the discriminating one.",
+          "If the verdict is indeterminate, say so rather than defaulting to counts — T1S2 has a defined behaviour for that case."
+        ],
+        "context": "Human skin bulk RNA-seq, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. Two input files only: counts/counts.csv (12000 x 13) and metadata/metadata.csv (12 x 2). The data profile explicitly flags that provenance of the count table is unknown and that no quant.sf directories were delivered. This step exists because that unknown decides the statistical model, and guessing it is the single largest risk in this analysis.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Is /data/inputs/counts/counts.csv on a count scale (raw Salmon estimated counts or tximport length-scaled counts) or already normalized (TPM/CPM/FPKM), and therefore which DE model is admissible for the 6 lesional vs 6 control contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "Do not modify counts.csv; write all derived summaries to the step's own outputs.",
+          "Report the verdict as an explicit named field so T1S2 can branch on it programmatically, not only as prose.",
+          "Use the four verdict values exactly: raw_counts, length_scaled_counts, normalized_tpm_or_cpm, indeterminate.",
+          "Report the exact condition label strings found in metadata.csv verbatim rather than paraphrasing them as 'treated'/'control'.",
+          "Do not impute, rescale, or round the matrix in this step — characterization only."
+        ],
+        "description": "Forensic characterization of the delivered 12,000 x 13 counts.csv (first column = gene identifier, 12 sample columns) to infer how the Salmon output was collapsed, since the per-sample quant.sf files were not delivered and tximport cannot be re-run. Report: (a) whether values are integer or fractional, and the fraction of non-integer entries; (b) per-sample column sums and their coefficient of variation — column sums all ~1e6 imply TPM or CPM, heterogeneous sums spanning a realistic library-size range imply counts; (c) min/median/max, the fraction of exact zeros, and whether any value is negative or non-finite; (d) the mean-variance relationship across genes on the raw scale (variance >> mean, overdispersed, is the count signature; variance ~ mean^2 with compressed dynamic range suggests normalized values); (e) whether the identifier space is HGNC symbols, Ensembl gene IDs, or Entrez IDs, and the duplicate-identifier count; (f) that the 12 columns of counts.csv match the 12 rows of metadata.csv one-to-one after any name normalization, and the exact condition label strings and their group sizes. Emit an explicit machine-readable verdict field with one of: raw_counts, length_scaled_counts, normalized_tpm_or_cpm, indeterminate — plus the evidence behind it. Also state plainly that 12,000 genes is far below a full human annotation, so the table is already filtered and any 'universe' downstream is that filtered set.",
+        "acceptance_criteria": [
+          "A verdict field is emitted with one of the four permitted values, accompanied by the numeric evidence supporting it.",
+          "Per-sample column sums are reported for all 12 samples, with their CV.",
+          "The integer fraction, zero fraction, and min/median/max of the matrix are reported.",
+          "Sample-name concordance between counts.csv columns and metadata.csv rows is confirmed or the mismatch is enumerated.",
+          "The exact condition labels and per-group sample counts (expected 6/6) are reported verbatim."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Sample QC, library-size spread and PCA",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 6 per group, PCA separation can be absent even when real DE exists — a null PCA is not evidence of no effect.",
+          "If the table turned out to be normalized, library-size spread is uninformative by construction; say so rather than reporting a flat result as a QC pass.",
+          "Unrecorded covariates (sex, age, body site) cannot be tested here — note the limitation rather than asserting a single batch is clean."
+        ],
+        "context": "Unpaired 6 vs 6 design, single batch, no covariates beyond condition in metadata.csv (12 x 2). Since there is only one factor, PCA is the main tool for detecting hidden structure (e.g. sex, biopsy site, RNA quality) that the metadata does not record.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the 12 skin samples separate by atopic dermatitis lesional vs control status, and is any sample an outlier that would drive the unpaired 6v6 contrast?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Colour and label samples using the actual condition strings from metadata.csv, not generic 'treated'/'control'.",
+          "Choose the transform from the T1S1 verdict: variance-stabilizing transform for a count scale, log2(x+1) for an already-normalized table.",
+          "Do not remove any sample from the dataset — flag only, and report what the contrast would look like with each flagged sample excluded as a sensitivity note.",
+          "Report PC1/PC2 variance explained numerically."
+        ],
+        "description": "Quality control on the 12-sample matrix using the scale verdict from T1S1. Compute per-sample library size (or total signal, if normalized) and its spread; detected-gene counts per sample; log-transformed PCA (variance-stabilized if the verdict is a count scale, log2(x+1) otherwise) with samples coloured by the condition label from metadata.csv; a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering; and per-sample boxplots of expression distribution. Report the variance explained by PC1 and PC2, whether the leading PC aligns with condition, and any sample whose median correlation to its own group is a clear outlier. With n=6 per group there is no power to drop and re-run selectively, so the deliverable is a flagged list plus a leave-one-out sensitivity note, not an exclusion decision made unilaterally.",
+        "acceptance_criteria": [
+          "Per-sample library size / total signal and detected-gene count reported for all 12 samples.",
+          "PCA plot produced with samples labelled by the actual condition strings; PC1 and PC2 variance explained reported.",
+          "Sample-sample correlation heatmap with clustering produced.",
+          "An explicit statement of whether condition is the dominant source of variance, and a named list of any outlier samples (possibly empty)."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: AD lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 on TPM or CPM values produces plausible-looking but invalid p-values — this is the specific failure the T1S1 gate exists to prevent.",
+          "Rounding length-scaled counts is a compromise, not a neutral operation; it slightly distorts dispersion estimates and must be disclosed in the write-up.",
+          "With n=6 per group, effect-size estimates for low-expression genes are unstable — prefer the shrunken LFC for any ranking or downstream use.",
+          "Independent filtering changes the number of tested genes; report how many genes were filtered out.",
+          "Lesional-vs-control skin comparisons carry a large cell-composition component (immune infiltrate, epidermal hyperplasia); differential expression here reflects tissue composition as well as per-cell regulation, and should not be described as cell-intrinsic."
+        ],
+        "context": "This is the primary answer to the research question. 6 vs 6 unpaired, single batch, one factor. 12,000 genes is a pre-filtered subset, which slightly relaxes the multiple-testing burden relative to a full transcriptome but also means genes absent from the table were never tested — the result cannot be read as transcriptome-wide.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "limma",
+          "edgeR",
+          "EnhancedVolcano",
+          "pheatmap",
+          "ggplot2"
+        ],
+        "question": "Which of the 12,000 genes are differentially expressed between the 6 atopic dermatitis lesional skin samples and the 6 control samples?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Branch strictly on the T1S1 verdict; do not assume the table is raw counts.",
+          "Set the control condition as the reference level so positive log2FC means up in lesional skin.",
+          "Use Benjamini-Hochberg FDR; report padj < 0.05 as the primary significance threshold and report the |log2FC| > 1 subset separately.",
+          "Emit a results table covering every tested gene, not only significant ones, so downstream ranking has the full list.",
+          "If rounding was applied, report the number and proportion of entries altered.",
+          "State the model actually used and the reason, in the step output, in one sentence."
+        ],
+        "description": "Run the two-group unpaired contrast lesional vs control, with the model chosen by the T1S1 verdict. If the verdict is raw_counts or length_scaled_counts: build a DESeq2 dataset with design ~condition, rounding fractional values to integers first (the accepted handling when only the collapsed matrix survives and quant.sf is unavailable — state that rounding was applied and how many entries changed), set the control label as the reference level, apply DESeq2's default independent filtering, use Wald testing with BH FDR, and shrink log2 fold changes with apeglm for ranking and plotting while reporting unshrunken LFC alongside. If the verdict is normalized_tpm_or_cpm: do NOT use DESeq2 or edgeR — fit limma-trend on log2(x+1) values (or limma-voom with quality weights if a count scale is partially recoverable), and state prominently that library-size information was destroyed upstream, so the analysis inherits whatever normalization the core applied. If the verdict is indeterminate: run BOTH the DESeq2-on-rounded-values and the limma-trend paths, report the overlap of the significant sets, and present the intersection as the confident core while flagging the whole result as provenance-limited. Pre-filter to genes with a low-count floor (e.g. at least 10 total across samples, or the normalized-scale equivalent) before testing. Deliverables: a full results table for every tested gene (gene ID, baseMean/AveExpr, log2FC, shrunken log2FC where applicable, standard error, p, BH-adjusted p), the count of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1, an MA plot, a volcano plot labelling the top genes by adjusted p, and a heatmap of the top 50 genes by adjusted p with samples annotated by condition.",
+        "acceptance_criteria": [
+          "A per-gene results table is written covering all tested genes with log2FC, p-value and BH-adjusted p.",
+          "The chosen model is named and justified by reference to the T1S1 verdict.",
+          "Counts of DE genes at padj<0.05, and at padj<0.05 with |log2FC|>1, are reported for both directions.",
+          "MA plot, volcano plot and top-50 heatmap are produced.",
+          "If the verdict was indeterminate, both model paths were run and the overlap reported."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Hallmark and GO enrichment of the DE signature",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment inherits every weakness of the upstream DE result — if T1S2 had to fall back to a normalized-scale model, say so here rather than presenting pathways as firm.",
+          "GO BP sets are nested; correlated significant terms are not independent findings.",
+          "With a 12,000-gene filtered table, some gene sets will be poorly covered; report set coverage and drop sets with too few represented members.",
+          "Enrichment describes association with a gene set, not mechanistic activation of a pathway."
+        ],
+        "context": "Interpretive layer on top of the primary DE result. Atopic dermatitis lesional skin is expected to show type-2 inflammation, keratinocyte proliferation/differentiation changes and barrier disruption; enrichment either recovers that or does not, and either outcome is informative about data quality.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db",
+          "ggplot2",
+          "enrichplot"
+        ],
+        "question": "Which hallmark processes and GO biological processes are enriched among genes differentially expressed in atopic dermatitis lesional skin versus control?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Set the enrichment universe to the genes present in counts.csv, and state the universe size used.",
+          "Use human gene sets — the data is Homo sapiens; a mouse collection here would be silently wrong.",
+          "Report the identifier mapping rate to gene symbols and the number of genes dropped.",
+          "Collapse redundant GO terms before reporting a count of significant processes.",
+          "Report both GSEA and ORA results; do not present only whichever is more significant."
+        ],
+        "description": "Take the full ranked gene list from T1S2 and run (a) GSEA on the genes ranked by the Wald/moderated statistic (or by shrunken log2FC where the statistic is unavailable) against human hallmark gene sets and human GO biological process sets, and (b) over-representation analysis on the padj<0.05 up- and down-regulated sets separately. Reference data needed: hallmark gene sets for human, and GO biological process gene sets for human — both are gene-symbol GMTs. Critically, the enrichment universe must be the 12,000 genes actually present in counts.csv, not the full human genome, because the table is already filtered; using a genome-wide universe would inflate ORA significance. If the identifiers in counts.csv are Ensembl or Entrez IDs, map them to HGNC symbols first and report the mapping rate and the genes lost. Report the top enriched sets with normalized enrichment score, p, and BH-adjusted p, and collapse the redundant parent/child GO blocks before quoting a count of significant terms. If neither gene set collection is available at run time, report that and fall back to whichever human pathway collection the environment does hold (e.g. a curated pathway GMT), naming the substitution explicitly.",
+        "acceptance_criteria": [
+          "GSEA run against human hallmark sets and human GO BP sets, with NES, p and BH-adjusted p reported.",
+          "ORA run separately for up- and down-regulated significant genes against the counts.csv-restricted universe.",
+          "Universe size and identifier mapping rate explicitly stated.",
+          "A redundancy-collapsed summary of significant GO terms is produced.",
+          "If a gene set collection was unavailable, the substitution or omission is named explicitly rather than silently skipped."
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Targeted check against known AD lesional biology",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This is a consistency check on the same data, not independent validation — it cannot confirm the DE result, only fail it.",
+          "Some canonical AD genes (FLG, IL13, IL31) are lowly expressed or noisy in bulk skin and may be filtered out or non-significant at n=6 without implying the data are wrong.",
+          "A pre-filtered 12,000-gene table may simply lack several panel members; absence is an annotation fact, not a biological one."
+        ],
+        "context": "The provenance uncertainty flagged in the data profile means the DE list needs an external anchor. AD lesional skin has one of the most reproducible bulk signatures in dermatology, which makes it usable as a check on whether the pipeline and the labels are sound.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Does the lesional-versus-control signature behave like published atopic dermatitis lesional skin — Th2 cytokine axis up, barrier and keratinocyte differentiation genes down?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Declare the marker panel before inspecting the results; do not add genes post hoc to improve concordance.",
+          "Report genes absent from the 12,000-gene table as absent, not as null results.",
+          "Do not compute a p-value for the panel as a whole from these same data and present it as independent validation — the panel shares samples with the DE test.",
+          "Report direction concordance as a plain count with the per-gene table behind it."
+        ],
+        "description": "A focused positive-control read on the T1S2 results. For a small, pre-declared panel of genes with well-established direction in AD lesional skin — type-2/inflammatory axis (e.g. IL13, IL4R, IL31, CCL17, CCL18, CCL22, TSLP, IL22, S100A7, S100A8, S100A9, DEFB4A, PI3/elafin, MMP12), barrier and differentiation (e.g. FLG, LOR, CLDN1, KRT1, KRT10) and keratinocyte hyperproliferation (KRT6A, KRT16, KRT17) — report which are present in the 12,000-gene table, their log2FC, adjusted p, and whether the direction matches expectation. Summarize as a concordance count (matched direction / discordant / absent from table / not significant). This is a data-sanity check: strong concordance raises confidence that the provenance-ambiguous count table is nonetheless usable, while broad discordance is evidence of a labelling or processing problem that should be escalated before the DE list is interpreted further. Do not select the panel from the results — declare it before looking.",
+        "acceptance_criteria": [
+          "Per-gene table for the declared panel with presence/absence, log2FC, adjusted p, and expected vs observed direction.",
+          "A concordance summary counting matched, discordant, non-significant and absent genes.",
+          "An explicit statement of whether the signature is consistent with AD lesional skin, with the counts backing it."
+        ]
+      }
+    ],
+    "title": "AD lesional vs control skin: Salmon-count provenance + DE",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The input is a single gene-level count table (12,000 genes x 12 samples, counts.csv) with a 12x2 metadata table giving one condition column, 6 atopic dermatitis lesional skin samples vs 6 controls, unpaired, single batch. The central complication is stated in the profile itself: the table came from Salmon but the per-sample quant.sf directories were not delivered, and the record does not say whether it is raw estimated counts, tximport length-scaled counts (lengthScaledTPM / scaledTPM), or something already normalized (TPM/CPM). That distinction changes which DE model is valid — DESeq2's negative-binomial fit assumes counts on the raw or length-scaled-count scale with library-size differences intact, and it is silently wrong on TPM. Since tximport cannot be re-run (no quant.sf), the provenance must be inferred from the table itself, so T1S1 is a forensic characterization step: integer-vs-fractional values, per-column sums (equal ~1e6 column sums indicate TPM/CPM; heterogeneous sums indicate counts), value distribution, zero fraction, and the mean-variance relationship. Its verdict is a hard gate on T1S2.\n\nT1S2 runs the DE contrast lesional vs control with DESeq2 when T1S1 concludes count-scale (rounding fractional length-scaled counts, which is the accepted handling when only the collapsed matrix survives), and falls back to limma-voom or limma-trend on log2 values when T1S1 concludes the table is already normalized — the fallback is stated up front rather than improvised, because a DESeq2 run on TPM would produce confident and meaningless p-values. T1S3 is the QC/sanity read of the same matrix (library-size spread, PCA, sample-sample correlation, condition separation, outlier detection) which also tells us whether the unpaired 6v6 contrast is driven by one or two samples. T2S1 takes the ranked DE result to hallmark and GO enrichment for human, using staged MSigDB human gene sets, and is explicitly interpretive rather than confirmatory; with n=6 per group and only 12,000 genes present (a pre-filtered subset of the transcriptome, not a full annotation), the enrichment universe is that subset and must be set as such. T2S2 is a small targeted check against known atopic dermatitis biology (Th2 axis, keratinocyte differentiation, antimicrobial peptides, barrier genes) to say whether the signature behaves like AD lesional skin at all — a positive-control read on the data, not a discovery step."
+  },
+  "usage": {
+    "inputTokens": 93253,
+    "outputTokens": 7444,
+    "cacheCreationInputTokens": 74267,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01LkH6mfiQCtQXhhQFpeEcv9",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "tximport",
+          "pydeseq2",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano",
+          "sva",
+          "rnanorm"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_01RSUKuMtUBSfUy3oQBq1sYF",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_01JrddGtoeRJuSfDA8Nj4Spt",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "AD lesional vs control skin: Salmon-count provenance + DE",
+          "analytical_narrative": "The input is a single gene-level count table (12,000 genes x 12 samples, counts.csv) with a 12x2 metadata table giving one condition column, 6 atopic dermatitis lesional skin samples vs 6 controls, unpaired, single batch. The central complication is stated in the profile itself: the table came from Salmon but the per-sample quant.sf directories were not delivered, and the record does not say whether it is raw estimated counts, tximport length-scaled counts (lengthScaledTPM / scaledTPM), or something already normalized (TPM/CPM). That distinction changes which DE model is valid — DESeq2's negative-binomial fit assumes counts on the raw or length-scaled-count scale with library-size differences intact, and it is silently wrong on TPM. Since tximport cannot be re-run (no quant.sf), the provenance must be inferred from the table itself, so T1S1 is a forensic characterization step: integer-vs-fractional values, per-column sums (equal ~1e6 column sums indicate TPM/CPM; heterogeneous sums indicate counts), value distribution, zero fraction, and the mean-variance relationship. Its verdict is a hard gate on T1S2.\n\nT1S2 runs the DE contrast lesional vs control with DESeq2 when T1S1 concludes count-scale (rounding fractional length-scaled counts, which is the accepted handling when only the collapsed matrix survives), and falls back to limma-voom or limma-trend on log2 values when T1S1 concludes the table is already normalized — the fallback is stated up front rather than improvised, because a DESeq2 run on TPM would produce confident and meaningless p-values. T1S3 is the QC/sanity read of the same matrix (library-size spread, PCA, sample-sample correlation, condition separation, outlier detection) which also tells us whether the unpaired 6v6 contrast is driven by one or two samples. T2S1 takes the ranked DE result to hallmark and GO enrichment for human, using staged MSigDB human gene sets, and is explicitly interpretive rather than confirmatory; with n=6 per group and only 12,000 genes present (a pre-filtered subset of the transcriptome, not a full annotation), the enrichment universe is that subset and must be set as such. T2S2 is a small targeted check against known atopic dermatitis biology (Th2 axis, keratinocyte differentiation, antimicrobial peptides, barrier genes) to say whether the signature behaves like AD lesional skin at all — a positive-control read on the data, not a discovery step.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Determine count-table provenance and scale",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Is /data/inputs/counts/counts.csv on a count scale (raw Salmon estimated counts or tximport length-scaled counts) or already normalized (TPM/CPM/FPKM), and therefore which DE model is admissible for the 6 lesional vs 6 control contrast?",
+              "description": "Forensic characterization of the delivered 12,000 x 13 counts.csv (first column = gene identifier, 12 sample columns) to infer how the Salmon output was collapsed, since the per-sample quant.sf files were not delivered and tximport cannot be re-run. Report: (a) whether values are integer or fractional, and the fraction of non-integer entries; (b) per-sample column sums and their coefficient of variation — column sums all ~1e6 imply TPM or CPM, heterogeneous sums spanning a realistic library-size range imply counts; (c) min/median/max, the fraction of exact zeros, and whether any value is negative or non-finite; (d) the mean-variance relationship across genes on the raw scale (variance >> mean, overdispersed, is the count signature; variance ~ mean^2 with compressed dynamic range suggests normalized values); (e) whether the identifier space is HGNC symbols, Ensembl gene IDs, or Entrez IDs, and the duplicate-identifier count; (f) that the 12 columns of counts.csv match the 12 rows of metadata.csv one-to-one after any name normalization, and the exact condition label strings and their group sizes. Emit an explicit machine-readable verdict field with one of: raw_counts, length_scaled_counts, normalized_tpm_or_cpm, indeterminate — plus the evidence behind it. Also state plainly that 12,000 genes is far below a full human annotation, so the table is already filtered and any 'universe' downstream is that filtered set.",
+              "context": "Human skin bulk RNA-seq, atopic dermatitis lesional vs control, 6 vs 6, unpaired, single batch. Two input files only: counts/counts.csv (12000 x 13) and metadata/metadata.csv (12 x 2). The data profile explicitly flags that provenance of the count table is unknown and that no quant.sf directories were delivered. This step exists because that unknown decides the statistical model, and guessing it is the single largest risk in this analysis.",
+              "constraints": [
+                "Do not modify counts.csv; write all derived summaries to the step's own outputs.",
+                "Report the verdict as an explicit named field so T1S2 can branch on it programmatically, not only as prose.",
+                "Use the four verdict values exactly: raw_counts, length_scaled_counts, normalized_tpm_or_cpm, indeterminate.",
+                "Report the exact condition label strings found in metadata.csv verbatim rather than paraphrasing them as 'treated'/'control'.",
+                "Do not impute, rescale, or round the matrix in this step — characterization only."
+              ],
+              "acceptance_criteria": [
+                "A verdict field is emitted with one of the four permitted values, accompanied by the numeric evidence supporting it.",
+                "Per-sample column sums are reported for all 12 samples, with their CV.",
+                "The integer fraction, zero fraction, and min/median/max of the matrix are reported.",
+                "Sample-name concordance between counts.csv columns and metadata.csv rows is confirmed or the mismatch is enumerated.",
+                "The exact condition labels and per-group sample counts (expected 6/6) are reported verbatim."
+              ],
+              "caveats": [
+                "Length-scaled counts from tximport are fractional but ARE on a count scale — fractional values alone do not mean the table is normalized. Use column sums and the mean-variance relationship together.",
+                "Salmon raw estimated counts are also fractional. Integer values would suggest rounding was already applied upstream, which is itself information about provenance.",
+                "A table of TPM values rounded to integers can mimic counts on the integer test alone; the ~1e6 column-sum test is the discriminating one.",
+                "If the verdict is indeterminate, say so rather than defaulting to counts — T1S2 has a defined behaviour for that case."
+              ],
+              "depends_on": [],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Sample QC, library-size spread and PCA",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12 skin samples separate by atopic dermatitis lesional vs control status, and is any sample an outlier that would drive the unpaired 6v6 contrast?",
+              "description": "Quality control on the 12-sample matrix using the scale verdict from T1S1. Compute per-sample library size (or total signal, if normalized) and its spread; detected-gene counts per sample; log-transformed PCA (variance-stabilized if the verdict is a count scale, log2(x+1) otherwise) with samples coloured by the condition label from metadata.csv; a sample-sample Spearman and Pearson correlation heatmap with hierarchical clustering; and per-sample boxplots of expression distribution. Report the variance explained by PC1 and PC2, whether the leading PC aligns with condition, and any sample whose median correlation to its own group is a clear outlier. With n=6 per group there is no power to drop and re-run selectively, so the deliverable is a flagged list plus a leave-one-out sensitivity note, not an exclusion decision made unilaterally.",
+              "context": "Unpaired 6 vs 6 design, single batch, no covariates beyond condition in metadata.csv (12 x 2). Since there is only one factor, PCA is the main tool for detecting hidden structure (e.g. sex, biopsy site, RNA quality) that the metadata does not record.",
+              "constraints": [
+                "Colour and label samples using the actual condition strings from metadata.csv, not generic 'treated'/'control'.",
+                "Choose the transform from the T1S1 verdict: variance-stabilizing transform for a count scale, log2(x+1) for an already-normalized table.",
+                "Do not remove any sample from the dataset — flag only, and report what the contrast would look like with each flagged sample excluded as a sensitivity note.",
+                "Report PC1/PC2 variance explained numerically."
+              ],
+              "acceptance_criteria": [
+                "Per-sample library size / total signal and detected-gene count reported for all 12 samples.",
+                "PCA plot produced with samples labelled by the actual condition strings; PC1 and PC2 variance explained reported.",
+                "Sample-sample correlation heatmap with clustering produced.",
+                "An explicit statement of whether condition is the dominant source of variance, and a named list of any outlier samples (possibly empty)."
+              ],
+              "caveats": [
+                "With 6 per group, PCA separation can be absent even when real DE exists — a null PCA is not evidence of no effect.",
+                "If the table turned out to be normalized, library-size spread is uninformative by construction; say so rather than reporting a flat result as a QC pass.",
+                "Unrecorded covariates (sex, age, body site) cannot be tested here — note the limitation rather than asserting a single batch is clean."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Differential expression: AD lesional vs control",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes are differentially expressed between the 6 atopic dermatitis lesional skin samples and the 6 control samples?",
+              "description": "Run the two-group unpaired contrast lesional vs control, with the model chosen by the T1S1 verdict. If the verdict is raw_counts or length_scaled_counts: build a DESeq2 dataset with design ~condition, rounding fractional values to integers first (the accepted handling when only the collapsed matrix survives and quant.sf is unavailable — state that rounding was applied and how many entries changed), set the control label as the reference level, apply DESeq2's default independent filtering, use Wald testing with BH FDR, and shrink log2 fold changes with apeglm for ranking and plotting while reporting unshrunken LFC alongside. If the verdict is normalized_tpm_or_cpm: do NOT use DESeq2 or edgeR — fit limma-trend on log2(x+1) values (or limma-voom with quality weights if a count scale is partially recoverable), and state prominently that library-size information was destroyed upstream, so the analysis inherits whatever normalization the core applied. If the verdict is indeterminate: run BOTH the DESeq2-on-rounded-values and the limma-trend paths, report the overlap of the significant sets, and present the intersection as the confident core while flagging the whole result as provenance-limited. Pre-filter to genes with a low-count floor (e.g. at least 10 total across samples, or the normalized-scale equivalent) before testing. Deliverables: a full results table for every tested gene (gene ID, baseMean/AveExpr, log2FC, shrunken log2FC where applicable, standard error, p, BH-adjusted p), the count of genes at padj < 0.05 and at padj < 0.05 with |log2FC| > 1, an MA plot, a volcano plot labelling the top genes by adjusted p, and a heatmap of the top 50 genes by adjusted p with samples annotated by condition.",
+              "context": "This is the primary answer to the research question. 6 vs 6 unpaired, single batch, one factor. 12,000 genes is a pre-filtered subset, which slightly relaxes the multiple-testing burden relative to a full transcriptome but also means genes absent from the table were never tested — the result cannot be read as transcriptome-wide.",
+              "constraints": [
+                "Branch strictly on the T1S1 verdict; do not assume the table is raw counts.",
+                "Set the control condition as the reference level so positive log2FC means up in lesional skin.",
+                "Use Benjamini-Hochberg FDR; report padj < 0.05 as the primary significance threshold and report the |log2FC| > 1 subset separately.",
+                "Emit a results table covering every tested gene, not only significant ones, so downstream ranking has the full list.",
+                "If rounding was applied, report the number and proportion of entries altered.",
+                "State the model actually used and the reason, in the step output, in one sentence."
+              ],
+              "acceptance_criteria": [
+                "A per-gene results table is written covering all tested genes with log2FC, p-value and BH-adjusted p.",
+                "The chosen model is named and justified by reference to the T1S1 verdict.",
+                "Counts of DE genes at padj<0.05, and at padj<0.05 with |log2FC|>1, are reported for both directions.",
+                "MA plot, volcano plot and top-50 heatmap are produced.",
+                "If the verdict was indeterminate, both model paths were run and the overlap reported."
+              ],
+              "caveats": [
+                "DESeq2 on TPM or CPM values produces plausible-looking but invalid p-values — this is the specific failure the T1S1 gate exists to prevent.",
+                "Rounding length-scaled counts is a compromise, not a neutral operation; it slightly distorts dispersion estimates and must be disclosed in the write-up.",
+                "With n=6 per group, effect-size estimates for low-expression genes are unstable — prefer the shrunken LFC for any ranking or downstream use.",
+                "Independent filtering changes the number of tested genes; report how many genes were filtered out.",
+                "Lesional-vs-control skin comparisons carry a large cell-composition component (immune infiltrate, epidermal hyperplasia); differential expression here reflects tissue composition as well as per-cell regulation, and should not be described as cell-intrinsic."
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "limma",
+                "edgeR",
+                "EnhancedVolcano",
+                "pheatmap",
+                "ggplot2"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Hallmark and GO enrichment of the DE signature",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which hallmark processes and GO biological processes are enriched among genes differentially expressed in atopic dermatitis lesional skin versus control?",
+              "description": "Take the full ranked gene list from T1S2 and run (a) GSEA on the genes ranked by the Wald/moderated statistic (or by shrunken log2FC where the statistic is unavailable) against human hallmark gene sets and human GO biological process sets, and (b) over-representation analysis on the padj<0.05 up- and down-regulated sets separately. Reference data needed: hallmark gene sets for human, and GO biological process gene sets for human — both are gene-symbol GMTs. Critically, the enrichment universe must be the 12,000 genes actually present in counts.csv, not the full human genome, because the table is already filtered; using a genome-wide universe would inflate ORA significance. If the identifiers in counts.csv are Ensembl or Entrez IDs, map them to HGNC symbols first and report the mapping rate and the genes lost. Report the top enriched sets with normalized enrichment score, p, and BH-adjusted p, and collapse the redundant parent/child GO blocks before quoting a count of significant terms. If neither gene set collection is available at run time, report that and fall back to whichever human pathway collection the environment does hold (e.g. a curated pathway GMT), naming the substitution explicitly.",
+              "context": "Interpretive layer on top of the primary DE result. Atopic dermatitis lesional skin is expected to show type-2 inflammation, keratinocyte proliferation/differentiation changes and barrier disruption; enrichment either recovers that or does not, and either outcome is informative about data quality.",
+              "constraints": [
+                "Set the enrichment universe to the genes present in counts.csv, and state the universe size used.",
+                "Use human gene sets — the data is Homo sapiens; a mouse collection here would be silently wrong.",
+                "Report the identifier mapping rate to gene symbols and the number of genes dropped.",
+                "Collapse redundant GO terms before reporting a count of significant processes.",
+                "Report both GSEA and ORA results; do not present only whichever is more significant."
+              ],
+              "acceptance_criteria": [
+                "GSEA run against human hallmark sets and human GO BP sets, with NES, p and BH-adjusted p reported.",
+                "ORA run separately for up- and down-regulated significant genes against the counts.csv-restricted universe.",
+                "Universe size and identifier mapping rate explicitly stated.",
+                "A redundancy-collapsed summary of significant GO terms is produced.",
+                "If a gene set collection was unavailable, the substitution or omission is named explicitly rather than silently skipped."
+              ],
+              "caveats": [
+                "Enrichment inherits every weakness of the upstream DE result — if T1S2 had to fall back to a normalized-scale model, say so here rather than presenting pathways as firm.",
+                "GO BP sets are nested; correlated significant terms are not independent findings.",
+                "With a 12,000-gene filtered table, some gene sets will be poorly covered; report set coverage and drop sets with too few represented members.",
+                "Enrichment describes association with a gene set, not mechanistic activation of a pathway."
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db",
+                "ggplot2",
+                "enrichplot"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Targeted check against known AD lesional biology",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Does the lesional-versus-control signature behave like published atopic dermatitis lesional skin — Th2 cytokine axis up, barrier and keratinocyte differentiation genes down?",
+              "description": "A focused positive-control read on the T1S2 results. For a small, pre-declared panel of genes with well-established direction in AD lesional skin — type-2/inflammatory axis (e.g. IL13, IL4R, IL31, CCL17, CCL18, CCL22, TSLP, IL22, S100A7, S100A8, S100A9, DEFB4A, PI3/elafin, MMP12), barrier and differentiation (e.g. FLG, LOR, CLDN1, KRT1, KRT10) and keratinocyte hyperproliferation (KRT6A, KRT16, KRT17) — report which are present in the 12,000-gene table, their log2FC, adjusted p, and whether the direction matches expectation. Summarize as a concordance count (matched direction / discordant / absent from table / not significant). This is a data-sanity check: strong concordance raises confidence that the provenance-ambiguous count table is nonetheless usable, while broad discordance is evidence of a labelling or processing problem that should be escalated before the DE list is interpreted further. Do not select the panel from the results — declare it before looking.",
+              "context": "The provenance uncertainty flagged in the data profile means the DE list needs an external anchor. AD lesional skin has one of the most reproducible bulk signatures in dermatology, which makes it usable as a check on whether the pipeline and the labels are sound.",
+              "constraints": [
+                "Declare the marker panel before inspecting the results; do not add genes post hoc to improve concordance.",
+                "Report genes absent from the 12,000-gene table as absent, not as null results.",
+                "Do not compute a p-value for the panel as a whole from these same data and present it as independent validation — the panel shares samples with the DE test.",
+                "Report direction concordance as a plain count with the per-gene table behind it."
+              ],
+              "acceptance_criteria": [
+                "Per-gene table for the declared panel with presence/absence, log2FC, adjusted p, and expected vs observed direction.",
+                "A concordance summary counting matched, discordant, non-significant and absent genes.",
+                "An explicit statement of whether the signature is consistent with AD lesional skin, with the counts backing it."
+              ],
+              "caveats": [
+                "This is a consistency check on the same data, not independent validation — it cannot confirm the DE result, only fail it.",
+                "Some canonical AD genes (FLG, IL13, IL31) are lowly expressed or noisy in bulk skin and may be filtered out or non-significant at n=6 without implying the data are wrong.",
+                "A pre-filtered 12,000-gene table may simply lack several panel members; absence is an annotation fact, not a biological one."
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 56
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

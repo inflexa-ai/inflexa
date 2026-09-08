@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every core point: raw featureCounts counts go straight into DESeq2 Wald with median-of-ratios inside the model, explicit control reference and named treated-vs-control contrast, apeglm shrinkage, BH at 0.05 with independent filtering, a lowered 5-in-3 floor with genes-kept reported, and an explicit statement that no length offset, tximport, or TPM applies to a 3' tag library. QC is blind-VST PCA plus distance heatmap plus library sizes with a flag-not-remove outlier policy, and the n=3 power caveat is carried into the report. Minor deductions: the filter justification ('long genes get proportionally fewer reads') is muddled for a length-independent protocol, and the GC/length bias diagnostic is a slightly off-target aside though no correction is applied. Enrichment was not asked and the reference omits it; the plan adds fgsea anyway, but does so correctly (full ranked list, Wald stat, named collections with versions, 15-500 window, universe intersection), so it is partially rather than fully penalized."
+}

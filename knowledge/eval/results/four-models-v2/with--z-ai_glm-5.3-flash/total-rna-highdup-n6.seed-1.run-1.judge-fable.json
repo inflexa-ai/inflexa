@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the decisive points: DESeq2 Wald for 6 vs 6 unpaired single-batch counts, duplicates explicitly kept because there are no UMIs, rRNA and mitochondrial fractions computed per sample with the intronic share honestly marked as not computable from a gene table, and sample_01 kept through QC with a stated keep-inspect-report policy. Filter (>=10 counts in >=6 samples), median-of-ratios/TMM inside the models, explicit control reference level and contrast, apeglm shrinkage, and BH at 0.05 with independent filtering are all stated. Minor gaps: the plan never states a policy on whether rRNA/mito genes are removed from the matrix if their share is large and uneven across samples, the constraint 'lfc_threshold_policy = test_against_threshold' is not carried into the narrative with a stated threshold, and the DESeq2-edgeR intersection as the headline set is an added layer not required by the design. Enrichment is correctly omitted, and the report specification is complete with versions, counts and caveats."
+}

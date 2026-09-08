@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames PROGENy mlm as a footprint (human weights, top 500 responsive genes, BH across 14 pathways, coverage reported, membership ORA explicitly rejected) and handles sample_01 well: kept, inspected on PCA and distance heatmap, library size reported, leave-one-out sensitivity, removal only with a stated reason. Its main departure from the reference is that it never fits the count model: no DESeq2 Wald or edgeR QL contrast, so the primary decoupleR input is a per-sample log-CPM matrix with limma on scores rather than the per-gene Wald statistic, and normalization is a bare edgeR cpm call with no TMM factors stated and no size-factor model. The reference level, the alpha for BH, and any gene-level tested/significant counts are not stated, and fold-change shrinkage is moot only because no gene-level test exists. The report specification is otherwise thorough, naming the network versions, estimator, input, contrast, limitations and reproducibility record."
+}

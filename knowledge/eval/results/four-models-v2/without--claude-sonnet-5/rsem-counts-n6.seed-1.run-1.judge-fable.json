@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 6,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies the matrix as RSEM expected counts, states that the effective-length offset is lost without the genes.results files, rounds for DESeq2 and never substitutes TPM/FPKM, but it does not request the missing per-sample files as the reference expects. QC covers library sizes, detection rate, PCA/clustering and a stated keep-and-sensitivity policy for sample_01. The low-count filter is described only as removing 'all-zero or near-zero' rows with no stated threshold or justification. Enrichment was not asked for; the plan adds it with an unstated ORA universe, an ambiguous ranking metric (stat vs LFC), no collection versions and no size window. The report omits software versions but otherwise names the design, thresholds, counts and caveats."
+}

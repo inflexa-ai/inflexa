@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The plan fits the design: DESeq2 ~condition with vehicle as reference on raw Salmon counts, a 10-in-6 filter, median-of-ratios inside the model, apeglm shrinkage and BH, followed by decoupleR mlm on the human PROGENy model with per-sample activity scores and a contrast-level score, and it correctly reads activity as footprint rather than member expression while keeping the membership GSEA as an explicit counterpoint. QC is thorough with a pre-stated keep/exclude rule for sample_01 and a sensitivity rerun. Weaknesses: the non-integer check mis-infers that fractional Salmon counts imply TPM scaling (tximport rounding is standard, so the limma-voom fallback is misdirected); the |log2FC|>1 cutoff is applied post hoc rather than via lfcThreshold; the mlm input is left ambiguous between shrunken LFC and the Wald statistic; and no resource or software versions are stated for PROGENy, CollecTRI or WikiPathways."
+}

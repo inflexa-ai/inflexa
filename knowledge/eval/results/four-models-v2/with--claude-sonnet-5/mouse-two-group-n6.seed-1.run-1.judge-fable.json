@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with a ~condition design, chow as the explicit reference level and a named HFD-vs-chow contrast, apeglm shrinkage, BH at alpha 0.05 set inside results(). QC keeps sample_01, inspects it on blind-VST PCA and a distance heatmap with a library-size table, and requires a stated reason for any removal. The pre-filter (>=10 counts in >=6 samples) is minimal and tied to the smallest group size, and normalization is the internal median-of-ratios with an explicit prohibition on pre-normalization. Enrichment uses a mouse-native Hallmark collection with a stated version, fgsea preranked on the Wald statistic over the full tested universe with a 15-500 size window; a point is withheld because the plan asserts the mouse GMT is already present without a fallback (e.g., msigdbr Mus musculus or an ortholog map with mapping rate) if that resource is absent. The report step names methods, versions, thresholds, counts, seed, and design caveats."
+}

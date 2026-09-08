@@ -1,0 +1,303 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T07:31:41.874Z",
+  "elapsedMs": 59721,
+  "outcome": "plan_submitted",
+  "planId": "pln-029379aa",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and normalization of Salmon counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "sample_01's ~4x-low depth inflates its sampling noise; do not exclude it here, only quantify it and keep all 12 samples in the normalized output",
+          "No batch covariate exists (single batch), so the model is condition only",
+          "If a gene-ID column other than HGNC symbols is detected, do not attempt a network lookup; pass the identifier type through to the next step verbatim"
+        ],
+        "context": "Data: /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 cols: gene ID column + 12 samples) and metadata.csv (12 rows x 2 cols, one per sample with condition). Crohn disease ileum, 6 treated/inflamed vs 6 control, unpaired, single batch. Known caveat: sample_01 library size ~4x below median. Counts are Salmon gene-level output and the record does not state whether effective-length correction was applied; use normalization that is valid for count-like matrices (edgeR TMM on CPM, or DESeq2 median-of-ratios size factors + VST). Downstream scoring uses this normalized matrix, so save it as CSV plus the QC summary.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "DESeq2",
+          "data.table",
+          "ggplot2",
+          "pheatmap"
+        ],
+        "question": "Are the 12 Crohn ileum samples comparable after normalization, and how anomalous is the shallow sample_01 (library size ~4x below median) in PCA/correlation space?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load counts.csv (12,000 gene rows x 12 sample columns) and metadata.csv, align sample IDs, filter low-expression genes (e.g. CPM > 1 in at least 4 samples), compute library sizes and normalization factors, produce a variance-stabilized / logCPM expression matrix, and quantify sample quality: total counts per sample, sample_01's exact ratio to the median, PCA of samples, and pairwise sample correlations. Output the normalized matrix and a QC table for downstream steps.",
+        "acceptance_criteria": [
+          "All 12 samples load and match metadata rows 1:1; condition has exactly 6 treated and 6 control",
+          "Library-size table published including sample_01 and its ratio to the median",
+          "Normalized (VST or logCPM) matrix and PCA/correlation QC report saved as artifacts",
+          "Explicit statement of whether sample_01 is a within-group or cross-group outlier in PCA"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Per-sample Hallmark signature scoring (GSVA + UCell)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If the gene identifiers turn out to be neither HGNC symbols nor Ensembl/Entrez, stop and report the identifier format rather than forcing a partial match",
+          "GSVA and UCell scores are on different scales; keep them in separate files and never average them",
+          "A hallmark set with high overlap but low detectable expression in the ileum can still yield noisy scores; the overlap table alone does not guarantee score quality"
+        ],
+        "context": "Input: normalized expression matrix from T1S1 (up to 12,000 genes x 12 samples) plus the raw counts file for identifier inspection. Reference: the staged MSigDB human hallmark collection, 50 sets, HALLMARK_* names, HGNC symbols (managed/msigdb-hallmark-human/2026.1, h.all.v2026.1.Hs.symbols.gmt). The count-matrix gene identifier type is unknown (symbols, Ensembl, or Entrez); if not already HGNC symbols, map to HGNC using the staged UniProt human ID-mapping table (columns 3 Entrez GeneID, 19 Ensembl, 2 UniProtKB gene name) rather than any network lookup. The counts matrix carries only 12,000 genes, so several hallmark sets may be only partially represented; report the overlap per set and exclude from differential testing any set with fewer than 10 detectable member genes while still reporting its scores. Compute scores with GSVA (on the normalized log-scale matrix) and with UCell rank-based scoring (depth-robust, protecting the shallow sample_01) so method concordance can be checked downstream.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "UCell",
+          "GSEABase",
+          "data.table"
+        ],
+        "question": "What is the score of every one of the 50 Hallmark signatures in every one of the 12 samples, under the constraints of a 12,000-gene matrix and one shallow library?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Detect the gene identifier type in the normalized matrix and map to HGNC symbols if needed (staged UniProt human ID-mapping resource covers Ensembl/Entrez to gene name). Load the 50-set MSigDB 2026.1 hallmark GMT, intersect each set with the 12,000-gene matrix, record per-set overlap (members detected / set size), and compute a 12-sample x 50-hallmark score matrix with two methods: GSVA and UCell (rank-based, robust to the shallow library of sample_01). Save both score matrices and the per-set overlap table.",
+        "acceptance_criteria": [
+          "Score matrix published with one row per sample (all 12) and one column per hallmark set, for BOTH scoring methods",
+          "Per-set detectable-gene table published (members present / total members) for all 50 sets",
+          "Sets dropped or flagged for low overlap explicitly listed with their overlap counts",
+          "Identifier mapping coverage reported (fraction of the 12,000 genes mapped to HGNC symbols, if mapping was needed)"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Test Hallmark scores inflamed vs control with sensitivity to sample_01",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With n=6 per arm, BH across 50 tests is severe; sets with nominal p<0.05 but FDR>0.1 should be reported as suggestive, not significant",
+          "If sample_01 is also the most extreme score outlier on many sets, the primary result is effectively a 5-vs-6 comparison and must be stated as such",
+          "Do not pool GSVA and UCell p-values; report them side by side"
+        ],
+        "context": "Input: the two 12 x 50 score matrices (GSVA and UCell) and per-set overlap table from T1S2, plus metadata.csv condition labels (6 treated/inflamed vs 6 control, unpaired, single batch; sample_01 is the shallow sample). Test each hallmark score with limma: score ~ condition, eBayes moderated t, BH FDR across the 50 sets per method. Report signed effect size (difference in mean score between inflamed and control, standardized), 95% CI, and per-set group means. Sensitivity analysis: rerun the model excluding sample_01 (n=11) and flag every set whose FDR significance status changes - these are the sample_01-dependent calls. Concordance: Spearman correlation of condition t-statistics and of effect signs between GSVA and UCell; report sets significant in both vs only one method. This is a 12-sample exploratory comparison: power is limited, do not rank-significance-into-mechanism; report effect sizes alongside p-values. No treatment interaction, survival, or biomarker-panel modeling is in scope - the scores are the features and condition is the only covariate.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "data.table",
+          "ggplot2",
+          "ComplexHeatmap",
+          "broom"
+        ],
+        "question": "Which of the 50 Hallmark signatures differ between inflamed/treated and control ileum samples, and which of those differences survive removal of the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "For each hallmark set, fit a limma linear model of the score on condition (inflamed/treated vs control) across the 12 samples, with Benjamini-Hochberg FDR correction across the 50 sets. Repeat the entire test excluding sample_01 as a sensitivity analysis and flag signatures whose significance changes. Quantify GSVA-vs-UCell concordance (correlation of effect sizes/t-statistics across the 50 sets). Produce a sample-by-signature score heatmap annotated by condition and an effect-size vs FDR volcano.",
+        "acceptance_criteria": [
+          "Results table published with all 50 hallmark sets: log2 effect, SE, t, raw p, BH-adjusted p, and min-group score mean",
+          "Sensitivity table published for the n=11 retest with the sample_01-dependence flag per set",
+          "Cross-method concordance statistic published (correlation of condition t-statistics between GSVA and UCell)",
+          "Figures saved: score heatmap (samples annotated by condition) and effect-vs-FDR volcano",
+          "Explicit statement of which results are method-robust vs method-dependent, and which flip when sample_01 is removed"
+        ]
+      }
+    ],
+    "title": "Crohn ileum hallmark signature scoring inflamed vs control",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-22T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is a per-sample pathway-activity readout: score each of the 50 MSigDB Hallmark gene sets in each of the 12 samples, then test inflamed vs control for every signature. The data are raw Salmon gene-level counts (12,000 genes x 12 samples, 6 treated vs 6 control, single batch) with one flagged anomaly: sample_01 has library size ~4x below the median. Raw counts cannot be scored directly, so step T1S1 normalizes (size-factor/TMM correction + variance-stabilizing transform) and quantifies how anomalous sample_01 is in PCA and sample-correlation space, which determines how much weight its downstream signature scores can carry. Step T1S2 maps the count-matrix gene identifiers to the HGNC symbols used by the staged MSigDB 2026.1 hallmark GMT, computes a per-set detectable-gene count, and produces a 12 x 50 score matrix using two complementary methods: GSVA (distribution-level enrichment) and UCell (rank-based, library-depth-robust, which specifically protects the shallow sample_01 from depth-driven score artifacts). Step T1S3 tests each hallmark score for the inflamed-vs-control effect with a limma linear model, applies BH FDR across the 50 sets, and repeats the test excluding sample_01 as a sensitivity analysis, flagging any signature whose significance depends on the shallow sample; concordance between the two scoring methods guards against method-specific artifacts. This is an exploratory 12-sample design: results are reported as effect sizes with FDR, not as definitive pathway conclusions."
+  },
+  "usage": {
+    "inputTokens": 118057,
+    "outputTokens": 4859,
+    "cacheReadInputTokens": 76288,
+    "reasoningTokens": 2353
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_3a85877922a14815a4e8cdb1",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 47
+    },
+    {
+      "toolUseId": "call_62fa9c75d5164128adf30d8d",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb",
+        "limit": 30
+      },
+      "outcome": "ok",
+      "durationMs": 46
+    },
+    {
+      "toolUseId": "call_242817094fa24b1ca33a75fc",
+      "name": "submit_plan",
+      "input": {
+        "plan": "title</arg_key><arg_value>Crohn ileum hallmark signature scoring inflamed vs control"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "call_b823a56a92804b39ba0de03a",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The question is a per-sample pathway-activity readout: score each of the 50 MSigDB Hallmark gene sets in each of the 12 samples, then test inflamed vs control for every signature. The data are raw Salmon gene-level counts (12,000 genes x 12 samples, 6 treated vs 6 control, single batch) with one flagged anomaly: sample_01 has library size ~4x below the median. Raw counts cannot be scored directly, so step T1S1 normalizes (size-factor/TMM correction + variance-stabilizing transform) and quantifies how anomalous sample_01 is in PCA and sample-correlation space, which determines how much weight its downstream signature scores can carry. Step T1S2 maps the count-matrix gene identifiers to the HGNC symbols used by the staged MSigDB 2026.1 hallmark GMT, computes a per-set detectable-gene count, and produces a 12 x 50 score matrix using two complementary methods: GSVA (distribution-level enrichment) and UCell (rank-based, library-depth-robust, which specifically protects the shallow sample_01 from depth-driven score artifacts). Step T1S3 tests each hallmark score for the inflamed-vs-control effect with a limma linear model, applies BH FDR across the 50 sets, and repeats the test excluding sample_01 as a sensitivity analysis, flagging any signature whose significance depends on the shallow sample; concordance between the two scoring methods guards against method-specific artifacts. This is an exploratory 12-sample design: results are reported as effect sizes with FDR, not as definitive pathway conclusions.",
+          "created_at": "2026-07-22T00:00:00Z",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "All 12 samples load and match metadata rows 1:1; condition has exactly 6 treated and 6 control",
+                "Library-size table published including sample_01 and its ratio to the median",
+                "Normalized (VST or logCPM) matrix and PCA/correlation QC report saved as artifacts",
+                "Explicit statement of whether sample_01 is a within-group or cross-group outlier in PCA"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 13 cols: gene ID column + 12 samples) and metadata.csv (12 rows x 2 cols, one per sample with condition). Crohn disease ileum, 6 treated/inflamed vs 6 control, unpaired, single batch. Known caveat: sample_01 library size ~4x below median. Counts are Salmon gene-level output and the record does not state whether effective-length correction was applied; use normalization that is valid for count-like matrices (edgeR TMM on CPM, or DESeq2 median-of-ratios size factors + VST). Downstream scoring uses this normalized matrix, so save it as CSV plus the QC summary.",
+              "caveats": [
+                "sample_01's ~4x-low depth inflates its sampling noise; do not exclude it here, only quantify it and keep all 12 samples in the normalized output",
+                "No batch covariate exists (single batch), so the model is condition only",
+                "If a gene-ID column other than HGNC symbols is detected, do not attempt a network lookup; pass the identifier type through to the next step verbatim"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv (12,000 gene rows x 12 sample columns) and metadata.csv, align sample IDs, filter low-expression genes (e.g. CPM > 1 in at least 4 samples), compute library sizes and normalization factors, produce a variance-stabilized / logCPM expression matrix, and quantify sample quality: total counts per sample, sample_01's exact ratio to the median, PCA of samples, and pairwise sample correlations. Output the normalized matrix and a QC table for downstream steps.",
+              "id": "T1S1",
+              "name": "QC and normalization of Salmon counts",
+              "packages": [
+                "edgeR",
+                "DESeq2",
+                "data.table",
+                "ggplot2",
+                "pheatmap"
+              ],
+              "question": "Are the 12 Crohn ileum samples comparable after normalization, and how anomalous is the shallow sample_01 (library size ~4x below median) in PCA/correlation space?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Score matrix published with one row per sample (all 12) and one column per hallmark set, for BOTH scoring methods",
+                "Per-set detectable-gene table published (members present / total members) for all 50 sets",
+                "Sets dropped or flagged for low overlap explicitly listed with their overlap counts",
+                "Identifier mapping coverage reported (fraction of the 12,000 genes mapped to HGNC symbols, if mapping was needed)"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Input: normalized expression matrix from T1S1 (up to 12,000 genes x 12 samples) plus the raw counts file for identifier inspection. Reference: the staged MSigDB human hallmark collection, 50 sets, HALLMARK_* names, HGNC symbols (managed/msigdb-hallmark-human/2026.1, h.all.v2026.1.Hs.symbols.gmt). The count-matrix gene identifier type is unknown (symbols, Ensembl, or Entrez); if not already HGNC symbols, map to HGNC using the staged UniProt human ID-mapping table (columns 3 Entrez GeneID, 19 Ensembl, 2 UniProtKB gene name) rather than any network lookup. The counts matrix carries only 12,000 genes, so several hallmark sets may be only partially represented; report the overlap per set and exclude from differential testing any set with fewer than 10 detectable member genes while still reporting its scores. Compute scores with GSVA (on the normalized log-scale matrix) and with UCell rank-based scoring (depth-robust, protecting the shallow sample_01) so method concordance can be checked downstream.",
+              "caveats": [
+                "If the gene identifiers turn out to be neither HGNC symbols nor Ensembl/Entrez, stop and report the identifier format rather than forcing a partial match",
+                "GSVA and UCell scores are on different scales; keep them in separate files and never average them",
+                "A hallmark set with high overlap but low detectable expression in the ileum can still yield noisy scores; the overlap table alone does not guarantee score quality"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Detect the gene identifier type in the normalized matrix and map to HGNC symbols if needed (staged UniProt human ID-mapping resource covers Ensembl/Entrez to gene name). Load the 50-set MSigDB 2026.1 hallmark GMT, intersect each set with the 12,000-gene matrix, record per-set overlap (members detected / set size), and compute a 12-sample x 50-hallmark score matrix with two methods: GSVA and UCell (rank-based, robust to the shallow library of sample_01). Save both score matrices and the per-set overlap table.",
+              "id": "T1S2",
+              "name": "Per-sample Hallmark signature scoring (GSVA + UCell)",
+              "packages": [
+                "GSVA",
+                "UCell",
+                "GSEABase",
+                "data.table"
+              ],
+              "question": "What is the score of every one of the 50 Hallmark signatures in every one of the 12 samples, under the constraints of a 12,000-gene matrix and one shallow library?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Results table published with all 50 hallmark sets: log2 effect, SE, t, raw p, BH-adjusted p, and min-group score mean",
+                "Sensitivity table published for the n=11 retest with the sample_01-dependence flag per set",
+                "Cross-method concordance statistic published (correlation of condition t-statistics between GSVA and UCell)",
+                "Figures saved: score heatmap (samples annotated by condition) and effect-vs-FDR volcano",
+                "Explicit statement of which results are method-robust vs method-dependent, and which flip when sample_01 is removed"
+              ],
+              "agent": "statistical-modeling-agent",
+              "context": "Input: the two 12 x 50 score matrices (GSVA and UCell) and per-set overlap table from T1S2, plus metadata.csv condition labels (6 treated/inflamed vs 6 control, unpaired, single batch; sample_01 is the shallow sample). Test each hallmark score with limma: score ~ condition, eBayes moderated t, BH FDR across the 50 sets per method. Report signed effect size (difference in mean score between inflamed and control, standardized), 95% CI, and per-set group means. Sensitivity analysis: rerun the model excluding sample_01 (n=11) and flag every set whose FDR significance status changes - these are the sample_01-dependent calls. Concordance: Spearman correlation of condition t-statistics and of effect signs between GSVA and UCell; report sets significant in both vs only one method. This is a 12-sample exploratory comparison: power is limited, do not rank-significance-into-mechanism; report effect sizes alongside p-values. No treatment interaction, survival, or biomarker-panel modeling is in scope - the scores are the features and condition is the only covariate.",
+              "caveats": [
+                "With n=6 per arm, BH across 50 tests is severe; sets with nominal p<0.05 but FDR>0.1 should be reported as suggestive, not significant",
+                "If sample_01 is also the most extreme score outlier on many sets, the primary result is effectively a 5-vs-6 comparison and must be stated as such",
+                "Do not pool GSVA and UCell p-values; report them side by side"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "For each hallmark set, fit a limma linear model of the score on condition (inflamed/treated vs control) across the 12 samples, with Benjamini-Hochberg FDR correction across the 50 sets. Repeat the entire test excluding sample_01 as a sensitivity analysis and flag signatures whose significance changes. Quantify GSVA-vs-UCell concordance (correlation of effect sizes/t-statistics across the 50 sets). Produce a sample-by-signature score heatmap annotated by condition and an effect-size vs FDR volcano.",
+              "id": "T1S3",
+              "name": "Test Hallmark scores inflamed vs control with sensitivity to sample_01",
+              "packages": [
+                "limma",
+                "data.table",
+                "ggplot2",
+                "ComplexHeatmap",
+                "broom"
+              ],
+              "question": "Which of the 50 Hallmark signatures differ between inflamed/treated and control ileum samples, and which of those differences survive removal of the shallow sample_01?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            }
+          ],
+          "title": "Crohn ileum hallmark signature scoring inflamed vs control",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 50
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

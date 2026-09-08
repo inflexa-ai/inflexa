@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refuses to refit the delivered DESeq2 table, defines the foreground as padj < 0.05, sets the universe to tested genes with non-NA padj, names GO BP with enrichGO, a 15-500 window, BH, rrvgo reduction, and a stated pooled-then-split direction policy, and the report lists terms, gene ratios, adjusted p, and driving genes with pinned annotation versions. QC is design-specific (blind VST PCA, distance heatmap, explicit keep policy for the shallow sample_01) and single-batch is handled implicitly. Deductions: the <50-gene guard promotes fgsea preranked to the primary answer, which the reference flags as a wrong answer to an over-representation question; no fold-change cutoff is stated as present or absent for the foreground; the alpha for calling enriched terms is not given; and normalization within the VST (size factors) and any low-count filtering for the QC transform are not stated."
+}

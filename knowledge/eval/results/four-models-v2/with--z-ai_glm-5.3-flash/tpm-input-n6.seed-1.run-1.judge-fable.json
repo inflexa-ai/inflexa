@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly recognizes that TPM is not a count, forbids DESeq2/edgeR/voom, and fits limma with eBayes(trend=TRUE, robust=TRUE) on log2(TPM+1) with control as the explicit reference level and a named lesional-vs-control contrast, matching the reference; it recommends re-validation on raw counts but does not explicitly request the counts or quant directories from the core up front. QC on log2(TPM+1) includes MDS/PCA, distance heatmap, and detected genes per sample colored by condition, with outliers flagged before modeling, though the disposition policy for a flagged sample is left as flag-only. The filter (TPM >= 1 in at least the smallest group size) is minimal and justified; no TMM or size factors are applied, consistent with log-value input. BH at 0.05 via topTable plus treat(lfc=1) tested inside the model is correct, and the absence of LFC shrinkage is acknowledged; enrichment is appropriately omitted and the report specifies method, versions, design, thresholds, counts, sessionInfo, and the TPM-only and compositional caveats."
+}

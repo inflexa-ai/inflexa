@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan places the balanced known batch in the design as ~ batch + condition, refuses any count adjustment before the test, and confines the batch-adjusted VST matrix to visualization, matching the reference. QC uses blind VST, PCA on the top 500 genes, sample distances and library sizes, all annotated by both condition and batch, with an explicit no-silent-removal policy, though the outlier/shallow-sample handling could be a little more concrete. The pre-filter (>=10 counts in >=6 samples, the smallest group) is minimal and justified, size factors and TMM are estimated inside the models, the reference level and treated-vs-control contrast are explicit, BH at alpha 0.05 with apeglm shrinkage and lfcThreshold-in-test are stated, and enrichment is correctly omitted. The report step names method, versions, design, thresholds, tested and significant counts, NA counts by cause, sessionInfo and the design caveats."
+}

@@ -1,0 +1,212 @@
+{
+  "report_step": "T1S3 (bulk-transcriptomics-agent, report synthesis)",
+  "snapshot_digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+  "differential_expression": {
+    "step": "T1S2",
+    "method": "DESeq2 Wald test",
+    "template": "tpl-deseq2-two-group@1.1.0",
+    "design": "~condition",
+    "contrast": {
+      "factor": "condition",
+      "test": "treated",
+      "reference": "control"
+    },
+    "alpha": 0.05,
+    "lfc_shrink": "apeglm",
+    "min_count_filter": {
+      "min_count": 10,
+      "min_samples": 6
+    },
+    "n_genes_input": 12000,
+    "n_genes_after_prefilter": 9782,
+    "n_genes_tested_after_independent_filtering": 9402,
+    "n_significant_padj_lt_0.05": 875,
+    "n_up": 513,
+    "n_down": 362,
+    "n_cooks_outlier_na": 0,
+    "n_independent_filter_na": 380,
+    "pvalue_histogram_ks_test_tail_uniform": {
+      "n_pvalues": 9782,
+      "ks_stat_tail_uniform_p_gt_0.5": 0.016218533914433397,
+      "ks_p_tail_uniform_p_gt_0.5": 0.20406538737345659,
+      "bins": [
+        {
+          "bin_low": 0.0,
+          "bin_high": 0.05,
+          "n_genes": 1533
+        },
+        {
+          "bin_low": 0.05,
+          "bin_high": 0.1,
+          "n_genes": 470
+        },
+        {
+          "bin_low": 0.1,
+          "bin_high": 0.15000000000000002,
+          "n_genes": 426
+        },
+        {
+          "bin_low": 0.15000000000000002,
+          "bin_high": 0.2,
+          "n_genes": 422
+        },
+        {
+          "bin_low": 0.2,
+          "bin_high": 0.25,
+          "n_genes": 435
+        },
+        {
+          "bin_low": 0.25,
+          "bin_high": 0.30000000000000004,
+          "n_genes": 453
+        },
+        {
+          "bin_low": 0.30000000000000004,
+          "bin_high": 0.35000000000000003,
+          "n_genes": 430
+        },
+        {
+          "bin_low": 0.35000000000000003,
+          "bin_high": 0.4,
+          "n_genes": 449
+        },
+        {
+          "bin_low": 0.4,
+          "bin_high": 0.45,
+          "n_genes": 435
+        },
+        {
+          "bin_low": 0.45,
+          "bin_high": 0.5,
+          "n_genes": 413
+        },
+        {
+          "bin_low": 0.5,
+          "bin_high": 0.55,
+          "n_genes": 468
+        },
+        {
+          "bin_low": 0.55,
+          "bin_high": 0.6000000000000001,
+          "n_genes": 458
+        },
+        {
+          "bin_low": 0.6000000000000001,
+          "bin_high": 0.65,
+          "n_genes": 414
+        },
+        {
+          "bin_low": 0.65,
+          "bin_high": 0.7000000000000001,
+          "n_genes": 387
+        },
+        {
+          "bin_low": 0.7000000000000001,
+          "bin_high": 0.75,
+          "n_genes": 433
+        },
+        {
+          "bin_low": 0.75,
+          "bin_high": 0.8,
+          "n_genes": 399
+        },
+        {
+          "bin_low": 0.8,
+          "bin_high": 0.8500000000000001,
+          "n_genes": 458
+        },
+        {
+          "bin_low": 0.8500000000000001,
+          "bin_high": 0.9,
+          "n_genes": 447
+        },
+        {
+          "bin_low": 0.9,
+          "bin_high": 0.9500000000000001,
+          "n_genes": 396
+        },
+        {
+          "bin_low": 0.9500000000000001,
+          "bin_high": 1.0,
+          "n_genes": 456
+        }
+      ]
+    },
+    "versions": {
+      "R": "R version 4.6.0 (2026-04-24)",
+      "DESeq2": "1.52.0",
+      "tximport": null,
+      "apeglm": "1.34.0",
+      "ashr": "2.2.63"
+    }
+  },
+  "annotation_mapping": {
+    "step": "T1S6",
+    "organism_package": "org.Hs.eg.db",
+    "organism_package_version": "3.23.1",
+    "entrez_source_date": "2026-Mar18",
+    "ensembl_source_date": "2025-Sep03",
+    "organism_assumption": "human",
+    "n_mapped": 4384,
+    "mapped_share": 0.3653,
+    "n_unmapped": 7616,
+    "unmapped_share": 0.6347,
+    "versions": {
+      "R": "R version 4.6.0 (2026-04-24)",
+      "AnnotationDbi": "1.74.0",
+      "org_package": "3.23.1",
+      "ggplot2": "4.0.3",
+      "jsonlite": "2.0.0"
+    }
+  },
+  "enrichment": {
+    "step": "T2S1",
+    "rank_metric": "stat",
+    "gene_universe_join_qc": {
+      "n_tested_genes_T1S2": 9402,
+      "n_mapped_to_real_identifier": 3403,
+      "n_unmapped_placeholder": 5999,
+      "mapped_share": 0.36194426717719635,
+      "n_duplicate_symbol_ids": 0,
+      "n_duplicate_entrez_ids": 0,
+      "notes": "gene column in symbol-keyed list is the T1S6-mapped HGNC symbol for mapped genes, else the original GENE##### placeholder ID (guaranteed not to match any real pathway gene set). entrez-keyed list is the same but with the T1S6-mapped Entrez Gene ID as string, for use against the Entrez-keyed WikiPathways GMT."
+    },
+    "seed": 20260904,
+    "size_window": {
+      "min_size": 15,
+      "max_size": 500
+    },
+    "padj_cutoff": 0.05,
+    "collections": {
+      "hallmark": {
+        "database_file": "h.all.v2026.1.Hs.symbols.gmt",
+        "collection_version": "MSigDB Hallmark human 2026.1",
+        "n_sets_input": 50,
+        "n_sets_tested_in_window": 50,
+        "n_significant": 15,
+        "n_main_pathways_after_collapse": 8
+      },
+      "reactome": {
+        "database_file": "ReactomePathways.gmt",
+        "collection_version": "Reactome pathways, 'current' quarterly release (no fixed version string upstream)",
+        "n_sets_input": 2868,
+        "n_sets_tested_in_window": 766,
+        "n_significant": 97,
+        "n_main_pathways_after_collapse": 22
+      },
+      "wikipathways": {
+        "database_file": "wikipathways_clean.gmt",
+        "collection_version": "WikiPathways human 2026.07.10",
+        "n_sets_input": 987,
+        "n_sets_tested_in_window": 390,
+        "n_significant": 99,
+        "n_main_pathways_after_collapse": 34
+      }
+    },
+    "versions": {
+      "R": "R version 4.6.0 (2026-04-24)",
+      "fgsea": "1.38.0",
+      "ggplot2": "4.0.3"
+    }
+  }
+}

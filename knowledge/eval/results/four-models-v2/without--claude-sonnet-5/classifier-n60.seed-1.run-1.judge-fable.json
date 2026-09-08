@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The core classifier design is sound: nested CV with feature selection and tuning inside each training fold, elastic-net logistic regression, outer-fold AUC with variability, gene selection stability, and a clear internal-vs-external caveat. It falls short of the reference by feeding a matrix normalized and filtered on all 120 samples into the CV (the transformation is not fitted per fold), by not stating stratified or repeated folds with a fixed seed, by giving only 'CI or SD across folds' rather than a bootstrap/DeLong interval or Brier score, and by not stating a final refit on all samples. QC is adequate but has no explicit outlier or shallow-sample policy; the count filter is an unspecific 'e.g.' with no justification; the DE design names the single fixed effect but no reference level or contrast, and BH at 0.05 is stated without fold-change shrinkage. The enrichment and deconvolution steps are not warranted by the question and, as written, lack a ranking metric, ORA universe, gene-set version, or size window; the report plan omits software versions."
+}

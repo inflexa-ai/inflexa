@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly routes a TPM-only 6v6 unpaired design into TPM-native deconvolution (quanTIseq/EPIC fractions, MCP-counter/xCell scores kept on native scales) followed by per-cell-type Wilcoxon with BH, and it explicitly keeps and sensitivity-checks the shallow sample_01 rather than dropping it. It falls short of the reference by never stating that EPIC/quanTIseq must receive linear (not log) TPM, never naming the EPIC reference profile (TRef vs BRef) for a tumor biopsy, and not reporting the share of each method's signature genes present in the 12000-gene matrix; QC lacks PCA/sample-distance checks and no alpha is stated. The added ssGSEA hallmark/immunologic scoring and the scGate marker cross-check are unwarranted for the composition question, multiply the test burden across four methods with no designated primary, and are unaccompanied by collection versions. Reporting is per-sample with stacked composition figures, medians, adjusted p and effect sizes, but tool versions and the reference/signature used are not specified."
+}

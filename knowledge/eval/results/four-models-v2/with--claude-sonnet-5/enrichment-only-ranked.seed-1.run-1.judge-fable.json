@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly refrains from refitting DE and runs preranked fgsea on the full 12,000-gene list ranked by the Wald statistic, with Hallmark named and versioned, a 15-500 size window, BH on pathways, leading-edge reporting, and the unmapped-symbol share disclosed; the secondary Reactome/WikiPathways passes are extra scope but not wrong. The QC step is concrete for this dataset (blind vst, top-500 PCA, distance heatmap, library sizes, explicit sample_01 policy of caveat-not-exclusion). Weaknesses: the fixed seed and adaptive permutation count are only mentioned in the report step rather than as an fgsea execution constraint, and the low-count filter and normalization criteria are not addressed explicitly (though not required since DE is inherited). Contrast direction and reference level are stated but only as inherited context."
+}

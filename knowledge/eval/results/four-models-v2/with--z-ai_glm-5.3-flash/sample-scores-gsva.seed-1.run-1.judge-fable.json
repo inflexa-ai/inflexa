@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly treats this as a per-sample scoring question: GSVA on a blind VST matrix over a named MSigDB Hallmark release (2026.1) with a 15-500 size window, limma on the score matrix under ~condition with BH across the sets, and a row-scaled heatmap annotated by condition with sample_01 kept, inspected on PCA/distances and visible on the score heatmap. QC, filtering (10 counts in >= 6 samples plus independent filtering), median-of-ratios normalization inside DESeq2, explicit reference level and contrast, apeglm shrinkage and BH at 0.05 are all stated. The DESeq2 and fgsea steps are extra rather than the answer, but the plan frames fgsea as corroboration and specifies the full ranked list, Wald-statistic metric, collection version and unmapped share; a minor inconsistency is that GSVA takes the unfiltered 12,000-gene VST while the size window references 'tested genes'. The report specification is complete, including versions, thresholds, counts, the length-offset caveat and the fixed-sample-set nature of GSVA scores."
+}

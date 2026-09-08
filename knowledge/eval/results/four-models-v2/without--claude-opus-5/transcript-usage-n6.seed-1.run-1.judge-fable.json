@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 3,
+    "normalization": 3,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 5
+  },
+  "rationale": "The planner reached the correct outcome: it recognised that a gene-level count matrix carries no isoform information, refused to fit DESeq2 on it as a proxy for switching, and asked for exactly the right inputs (per-sample Salmon quant.sf or a transcript x sample matrix plus a GENCODE tx2gene map). It did not, however, state what it would do once those arrive (DRIMSeq/DEXSeq on tximport scaledTPM, dmFilter, stageR at 0.05), so the method, filter, normalization, contrast and FDR details are unstated rather than wrong. QC is only gestured at via library-size handling for sample_01, and pathway enrichment is offered in the fallback although it is not warranted by the question. The fallback proposal to report the isoform question as unanswerable is appropriate, but the reporting content is otherwise unspecified."
+}

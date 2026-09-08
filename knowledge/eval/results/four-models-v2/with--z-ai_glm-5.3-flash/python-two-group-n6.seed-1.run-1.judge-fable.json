@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: PyDESeq2 Wald test on rounded Salmon counts with design ~condition, control as explicit reference, treated-vs-control contrast, median-of-ratios size factors inside the model, and a minimal >=10-in-6-samples pre-filter tied to the smallest group. QC precedes the fit with library sizes, top-500 VST PCA, and a distance heatmap, and sample_01 is kept with a stated keep/drop policy plus a sensitivity refit rather than being dropped for depth alone. BH at 0.05 with independent filtering, apeglm-style shrinkage with a stated fallback, and a p-value histogram check are all explicit; the only ambiguity is a listed 'test_against_threshold' policy without a stated LFC threshold. Enrichment uses gseapy prerank on the full Wald-statistic-ranked list, Hallmark 2026.1 named, 15-500 window, seed recorded, unmapped share reported, and the report specifies versions, counts, diagnostics, and design caveats including the lost length offset."
+}

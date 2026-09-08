@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core path: PyDESeq2 with ~condition and vehicle as reference on raw counts, the unshrunken Wald statistic for every tested gene fed to decoupler ulm on the signed CollecTRI regulon with a minimum of five present targets and BH across TFs, and explicit caveats that activity is inferred from targets. It omits the per-sample activity matrix for replicate consistency and leaves an rpy2 back door for DoRothEA, which brushes against the Python constraint. QC is a PCA only, without library sizes or sample distances and without a stated outlier policy; the low-count filter is described only as 'a minimum total count' without a threshold or rationale, and size-factor normalization is implied rather than stated. Enrichment names WikiPathways and the tested-gene background but gives no collection version for CollecTRI or WikiPathways, no size window, and no GSEA ranking metric; the |log2FC|>1 count is a post hoc threshold rather than a tested one."
+}

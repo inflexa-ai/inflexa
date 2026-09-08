@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core network method: VST (blind) input rather than raw counts, signed bicor network, power chosen by scale-free R^2 >= 0.85 with the fit table reported, TOM, dynamic tree cut at minModuleSize 30, merge at eigengene correlation 0.75, eigengene-trait correlation with BH across modules, and kME/GS hub genes, plus a sensible bootstrap stability check. It deviates from the reference by running on all ~12,000 filtered genes rather than the top ~5,000 variable genes, and its filter (>=10 counts in ~60 samples) is stricter than a minimal floor, though stated and justified. QC has a dendrogram and condition-coloured PCA with an explicit outlier policy but omits library sizes; enrichment uses the network genes as universe and Hallmark/GO BP with fgsea on the DE ranking, but gives no collection version or set-size window. The report specification is thorough on power, module counts/sizes, trait table, seed and caveats, though software versions are not explicitly demanded and the |LFC|>0.5 count is post hoc rather than tested."
+}

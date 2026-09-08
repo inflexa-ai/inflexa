@@ -1,0 +1,17 @@
+{
+  "results_path": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/runs/619852b4-1723-48f1-b3fe-f19dbee5d2d9/T1S2/output/deseq2_results.csv",
+  "n_genes_input_table": 9782,
+  "n_genes_tested": 9782,
+  "n_unique_symbols_tested": 9782,
+  "n_mapped_unique_symbols": 3538,
+  "n_unmapped_unique_symbols": 6244,
+  "fraction_mapped": 0.361684727049683,
+  "fraction_unmapped": 0.638315272950317,
+  "n_unmapped_placeholder_gene_ids": 6241,
+  "n_unmapped_other": 3,
+  "mapping_source": "org.Hs.eg.db",
+  "org_hs_eg_db_version": "3.23.1",
+  "keytype": "SYMBOL",
+  "target": "ENTREZID",
+  "note": "GSEA ranking and testing (fgsea vs Hallmark/Reactome) is performed directly on gene symbols, which is the native identifier space of both GMT collections; this Entrez mapping is a reporting/QC step on gene identifier quality, not an input to the enrichment test."
+}

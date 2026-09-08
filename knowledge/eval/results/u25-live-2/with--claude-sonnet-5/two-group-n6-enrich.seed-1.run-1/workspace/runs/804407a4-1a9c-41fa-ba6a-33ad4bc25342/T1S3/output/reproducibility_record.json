@@ -1,0 +1,93 @@
+{
+  "schema": "consolidated_report.reproducibility_record/1.0",
+  "de_method": {
+    "tool": "DESeq2",
+    "test": "Wald test",
+    "shrinkage": "apeglm (coef-based)",
+    "design_formula": "~condition",
+    "contrast": {
+      "factor": "condition",
+      "test": "treated",
+      "reference": "control"
+    },
+    "reference_level": "control",
+    "test_level": "treated",
+    "alpha": 0.05,
+    "independent_filtering": true,
+    "multiple_testing_correction": "Benjamini-Hochberg (BH)",
+    "min_count_filter": {
+      "min_count": 10,
+      "min_samples": 6
+    }
+  },
+  "enrichment_method": {
+    "tool": "fgsea",
+    "algorithm": "fgseaMultilevel (preranked GSEA)",
+    "rank_metric": "stat",
+    "rank_metric_definition": "DESeq2 Wald statistic ('stat' column) from the full (pre-p-value-cut) T1S2 results table",
+    "eps": 0,
+    "min_size": 15,
+    "max_size": 500,
+    "padj_cutoff": 0.05,
+    "seed": 20260904,
+    "collapse_pathways": true,
+    "gene_set_databases": {
+      "Hallmark": {
+        "source_file": "h.all.v2026.1.Hs.symbols.gmt",
+        "version": "MSigDB Hallmark 2026.1",
+        "n_sets_total": 50,
+        "n_sets_tested_in_window": 50
+      },
+      "WikiPathways": {
+        "source_file": "wikipathways_human_2026.07.10_hgnc_symbols.gmt (converted from Entrez IDs by T2S1)",
+        "version": "WikiPathways 2026.07.10",
+        "n_sets_total": 987,
+        "n_sets_tested_in_window": 402
+      }
+    }
+  },
+  "universe": {
+    "n_genes_input_matrix": 12000,
+    "n_genes_after_expression_filter": 9782,
+    "n_genes_tested_for_DE_nonNA_padj": 9402,
+    "n_genes_ranked_for_gsea": 9782,
+    "note": "GSEA universe = all 9,782 genes surviving the DESeq2 expression filter and receiving a Wald statistic, not just the 875 padj<0.05 DE genes -- this is the standard preranked-GSEA universe, not a hypergeometric overlap test against a p-value-thresholded gene list."
+  },
+  "shallow_sample_handling": {
+    "sample": "sample_01",
+    "condition": "control",
+    "library_size": 420347,
+    "cohort_median_library_size": 1614280,
+    "ratio_to_median": 0.26,
+    "detected_genes": 10918,
+    "size_factor_deseq2": 0.2835,
+    "qc_flag_status": "Below the literal 1/4-of-median low-depth threshold cutoff of 0.25 by only 0.01 (ratio 0.260); did NOT trip the automated low-depth flag (n_low_depth_samples=0 in T1S1) but is unambiguously the cohort's depth outlier (next-lowest sample is at 0.71x median).",
+    "pca_behavior": "Falls cleanly within the control cluster on PC1 (condition axis, 55.1% variance); is a PC2 outlier (PC2=+20.56 vs -5.82 to +2.68 for all other samples) consistent with depth-driven technical noise, not a condition-related effect.",
+    "cooks_distance_check_at_DE_step": "0 Cook's-distance-flagged (NA pvalue) genes attributed to sample_01, identical to every other sample -- no evidence sample_01 drives outlier-level leverage on any tested gene.",
+    "decision": "KEPT in the final DESeq2 model (design ~condition, all 12 samples).",
+    "rationale": "Per the plan's keep_inspect_report policy, library depth alone is not a removal criterion. sample_01 clusters correctly by condition (PC1, hierarchical clustering) and DESeq2's internal size-factor normalization together with the Cook's-distance diagnostic (0 outlier genes attributed to it, same as every other sample) show no evidence it distorts the DE fit. Its low depth widens its contribution to per-gene dispersion/CI width via its size factor (0.2835, lowest in the cohort) rather than biasing fold changes systematically."
+  },
+  "gc_length_bias_diagnostic": {
+    "tool": "Pearson/Spearman correlation, log2(gene length) vs log2(normalized-count-to-geometric-mean ratio), per sample",
+    "outcome": "No length-driven trend detected in any of the 12 samples (max |Pearson r| = 0.0176, sample sample_07, p > 0.08 for all samples).",
+    "caveat": "GC content itself could not be assessed -- only gene length was available in the input reference table. Absence of a length trend does not rule out a GC-content-driven trend. This is a diagnostic on this count matrix, not a validation of the (unstated) upstream quantification pipeline. No length/GC correction (e.g. cqn, EDASeq) was applied to the counts; DESeq2 was run on raw, uncorrected counts as intended."
+  },
+  "package_versions": {
+    "R": "R version 4.6.0 (2026-04-24)",
+    "DESeq2": "1.52.0",
+    "apeglm": "1.34.0",
+    "ashr": "2.2.63",
+    "fgsea": "1.38.0",
+    "ggplot2": "4.0.3",
+    "environment_match": "exact (all pinned packages matched the farm exactly; see T1S2 and T2S1 decision_record.json)"
+  },
+  "random_seeds": {
+    "fgsea_seed": 20260904,
+    "note": "Same seed (20260904) used for both the Hallmark and WikiPathways fgseaMultilevel runs, for reproducible tie-breaking in the multilevel Monte Carlo p-value estimation and for collapsePathways(). DESeq2's Wald test and apeglm shrinkage are deterministic given the input and involve no stochastic seed."
+  },
+  "upstream_step_provenance": {
+    "T1S1_sample_qc": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T1S1/output/summary.md",
+    "T1S2_deseq2": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T1S2/output/summary.md",
+    "T2S1_fgsea": "/eval-u25-live-2-with-two-group-n6-enrich-s1-1/runs/804407a4-1a9c-41fa-ba6a-33ad4bc25342/T2S1/output/summary.md"
+  }
+}

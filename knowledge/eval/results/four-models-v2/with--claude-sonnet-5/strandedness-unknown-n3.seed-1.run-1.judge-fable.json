@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The negative binomial Wald test with apeglm, BH at 0.05, explicit ~condition with control as reference, and an honest n=3 power caveat all match the reference. The central weakness is the strandedness handling: the plan asserts BAMs/reads are unavailable (nothing in the task says so), substitutes an ad hoc count-based antisense-overlap diagnostic for RSeQC infer_experiment or salmon libType A, and then fits the model on the counts as delivered with the problem carried only as a caveat rather than re-counting with the correct -s option, which the reference treats as required. QC covers PCA, distances, and library sizes but has no stated policy for removing or downweighting an outlier or shallow sample. Filtering, in-model normalization, and the report contents are correct and explicit; the unrequested GSEA is competently specified (ranked stat, size window, named collections) though the Reactome release is only 'current'."
+}

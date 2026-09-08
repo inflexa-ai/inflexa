@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 3,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the core method: limma-voom with ~condition (control as reference, direction stated), eBayes trend/robust, TREAT at |log2FC|>=1 with a 1.5-fold sensitivity check, log2FC with CI beside every BH-adjusted p at 0.05, filterByExpr, and TMM entering voom with no pre-normalization. QC covers PCA, distance heatmap, and library sizes colored by condition but omits the sex check (XIST/Y-linked genes), any search for hidden structure with candidate factors reported, and a stated outlier/shallow-sample policy beyond 'flagged'. Enrichment, which the reference deems warranted (camera or fgsea on Hallmark ranked by moderated t), is entirely absent with no stated reason for omission. The report step is thorough: method, versions, design, contrast, thresholds, n tested/DE per criterion, the length-offset and population-cohort caveats, and a reproducibility record."
+}

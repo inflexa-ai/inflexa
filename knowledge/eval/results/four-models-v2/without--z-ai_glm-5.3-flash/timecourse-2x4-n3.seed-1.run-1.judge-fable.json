@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 1,
+    "low_count_filter": 4,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The core method matches the reference: a DESeq2 GLM with condition:time interaction, an LRT against the additive ~condition + time model, and per-time-point Wald contrasts with t0 as reference, plus shrunken LFCs and an FDR 0.05 cutoff. The plan omits any sample-structure QC (no PCA, sample distances, library sizes, or outlier policy), gives only a vague 'tiny counts' prefilter with no threshold or justification, and leaves normalization implicit (DESeq2 size factors are implied, not stated; no mention of salmon length offsets). The enrichment step is not asked for, but it is reasonably specified with a named versioned WikiPathways release and tested-genes background, though without a set-size window and with a questionable up/down split for interaction genes. Reporting lists package versions and significant-gene counts but does not state the number of tested genes, the condition reference level, or design caveats such as the small replicate number and the interpretation of interaction terms."
+}

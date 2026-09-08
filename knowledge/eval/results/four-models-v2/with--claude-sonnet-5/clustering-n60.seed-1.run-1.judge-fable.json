@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 7,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the core method: blind VST, top 2000 centered variable genes, ConsensusClusterPlus with 1000 reps at 80% item subsampling, stated distance and linkage, k chosen from CDF delta-area and PAC with item and cluster consensus, and cross-tabulation against case/control and library size, plus a sensible blood composition check. It falls short of the reference in three places: gene resampling is not stated, the cluster-versus-condition agreement is only tabulated with no ARI or chi-squared/Fisher test, and the noise problem is handled only by a verbal caveat rather than a permuted or simulated null comparison that would decide whether the structure is real. Normalization is implicit in VST and unspecified for the MCP-counter input, the outlier policy is a flag rather than a decision rule, and no test or correction is named for comparing composition scores across clusters. Enrichment is correctly omitted, and the report specification is otherwise complete with versions, seed, and counts."
+}

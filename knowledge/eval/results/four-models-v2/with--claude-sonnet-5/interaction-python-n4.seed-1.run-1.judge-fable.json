@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 7,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly frames the question as a genotype:treatment interaction in PyDESeq2 with ~genotype + treatment + genotype:treatment, explicit reference levels (WT, vehicle), a Wald test on the interaction coefficient, and named within-genotype simple effects via contrast vectors, with median-of-ratios normalization inside the model and a justified minimal filter (>=10 counts in >=4 samples). It does not state a fallback if the installed PyDESeq2 cannot express the interaction or contrasts, and it prescribes ashr shrinkage, which is an R package with no PyDESeq2 equivalent, so the shrinkage step as written is not executable under the Python constraint. QC covers PCA and sample distances colored by both factors but omits library sizes and only flags rather than sets a policy for outliers. Enrichment is not required but is done reasonably (full ranked list, Wald statistic, named collections with mostly explicit versions, 15-500 window); the report step is thorough on design, thresholds, counts, versions and the low-power caveat."
+}

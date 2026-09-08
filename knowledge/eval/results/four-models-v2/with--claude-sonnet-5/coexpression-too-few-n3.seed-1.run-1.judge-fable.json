@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 10
+  },
+  "rationale": "The plan does exactly what the reference requires: it refuses a WGCNA correlation network on six samples, states the sampling-noise reason and the ~15-20 sample minimum, and substitutes a STRING v12.0 (score>=700) prior network with Louvain modules overlaid by a DESeq2 Wald test (BH at 0.05, apeglm shrinkage, low power at 3 vs 3 stated), presenting the result as a substitute rather than the module answer. QC uses blind VST, PCA and distances colored by condition with an explicit flag-not-drop outlier policy, but omits library-size inspection and a policy for a shallow sample. The design formula is described in words rather than written as ~condition with the reference level stated, and shrinkage is left as 'apeglm or normal'. Enrichment names the ranking metric, the explicit expressed-gene universe, and the WikiPathways snapshot, but no gene-set size window; the report step is complete with versions, seeds, counts, and caveats."
+}

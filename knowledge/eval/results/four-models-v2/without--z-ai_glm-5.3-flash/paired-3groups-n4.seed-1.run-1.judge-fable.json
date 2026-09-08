@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan correctly blocks on subject in a single ~ subject + condition DESeq2 fit with control as reference and extracts all three pairwise contrasts, but it omits the reference's first step, an omnibus LRT against the reduced ~ subject model (or joint F-test), so the 'any condition effect' question is never tested directly. QC is thorough (library sizes, VST PCA by subject and condition, correlation heatmap, explicit no-silent-drop policy) and the filter is minimal and justified by group size. Normalization is never named: nothing says size factors or TMM are estimated inside the model, which the criterion requires to be stated. BH at 0.05 and apeglm shrinkage are explicit, though the B-vs-A contrast is left unshrunken rather than using ashr; the fgsea step names the collection and version and the Wald ranking metric but states no min/max set-size window. Reporting is complete with versions, df, thresholds, gene counts and design caveats."
+}

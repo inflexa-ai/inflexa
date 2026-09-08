@@ -1,0 +1,349 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "interaction-python-n4",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:49:07.244Z",
+  "elapsedMs": 155645,
+  "outcome": "plan_submitted",
+  "planId": "pln-48d3cf88",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and preprocessing of 2x2 factorial counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv is 12000 x 17: one column is a gene identifier, the other 16 are samples - parse the header rather than assuming the layout",
+          "metadata has a 'condition' column that concatenates genotype and treatment - use it only as a cross-check that the factor coding is consistent, and build the design from the separate genotype and treatment columns",
+          "the profile does not state whether Salmon counts had length correction applied; for gene-level count summarization this has minimal effect on DE, but state the assumption in the report"
+        ],
+        "context": "Files: /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/counts/counts.csv (gene-level counts from Salmon, 12000 x 17 - one column is a gene identifier) and /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/metadata/metadata.csv (16 samples x 4 columns: genotype, treatment, condition). Design: WT/KO x vehicle/drug, 4 replicates per cell.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "numpy==2.5.2",
+          "matplotlib==3.11.1",
+          "seaborn==0.13.2"
+        ],
+        "question": "Are the 16 WT/KO x vehicle/drug samples clean and correctly annotated, and what count-matrix shape survives low-count filtering before any differential testing?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/counts/counts.csv (12,000 gene rows x 17 columns - one identifier column plus 16 sample columns) and /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows: genotype, treatment, condition). Verify the sample IDs in the count matrix match the metadata 1:1 and resolve any ordering mismatch explicitly. Report library sizes, total counts per sample, and the gene-level count distribution. Filter low-count genes (e.g. keep genes with total count >= 10 across samples, or CPM-based equivalent) and report how many genes survive. Produce a variance-stabilized (or log2 CPM) PCA colored by genotype and treatment plus a sample-distance heatmap to check for outliers and for whether samples separate by genotype, treatment, or both. Save the filtered count matrix and the QC report as step outputs.",
+        "acceptance_criteria": [
+          "counts.csv columns and metadata.csv rows align 1:1 on sample identifier (16/16), with any mismatch reported and resolved by documented rule",
+          "library-size summary per sample produced; total-count outliers flagged",
+          "low-count gene filter applied with explicit thresholds (e.g. count sum >= 10 across all samples) and the genes-in/genes-out numbers reported",
+          "PCA (vst- or log-transformed) saved as figure and table; PCA1/PC2 loadings checked for genotype or treatment structure and for an outlier sample",
+          "a QC report file written covering all of the above"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Factorial differential expression with genotype-by-treatment interaction",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "with 4 replicates per cell the interaction term rests on 12 residual degrees of freedom across the whole model - power is modest, so report effect sizes alongside significance and avoid calling the interaction 'absent' from a nonsignificant p-value alone",
+          "PyDESeq2 result contrasts must be named exactly as the factor levels are coded; a silently flipped contrast reverses the sign of the answer"
+        ],
+        "context": "Same inputs as T1S1; the filtered count matrix from T1S1. 16 samples, ~12,000 genes pre-filter, balanced design. PyDESeq2 is the Python replacement for DESeq2 per the user's Python-only constraint.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "numpy==2.5.2"
+        ],
+        "question": "What genes and how many show a drug response that differs between KO and WT (the genotype:treatment interaction), and what are the drug effects within each genotype?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Fit PyDESeq2 on the filtered counts with design '~ genotype + treatment + genotype:treatment'. Extract and save three result tables: (a) the interaction contrast (drug effect in KO minus drug effect in WT) - this is the direct quantitative answer to the research question; (b) the drug effect within WT (treatment effect at genotype=WT); (c) the drug effect within KO (treatment effect at genotype=KO). Apply BH multiple-testing correction within each contrast. Verify numerically that the KO drug-effect log2FC equals the WT drug-effect log2FC plus the interaction log2FC, and report the check. Summarize counts of significant genes (padj < 0.05, and a stated LFC threshold) for each contrast. All Python.",
+        "acceptance_criteria": [
+          "a results table for the interaction contrast (genotype:treatment) with log2FC, Wald statistic, p-value, and BH-adjusted p-value per gene, saved as CSV",
+          "a results table for the drug effect within WT (treatment at genotype=WT) with the same columns, saved as CSV",
+          "a results table for the drug effect within KO (treatment at genotype=KO) with the same columns, saved as CSV",
+          "numerical identity verified and reported: (drug effect in KO) = (drug effect in WT) + (interaction) at the log2FC level, within tolerance",
+          "counts of significant genes per contrast at stated thresholds (e.g. padj < 0.05, |log2FC| > 1), with the number of genes where the interaction is significant written out"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Robustness: factorial model vs additive and genotype-stratified models",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "the additive (no-interaction) model cannot answer the research question - it is fitted only to show how its treatment coefficient misrepresents the drug effect when the interaction is real; keep its role explicit",
+          "stratified fits use fewer samples per comparison (8 vs 8), so their dispersions are estimated differently - differences from the factorial model are expected and should be reported, not silently reconciled"
+        ],
+        "context": "16 samples, ~12,000 genes post-filter. The directory name hints at an evaluation across four model specifications - the factorial-with-interaction model, the additive model, and the two genotype-stratified models are exactly those four; this step makes the comparison explicit rather than implicit.",
+        "maxSteps": 200,
+        "packages": [
+          "pydeseq2==0.5.4",
+          "pandas==3.0.5",
+          "numpy==2.5.2",
+          "scipy==1.16.3",
+          "matplotlib==3.11.1"
+        ],
+        "question": "Is the genotype-by-treatment interaction conclusion stable across model specifications, and does the four-model comparison (factorial, additive, KO-stratified, WT-stratified) agree on which genes carry the differential drug response?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Refit the data under alternative specifications and compare: (a) an additive model without interaction ('~ genotype + treatment') to show what the interaction term adds and how the common treatment effect it estimates diverges from the genotype-specific effects; (b) two subset models - drug vs vehicle within WT only, and drug vs vehicle within KO only - and test whether (KO drug effect) - (WT drug effect) recomputed from the stratified fits reproduces the factorial interaction log2FCs (correlation, scatter, rank concordance of significant sets). Quantify disagreement: genes significant in one specification but not the other, correlation of log2FCs, and max absolute difference for top genes. Produce a volcano plot for the interaction contrast from T1S2 with top genes labeled. All Python.",
+        "acceptance_criteria": [
+          "results tables from the additive model and the two stratified models saved as CSV alongside the factorial-model tables",
+          "concordance report: Pearson/Spearman correlation of log2FCs (interaction vs difference-of-stratified; drug-effect-within-genotype vs stratified within-genotype) and max absolute differences, over genes tested in both",
+          "a table of genes whose significance calls differ between model specifications at padj < 0.05, with counts",
+          "a short written verdict: is the interaction signal stable across specifications or dependent on model choice",
+          "a volcano plot of the interaction contrast from T1S2 labeling the top interaction genes"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of interaction and KO drug-response signatures",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "the reference store also carries rat and mouse WikiPathways sets - they must not be used on this human dataset; the human file is the one with HGNC gene symbols",
+          "GMT member identifiers are HGNC symbols; if the count matrix row IDs are not HGNC symbols, map first (e.g. via the provisioned human UniProt id-mapping file) and report the mapping coverage rather than running enrichment on unmapped names",
+          "16 samples and 4-per-cell design give noisy per-gene statistics - treat pathway results as hypothesis-generating and report the leading-edge genes, not just NES"
+        ],
+        "context": "Human dataset (Homo sapiens, heart tissue). Reference available in the environment: human WikiPathways GMT at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt ('%' -delimited descriptor in field 1, HGNC symbols in fields 3+; split field 1 on '%' for the readable set name). gseapy 1.3.1 and blitzgsea 1.3.54 are installed. Human UniProt ID mapping (/mnt/refs/managed/uniprot-idmapping-human/current/HUMAN_9606_idmapping_selected.tab.gz) is available if gene-symbol mapping is needed.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy==1.3.1",
+          "pandas==3.0.5",
+          "numpy==2.5.2"
+        ],
+        "question": "Which biological pathways show a drug response that differs between KO and WT, and which pathways does the drug alter specifically in the knockout?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Run Python-based ranked gene-set enrichment (gseapy prerank, or blitzgsea) against the provisioned human WikiPathways GMT at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt. Rank 1: the interaction contrast statistic from T1S2 (the genotype-dependent drug response). Rank 2: the drug effect within KO statistic. Report enriched pathways with NES, nominal p, and FDR for each ranking, and identify pathways whose drug response is altered specifically in the knockout. If the human GMT is absent at run time, report the gap and still save the ranked gene lists so enrichment can be rerun once the reference is provisioned.",
+        "acceptance_criteria": [
+          "prerank GSEA run on the interaction contrast statistic; ranked results table with pathway name, NES, p-value, and FDR saved as CSV",
+          "prerank GSEA run on the KO drug-effect contrast statistic, saved as CSV",
+          "pathways significant at FDR < 0.25 reported for each ranking, with the overlap between the two highlighted",
+          "if the human WikiPathways GMT is not resolvable in the reference store, the step reports its absence and writes the ranked inputs so the annotation can be run once the resource is staged; it must not fail the run"
+        ]
+      }
+    ],
+    "title": "Drug-by-genotype interaction DE in heart 2x2 factorial",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-10T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The data are gene-level Salmon counts for 12,000 genes across 16 samples in a balanced 2x2 design (genotype WT/KO x treatment vehicle/drug, 4 replicates per cell) with a 16-row metadata table holding genotype, treatment, and condition. The research question - 'does the drug act differently in the knockout than in the wild type?' - is precisely the genotype-by-treatment interaction in this factorial design, so the analysis is built around a model that contains that interaction term rather than around pairwise group comparisons alone. Because everything is Python per the user constraint, PyDESeq2 (installed, v0.5.4) replaces DESeq2 for count modeling. The flow: (1) QC and preprocessing - align the 17-column count matrix (one ID column plus 16 samples) to the 16-row metadata, filter low-count genes, normalize, and check PCA for outliers and structure by genotype/treatment; (2) fit the full factorial model ~ genotype + treatment + genotype:treatment and extract three contrasts: the interaction (drug effect in KO minus drug effect in WT - the direct answer), the drug effect within WT, and the drug effect within KO; (3) cross-check the interaction against alternative model specifications (an additive no-interaction model and genotype-stratified subset models), since with only 4 replicates per cell the interaction estimate rests on a single residual degree-of-freedom structure and conclusions should be shown to be robust to model choice; (4) pathway-level interpretation of the interaction and of the KO-specific drug response using the provisioned human WikiPathways gene sets. All steps run on the two input files only; the only external reference needed is the human pathway GMT, whose absence would cost an annotation layer, not the core answer."
+  },
+  "usage": {
+    "inputTokens": 31185,
+    "outputTokens": 4690,
+    "cacheReadInputTokens": 8192,
+    "reasoningTokens": 1517
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_6d1d746e3a0b4b359e8c7eed",
+      "name": "submit_plan",
+      "input": {
+        "plan": "created_at</arg_key><arg_value>2026-07-10T00:00:00Z"
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "call_49dfb650d5d748cfac814057",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The data are gene-level Salmon counts for 12,000 genes across 16 samples in a balanced 2x2 design (genotype WT/KO x treatment vehicle/drug, 4 replicates per cell) with a 16-row metadata table holding genotype, treatment, and condition. The research question - 'does the drug act differently in the knockout than in the wild type?' - is precisely the genotype-by-treatment interaction in this factorial design, so the analysis is built around a model that contains that interaction term rather than around pairwise group comparisons alone. Because everything is Python per the user constraint, PyDESeq2 (installed, v0.5.4) replaces DESeq2 for count modeling. The flow: (1) QC and preprocessing - align the 17-column count matrix (one ID column plus 16 samples) to the 16-row metadata, filter low-count genes, normalize, and check PCA for outliers and structure by genotype/treatment; (2) fit the full factorial model ~ genotype + treatment + genotype:treatment and extract three contrasts: the interaction (drug effect in KO minus drug effect in WT - the direct answer), the drug effect within WT, and the drug effect within KO; (3) cross-check the interaction against alternative model specifications (an additive no-interaction model and genotype-stratified subset models), since with only 4 replicates per cell the interaction estimate rests on a single residual degree-of-freedom structure and conclusions should be shown to be robust to model choice; (4) pathway-level interpretation of the interaction and of the KO-specific drug response using the provisioned human WikiPathways gene sets. All steps run on the two input files only; the only external reference needed is the human pathway GMT, whose absence would cost an annotation layer, not the core answer.",
+          "created_at": "2026-07-10T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "counts.csv columns and metadata.csv rows align 1:1 on sample identifier (16/16), with any mismatch reported and resolved by documented rule",
+                "library-size summary per sample produced; total-count outliers flagged",
+                "low-count gene filter applied with explicit thresholds (e.g. count sum >= 10 across all samples) and the genes-in/genes-out numbers reported",
+                "PCA (vst- or log-transformed) saved as figure and table; PCA1/PC2 loadings checked for genotype or treatment structure and for an outlier sample",
+                "a QC report file written covering all of the above"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "counts.csv is 12000 x 17: one column is a gene identifier, the other 16 are samples - parse the header rather than assuming the layout",
+                "metadata has a 'condition' column that concatenates genotype and treatment - use it only as a cross-check that the factor coding is consistent, and build the design from the separate genotype and treatment columns",
+                "the profile does not state whether Salmon counts had length correction applied; for gene-level count summarization this has minimal effect on DE, but state the assumption in the report"
+              ],
+              "context": "Files: /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/counts/counts.csv (gene-level counts from Salmon, 12000 x 17 - one column is a gene identifier) and /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/metadata/metadata.csv (16 samples x 4 columns: genotype, treatment, condition). Design: WT/KO x vehicle/drug, 4 replicates per cell.",
+              "depends_on": [],
+              "description": "Load /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/counts/counts.csv (12,000 gene rows x 17 columns - one identifier column plus 16 sample columns) and /eval-four-models-v2-without-interaction-python-n4-s1-1/data/inputs/metadata/metadata.csv (16 rows: genotype, treatment, condition). Verify the sample IDs in the count matrix match the metadata 1:1 and resolve any ordering mismatch explicitly. Report library sizes, total counts per sample, and the gene-level count distribution. Filter low-count genes (e.g. keep genes with total count >= 10 across samples, or CPM-based equivalent) and report how many genes survive. Produce a variance-stabilized (or log2 CPM) PCA colored by genotype and treatment plus a sample-distance heatmap to check for outliers and for whether samples separate by genotype, treatment, or both. Save the filtered count matrix and the QC report as step outputs.",
+              "id": "T1S1",
+              "name": "QC and preprocessing of 2x2 factorial counts",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "numpy==2.5.2",
+                "matplotlib==3.11.1",
+                "seaborn==0.13.2"
+              ],
+              "question": "Are the 16 WT/KO x vehicle/drug samples clean and correctly annotated, and what count-matrix shape survives low-count filtering before any differential testing?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "a results table for the interaction contrast (genotype:treatment) with log2FC, Wald statistic, p-value, and BH-adjusted p-value per gene, saved as CSV",
+                "a results table for the drug effect within WT (treatment at genotype=WT) with the same columns, saved as CSV",
+                "a results table for the drug effect within KO (treatment at genotype=KO) with the same columns, saved as CSV",
+                "numerical identity verified and reported: (drug effect in KO) = (drug effect in WT) + (interaction) at the log2FC level, within tolerance",
+                "counts of significant genes per contrast at stated thresholds (e.g. padj < 0.05, |log2FC| > 1), with the number of genes where the interaction is significant written out"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "with 4 replicates per cell the interaction term rests on 12 residual degrees of freedom across the whole model - power is modest, so report effect sizes alongside significance and avoid calling the interaction 'absent' from a nonsignificant p-value alone",
+                "PyDESeq2 result contrasts must be named exactly as the factor levels are coded; a silently flipped contrast reverses the sign of the answer"
+              ],
+              "context": "Same inputs as T1S1; the filtered count matrix from T1S1. 16 samples, ~12,000 genes pre-filter, balanced design. PyDESeq2 is the Python replacement for DESeq2 per the user's Python-only constraint.",
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit PyDESeq2 on the filtered counts with design '~ genotype + treatment + genotype:treatment'. Extract and save three result tables: (a) the interaction contrast (drug effect in KO minus drug effect in WT) - this is the direct quantitative answer to the research question; (b) the drug effect within WT (treatment effect at genotype=WT); (c) the drug effect within KO (treatment effect at genotype=KO). Apply BH multiple-testing correction within each contrast. Verify numerically that the KO drug-effect log2FC equals the WT drug-effect log2FC plus the interaction log2FC, and report the check. Summarize counts of significant genes (padj < 0.05, and a stated LFC threshold) for each contrast. All Python.",
+              "id": "T1S2",
+              "name": "Factorial differential expression with genotype-by-treatment interaction",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "numpy==2.5.2"
+              ],
+              "question": "What genes and how many show a drug response that differs between KO and WT (the genotype:treatment interaction), and what are the drug effects within each genotype?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "results tables from the additive model and the two stratified models saved as CSV alongside the factorial-model tables",
+                "concordance report: Pearson/Spearman correlation of log2FCs (interaction vs difference-of-stratified; drug-effect-within-genotype vs stratified within-genotype) and max absolute differences, over genes tested in both",
+                "a table of genes whose significance calls differ between model specifications at padj < 0.05, with counts",
+                "a short written verdict: is the interaction signal stable across specifications or dependent on model choice",
+                "a volcano plot of the interaction contrast from T1S2 labeling the top interaction genes"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "the additive (no-interaction) model cannot answer the research question - it is fitted only to show how its treatment coefficient misrepresents the drug effect when the interaction is real; keep its role explicit",
+                "stratified fits use fewer samples per comparison (8 vs 8), so their dispersions are estimated differently - differences from the factorial model are expected and should be reported, not silently reconciled"
+              ],
+              "context": "16 samples, ~12,000 genes post-filter. The directory name hints at an evaluation across four model specifications - the factorial-with-interaction model, the additive model, and the two genotype-stratified models are exactly those four; this step makes the comparison explicit rather than implicit.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Refit the data under alternative specifications and compare: (a) an additive model without interaction ('~ genotype + treatment') to show what the interaction term adds and how the common treatment effect it estimates diverges from the genotype-specific effects; (b) two subset models - drug vs vehicle within WT only, and drug vs vehicle within KO only - and test whether (KO drug effect) - (WT drug effect) recomputed from the stratified fits reproduces the factorial interaction log2FCs (correlation, scatter, rank concordance of significant sets). Quantify disagreement: genes significant in one specification but not the other, correlation of log2FCs, and max absolute difference for top genes. Produce a volcano plot for the interaction contrast from T1S2 with top genes labeled. All Python.",
+              "id": "T1S3",
+              "name": "Robustness: factorial model vs additive and genotype-stratified models",
+              "packages": [
+                "pydeseq2==0.5.4",
+                "pandas==3.0.5",
+                "numpy==2.5.2",
+                "scipy==1.16.3",
+                "matplotlib==3.11.1"
+              ],
+              "question": "Is the genotype-by-treatment interaction conclusion stable across model specifications, and does the four-model comparison (factorial, additive, KO-stratified, WT-stratified) agree on which genes carry the differential drug response?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "prerank GSEA run on the interaction contrast statistic; ranked results table with pathway name, NES, p-value, and FDR saved as CSV",
+                "prerank GSEA run on the KO drug-effect contrast statistic, saved as CSV",
+                "pathways significant at FDR < 0.25 reported for each ranking, with the overlap between the two highlighted",
+                "if the human WikiPathways GMT is not resolvable in the reference store, the step reports its absence and writes the ranked inputs so the annotation can be run once the resource is staged; it must not fail the run"
+              ],
+              "agent": "enrichment-agent",
+              "caveats": [
+                "the reference store also carries rat and mouse WikiPathways sets - they must not be used on this human dataset; the human file is the one with HGNC gene symbols",
+                "GMT member identifiers are HGNC symbols; if the count matrix row IDs are not HGNC symbols, map first (e.g. via the provisioned human UniProt id-mapping file) and report the mapping coverage rather than running enrichment on unmapped names",
+                "16 samples and 4-per-cell design give noisy per-gene statistics - treat pathway results as hypothesis-generating and report the leading-edge genes, not just NES"
+              ],
+              "context": "Human dataset (Homo sapiens, heart tissue). Reference available in the environment: human WikiPathways GMT at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt ('%' -delimited descriptor in field 1, HGNC symbols in fields 3+; split field 1 on '%' for the readable set name). gseapy 1.3.1 and blitzgsea 1.3.54 are installed. Human UniProt ID mapping (/mnt/refs/managed/uniprot-idmapping-human/current/HUMAN_9606_idmapping_selected.tab.gz) is available if gene-symbol mapping is needed.",
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run Python-based ranked gene-set enrichment (gseapy prerank, or blitzgsea) against the provisioned human WikiPathways GMT at /mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt. Rank 1: the interaction contrast statistic from T1S2 (the genotype-dependent drug response). Rank 2: the drug effect within KO statistic. Report enriched pathways with NES, nominal p, and FDR for each ranking, and identify pathways whose drug response is altered specifically in the knockout. If the human GMT is absent at run time, report the gap and still save the ranked gene lists so enrichment can be rerun once the reference is provisioned.",
+              "id": "T2S1",
+              "name": "Pathway enrichment of interaction and KO drug-response signatures",
+              "packages": [
+                "gseapy==1.3.1",
+                "pandas==3.0.5",
+                "numpy==2.5.2"
+              ],
+              "question": "Which biological pathways show a drug response that differs between KO and WT, and which pathways does the drug alter specifically in the knockout?",
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "step_type": "analysis",
+              "track": "T2"
+            }
+          ],
+          "title": "Drug-by-genotype interaction DE in heart 2x2 factorial"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 86
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

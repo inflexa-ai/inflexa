@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 5,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly recognizes the Salmon-to-gene import problem and uses tximport with a named tx2gene map, reports unmapped transcripts, and fits a two-group DESeq2 Wald model with BH and apeglm, which suits 6 vs 6 unpaired single-batch. However it chooses lengthScaledTPM rather than the length-offset path through DESeqDataSetFromTximport, writes a count matrix to disk and never says how the non-integer values enter DESeq2 (rounding, DESeqDataSetFromMatrix), does not name the annotation version of the map, and never states size-factor normalization or a specific low-count filter. QC (PCA, distance heatmap, Cook's reporting) is present but library sizes are not mentioned; the reference level is not explicitly set. Enrichment was not requested but is handled reasonably with a stated ranking metric and size window, though the WikiPathways release is unversioned."
+}

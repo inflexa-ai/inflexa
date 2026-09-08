@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 7,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly specifies a blocked DESeq2 design (~subject + condition) with control as the reference level and explicitly rejects an unpaired model, matching the reference. QC includes PCA/sample distances and an outlier check but states no policy for handling an outlier or shallow sample and omits library-size review; the low-count filter is left as an unspecified 'e.g.' with no justified threshold. Normalization is implicit via DESeq2 (raw counts in, no re-normalization), BH-based padj at 0.05 and apeglm/ashr shrinkage are stated. Enrichment was not asked for; the plan adds it with a versioned WikiPathways collection and an explicit tested-gene universe, but the GSEA ranking metric is ambiguous ('statistic or shrunken LFC') and no gene-set size window is given. The report omits package versions, though it does specify design, thresholds, up/down counts, and small-n caveats."
+}

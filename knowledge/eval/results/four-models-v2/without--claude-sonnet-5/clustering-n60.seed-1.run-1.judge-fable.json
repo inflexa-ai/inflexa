@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 7,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 5
+  },
+  "rationale": "The plan correctly frames an unsupervised question with vst on filtered counts, top-variable-gene selection, consensus clustering with 80% sample subsampling over k=2..8 scored by CDF/PAC and per-sample consensus, and ARI/Fisher checks against condition, but it resamples only samples (not genes), sets iterations at >=100 rather than >=1000, never states the clustering algorithm or distance for the consensus step, and omits the null (permuted/simulated) comparison the reference requires to show the structure is not consensus-clustering-on-noise; library size is checked against PCs but not tabulated against the final clusters. QC covers library size, detected genes, PCA and an explicit outlier rule but does not say plots are colored by condition. The low-count filter is reproducible but left as a placeholder. The DESeq2 characterization step gives BH at 0.05 but no design formula, reference level, condition covariate, or LFC shrinkage, and the enrichment step names WikiPathways without version, universe, size window, or ranking metric; the report lists stability values and an explicit null statement but no versions or tested-gene counts."
+}

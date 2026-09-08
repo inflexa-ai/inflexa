@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 6,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly treats the 2x2 as a factorial with ~ condition + time + condition:time in DESeq2, makes the interaction Wald test primary, adds simple effects and an LRT against the additive model, and notes the 8 residual df; time enters as the t0/t1 factor rather than time_hours. QC (VST PCA, distance heatmap, library sizes, explicit outlier flagging) is present but coloring and a shallow-sample policy are not spelled out. The low count filter is only alluded to ('filtered-count summaries') with no threshold or justification, normalization is implicit in DESeq2 rather than stated, no fold change shrinkage (ashr/lfcShrink) is mentioned, and the |log2FC|>1 cutoff is applied post hoc rather than in the test. Enrichment is not strictly warranted but is done defensibly (named WikiPathways version, Wald-stat ranking, full list), lacking a set size window; the report omits package versions and reference level."
+}

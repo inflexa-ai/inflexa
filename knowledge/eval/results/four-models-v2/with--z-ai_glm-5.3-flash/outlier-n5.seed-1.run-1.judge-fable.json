@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on raw counts with median-of-ratios inside the model, an edgeR QL robust-dispersion second fit, explicit ~ condition with control as reference and a named treated-vs-control contrast, a minimal 10-counts-in-5-samples filter, apeglm shrinkage, BH at 0.05, and both with/without sample_03 fits reported with the status-changing genes. QC is thorough (blind vst PCA, distance heatmap, library size, detected genes, colored by condition) and the outlier policy is to keep and down-weight unless a technical cause is found, with the sensitivity refit always run. The one weakness is that the removal criterion is declared 'pre-specified numeric' but no actual number is fixed in the plan (the reference gives an example such as three MADs), so the criterion is nominally present rather than concretely stated. Enrichment is correctly omitted and the report carries versions, design, thresholds, counts, and the length-offset caveat."
+}

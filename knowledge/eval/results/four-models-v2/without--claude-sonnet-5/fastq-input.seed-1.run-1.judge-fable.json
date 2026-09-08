@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 1,
+    "low_count_filter": 0,
+    "normalization": 1,
+    "model_formula_contrasts": 1,
+    "fdr_shrinkage": 0,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 3
+  },
+  "rationale": "The planner reached the reference's correct outcome: it recognized that raw paired-end FASTQ cannot be tested by DESeq2, refused to invent a count matrix, named the appropriate quantifiers (Salmon, kallisto, STAR/featureCounts), identified the staged reference (GRCh38, GENCODE v50), and asked whether a count table or quant output exists elsewhere. That earns strong credit on fitting the data state. However, it did not sketch the downstream plan once counts arrive (DESeq2/edgeR, ~condition with control as reference, BH at 0.05, LFC shrinkage, minimal count filter, PCA/library-size QC, low-power caveat for 3 vs 3), so the QC, filtering, normalization, contrast, and FDR criteria have nothing stated to score. Enrichment is correctly absent since it is not warranted at this stage; the report criterion gets partial credit for clearly documenting tool availability, reference versions, and the blocking issue."
+}

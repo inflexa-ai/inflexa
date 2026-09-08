@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "DESeq2 Wald on ~condition with an explicit vehicle reference, median-of-ratios inside the model, a justified 10-in-6 filter, BH at 0.05 with apeglm for the reported fold change, and decoupleR ulm on the Wald stat against CollecTRI with mode of regulation and a size-5 floor all match the reference. QC covers PCA, distances, and library sizes colored by condition, but the outlier policy stops at 'flag' with no stated action. The TF step never states BH across regulators or a CollecTRI version, and omits the per-sample activity matrix with limma that checks replicate consistency; the added Hallmark fgsea is unrequested scope, though correctly specified. The report is otherwise thorough on design, thresholds, counts, and caveats."
+}

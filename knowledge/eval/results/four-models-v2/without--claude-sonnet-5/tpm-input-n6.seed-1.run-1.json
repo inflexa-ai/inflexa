@@ -1,0 +1,734 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:19:39.968Z",
+  "elapsedMs": 147846,
+  "outcome": "plan_submitted",
+  "planId": "pln-5dd0e352",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and log-TPM normalization diagnostics",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "Only TPM is available — no raw counts or quantification directories, so this is not a standard count-based QC (no library-size/mapping-rate diagnostics are possible)",
+          "n=6 per group is small; PCA outlier calls should be reported as observations, not used to silently exclude samples without justification"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scikit-learn",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Given the 12000 x 12 gene-level TPM table (6 psoriasis lesional vs 6 control skin samples, single batch, unpaired), are the samples comparable after log2 transformation — do PCA/hierarchical clustering separate lesional from control, are there outlier samples, and how many genes pass a minimum-expression filter?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "log2(TPM+1) matrix produced for all 12 samples with the metadata condition column joined and verified to match sample order",
+          "PCA and/or hierarchical clustering plot generated showing lesional vs control separation",
+          "A per-gene expression filter (e.g. median log2TPM or proportion of samples with TPM > 1) is applied and reports how many of the 12000 genes are retained",
+          "Any outlier sample or batch anomaly is flagged explicitly, not silently dropped"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-trend differential expression, lesional vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "1",
+        "status": "pending",
+        "caveats": [
+          "TPM-derived DE lacks the count-based mean-variance modeling of DESeq2/edgeR/voom; effect-size (logFC) and significance estimates are more approximate, especially for lowly-expressed genes — state this limitation in the output",
+          "n=6 vs 6 is a small, unpaired, single-batch design — no batch correction is applicable, but statistical power is limited and results should not be overclaimed",
+          "Do not attempt to reconstruct counts from TPM; do not run DESeq2/edgeR on TPM values as if they were counts"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Which genes are differentially expressed between psoriasis lesional and control skin samples in the 12000-gene TPM table, using a method valid for expression-only (non-count) input?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "log2(TPM+1) matrix (from T1S1, post-filter) modeled with limma: model.matrix on the condition column (lesional vs control), lmFit, then eBayes(trend=TRUE) — NOT voom (voom requires raw counts) and NOT DESeq2/edgeR count-based GLMs",
+          "topTable output reports logFC, moderated t, raw P.Value and BH-adjusted adj.P.Val for every retained gene",
+          "Full results table (all tested genes, not just significant ones) saved with gene symbols preserved",
+          "Report explicitly states this is a limma-trend analysis on TPM-derived log-expression, not a count-based test, and that this is a methodological compromise forced by the missing raw counts",
+          "A volcano plot and top-N (e.g. 25-50) gene table highlighting adj.P.Val < 0.05 and |logFC| thresholds are produced"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of the lesional vs control DE gene list",
+        "agent": "enrichment-agent",
+        "track": "2",
+        "status": "pending",
+        "caveats": [
+          "Gene symbols in the TPM table must be matched exactly (case, aliasing) against GMT gene symbols; unmatched genes should be reported as a count, not silently dropped without note"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler"
+        ],
+        "question": "Which WikiPathways and MSigDB Hallmark pathways are enriched among genes differentially expressed between psoriasis lesional and control skin (from the limma-trend result in T1S2)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Enrichment run on the significant gene list (e.g. adj.P.Val < 0.05) split by direction (up in lesional, up in control) and/or as a ranked list (by moderated t or logFC) using GSEA-style pre-ranked testing",
+          "Uses the WikiPathways human GMT and the MSigDB Hallmark human GMT staged in the environment, matched on HGNC gene symbols consistent with the TPM table's gene-symbol identifiers",
+          "Reports enriched pathway name, gene set size, NES/enrichment score, and adjusted P-value for both resources",
+          "If either GMT resource is unexpectedly absent at run time, the step reports that gap rather than fabricating pathway results"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Transcription-factor activity inference from log-TPM expression",
+        "agent": "network-agent",
+        "track": "3",
+        "status": "pending",
+        "caveats": [
+          "TF activity scores are inferred, not measured directly — they reflect target-gene expression patterns filtered through the regulon, not TF protein activity or phosphorylation state",
+          "With n=6 vs 6, per-TF group comparisons have limited power; treat results as hypothesis-generating"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Which transcription factors show differential inferred activity between psoriasis lesional and control skin samples, based on the log-TPM expression matrix and a curated human TF-target regulon?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "network_analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses the CollecTRI human TF-target regulatory network (source/target/weight) staged in the environment as the prior network",
+          "Runs decoupler's univariate linear model (ULM) method on the log2(TPM+1) matrix (from T1S1) per sample to produce a sample x TF activity score matrix",
+          "Compares TF activity scores between lesional and control groups (e.g. Wilcoxon or t-test per TF) and reports adjusted P-values",
+          "Top differentially active TFs are reported by name with direction of activity change",
+          "If the CollecTRI network is unexpectedly absent at run time, the step reports that gap rather than fabricating TF results"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control DE from TPM-only bulk RNA-seq",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The core delivered only a gene-level TPM table (12000 genes x 12 samples, 6 lesional vs 6 control, unpaired, single batch) with no raw counts and no quantification directories, so count-based tools (DESeq2, edgeR's exact/GLM tests, standard voom which needs a DGEList of counts) cannot be run in their normal form — voom's mean-variance trend is fit against counts, and DESeq2 requires integer counts for its negative-binomial GLM. The standard, literature-grounded way to run differential expression directly on a TPM/expression-only matrix is limma with the 'limma-trend' variant: log2-transform the TPM values (with a small pseudocount), fit a linear model with lmFit, and call eBayes(trend=TRUE) so the empirical Bayes moderation absorbs the mean-variance relationship from the log-expression values themselves rather than from library-size-derived precision weights (Law et al. 2014, Genome Biology, the paper that established the limma/voom precision-weighting framework this trend variant is derived from; documented directly in the Bioconductor GSVA/limma vignettes surfaced in this environment). This avoids the two things TPM-only data cannot support: raw count-based dispersion estimation and voom's count-derived weights. Track 1 does QC/normalization-diagnostics then the limma-trend DE test, track 2 takes the resulting gene list into pathway enrichment (WikiPathways human, MSigDB Hallmark human) grounded in HGNC symbols matching the TPM table's gene-symbol rows, track 3 layers a TF-activity readout (CollecTRI human regulon, decoupler ULM) on the same log-TPM matrix to give a mechanistic, transcription-factor-level view of what is driving the lesional signature, complementing the single-gene DE list. All three tracks operate on the same 12-sample TPM table; no step invents count data or pretends TPM can be converted back to counts."
+  },
+  "usage": {
+    "inputTokens": 2567606,
+    "outputTokens": 6974,
+    "cacheCreationInputTokens": 173871,
+    "cacheReadInputTokens": 2393267,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_017sFJxx3D6EvSVUMJrz8vs4",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 31
+    },
+    {
+      "toolUseId": "toolu_01Ank78pqxDKe6p5C6gEpzhn",
+      "name": "list_available_refs",
+      "input": {
+        "query": "psoriasis skin signature reference expression"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01KQ3pgdVo1MGDuivzXjiqvr",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "differential expression TPM only no raw counts limma voom RNA-seq without counts",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 489
+    },
+    {
+      "toolUseId": "toolu_01FspVcQ4BKjPdT6bTAZXx9r",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma TPM log transform differential expression without raw counts",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 455
+    },
+    {
+      "toolUseId": "toolu_01P23PExw149gm5LyhfN4pcX",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression analysis without raw read counts TPM limma",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 446
+    },
+    {
+      "toolUseId": "toolu_011EbSvSQoSdSf4gToWJmExS",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "psoriasis lesional skin gene expression signature RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 949
+    },
+    {
+      "toolUseId": "toolu_01DfVKo5VXnuwWPAabmEi6rk",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_0183FG7DxQYhpJMWfGhYSPV8",
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01AKbA7WfxENuC8nVdWQ5g2V",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_01ULtSAsN32M73oYasGGAyWQ",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "limma",
+          "edgeR",
+          "DESeq2",
+          "rnanorm"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01Fu9FkioC9fidXvMqtKKmUn",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma-trend log2 TPM RNA-seq differential expression precision weights",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 482
+    },
+    {
+      "toolUseId": "toolu_019FK4cFKV3hA3ztnvm7GX7A",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma trend eBayes microarray-like RNA-seq expression values without counts",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 463
+    },
+    {
+      "toolUseId": "toolu_01JqdoPGTcZp4DfWdRuiNu4q",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Law limma voom precision weights RNA-seq",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 645
+    },
+    {
+      "toolUseId": "toolu_01EysWQ4rCnmgzapKCXSb6sr",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "24485249"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 473
+    },
+    {
+      "toolUseId": "toolu_016GMybKdheCW69bAiouhpeE",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend TPM without raw counts differential expression precision-weighted linear model",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 362
+    },
+    {
+      "toolUseId": "toolu_01SimogRd7DPka96Jvv4LpiU",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma-trend analysis of sequencing count data using the trend option no voom",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9343
+    },
+    {
+      "toolUseId": "toolu_01Aqi42xWqzhNpTjZi8NBrDV",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "limma trend RNA-seq differential expression without voom log-CPM eBayes trend=TRUE",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 457
+    },
+    {
+      "toolUseId": "toolu_01VTPADNyXvq2bve8NUdkczo",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Law Chen Smyth RNA-seq gene expression analysis guide edgeR limma workflow",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 247
+    },
+    {
+      "toolUseId": "toolu_01LyDCzGPY77oXbvhsVQzyji",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression pipeline edgeR limma glimma workflow bioconductor F1000",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 473
+    },
+    {
+      "toolUseId": "toolu_01LTsw8jNT6yaT8Fni7QysdC",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq experiments read alignment differential expression using limma Glimma edgeR",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 454
+    },
+    {
+      "toolUseId": "toolu_019ZuSmB8RQpXaH6AyNx25Qs",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "RNA-seq differential expression tutorial limma Glimma edgeR workflow",
+        "maxResults": 5
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01Gx2Wh4rQMvi3xF6Zgc5Tgg",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend method for RNA-seq gene expression differential analysis without count-based model",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9313
+    },
+    {
+      "toolUseId": "toolu_01PoHpeuyjnzw4qWYcQ6Gt4j",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "limma trend RNA-seq expression",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9401
+    },
+    {
+      "toolUseId": "toolu_01F68aHfrrYeMgTqqUoLJS24",
+      "name": "search_arxiv",
+      "input": {
+        "query": "limma trend differential expression TPM RNA-seq without raw counts",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 725
+    },
+    {
+      "toolUseId": "toolu_015vW8Vt7t9vxyR6hYfr5CEz",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "TF activity CollecTRI ulm placeholder"
+      },
+      "outcome": "ok",
+      "durationMs": 839
+    },
+    {
+      "toolUseId": "toolu_01AYV1YrK4At3e1sxxL9yfkP",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "limma",
+        "query": "limma-trend eBayes trend=TRUE for log-expression data without counts"
+      },
+      "outcome": "ok",
+      "durationMs": 566
+    },
+    {
+      "toolUseId": "toolu_0137MvUUverKYA9g1RBjsR4H",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "limma bioconductor",
+        "query": "limma-trend eBayes trend=TRUE for log-expression data without counts"
+      },
+      "outcome": "ok",
+      "durationMs": 330
+    },
+    {
+      "toolUseId": "toolu_01M3niqSuViGk6HV9hrW8GHE",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/websites/bioconductor_packages_release_bioc",
+        "query": "limma eBayes trend=TRUE lmFit log2 expression matrix without counts trend method"
+      },
+      "outcome": "ok",
+      "durationMs": 1011
+    },
+    {
+      "toolUseId": "toolu_01Q5x7UK8EiAhkQ7d4meSvVw",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "tidybulk",
+          "quantiseqr",
+          "immunedeconv",
+          "xCell",
+          "ConsensusTME",
+          "MCPcounter"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01Vtiahyb7Y2sjzSxZK7KzYY",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupleR",
+          "decoupler",
+          "fgsea",
+          "GSVA",
+          "clusterProfiler"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01RJdKxLXLiigPRf2zKKLwEU",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human ensembl symbol"
+      },
+      "outcome": "ok",
+      "durationMs": 27
+    },
+    {
+      "toolUseId": "toolu_0168Ks1v7cTtvLuTVfavUHde",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_019dGVyyCrfyWUb5Nvip5Hfv",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01FmaQSqR6m2CGrsWmw6eQA6",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human"
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_017x6s8YR9gxcGXLfjgyHApp",
+      "name": "list_available_refs",
+      "input": {
+        "path": "managed/uniprot-idmapping-human/current"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01LxhyEMNctZ7Ni9yrEvyDd2",
+      "name": "list_available_refs",
+      "input": {
+        "query": "STRING"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01PEDH3YTuwtffAcoJoKDWso",
+      "name": "list_available_refs",
+      "input": {
+        "query": "normal expression skin GTEx"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "toolu_01TV6sJPpxYmGk6AH1fB4e1V",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      },
+      "outcome": "error",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01UkCKzTuYv7kxpKJZR8CAFf",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ComplexHeatmap",
+          "EnhancedVolcano",
+          "pheatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 16
+    },
+    {
+      "toolUseId": "toolu_01BddgtYrGTD95duoka8nDtu",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "quantiseqr",
+          "ComplexHeatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_016RFFZceNq9tRn8evZLvJoS",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "ggrepel",
+          "dplyr",
+          "tidyr"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_013gU5quGjR4N3vprckKQHdp",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control DE from TPM-only bulk RNA-seq",
+          "analytical_narrative": "The core delivered only a gene-level TPM table (12000 genes x 12 samples, 6 lesional vs 6 control, unpaired, single batch) with no raw counts and no quantification directories, so count-based tools (DESeq2, edgeR's exact/GLM tests, standard voom which needs a DGEList of counts) cannot be run in their normal form — voom's mean-variance trend is fit against counts, and DESeq2 requires integer counts for its negative-binomial GLM. The standard, literature-grounded way to run differential expression directly on a TPM/expression-only matrix is limma with the 'limma-trend' variant: log2-transform the TPM values (with a small pseudocount), fit a linear model with lmFit, and call eBayes(trend=TRUE) so the empirical Bayes moderation absorbs the mean-variance relationship from the log-expression values themselves rather than from library-size-derived precision weights (Law et al. 2014, Genome Biology, the paper that established the limma/voom precision-weighting framework this trend variant is derived from; documented directly in the Bioconductor GSVA/limma vignettes surfaced in this environment). This avoids the two things TPM-only data cannot support: raw count-based dispersion estimation and voom's count-derived weights. Track 1 does QC/normalization-diagnostics then the limma-trend DE test, track 2 takes the resulting gene list into pathway enrichment (WikiPathways human, MSigDB Hallmark human) grounded in HGNC symbols matching the TPM table's gene-symbol rows, track 3 layers a TF-activity readout (CollecTRI human regulon, decoupler ULM) on the same log-TPM matrix to give a mechanistic, transcription-factor-level view of what is driving the lesional signature, complementing the single-gene DE list. All three tracks operate on the same 12-sample TPM table; no step invents count data or pretends TPM can be converted back to counts.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and log-TPM normalization diagnostics",
+              "track": "1",
+              "step_type": "qc",
+              "question": "Given the 12000 x 12 gene-level TPM table (6 psoriasis lesional vs 6 control skin samples, single batch, unpaired), are the samples comparable after log2 transformation — do PCA/hierarchical clustering separate lesional from control, are there outlier samples, and how many genes pass a minimum-expression filter?",
+              "acceptance_criteria": [
+                "log2(TPM+1) matrix produced for all 12 samples with the metadata condition column joined and verified to match sample order",
+                "PCA and/or hierarchical clustering plot generated showing lesional vs control separation",
+                "A per-gene expression filter (e.g. median log2TPM or proportion of samples with TPM > 1) is applied and reports how many of the 12000 genes are retained",
+                "Any outlier sample or batch anomaly is flagged explicitly, not silently dropped"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scikit-learn",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "Only TPM is available — no raw counts or quantification directories, so this is not a standard count-based QC (no library-size/mapping-rate diagnostics are possible)",
+                "n=6 per group is small; PCA outlier calls should be reported as observations, not used to silently exclude samples without justification"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-trend differential expression, lesional vs control",
+              "track": "1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between psoriasis lesional and control skin samples in the 12000-gene TPM table, using a method valid for expression-only (non-count) input?",
+              "acceptance_criteria": [
+                "log2(TPM+1) matrix (from T1S1, post-filter) modeled with limma: model.matrix on the condition column (lesional vs control), lmFit, then eBayes(trend=TRUE) — NOT voom (voom requires raw counts) and NOT DESeq2/edgeR count-based GLMs",
+                "topTable output reports logFC, moderated t, raw P.Value and BH-adjusted adj.P.Val for every retained gene",
+                "Full results table (all tested genes, not just significant ones) saved with gene symbols preserved",
+                "Report explicitly states this is a limma-trend analysis on TPM-derived log-expression, not a count-based test, and that this is a methodological compromise forced by the missing raw counts",
+                "A volcano plot and top-N (e.g. 25-50) gene table highlighting adj.P.Val < 0.05 and |logFC| thresholds are produced"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "TPM-derived DE lacks the count-based mean-variance modeling of DESeq2/edgeR/voom; effect-size (logFC) and significance estimates are more approximate, especially for lowly-expressed genes — state this limitation in the output",
+                "n=6 vs 6 is a small, unpaired, single-batch design — no batch correction is applicable, but statistical power is limited and results should not be overclaimed",
+                "Do not attempt to reconstruct counts from TPM; do not run DESeq2/edgeR on TPM values as if they were counts"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of the lesional vs control DE gene list",
+              "track": "2",
+              "step_type": "enrichment",
+              "question": "Which WikiPathways and MSigDB Hallmark pathways are enriched among genes differentially expressed between psoriasis lesional and control skin (from the limma-trend result in T1S2)?",
+              "acceptance_criteria": [
+                "Enrichment run on the significant gene list (e.g. adj.P.Val < 0.05) split by direction (up in lesional, up in control) and/or as a ranked list (by moderated t or logFC) using GSEA-style pre-ranked testing",
+                "Uses the WikiPathways human GMT and the MSigDB Hallmark human GMT staged in the environment, matched on HGNC gene symbols consistent with the TPM table's gene-symbol identifiers",
+                "Reports enriched pathway name, gene set size, NES/enrichment score, and adjusted P-value for both resources",
+                "If either GMT resource is unexpectedly absent at run time, the step reports that gap rather than fabricating pathway results"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "caveats": [
+                "Gene symbols in the TPM table must be matched exactly (case, aliasing) against GMT gene symbols; unmatched genes should be reported as a count, not silently dropped without note"
+              ]
+            },
+            {
+              "id": "T3S1",
+              "name": "Transcription-factor activity inference from log-TPM expression",
+              "track": "3",
+              "step_type": "network_analysis",
+              "question": "Which transcription factors show differential inferred activity between psoriasis lesional and control skin samples, based on the log-TPM expression matrix and a curated human TF-target regulon?",
+              "acceptance_criteria": [
+                "Uses the CollecTRI human TF-target regulatory network (source/target/weight) staged in the environment as the prior network",
+                "Runs decoupler's univariate linear model (ULM) method on the log2(TPM+1) matrix (from T1S1) per sample to produce a sample x TF activity score matrix",
+                "Compares TF activity scores between lesional and control groups (e.g. Wilcoxon or t-test per TF) and reports adjusted P-values",
+                "Top differentially active TFs are reported by name with direction of activity change",
+                "If the CollecTRI network is unexpectedly absent at run time, the step reports that gap rather than fabricating TF results"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent",
+              "caveats": [
+                "TF activity scores are inferred, not measured directly — they reflect target-gene expression patterns filtered through the regulon, not TF protein activity or phosphorylation state",
+                "With n=6 vs 6, per-TF group comparisons have limited power; treat results as hypothesis-generating"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 60
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

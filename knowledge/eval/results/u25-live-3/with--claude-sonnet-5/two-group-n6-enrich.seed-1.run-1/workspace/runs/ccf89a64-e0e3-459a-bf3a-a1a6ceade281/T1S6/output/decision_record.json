@@ -1,0 +1,152 @@
+{
+  "schema": "inflexa.decision_record/0.1",
+  "template": {
+    "id": "tpl-annotation-map",
+    "version": "1.0.0",
+    "label": "Gene identifier annotation with AnnotationDbi and the organism package, offline: symbol, Entrez, and Ensembl in one table",
+    "method": {
+      "id": "M-0057",
+      "label": "Gene identifier annotation with the organism package and the reference store tables"
+    }
+  },
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "rendered_at": "2026-09-07T17:00:52.271Z",
+  "slots": [
+    {
+      "name": "matrix_path",
+      "value": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/data/inputs/local/counts.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        22
+      ]
+    },
+    {
+      "name": "gene_column",
+      "value": "gene",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        23
+      ]
+    },
+    {
+      "name": "organism",
+      "value": "human",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        24
+      ]
+    },
+    {
+      "name": "input_space",
+      "value": "symbol",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        25
+      ]
+    },
+    {
+      "name": "strip_ensembl_version",
+      "value": true,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        26
+      ]
+    },
+    {
+      "name": "alias_fallback",
+      "value": true,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        27
+      ]
+    },
+    {
+      "name": "multi_map_rule",
+      "value": "first",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        28
+      ]
+    },
+    {
+      "name": "output_prefix",
+      "value": "annotation",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        29
+      ]
+    }
+  ],
+  "environment": {
+    "match": "exact",
+    "pins": [
+      {
+        "name": "AnnotationDbi",
+        "track": "bioconductor",
+        "version": "1.74.0",
+        "farm": "1.74.0",
+        "status": "exact"
+      },
+      {
+        "name": "org.Hs.eg.db",
+        "track": "bioconductor",
+        "version": "3.23.1",
+        "farm": "3.23.1",
+        "status": "exact"
+      },
+      {
+        "name": "org.Mm.eg.db",
+        "track": "bioconductor",
+        "version": "3.23.0",
+        "farm": "3.23.0",
+        "status": "exact"
+      },
+      {
+        "name": "ggplot2",
+        "track": "cran",
+        "version": "4.0.3",
+        "farm": "4.0.3",
+        "status": "exact"
+      },
+      {
+        "name": "jsonlite",
+        "track": "cran",
+        "version": "2.0.0",
+        "farm": "2.0.0",
+        "status": "exact"
+      }
+    ]
+  },
+  "syntax": {
+    "status": "ok"
+  },
+  "citations": [
+    {
+      "doi": "10.1038/nprot.2009.97",
+      "title": "Mapping identifiers for the integration of genomic datasets with the R/Bioconductor package biomaRt",
+      "year": 2009,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1016/j.xinn.2021.100141",
+      "title": "clusterProfiler 4.0: A universal enrichment tool for interpreting omics data",
+      "year": 2021,
+      "direction": "supports"
+    }
+  ],
+  "unvetted_edits": [],
+  "script_path": "/eval-u25-live-3-with-two-group-n6-enrich-s1-1/runs/ccf89a64-e0e3-459a-bf3a-a1a6ceade281/T1S6/scripts/tpl-annotation-map.R",
+  "bound_slots": [],
+  "settings_overrides": []
+}

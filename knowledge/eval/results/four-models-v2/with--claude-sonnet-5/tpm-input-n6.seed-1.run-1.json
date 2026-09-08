@@ -1,0 +1,1431 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-sonnet-5",
+  "task": "tpm-input-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T19:03:32.901Z",
+  "elapsedMs": 92707,
+  "outcome": "plan_submitted",
+  "planId": "pln-d847e71c",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC on log2(TPM+1)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Only a TPM table was delivered — QC cannot detect library-prep or quantification artifacts visible only in raw counts"
+        ],
+        "context": "Input is /eval-four-models-v2-with-tpm-input-n6-s1-1/data/inputs/abundance/tpm.csv (12000 genes x 12 samples, gene symbol first column) and metadata.csv (12 samples x condition). No raw counts exist so the standard count-based VST/rlog QC does not apply.",
+        "maxSteps": 200,
+        "packages": [
+          "limma"
+        ],
+        "question": "Do the 6 lesional and 6 control skin samples separate by condition on log-transformed TPM values, and are there outlier samples or unexpected structure before fitting the DE model?",
+        "grounding": {
+          "claims": [
+            "R-0071@e4e2"
+          ],
+          "reason": "TPM input: sample structure QC on log2(TPM+1) values with PCA and sample distances, per R-0071@e4e2",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "log2_plus_1_unless_already_log",
+              "source": "guide:limma/2026-05-19#data-exploration"
+            },
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-log-abundance@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc_sample_structure",
+        "depends_on": [],
+        "constraints": [
+          "Transform TPM to log2(TPM+1) before any QC; do not apply a count-model variance-stabilizing transform",
+          "Use n_top_genes=500 for the PCA/MDS ordination"
+        ],
+        "acceptance_criteria": [
+          "PCA or MDS plot on log2(TPM+1) values (top 500 most variable genes) colored by condition (lesional vs control) is produced",
+          "A sample-distance heatmap and a count of genes detected per sample are reported",
+          "Any sample failing to cluster with its labeled condition is flagged explicitly in the output"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "limma-trend differential expression, Lesional vs Control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "TPM values are not comparable across sequencing protocols; if any batch/protocol difference is found in T1S1 QC it must be reported as a caveat on these results",
+          "No raw counts means no count-based dispersion model or independent filtering by mean count is possible; the abundance floor substitutes for it"
+        ],
+        "context": "6 lesional vs 6 control, unpaired, single batch, gene-level TPM from Salmon with no raw counts or quant files. Count models (DESeq2/edgeR/voom) are inapplicable to TPM data.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "matrixStats"
+        ],
+        "question": "Which genes are differentially expressed between psoriasis lesional and control skin samples in this 6-vs-6 TPM dataset?",
+        "grounding": {
+          "claims": [
+            "R-0072@881a",
+            "R-0073@8b36",
+            "R-0036@9786",
+            "R-0093@4fa4",
+            "R-0004@a06d",
+            "R-0037@e6d8",
+            "R-0043@4f55",
+            "R-0044@1777"
+          ],
+          "reason": "TPM input forbids count models (DESeq2/edgeR/voom); limma-trend eBayes robust=TRUE on log2(TPM+1) per R-0004@a06d and R-0093@4fa4",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "min_abundance_tpm",
+              "step": "filter_low_counts",
+              "value": 1,
+              "source": "rule:R-0072"
+            },
+            {
+              "name": "min_samples",
+              "step": "filter_low_counts",
+              "value": "smallest_group_size",
+              "source": "guide:limma/2026-05-19#filtering"
+            },
+            {
+              "name": "normalization",
+              "step": "normalize",
+              "value": "log2_plus_1_only",
+              "source": "rule:R-0073"
+            },
+            {
+              "name": "reference_level",
+              "step": "model_design",
+              "value": "explicit",
+              "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+            },
+            {
+              "name": "contrast_form",
+              "step": "model_design",
+              "value": "factor_numerator_denominator",
+              "source": "vignette:DESeq2/1.52.0#contrasts"
+            },
+            {
+              "name": "robust",
+              "step": "differential_expression",
+              "value": true,
+              "source": "doi:10.1214/16-AOAS920"
+            },
+            {
+              "name": "trend",
+              "step": "differential_expression",
+              "value": true,
+              "source": "guide:limma/2026-05-19#limma-trend"
+            },
+            {
+              "name": "adjustment",
+              "step": "multiple_testing",
+              "value": "BH",
+              "source": "guide:limma/2026-05-19#statistics-for-differential-expression"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-limma-trend-logvalues@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: min_abundance_tpm=1, min_samples=6 (smallest group size)",
+          "normalize: log2(value+1) only, no TMM/size-factor normalization",
+          "model_design: reference_level=Control set explicitly; contrast named factor,numerator=Lesional,denominator=Control",
+          "differential_expression: limma eBayes robust=TRUE, trend=TRUE",
+          "multiple_testing: BH adjustment via topTable adjust.method='BH', select by adj.P.Val<0.05"
+        ],
+        "acceptance_criteria": [
+          "Genes are filtered to >=1 TPM in at least 6 samples (the smaller group size) before modeling; number of genes retained is reported",
+          "Retained genes are log2(TPM+1) transformed with no count-based normalization applied",
+          "limma design matrix sets Control as the explicit reference level; contrast is named Lesional-Control",
+          "eBayes is run with robust=TRUE and trend=TRUE",
+          "topTable results are filtered by BH-adjusted p-value < 0.05 (not by unadjusted p-value or fold change alone); number tested and number significant are both reported",
+          "Full results table (gene, logFC, AveExpr, t, P.Value, adj.P.Val) is saved"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Pathway enrichment of psoriasis lesional-vs-control DE genes",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Enrichment results are method- and threshold-dependent; report as hypotheses for follow-up, not as proven biology",
+          "KEGG legacy sets are not available in this environment; only the MSigDB KEGG MEDICUS redistributable subset exists if needed as a substitute — not included here since Hallmark/Reactome/WikiPathways/GO already give a broad functional read"
+        ],
+        "context": "Input is the limma topTable results from T1S2 (Lesional vs Control contrast, Control as reference). Reference gene sets available in the environment: MSigDB human Hallmark (h.all.v2026.1.Hs.symbols.gmt, 50 sets), Reactome pathways (ReactomePathways.gmt, current release), WikiPathways human (wikipathways_Homo_sapiens.gmt, 2026.07.10), and MSigDB human GO Biological Process (c5.go.bp.v2026.1.Hs.symbols.gmt, 7538 sets). org.Hs.eg.db (v3.23.1) is available for symbol-to-Entrez ID mapping.",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "org.Hs.eg.db",
+          "rrvgo",
+          "fgsea"
+        ],
+        "question": "Which biological pathways and processes are over-represented among the genes differentially expressed between lesional and control skin (Hallmark, Reactome, WikiPathways, GO Biological Process)?",
+        "grounding": {
+          "claims": [
+            "R-0095@492a",
+            "R-0098@d01b",
+            "R-0165@e456",
+            "R-0107@976c",
+            "R-0048@500d",
+            "R-0097@a38e",
+            "R-0101@06c8",
+            "R-0103@93aa",
+            "R-0109@fe3e",
+            "R-0108@409f",
+            "R-0045@be9e",
+            "R-0046@a0ac",
+            "R-0047@fd9d",
+            "R-0052@620a"
+          ],
+          "reason": "Discrete DE gene list from limma: GO ORA with rrvgo reduction plus Hallmark/Reactome/WikiPathways ORA using tested genes as universe, per R-0095@492a and R-0048@500d; fallback to fgsea if significant list is short per R-0103@93aa",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "go_ontology",
+              "step": "enrichment",
+              "value": "BP",
+              "source": "doi:10.1016/j.xinn.2021.100141"
+            },
+            {
+              "name": "go_term_reduction",
+              "step": "enrichment",
+              "value": "rrvgo_semantic_similarity",
+              "source": "doi:10.17912/micropub.biology.000811"
+            },
+            {
+              "name": "min_size",
+              "step": "enrichment",
+              "value": 15,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "max_size",
+              "step": "enrichment",
+              "value": 500,
+              "source": "doi:10.1073/pnas.0506580102"
+            },
+            {
+              "name": "id_mapping",
+              "step": "enrichment",
+              "value": "to_entrez_with_orgdb",
+              "source": "doi:10.1016/j.xinn.2021.100141"
+            },
+            {
+              "name": "ora_min_significant_genes",
+              "step": "enrichment",
+              "value": 50,
+              "source": "doi:10.3389/fgene.2020.00654"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-ora-go@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "enrichment: universe = tested genes from T1S2, never the whole genome",
+          "enrichment: min_size=15, max_size=500 after universe intersection",
+          "enrichment: go_ontology=BP with rrvgo semantic-similarity term reduction",
+          "enrichment: collapse_redundant=true across overlapping significant sets, full table kept as supplement",
+          "enrichment: if <50 significant DE genes, switch to fgsea preranked GSEA on the full ranked list (ranking statistic: limma moderated t-statistic) against Hallmark, and state this explicitly rather than silently substituting",
+          "enrichment: id_mapping via org.Hs.eg.db to Entrez; report unmapped share",
+          "enrichment: state collection name and version for each of Hallmark, Reactome, WikiPathways, GO BP"
+        ],
+        "acceptance_criteria": [
+          "Gene symbols are mapped to Entrez IDs via org.Hs.eg.db; the fraction unmapped is reported",
+          "Over-representation analysis (enrichGO, and a generic hypergeometric ORA for Hallmark/Reactome/WikiPathways) uses the full set of genes tested in T1S2 as the universe, not the whole genome",
+          "Gene sets are restricted to 15-500 members after intersecting with the universe",
+          "GO Biological Process results are reduced to representative terms via rrvgo semantic similarity, keeping the full table as a supplement",
+          "If fewer than ~50 genes pass the adj.P.Val<0.05 threshold from T1S2, the step instead runs fgsea preranked GSEA on the full ranked gene list (ranked by the limma moderated t-statistic) against the Hallmark collection, and states this substitution explicitly",
+          "Each gene-set collection and its version/release is named in the output (MSigDB 2026.1 Hallmark, Reactome current release, WikiPathways human 2026.07.10)",
+          "Up- and down-regulated genes are tested as separate lists (or the pooling choice and its rationale is stated) per the direction-handling requirement"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Final report: DE and enrichment summary",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "State plainly that the TPM-only nature of the delivered data (no raw counts, no quant files) is a limitation on the DE model choice and precludes any count-based reanalysis"
+        ],
+        "context": "Consolidates T1S1 QC, T1S2 DE results, and T2S1 enrichment results into one report for the psoriasis lesional-vs-control skin comparison.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "What is the consolidated, reproducible summary of the lesional-vs-control differential expression and pathway enrichment findings, and what are the caveats of an analysis run on TPM-only input?",
+        "grounding": {
+          "claims": [
+            "R-0041@059a",
+            "R-0086@becf"
+          ],
+          "reason": "no rule covers report synthesis step itself; reporting fields per R-0041@059a and R-0086@becf",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "report_fields",
+              "step": "report",
+              "value": [
+                "method",
+                "versions",
+                "design",
+                "thresholds",
+                "n_tested",
+                "n_de",
+                "session_info"
+              ],
+              "source": "doi:10.1093/bib/bbz124"
+            },
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T2S1"
+        ],
+        "constraints": [
+          "report: include method, versions, design, thresholds, n_tested, n_de, session_info",
+          "report: include reproducibility record (session_info, seed, package_versions, collection_version, annotation_release)"
+        ],
+        "acceptance_criteria": [
+          "Report states the method (limma-trend), package versions, design (6 lesional vs 6 control, unpaired, single batch), the contrast and reference level, the significance thresholds, the number of genes tested and the number found DE",
+          "Report states each enrichment database and its version, the ranking metric or list used, the universe, and the gene-set size window",
+          "Report includes a full reproducibility record: sessionInfo, package versions, gene-set collection versions, and any random seed used",
+          "Report explicitly states the caveat that only a TPM table was delivered (no raw counts, no quantification files), so no count-based model or independent filtering by count was possible"
+        ]
+      }
+    ],
+    "title": "Psoriasis lesional vs control DE from TPM (limma-trend)",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The core delivered only a gene-level Salmon TPM table (12000 genes x 12 samples) and a metadata table for a 6 lesional vs 6 control, unpaired, single-batch design in human skin — no raw counts or quantification files exist, which rules out any count-based model (DESeq2/edgeR/voom). Per the grounded procedure for TPM/FPKM input, the plan: (1) QC's sample structure on log2(TPM+1) values via PCA/MDS and a sample-distance heatmap to check the lesional/control samples separate and to flag any outlier before modeling; (2) filters low-abundance genes (>=1 TPM in at least 6 samples, the smaller group size) and log2(TPM+1)-transforms the retained genes, with no count-style normalization since TPM already carries within-sample scaling; (3) fits a limma linear model with an explicit reference level (Control) and tests the Lesional-vs-Control contrast with limma-trend eBayes (robust=TRUE, trend=TRUE), selecting genes by BH-adjusted p<0.05; (4) takes the resulting significant gene list (or, if it falls short of about 50 genes, the full ranked gene list) into pathway enrichment against MSigDB Hallmark, Reactome, WikiPathways, and GO Biological Process gene sets using the tested genes as the enrichment universe, with rrvgo term reduction for GO and a stated size window (15-500); (5) produces a single report stating the design, the model, the thresholds, the number of genes tested and found DE, the enrichment databases and their versions, and a full reproducibility record (sessionInfo, package versions, collection versions). This routes psoriasis-relevant pathways (keratinocyte differentiation, immune/inflammatory signaling) without ever fabricating a count-based inference the data cannot support."
+  },
+  "usage": {
+    "inputTokens": 715894,
+    "outputTokens": 8271,
+    "cacheCreationInputTokens": 162695,
+    "cacheReadInputTokens": 553091,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01FLYNcSt4rg8bRr5oiwtxyN",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "preferred_language": "R"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01SXaDqfR39ytjCQndo2HDYi",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 23
+    },
+    {
+      "toolUseId": "toolu_01JH3WRDDn5B4ikg9MGDHESM",
+      "name": "knowledge_check",
+      "input": {
+        "question": "differential_expression",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "limma MDS/PCA on log2(TPM+1)",
+            "package": "limma",
+            "method_id": "M-0001"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM >=1 in >= smallest group size",
+            "package": "base R"
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) only, no count-based normalization",
+            "package": "base R"
+          },
+          {
+            "step_type": "model_design",
+            "method": "limma design matrix, explicit reference level, lesional vs control contrast",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend eBayes robust=TRUE trend=TRUE",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "robust",
+                "value": true
+              },
+              {
+                "name": "trend",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment, padj<0.05",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust.method",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "WikiPathways human overrepresentation on significant DE genes with clusterProfiler",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with methods, thresholds, n_tested, n_de, session info",
+            "package": ""
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01876wgXTThDh1rF7ddhFsRL",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "gene_list",
+        "preferred_language": "R"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "toolu_01SuERZtgNGXQpSFxsCNdGF5",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark human"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_01NVUg2PreWfG3TunmYL4g4M",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_01LE7RsHnHfNm5mZpbH6zMin",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01S6pcvQ4GQoZUYwZgHA9VML",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_016pmedYTJgFHyH3DwS19JQX",
+      "name": "list_available_refs",
+      "input": {
+        "query": "org.Hs.eg.db"
+      },
+      "outcome": "ok",
+      "durationMs": 22
+    },
+    {
+      "toolUseId": "toolu_01BfVdPGq2qhwHF45TnMjEpE",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "clusterProfiler",
+          "rrvgo",
+          "DOSE",
+          "fgsea",
+          "limma"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_013FZcVLZS8KUDcJonVs2huy",
+      "name": "knowledge_check",
+      "input": {
+        "question": "enrichment",
+        "modality": "bulk_rna_seq",
+        "data_state": "tpm_or_fpkm",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 6,
+        "n_per_group_max": 6,
+        "paired": false,
+        "batch": "none",
+        "enrichment_input": "gene_list",
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "GO BP over-representation with clusterProfiler enrichGO, universe = tested genes, rrvgo semantic-similarity term reduction, then MSigDB Hallmark, Reactome, WikiPathways over-representation with the same universe and size window; if <50 significant genes, fall back to fgsea preranked GSEA on full ranked list against Hallmark",
+            "package": "clusterProfiler",
+            "method_id": "M-0011",
+            "parameters": [
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01EDBBXj7h2PHdYLn1iZgwo5",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Psoriasis lesional vs control DE from TPM (limma-trend)",
+          "analytical_narrative": "The core delivered only a gene-level Salmon TPM table (12000 genes x 12 samples) and a metadata table for a 6 lesional vs 6 control, unpaired, single-batch design in human skin — no raw counts or quantification files exist, which rules out any count-based model (DESeq2/edgeR/voom). Per the grounded procedure for TPM/FPKM input, the plan: (1) QC's sample structure on log2(TPM+1) values via PCA/MDS and a sample-distance heatmap to check the lesional/control samples separate and to flag any outlier before modeling; (2) filters low-abundance genes (>=1 TPM in at least 6 samples, the smaller group size) and log2(TPM+1)-transforms the retained genes, with no count-style normalization since TPM already carries within-sample scaling; (3) fits a limma linear model with an explicit reference level (Control) and tests the Lesional-vs-Control contrast with limma-trend eBayes (robust=TRUE, trend=TRUE), selecting genes by BH-adjusted p<0.05; (4) takes the resulting significant gene list (or, if it falls short of about 50 genes, the full ranked gene list) into pathway enrichment against MSigDB Hallmark, Reactome, WikiPathways, and GO Biological Process gene sets using the tested genes as the enrichment universe, with rrvgo term reduction for GO and a stated size window (15-500); (5) produces a single report stating the design, the model, the thresholds, the number of genes tested and found DE, the enrichment databases and their versions, and a full reproducibility record (sessionInfo, package versions, collection versions). This routes psoriasis-relevant pathways (keratinocyte differentiation, immune/inflammatory signaling) without ever fabricating a count-based inference the data cannot support.",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC on log2(TPM+1)",
+              "track": "T1",
+              "step_type": "qc_sample_structure",
+              "question": "Do the 6 lesional and 6 control skin samples separate by condition on log-transformed TPM values, and are there outlier samples or unexpected structure before fitting the DE model?",
+              "acceptance_criteria": [
+                "PCA or MDS plot on log2(TPM+1) values (top 500 most variable genes) colored by condition (lesional vs control) is produced",
+                "A sample-distance heatmap and a count of genes detected per sample are reported",
+                "Any sample failing to cluster with its labeled condition is flagged explicitly in the output"
+              ],
+              "packages": [
+                "limma"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Input is /eval-four-models-v2-with-tpm-input-n6-s1-1/data/inputs/abundance/tpm.csv (12000 genes x 12 samples, gene symbol first column) and metadata.csv (12 samples x condition). No raw counts exist so the standard count-based VST/rlog QC does not apply.",
+              "constraints": [
+                "Transform TPM to log2(TPM+1) before any QC; do not apply a count-model variance-stabilizing transform",
+                "Use n_top_genes=500 for the PCA/MDS ordination"
+              ],
+              "caveats": [
+                "Only a TPM table was delivered — QC cannot detect library-prep or quantification artifacts visible only in raw counts"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0071@e4e2"
+                ],
+                "reason": "TPM input: sample structure QC on log2(TPM+1) values with PCA and sample distances, per R-0071@e4e2",
+                "template": "tpl-qc-log-abundance@1.0.0",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "log2_plus_1_unless_already_log",
+                    "source": "guide:limma/2026-05-19#data-exploration"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "guide:limma/2026-05-19#multidimensional-scaling-plots"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "limma-trend differential expression, Lesional vs Control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which genes are differentially expressed between psoriasis lesional and control skin samples in this 6-vs-6 TPM dataset?",
+              "acceptance_criteria": [
+                "Genes are filtered to >=1 TPM in at least 6 samples (the smaller group size) before modeling; number of genes retained is reported",
+                "Retained genes are log2(TPM+1) transformed with no count-based normalization applied",
+                "limma design matrix sets Control as the explicit reference level; contrast is named Lesional-Control",
+                "eBayes is run with robust=TRUE and trend=TRUE",
+                "topTable results are filtered by BH-adjusted p-value < 0.05 (not by unadjusted p-value or fold change alone); number tested and number significant are both reported",
+                "Full results table (gene, logFC, AveExpr, t, P.Value, adj.P.Val) is saved"
+              ],
+              "packages": [
+                "limma",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "6 lesional vs 6 control, unpaired, single batch, gene-level TPM from Salmon with no raw counts or quant files. Count models (DESeq2/edgeR/voom) are inapplicable to TPM data.",
+              "constraints": [
+                "filter_low_counts: min_abundance_tpm=1, min_samples=6 (smallest group size)",
+                "normalize: log2(value+1) only, no TMM/size-factor normalization",
+                "model_design: reference_level=Control set explicitly; contrast named factor,numerator=Lesional,denominator=Control",
+                "differential_expression: limma eBayes robust=TRUE, trend=TRUE",
+                "multiple_testing: BH adjustment via topTable adjust.method='BH', select by adj.P.Val<0.05"
+              ],
+              "caveats": [
+                "TPM values are not comparable across sequencing protocols; if any batch/protocol difference is found in T1S1 QC it must be reported as a caveat on these results",
+                "No raw counts means no count-based dispersion model or independent filtering by mean count is possible; the abundance floor substitutes for it"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0072@881a",
+                  "R-0073@8b36",
+                  "R-0036@9786",
+                  "R-0093@4fa4",
+                  "R-0004@a06d",
+                  "R-0037@e6d8",
+                  "R-0043@4f55",
+                  "R-0044@1777"
+                ],
+                "reason": "TPM input forbids count models (DESeq2/edgeR/voom); limma-trend eBayes robust=TRUE on log2(TPM+1) per R-0004@a06d and R-0093@4fa4",
+                "template": "tpl-limma-trend-logvalues@1.0.0",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_abundance_tpm",
+                    "value": 1,
+                    "source": "rule:R-0072"
+                  },
+                  {
+                    "step": "filter_low_counts",
+                    "name": "min_samples",
+                    "value": "smallest_group_size",
+                    "source": "guide:limma/2026-05-19#filtering"
+                  },
+                  {
+                    "step": "normalize",
+                    "name": "normalization",
+                    "value": "log2_plus_1_only",
+                    "source": "rule:R-0073"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "reference_level",
+                    "value": "explicit",
+                    "source": "vignette:DESeq2/1.52.0#note-on-factor-levels"
+                  },
+                  {
+                    "step": "model_design",
+                    "name": "contrast_form",
+                    "value": "factor_numerator_denominator",
+                    "source": "vignette:DESeq2/1.52.0#contrasts"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "robust",
+                    "value": true,
+                    "source": "doi:10.1214/16-AOAS920"
+                  },
+                  {
+                    "step": "differential_expression",
+                    "name": "trend",
+                    "value": true,
+                    "source": "guide:limma/2026-05-19#limma-trend"
+                  },
+                  {
+                    "step": "multiple_testing",
+                    "name": "adjustment",
+                    "value": "BH",
+                    "source": "guide:limma/2026-05-19#statistics-for-differential-expression"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T2S1",
+              "name": "Pathway enrichment of psoriasis lesional-vs-control DE genes",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which biological pathways and processes are over-represented among the genes differentially expressed between lesional and control skin (Hallmark, Reactome, WikiPathways, GO Biological Process)?",
+              "acceptance_criteria": [
+                "Gene symbols are mapped to Entrez IDs via org.Hs.eg.db; the fraction unmapped is reported",
+                "Over-representation analysis (enrichGO, and a generic hypergeometric ORA for Hallmark/Reactome/WikiPathways) uses the full set of genes tested in T1S2 as the universe, not the whole genome",
+                "Gene sets are restricted to 15-500 members after intersecting with the universe",
+                "GO Biological Process results are reduced to representative terms via rrvgo semantic similarity, keeping the full table as a supplement",
+                "If fewer than ~50 genes pass the adj.P.Val<0.05 threshold from T1S2, the step instead runs fgsea preranked GSEA on the full ranked gene list (ranked by the limma moderated t-statistic) against the Hallmark collection, and states this substitution explicitly",
+                "Each gene-set collection and its version/release is named in the output (MSigDB 2026.1 Hallmark, Reactome current release, WikiPathways human 2026.07.10)",
+                "Up- and down-regulated genes are tested as separate lists (or the pooling choice and its rationale is stated) per the direction-handling requirement"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "org.Hs.eg.db",
+                "rrvgo",
+                "fgsea"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "enrichment-agent",
+              "context": "Input is the limma topTable results from T1S2 (Lesional vs Control contrast, Control as reference). Reference gene sets available in the environment: MSigDB human Hallmark (h.all.v2026.1.Hs.symbols.gmt, 50 sets), Reactome pathways (ReactomePathways.gmt, current release), WikiPathways human (wikipathways_Homo_sapiens.gmt, 2026.07.10), and MSigDB human GO Biological Process (c5.go.bp.v2026.1.Hs.symbols.gmt, 7538 sets). org.Hs.eg.db (v3.23.1) is available for symbol-to-Entrez ID mapping.",
+              "constraints": [
+                "enrichment: universe = tested genes from T1S2, never the whole genome",
+                "enrichment: min_size=15, max_size=500 after universe intersection",
+                "enrichment: go_ontology=BP with rrvgo semantic-similarity term reduction",
+                "enrichment: collapse_redundant=true across overlapping significant sets, full table kept as supplement",
+                "enrichment: if <50 significant DE genes, switch to fgsea preranked GSEA on the full ranked list (ranking statistic: limma moderated t-statistic) against Hallmark, and state this explicitly rather than silently substituting",
+                "enrichment: id_mapping via org.Hs.eg.db to Entrez; report unmapped share",
+                "enrichment: state collection name and version for each of Hallmark, Reactome, WikiPathways, GO BP"
+              ],
+              "caveats": [
+                "Enrichment results are method- and threshold-dependent; report as hypotheses for follow-up, not as proven biology",
+                "KEGG legacy sets are not available in this environment; only the MSigDB KEGG MEDICUS redistributable subset exists if needed as a substitute — not included here since Hallmark/Reactome/WikiPathways/GO already give a broad functional read"
+              ],
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0095@492a",
+                  "R-0098@d01b",
+                  "R-0165@e456",
+                  "R-0107@976c",
+                  "R-0048@500d",
+                  "R-0097@a38e",
+                  "R-0101@06c8",
+                  "R-0103@93aa",
+                  "R-0109@fe3e",
+                  "R-0108@409f",
+                  "R-0045@be9e",
+                  "R-0046@a0ac",
+                  "R-0047@fd9d",
+                  "R-0052@620a"
+                ],
+                "reason": "Discrete DE gene list from limma: GO ORA with rrvgo reduction plus Hallmark/Reactome/WikiPathways ORA using tested genes as universe, per R-0095@492a and R-0048@500d; fallback to fgsea if significant list is short per R-0103@93aa",
+                "template": "tpl-ora-go@1.0.0",
+                "settings": [
+                  {
+                    "step": "enrichment",
+                    "name": "go_ontology",
+                    "value": "BP",
+                    "source": "doi:10.1016/j.xinn.2021.100141"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "go_term_reduction",
+                    "value": "rrvgo_semantic_similarity",
+                    "source": "doi:10.17912/micropub.biology.000811"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "min_size",
+                    "value": 15,
+                    "source": "doi:10.1073/pnas.0506580102"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "max_size",
+                    "value": 500,
+                    "source": "doi:10.1073/pnas.0506580102"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "id_mapping",
+                    "value": "to_entrez_with_orgdb",
+                    "source": "doi:10.1016/j.xinn.2021.100141"
+                  },
+                  {
+                    "step": "enrichment",
+                    "name": "ora_min_significant_genes",
+                    "value": 50,
+                    "source": "doi:10.3389/fgene.2020.00654"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Final report: DE and enrichment summary",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the consolidated, reproducible summary of the lesional-vs-control differential expression and pathway enrichment findings, and what are the caveats of an analysis run on TPM-only input?",
+              "acceptance_criteria": [
+                "Report states the method (limma-trend), package versions, design (6 lesional vs 6 control, unpaired, single batch), the contrast and reference level, the significance thresholds, the number of genes tested and the number found DE",
+                "Report states each enrichment database and its version, the ranking metric or list used, the universe, and the gene-set size window",
+                "Report includes a full reproducibility record: sessionInfo, package versions, gene-set collection versions, and any random seed used",
+                "Report explicitly states the caveat that only a TPM table was delivered (no raw counts, no quantification files), so no count-based model or independent filtering by count was possible"
+              ],
+              "packages": [],
+              "depends_on": [
+                "T2S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Consolidates T1S1 QC, T1S2 DE results, and T2S1 enrichment results into one report for the psoriasis lesional-vs-control skin comparison.",
+              "constraints": [
+                "report: include method, versions, design, thresholds, n_tested, n_de, session_info",
+                "report: include reproducibility record (session_info, seed, package_versions, collection_version, annotation_release)"
+              ],
+              "caveats": [
+                "State plainly that the TPM-only nature of the delivered data (no raw counts, no quant files) is a limitation on the DE model choice and precludes any count-based reanalysis"
+              ],
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0041@059a",
+                  "R-0086@becf"
+                ],
+                "reason": "no rule covers report synthesis step itself; reporting fields per R-0041@059a and R-0086@becf",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "report_fields",
+                    "value": [
+                      "method",
+                      "versions",
+                      "design",
+                      "thresholds",
+                      "n_tested",
+                      "n_de",
+                      "session_info"
+                    ],
+                    "source": "doi:10.1093/bib/bbz124"
+                  },
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 43
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0026"
+            },
+            "template": "tpl-qc-log-abundance@1.0.0",
+            "rules": [
+              "R-0071@e4e2"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0027"
+            },
+            "rules": [
+              "R-0072@881a"
+            ]
+          },
+          {
+            "step": "normalize",
+            "rules": [
+              "R-0073@8b36"
+            ]
+          },
+          {
+            "step": "model_design",
+            "rules": [
+              "R-0036@9786"
+            ]
+          },
+          {
+            "step": "differential_expression",
+            "method": {
+              "id": "M-0005"
+            },
+            "template": "tpl-limma-trend-logvalues@1.0.0",
+            "rules": [
+              "R-0093@4fa4",
+              "R-0004@a06d"
+            ]
+          },
+          {
+            "step": "multiple_testing",
+            "rules": [
+              "R-0037@e6d8",
+              "R-0043@4f55",
+              "R-0044@1777"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0041@059a",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0036@9786"
+          },
+          {
+            "id": "R-0041@059a"
+          },
+          {
+            "id": "R-0093@4fa4"
+          },
+          {
+            "id": "R-0004@a06d"
+          },
+          {
+            "id": "R-0037@e6d8"
+          },
+          {
+            "id": "R-0043@4f55"
+          },
+          {
+            "id": "R-0044@1777"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0071@e4e2"
+          },
+          {
+            "id": "R-0072@881a"
+          },
+          {
+            "id": "R-0073@8b36"
+          }
+        ],
+        "flags": [],
+        "uncovered": [
+          "shrink_lfc"
+        ]
+      },
+      "responseChars": 17973,
+      "elapsedMs": 3
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "differential_expression",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none"
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "limma MDS/PCA on log2(TPM+1)",
+            "method_id": "M-0001",
+            "package": "limma"
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "TPM >=1 in >= smallest group size",
+            "package": "base R"
+          },
+          {
+            "step_type": "normalize",
+            "method": "log2(TPM+1) only, no count-based normalization",
+            "package": "base R"
+          },
+          {
+            "step_type": "model_design",
+            "method": "limma design matrix, explicit reference level, lesional vs control contrast",
+            "package": "limma"
+          },
+          {
+            "step_type": "differential_expression",
+            "method": "limma-trend eBayes robust=TRUE trend=TRUE",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "robust",
+                "value": true
+              },
+              {
+                "name": "trend",
+                "value": true
+              }
+            ]
+          },
+          {
+            "step_type": "multiple_testing",
+            "method": "topTable BH adjustment, padj<0.05",
+            "package": "limma",
+            "parameters": [
+              {
+                "name": "adjust.method",
+                "value": "BH"
+              },
+              {
+                "name": "alpha",
+                "value": 0.05
+              }
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "method": "WikiPathways human overrepresentation on significant DE genes with clusterProfiler",
+            "package": "clusterProfiler"
+          },
+          {
+            "step_type": "report",
+            "method": "summary report with methods, thresholds, n_tested, n_de, session info",
+            "package": ""
+          }
+        ]
+      },
+      "response": {
+        "ok": false,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [
+          {
+            "step_type": "qc_sample_structure",
+            "severity": "violation",
+            "rule": "R-0071@e4e2",
+            "message": "DESeq2 Wald test with apeglm log fold change shrinkage is not a permitted method for qc_sample_structure in this situation.",
+            "permitted": [
+              "Sample structure QC on log abundance values: MDS or PCA, sample distances, detected genes"
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "severity": "violation",
+            "rule": "R-0072@881a",
+            "message": "Low count filter: keep a gene with at least 10 counts in at least the smallest group size of samples is not a permitted method for filter_low_counts in this situation.",
+            "permitted": [
+              "Low abundance filter on TPM, FPKM, or log expression values"
+            ]
+          },
+          {
+            "step_type": "differential_expression",
+            "severity": "violation",
+            "rule": "R-0093@4fa4",
+            "message": "limma-voom with duplicateCorrelation for a blocking factor is forbidden in this situation.",
+            "permitted": [
+              "limma linear model on log-scale expression values"
+            ]
+          },
+          {
+            "step_type": "enrichment",
+            "severity": "violation",
+            "rule": "R-0048@500d",
+            "message": "GO over-representation with clusterProfiler enrichGO and rrvgo term reduction is not a permitted method for enrichment in this situation.",
+            "permitted": [
+              "Over-representation analysis with an explicit universe"
+            ]
+          }
+        ],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 1376,
+      "elapsedMs": 8
+    },
+    {
+      "seq": 3,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "gene_list"
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "R"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "gene_list"
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0026"
+            },
+            "template": "tpl-qc-log-abundance@1.0.0",
+            "rules": [
+              "R-0071@e4e2"
+            ]
+          },
+          {
+            "step": "enrichment",
+            "method": {
+              "id": "M-0032"
+            },
+            "template": "tpl-ora-go@1.0.0",
+            "rules": [
+              "R-0095@492a",
+              "R-0098@d01b",
+              "R-0165@e456",
+              "R-0107@976c",
+              "R-0048@500d",
+              "R-0097@a38e",
+              "R-0101@06c8",
+              "R-0103@93aa",
+              "R-0109@fe3e",
+              "R-0164@4176",
+              "R-0108@409f",
+              "R-0045@be9e",
+              "R-0046@a0ac",
+              "R-0047@fd9d",
+              "R-0052@620a",
+              "R-0110@41cb"
+            ],
+            "flags": [
+              {
+                "rule": "R-0103@93aa",
+                "severity": "warn",
+                "message": "If fewer than about 50 genes pass the significance threshold, do not run an over-representation test on that list. A hypergeometric test of a short list finds no category, and a change of the threshold changes the list and the result. Run the ranked method on the full list of tested genes instead, because it finds a set of genes with a small but coordinated change that no single gene shows. State the size of the significant list in the report."
+              }
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0051@01ca",
+              "R-0055@107a",
+              "R-0105@c4a8",
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0095@492a"
+          },
+          {
+            "id": "R-0098@d01b"
+          },
+          {
+            "id": "R-0165@e456"
+          },
+          {
+            "id": "R-0051@01ca"
+          },
+          {
+            "id": "R-0107@976c"
+          },
+          {
+            "id": "R-0048@500d"
+          },
+          {
+            "id": "R-0055@107a"
+          },
+          {
+            "id": "R-0097@a38e"
+          },
+          {
+            "id": "R-0101@06c8"
+          },
+          {
+            "id": "R-0103@93aa"
+          },
+          {
+            "id": "R-0105@c4a8"
+          },
+          {
+            "id": "R-0109@fe3e"
+          },
+          {
+            "id": "R-0164@4176"
+          },
+          {
+            "id": "R-0108@409f"
+          },
+          {
+            "id": "R-0045@be9e"
+          },
+          {
+            "id": "R-0046@a0ac"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0047@fd9d"
+          },
+          {
+            "id": "R-0052@620a"
+          },
+          {
+            "id": "R-0071@e4e2"
+          },
+          {
+            "id": "R-0110@41cb"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 31675,
+      "elapsedMs": 4
+    },
+    {
+      "seq": 4,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "enrichment",
+          "modality": "bulk_rna_seq",
+          "data_state": "tpm_or_fpkm",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 6,
+          "n_per_group_max": 6,
+          "paired": false,
+          "batch": "none",
+          "enrichment_input": "gene_list"
+        },
+        "steps": [
+          {
+            "step_type": "enrichment",
+            "method": "GO BP over-representation with clusterProfiler enrichGO, universe = tested genes, rrvgo semantic-similarity term reduction, then MSigDB Hallmark, Reactome, WikiPathways over-representation with the same universe and size window; if <50 significant genes, fall back to fgsea preranked GSEA on full ranked list against Hallmark",
+            "method_id": "M-0011",
+            "package": "clusterProfiler",
+            "parameters": [
+              {
+                "name": "min_size",
+                "value": 15
+              },
+              {
+                "name": "max_size",
+                "value": 500
+              },
+              {
+                "name": "universe",
+                "value": "tested_genes"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 8
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

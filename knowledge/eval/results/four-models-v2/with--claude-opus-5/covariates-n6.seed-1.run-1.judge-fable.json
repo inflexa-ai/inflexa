@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: DESeq2 Wald on ~ sex + age_centered + condition with control releveled explicitly, age mean-centred, contrast named as a triple, apeglm on the condition coefficient, BH at 0.05, and an explicit prohibition on regressing covariates out of the counts, with edgeR QL as a stated robustness check on the identical design. The QC step quantifies age and sex balance against condition and PC associations before modelling, which is exactly the confounding check the reference requires, but it omits the sex verification against XIST and Y-linked genes that the reference lists. Filtering is minimal and justified by group size, normalization is internal to each model, enrichment is correctly declined as unasked scope, and the report specifies methods, versions, design, thresholds, tested/significant counts, both NA categories, and the design caveats."
+}

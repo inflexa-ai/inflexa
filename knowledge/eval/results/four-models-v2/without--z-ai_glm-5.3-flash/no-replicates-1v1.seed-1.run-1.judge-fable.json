@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 5,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly identifies that with one sample per group no dispersion can be estimated, forbids p-values, restricts pydeseq2 to size factors, and reports descriptive log2FC with a pseudocount and a prominent no-replication caveat; it does not, however, state the replicated design (≥2–3 per group) that would support inference, and the |log2FC|≥1 listing edges toward a post hoc cutoff. QC is limited to library sizes and detection with no stated policy for a shallow sample, and the low-count filter is named only as an unspecified CPM threshold. The reference treats enrichment as unwarranted here; the plan adds fgsea on an n=1 log2FC ranking, though it specifies the metric, a versioned collection, a size window, ID mapping, and labels NES as untested. The report names methods, design, and caveats but omits package versions."
+}

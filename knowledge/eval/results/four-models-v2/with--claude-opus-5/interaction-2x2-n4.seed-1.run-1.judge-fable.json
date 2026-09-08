@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly frames the question as the genotype:treatment interaction under ~ genotype + treatment + genotype:treatment with explicit WT/vehicle reference levels, tests the single interaction coefficient by Wald, and extracts both simple effects (the KO effect as a list contrast over two coefficients), matching the reference exactly. QC is design-specific (blind VST, PCA on top 500, distances, library sizes, coloured by both factors and cell, balance check) with a describe-do-not-drop policy, though the handling of a shallow sample is only implied rather than spelled out. Filtering is minimal and justified by the smallest cell size, normalization is median-of-ratios inside the model with no pre-scaling, BH at a stated alpha 0.05 passed to results() with ashr shrinkage and selection by padj only, enrichment is explicitly and correctly omitted, and the report specifies method, versions, design, thresholds, tested/significant/NA counts by cause, and the power and salmon length-offset caveats."
+}

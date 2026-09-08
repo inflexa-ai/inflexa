@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 6,
+    "low_count_filter": 6,
+    "normalization": 4,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 5,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly places a DESeq2 Wald model on raw counts before ulm/mlm on the full signed statistic with CollecTRI regulons, which matches the reference, but it hedges with an unspecified 'rank-based method' fallback, omits the minimum regulon size, and never states BH correction across regulators or an alpha for either the DE or activity stage. Normalization inside the model is never mentioned (only that raw counts enter DESeq2), and the reference level of the contrast is implied rather than stated. QC names PCA and sample distances with an outlier decision but no library-size check or coloring policy; the low-count filter is present with a reported retained-gene count but its justification is thin and the wording is garbled. Reporting covers package versions, design, coverage and set counts, and separates 'TF is DE' from 'activity is inferred', but omits the CollecTRI version, the number of regulators tested, and the thresholds; the extra WikiPathways GSEA is not wrong but adds little to the question asked."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 6,
+    "low_count_filter": 2,
+    "normalization": 4,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 Wald with apeglm on raw counts fits the 5v5 unpaired single-batch design, and the plan correctly reports both fits (with and without sample_03) with an explicit overlap and LFC-correlation comparison rather than a silent removal, while noting that Cook's replacement will not trigger at n=5. QC is limited to PCA and a distance heatmap: library size, gene detection, mapping/duplication metrics, and coloring by condition are not stated, and no fixed removal criterion is given beyond running the sensitivity analysis. No low-count filter is specified, size-factor normalization is never named, and the design formula and reference level are not written out, only the contrast direction. Enrichment is unrequested but well specified (FGSEA on Wald stat, versioned WikiPathways, 10-500 size window); the report lacks package versions and an explicit count of genes tested."
+}

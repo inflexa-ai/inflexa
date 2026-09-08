@@ -1,0 +1,29 @@
+{
+  "padj_threshold": 0.05,
+  "hallmark": {
+    "database": "MSigDB Hallmark human, 2026.1",
+    "ranking_metric": "stat",
+    "gene_universe_size": 9782,
+    "min_size": 15,
+    "max_size": 500,
+    "n_sets_input": 50,
+    "n_sets_tested": 50,
+    "n_significant": 17,
+    "n_up": 15,
+    "n_down": 2,
+    "n_representative": 11
+  },
+  "reactome": {
+    "database": "Reactome pathways, release 'current' (host-provisioned snapshot)",
+    "ranking_metric": "stat",
+    "gene_universe_size": 9782,
+    "min_size": 15,
+    "max_size": 500,
+    "n_sets_input": 2868,
+    "n_sets_tested": 787,
+    "n_significant": 106,
+    "n_up": 99,
+    "n_down": 7,
+    "n_representative": 25
+  }
+}

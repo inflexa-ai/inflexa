@@ -1,0 +1,748 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "survival-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:30:31.164Z",
+  "elapsedMs": 186325,
+  "outcome": "plan_submitted",
+  "planId": "pln-11dbad5d",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load, QC-align counts/metadata/signature and normalize counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "counts.csv is described as 12000 x 121 while metadata.csv is 120 x 4 — one row/column is not a sample; identify and document which before merging, do not assume alignment by position",
+          "Salmon gene counts may need integer rounding before DESeq2 ingestion if they carry fractional values from transcript-length aggregation",
+          "If gene identifiers in counts.csv are not HGNC symbols, use the human UniProt ID mapping or org.Hs.eg.db to resolve the 20 signature gene symbols before subsetting"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 121-sample counts.csv, 120-sample metadata.csv, and 20-gene signature_genes.csv align on sample identifiers and gene symbols, and what does a DESeq2 size-factor + VST normalization of the raw Salmon gene counts look like for this cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv (minus any gene-ID column) are matched 1:1 against metadata.csv rows; any mismatch (121 vs 120) is resolved and reported explicitly (e.g., one column is a gene identifier, not a sample)",
+          "All 20 signature genes are located in the count matrix by symbol (or via an ID mapping if counts are Ensembl-indexed); genes not found are reported by name, not silently dropped",
+          "DESeq2 is run only for size-factor estimation and variance-stabilizing transformation (VST) — no differential expression test is performed",
+          "Output is a VST-normalized expression matrix (genes x samples) and a merged sample-level table joining metadata (condition, time, event) with sample IDs, saved for downstream steps"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Compute unweighted 20-gene signature score per sample",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If any signature genes are near-zero-count/low-expression across the cohort, flag them rather than silently including a noisy z-score in the composite",
+          "Do not use any outcome information (time/event) when constructing the score — the score must be computed independent of the survival outcome to avoid circularity"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "What is each sample's composite score for the pre-specified 20-gene signature, given that no per-gene weights are provided?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "feature-construction",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Each of the 20 signature genes' VST-normalized expression is z-scored across the 121 samples",
+          "A single per-sample signature score is computed as the unweighted mean of the 20 per-gene z-scores (documented explicitly as the scoring choice, since the signature file carries no weights)",
+          "Output is a sample-level table with sample ID, signature_score, condition (case/control), time, and event, ready for survival modeling",
+          "Distribution of the score is reported (histogram/summary stats) and checked for outliers or genes dominating the score due to low expression/high variance"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Multivariable Cox model: signature score adjusted for case/control status",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "With 60 cases/60 controls and only one signature covariate, this is a hypothesis-confirming model on a pre-specified score, not a discovery model — do not add other covariates unless metadata.csv contains more than condition, time, event (it currently reports only 4 columns total)",
+          "Check the number of observed events (not just samples) before over-interpreting a marginal p-value; a low event count sharply limits power for detecting a modest hazard ratio",
+          "Confirm event coding (1=event/0=censored or the reverse) explicitly from metadata before fitting — a flipped event indicator silently inverts the hazard ratio's direction",
+          "If the proportional-hazards assumption is violated for signature_score or condition, report the violation and note that the HR is a time-averaged effect rather than a constant hazard ratio"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "lifelines",
+          "pandas",
+          "numpy",
+          "scipy"
+        ],
+        "question": "Once case versus control status is included as a covariate, is the 20-gene signature score independently associated with time to the recorded event in this 120-sample cohort?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "survival-analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "A Cox proportional-hazards model of Surv(time, event) ~ signature_score + condition is fit on all samples with complete time/event/score/condition data",
+          "Report the hazard ratio, 95% CI, and p-value for signature_score adjusted for condition, and separately for condition adjusted for signature_score",
+          "Fit and report two comparison models: signature_score alone (unadjusted) and condition alone, to show what the adjustment changes",
+          "Fit a model including a condition:signature_score interaction term and report whether it is significant, to test whether the score's prognostic effect differs between cases and controls",
+          "Proportional-hazards assumption is tested (e.g., scaled Schoenfeld residuals) for the primary adjusted model and any violation is reported, not ignored",
+          "Kaplan-Meier curves stratified by signature score (median or tertile split) are produced within each condition stratum for visualization, with log-rank test statistics reported",
+          "All effect estimates are reported with the number of events driving them (event count in the 120-sample cohort), since a small event count limits how many covariates the model can reliably support"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Cross-validated robustness check of the fixed 20-gene score against full-feature selection",
+        "agent": "statistical-modeling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "This step must select features fresh inside each cross-validation fold from the full expression matrix — do not reuse the 20-gene list as a pre-filter, or the comparison to the fixed signature becomes meaningless",
+          "With ~120 samples and likely a modest number of events, cross-validated Cox concordance estimates will have wide uncertainty; report that spread rather than a single point estimate",
+          "This is a secondary/context step; the primary answer to the research question is T2S1"
+        ],
+        "maxSteps": 200,
+        "packages": [
+          "scikit-survival",
+          "pandas",
+          "numpy",
+          "scikit-learn"
+        ],
+        "question": "Does the association between the pre-specified 20-gene score and time-to-event hold up under a properly cross-validated re-derivation of a signature from the full ~12000-gene feature space, or is the fixed panel's apparent association fragile relative to what a resampled model finds by chance in a cohort of this size?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 6
+        },
+        "step_type": "survival-analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "A cross-validated penalized Cox model (e.g., L1/elastic-net Cox) is fit on the full VST-normalized gene expression matrix (not restricted to the 20 signature genes) with time/event as outcome and condition as a forced-in covariate, using k-fold CV with feature selection performed inside each fold",
+          "The cross-validated concordance index (or partial likelihood deviance) of the full-feature model is compared against the concordance index of the fixed 20-gene score model from T2S1, both adjusted for condition",
+          "Report explicitly that this is a robustness/context check, not a claim that the full-feature model is a validated new signature — no claims of a new discovered signature are made from this step",
+          "State the achieved concordance index with a confidence interval or resampling spread, and flag if the CV performance estimate is optimistic due to the modest sample size (120) and event count"
+        ]
+      }
+    ],
+    "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The cohort is 60 cases vs 60 controls (single batch, unpaired) with raw Salmon gene-level counts (12000 genes x 121 samples incl. one extra column likely gene ID), a metadata table with condition/time/event, and a pre-specified unweighted 20-gene signature (gene symbols, no weights). The research question is explicitly about whether the signature SCORE tracks time-to-event once case/control status is held constant — this is a prognostic-adjustment question, not a discovery question, so the plan does not run genome-wide differential expression as the primary analysis. The workflow is: (1) load and QC-align counts/metadata/signature, confirm signature genes are present in the count matrix and map cleanly to gene symbols; (2) normalize the raw counts appropriately for a small non-DE quantitative-score use case (library-size + variance-stabilizing normalization via DESeq2's VST, which is standard for deriving per-sample expression values from RNA-seq counts before building a score) and compute a single per-sample signature score (mean of standardized/VST-normalized expression across the 20 genes, since no weights are supplied — an unweighted z-score composite is the only defensible choice with no weight vector); (3) fit a multivariable Cox proportional-hazards model of time-to-event ~ signature_score + case/control status, test the proportional-hazards assumption, and report the score's hazard ratio adjusted for case/control, together with an unadjusted (score-only) model and a case/control-only model for comparison, plus a case/control x score interaction term to check whether the score's prognostic effect differs by group; (4) as a secondary robustness step, evaluate whether the score's association survives a full-feature, cross-validated selection to characterize whether the fixed 20-gene panel is doing better or worse than a resampled null, and produce Kaplan-Meier stratification by score tertile/median within each case/control stratum for visualization. No DE, enrichment, or drug-repurposing steps are included because the question is narrowly a biomarker-outcome association question on a pre-specified signature, not a discovery question — enrichment/pathway reference data (WikiPathways, MSigDB Hallmark) available in the environment is not needed here and is not invoked speculatively."
+  },
+  "usage": {
+    "inputTokens": 2527334,
+    "outputTokens": 7080,
+    "cacheCreationInputTokens": 145133,
+    "cacheReadInputTokens": 2381721,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01TYtV2WTktjxJ1jkgscjzEF",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene annotation human ensembl",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01YACqb6y3V7FBUiVhXuwC76",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "lifelines",
+          "scikit-survival",
+          "survival",
+          "survminer",
+          "rms",
+          "pydeseq2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01NTqtkXohvf55FpH5vvVwPq",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "survival",
+          "quantreg"
+        ],
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01RyHFraFT4Sn4iWhAnrqpS1",
+      "name": "list_available_packages",
+      "input": {
+        "query": "surv"
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_017yafDvKoLz51iU3vNNbVud",
+      "name": "list_available_packages",
+      "input": {
+        "query": "Surv",
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "toolu_01RJkSfg2zQEW9km5rGSa6HV",
+      "name": "list_available_packages",
+      "input": {
+        "query": "timereg"
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_016H6ikCUQHDQJmgsp29VCRQ",
+      "name": "list_available_packages",
+      "input": {
+        "query": "rms"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_016Uh3oSTjowPctnDfkeMYHA",
+      "name": "list_available_packages",
+      "input": {
+        "query": "prodlim"
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_017S1jY7BY6jbspbK4JvMLKp",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "rms",
+        "query": "cph function Surv object without survival package"
+      },
+      "outcome": "error",
+      "durationMs": 1545
+    },
+    {
+      "toolUseId": "toolu_01M2pqrWE3J6uy2LkmwQxTnX",
+      "name": "list_available_packages",
+      "input": {
+        "query": "Surv"
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01DrCDJN9BQ2yupEmq74nKb3",
+      "name": "list_available_packages",
+      "input": {
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_018aEAmhyp5a5jnjjp6X8DsB",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "survival"
+        ],
+        "language": "r"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_019WBaAqx3NjZTpxWzj5AL6z",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "survival",
+          "Survival",
+          "SURVIVAL"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01TcMYfxtrx1p6HoRdzxVMzX",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/lifelines-dev/lifelines",
+        "query": "CoxPHFitter usage with formula and covariates"
+      },
+      "outcome": "error",
+      "durationMs": 1675
+    },
+    {
+      "toolUseId": "toolu_01VDfFZbw6VWATzpCqQLTETt",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "lifelines",
+        "query": "CoxPHFitter"
+      },
+      "outcome": "error",
+      "durationMs": 1554
+    },
+    {
+      "toolUseId": "toolu_01VxTRW8yDNe1WLzXqZJmXoM",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene expression signature score Cox proportional hazards adjusted for case control status survival",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 532
+    },
+    {
+      "toolUseId": "toolu_012R4jQYrpQhdM6FWSb3igom",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene expression signature score Cox proportional hazards tumor biomarker time to event",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1520
+    },
+    {
+      "toolUseId": "toolu_011Yb46fnRMY4UVYRU5am1A2",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "33995639"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 800
+    },
+    {
+      "toolUseId": "toolu_01E5yb1oXSCK4WVagN6LGpcE",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "gene signature score normalization variance stabilizing transformation Cox regression prognostic validation cohort",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 538
+    },
+    {
+      "toolUseId": "toolu_01UheGiF5wKhJeqHhMVUdUxC",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gene expression signature score association overall survival Cox proportional hazards adjusting for group covariate",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8948
+    },
+    {
+      "toolUseId": "toolu_01TtPM33swtroiddDhS2PCQJ",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "multi-gene prognostic signature score Cox proportional hazards model adjusting for clinical covariate",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8851
+    },
+    {
+      "toolUseId": "toolu_01X2WQhQbX6sNfxr3TCqR1dz",
+      "name": "search_arxiv",
+      "input": {
+        "query": "gene signature score Cox proportional hazards proportional hazards assumption schoenfeld residuals",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 555
+    },
+    {
+      "toolUseId": "toolu_014iawSUfYYxkqLem3VGi2VU",
+      "name": "list_available_refs",
+      "input": {
+        "query": "signature genes score module"
+      },
+      "outcome": "ok",
+      "durationMs": 48
+    },
+    {
+      "toolUseId": "toolu_01JjbhKzJpxYgAtnNouwVGCr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01QMy3Ub5xCiMiXXrm5KwLxt",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 35
+    },
+    {
+      "toolUseId": "toolu_018yuVmeKnwmcz2pgEUPLFcS",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene identifiers human ensembl entrez symbol"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_013XMC6b6uRHQoMUeK4VUsjw",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_01ALTaRaDWxeqCqqSgxow5R2",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot idmapping human"
+      },
+      "outcome": "ok",
+      "durationMs": 26
+    },
+    {
+      "toolUseId": "toolu_015pktKvFXLfZKS9K43BEjtf",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot"
+      },
+      "outcome": "ok",
+      "durationMs": 35
+    },
+    {
+      "toolUseId": "toolu_01WeSR6h7jHU5TfvVgbsyjfr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "ensembl gtf annotation gene length"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01YUsZp6ayuck5VhfwTc9iEE",
+      "name": "list_available_refs",
+      "input": {
+        "category": "genome-annotation"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_019LNqYf4JPGcpdcQNE8DotR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "chrom sizes human"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_017VujAviHb2cKN3eCx1STkn",
+      "name": "list_available_refs",
+      "input": {
+        "query": "chrom sizes"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01GLpBfkV9bqXCHiU6Lsw9rr",
+      "name": "list_available_refs",
+      "input": {
+        "query": "GRCh38"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01Y5yx5GB23SUsYzE168TWrR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_019gvRaQUYFdS7Nixo3LzmWJ",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "biomaRt",
+          "EnsDb.Hsapiens.v86"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 20
+    },
+    {
+      "toolUseId": "toolu_019xK8de6vThQwLLuGFhwHrd",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "test"
+      },
+      "outcome": "error",
+      "durationMs": 1645
+    },
+    {
+      "toolUseId": "toolu_017C9GPWtFUAd9BXCkdctbZf",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "DESeq2 variance stabilizing transformation counts survival analysis gene signature score",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8476
+    },
+    {
+      "toolUseId": "toolu_01LJLcgnwZZTexUVPjkzddpF",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "unweighted gene signature score ssGSEA singscore Cox proportional hazards prognostic case control",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 463
+    },
+    {
+      "toolUseId": "toolu_01KrURgAZ9ttbxBvcZ3h4KVj",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "singscore gene signature scoring method rank-based single sample",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 901
+    },
+    {
+      "toolUseId": "toolu_01H3mLXvqGjkYtqF4RwmUvCd",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "31723419"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 3
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_019Tfjr6zhYfrERnqrnVF3GL",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "singscore",
+          "GSVA"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01QQfHRC1Uy1Az3bvENgrzoT",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "20-gene signature score vs time-to-event, adjusted for case/control",
+          "analytical_narrative": "The cohort is 60 cases vs 60 controls (single batch, unpaired) with raw Salmon gene-level counts (12000 genes x 121 samples incl. one extra column likely gene ID), a metadata table with condition/time/event, and a pre-specified unweighted 20-gene signature (gene symbols, no weights). The research question is explicitly about whether the signature SCORE tracks time-to-event once case/control status is held constant — this is a prognostic-adjustment question, not a discovery question, so the plan does not run genome-wide differential expression as the primary analysis. The workflow is: (1) load and QC-align counts/metadata/signature, confirm signature genes are present in the count matrix and map cleanly to gene symbols; (2) normalize the raw counts appropriately for a small non-DE quantitative-score use case (library-size + variance-stabilizing normalization via DESeq2's VST, which is standard for deriving per-sample expression values from RNA-seq counts before building a score) and compute a single per-sample signature score (mean of standardized/VST-normalized expression across the 20 genes, since no weights are supplied — an unweighted z-score composite is the only defensible choice with no weight vector); (3) fit a multivariable Cox proportional-hazards model of time-to-event ~ signature_score + case/control status, test the proportional-hazards assumption, and report the score's hazard ratio adjusted for case/control, together with an unadjusted (score-only) model and a case/control-only model for comparison, plus a case/control x score interaction term to check whether the score's prognostic effect differs by group; (4) as a secondary robustness step, evaluate whether the score's association survives a full-feature, cross-validated selection to characterize whether the fixed 20-gene panel is doing better or worse than a resampled null, and produce Kaplan-Meier stratification by score tertile/median within each case/control stratum for visualization. No DE, enrichment, or drug-repurposing steps are included because the question is narrowly a biomarker-outcome association question on a pre-specified signature, not a discovery question — enrichment/pathway reference data (WikiPathways, MSigDB Hallmark) available in the environment is not needed here and is not invoked speculatively.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load, QC-align counts/metadata/signature and normalize counts",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Do the 121-sample counts.csv, 120-sample metadata.csv, and 20-gene signature_genes.csv align on sample identifiers and gene symbols, and what does a DESeq2 size-factor + VST normalization of the raw Salmon gene counts look like for this cohort?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv (minus any gene-ID column) are matched 1:1 against metadata.csv rows; any mismatch (121 vs 120) is resolved and reported explicitly (e.g., one column is a gene identifier, not a sample)",
+                "All 20 signature genes are located in the count matrix by symbol (or via an ID mapping if counts are Ensembl-indexed); genes not found are reported by name, not silently dropped",
+                "DESeq2 is run only for size-factor estimation and variance-stabilizing transformation (VST) — no differential expression test is performed",
+                "Output is a VST-normalized expression matrix (genes x samples) and a merged sample-level table joining metadata (condition, time, event) with sample IDs, saved for downstream steps"
+              ],
+              "packages": [
+                "DESeq2",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "counts.csv is described as 12000 x 121 while metadata.csv is 120 x 4 — one row/column is not a sample; identify and document which before merging, do not assume alignment by position",
+                "Salmon gene counts may need integer rounding before DESeq2 ingestion if they carry fractional values from transcript-length aggregation",
+                "If gene identifiers in counts.csv are not HGNC symbols, use the human UniProt ID mapping or org.Hs.eg.db to resolve the 20 signature gene symbols before subsetting"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Compute unweighted 20-gene signature score per sample",
+              "track": "T1",
+              "step_type": "feature-construction",
+              "question": "What is each sample's composite score for the pre-specified 20-gene signature, given that no per-gene weights are provided?",
+              "acceptance_criteria": [
+                "Each of the 20 signature genes' VST-normalized expression is z-scored across the 121 samples",
+                "A single per-sample signature score is computed as the unweighted mean of the 20 per-gene z-scores (documented explicitly as the scoring choice, since the signature file carries no weights)",
+                "Output is a sample-level table with sample ID, signature_score, condition (case/control), time, and event, ready for survival modeling",
+                "Distribution of the score is reported (histogram/summary stats) and checked for outliers or genes dominating the score due to low expression/high variance"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "caveats": [
+                "If any signature genes are near-zero-count/low-expression across the cohort, flag them rather than silently including a noisy z-score in the composite",
+                "Do not use any outcome information (time/event) when constructing the score — the score must be computed independent of the survival outcome to avoid circularity"
+              ]
+            },
+            {
+              "id": "T2S1",
+              "name": "Multivariable Cox model: signature score adjusted for case/control status",
+              "track": "T2",
+              "step_type": "survival-analysis",
+              "question": "Once case versus control status is included as a covariate, is the 20-gene signature score independently associated with time to the recorded event in this 120-sample cohort?",
+              "acceptance_criteria": [
+                "A Cox proportional-hazards model of Surv(time, event) ~ signature_score + condition is fit on all samples with complete time/event/score/condition data",
+                "Report the hazard ratio, 95% CI, and p-value for signature_score adjusted for condition, and separately for condition adjusted for signature_score",
+                "Fit and report two comparison models: signature_score alone (unadjusted) and condition alone, to show what the adjustment changes",
+                "Fit a model including a condition:signature_score interaction term and report whether it is significant, to test whether the score's prognostic effect differs between cases and controls",
+                "Proportional-hazards assumption is tested (e.g., scaled Schoenfeld residuals) for the primary adjusted model and any violation is reported, not ignored",
+                "Kaplan-Meier curves stratified by signature score (median or tertile split) are produced within each condition stratum for visualization, with log-rank test statistics reported",
+                "All effect estimates are reported with the number of events driving them (event count in the 120-sample cohort), since a small event count limits how many covariates the model can reliably support"
+              ],
+              "packages": [
+                "lifelines",
+                "pandas",
+                "numpy",
+                "scipy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "With 60 cases/60 controls and only one signature covariate, this is a hypothesis-confirming model on a pre-specified score, not a discovery model — do not add other covariates unless metadata.csv contains more than condition, time, event (it currently reports only 4 columns total)",
+                "Check the number of observed events (not just samples) before over-interpreting a marginal p-value; a low event count sharply limits power for detecting a modest hazard ratio",
+                "Confirm event coding (1=event/0=censored or the reverse) explicitly from metadata before fitting — a flipped event indicator silently inverts the hazard ratio's direction",
+                "If the proportional-hazards assumption is violated for signature_score or condition, report the violation and note that the HR is a time-averaged effect rather than a constant hazard ratio"
+              ]
+            },
+            {
+              "id": "T2S2",
+              "name": "Cross-validated robustness check of the fixed 20-gene score against full-feature selection",
+              "track": "T2",
+              "step_type": "survival-analysis",
+              "question": "Does the association between the pre-specified 20-gene score and time-to-event hold up under a properly cross-validated re-derivation of a signature from the full ~12000-gene feature space, or is the fixed panel's apparent association fragile relative to what a resampled model finds by chance in a cohort of this size?",
+              "acceptance_criteria": [
+                "A cross-validated penalized Cox model (e.g., L1/elastic-net Cox) is fit on the full VST-normalized gene expression matrix (not restricted to the 20 signature genes) with time/event as outcome and condition as a forced-in covariate, using k-fold CV with feature selection performed inside each fold",
+                "The cross-validated concordance index (or partial likelihood deviance) of the full-feature model is compared against the concordance index of the fixed 20-gene score model from T2S1, both adjusted for condition",
+                "Report explicitly that this is a robustness/context check, not a claim that the full-feature model is a validated new signature — no claims of a new discovered signature are made from this step",
+                "State the achieved concordance index with a confidence interval or resampling spread, and flag if the CV performance estimate is optimistic due to the modest sample size (120) and event count"
+              ],
+              "packages": [
+                "scikit-survival",
+                "pandas",
+                "numpy",
+                "scikit-learn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 6
+              },
+              "agent": "statistical-modeling-agent",
+              "caveats": [
+                "This step must select features fresh inside each cross-validation fold from the full expression matrix — do not reuse the 20-gene list as a pre-filter, or the comparison to the fixed signature becomes meaningless",
+                "With ~120 samples and likely a modest number of events, cross-validated Cox concordance estimates will have wide uncertainty; report that spread rather than a single point estimate",
+                "This is a secondary/context step; the primary answer to the research question is T2S1"
+              ]
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

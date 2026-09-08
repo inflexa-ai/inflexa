@@ -1,0 +1,342 @@
+{
+  "campaign": "four-models-v2",
+  "frozen_at": "2026-09-07T18:08:55.625Z",
+  "task_set": {
+    "path": "eval/tasks/tasks.yaml",
+    "digest": "sha256:63f7cb10a2804bc4409942b12c50858049d853630afe15bb3e231dabf9b12534",
+    "ids": [
+      "two-group-n3",
+      "two-group-n6-enrich",
+      "paired-n5",
+      "batch-balanced-n6",
+      "interaction-2x2-n4",
+      "timecourse-2x4-n3",
+      "confounded-batch-n6",
+      "no-replicates-1v1",
+      "gene-list-ora",
+      "sample-scores-gsva",
+      "fastq-input",
+      "python-two-group-n6",
+      "python-enrichment-only",
+      "qc-only-n6",
+      "strandedness-unknown-n3",
+      "two-timepoints-n3",
+      "paired-3groups-n4",
+      "population-n60",
+      "covariates-n6",
+      "enrichment-only-ranked",
+      "multi-group-3x4",
+      "outlier-n5",
+      "suspected-batch-n6",
+      "star-counts-n3",
+      "mouse-two-group-n6",
+      "total-rna-highdup-n6",
+      "zebrafish-two-group-n3",
+      "three-prime-n3",
+      "rsem-counts-n6",
+      "salmon-quant-n6",
+      "salmon-counts-unknown-n6",
+      "tpm-input-n6",
+      "log-normalized-n6",
+      "interaction-python-n4",
+      "coexpression-n60",
+      "coexpression-too-few-n3",
+      "clustering-n60",
+      "survival-n60",
+      "variance-partition-n6",
+      "transcript-usage-n6",
+      "classifier-n60",
+      "tf-activity-n6",
+      "tf-activity-python-n6",
+      "de-plus-tf-activity-n6",
+      "pathway-activity-n6",
+      "deconvolution-tpm-n6",
+      "deconvolution-mouse-n6",
+      "signature-scores-n6"
+    ],
+    "split": {
+      "development": [
+        "two-group-n3",
+        "two-group-n6-enrich",
+        "paired-n5",
+        "batch-balanced-n6",
+        "interaction-2x2-n4",
+        "timecourse-2x4-n3",
+        "confounded-batch-n6",
+        "no-replicates-1v1",
+        "gene-list-ora",
+        "sample-scores-gsva",
+        "fastq-input",
+        "python-two-group-n6",
+        "python-enrichment-only",
+        "qc-only-n6",
+        "strandedness-unknown-n3",
+        "two-timepoints-n3",
+        "paired-3groups-n4",
+        "population-n60",
+        "covariates-n6",
+        "enrichment-only-ranked",
+        "multi-group-3x4",
+        "outlier-n5",
+        "suspected-batch-n6",
+        "star-counts-n3",
+        "mouse-two-group-n6",
+        "total-rna-highdup-n6",
+        "zebrafish-two-group-n3",
+        "three-prime-n3",
+        "rsem-counts-n6",
+        "salmon-quant-n6",
+        "salmon-counts-unknown-n6",
+        "tpm-input-n6",
+        "log-normalized-n6",
+        "interaction-python-n4",
+        "coexpression-n60",
+        "coexpression-too-few-n3",
+        "clustering-n60",
+        "survival-n60",
+        "variance-partition-n6",
+        "transcript-usage-n6",
+        "classifier-n60",
+        "tf-activity-n6",
+        "tf-activity-python-n6",
+        "de-plus-tf-activity-n6",
+        "pathway-activity-n6",
+        "deconvolution-tpm-n6",
+        "deconvolution-mouse-n6",
+        "signature-scores-n6"
+      ],
+      "held_out": []
+    },
+    "weights": {
+      "two-group-n3": 1,
+      "two-group-n6-enrich": 1,
+      "paired-n5": 1,
+      "batch-balanced-n6": 1,
+      "interaction-2x2-n4": 1,
+      "timecourse-2x4-n3": 1,
+      "confounded-batch-n6": 1,
+      "no-replicates-1v1": 1,
+      "gene-list-ora": 1,
+      "sample-scores-gsva": 1,
+      "fastq-input": 1,
+      "python-two-group-n6": 1,
+      "python-enrichment-only": 1,
+      "qc-only-n6": 1,
+      "strandedness-unknown-n3": 1,
+      "two-timepoints-n3": 1,
+      "paired-3groups-n4": 1,
+      "population-n60": 1,
+      "covariates-n6": 1,
+      "enrichment-only-ranked": 1,
+      "multi-group-3x4": 1,
+      "outlier-n5": 1,
+      "suspected-batch-n6": 1,
+      "star-counts-n3": 1,
+      "mouse-two-group-n6": 1,
+      "total-rna-highdup-n6": 1,
+      "zebrafish-two-group-n3": 1,
+      "three-prime-n3": 1,
+      "rsem-counts-n6": 1,
+      "salmon-quant-n6": 1,
+      "salmon-counts-unknown-n6": 1,
+      "tpm-input-n6": 1,
+      "log-normalized-n6": 1,
+      "interaction-python-n4": 1,
+      "coexpression-n60": 1,
+      "coexpression-too-few-n3": 1,
+      "clustering-n60": 1,
+      "survival-n60": 1,
+      "variance-partition-n6": 1,
+      "transcript-usage-n6": 1,
+      "classifier-n60": 1,
+      "tf-activity-n6": 1,
+      "tf-activity-python-n6": 1,
+      "de-plus-tf-activity-n6": 1,
+      "pathway-activity-n6": 1,
+      "deconvolution-tpm-n6": 1,
+      "deconvolution-mouse-n6": 1,
+      "signature-scores-n6": 1
+    }
+  },
+  "seeds": {
+    "development": [
+      1
+    ],
+    "held_out": []
+  },
+  "corpus": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+    "schema_version": "0.1.0",
+    "tool_definition_hash": "sha256:0a1e2685bc49d320575454056d29cd122632000fe741f35bda0079b1e3a5c469"
+  },
+  "runtime": {
+    "harness_commit": "de27ffd7d8408519ebcf99e6e22e6393f50c2bee",
+    "knowledge_commit": "de27ffd7d8408519ebcf99e6e22e6393f50c2bee-dirty",
+    "bun": "1.3.10"
+  },
+  "arms": [
+    {
+      "name": "glm_with",
+      "condition": "with",
+      "role": "economical",
+      "provider": "openai-compatible",
+      "model": "z-ai/glm-5.3-flash",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "providerOrder": [
+        "wafer",
+        "io-net/fp8",
+        "nextbit/fp8"
+      ],
+      "requestTimeoutMs": 1500000
+    },
+    {
+      "name": "glm_without",
+      "condition": "without",
+      "role": "economical",
+      "provider": "openai-compatible",
+      "model": "z-ai/glm-5.3-flash",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "providerOrder": [
+        "wafer",
+        "io-net/fp8",
+        "nextbit/fp8"
+      ],
+      "requestTimeoutMs": 1500000
+    },
+    {
+      "name": "qwen_with",
+      "condition": "with",
+      "role": "economical",
+      "provider": "openai-compatible",
+      "model": "qwen/qwen3.8-27b",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "providerOrder": [
+        "ionstream/fp8",
+        "akashml/fp8",
+        "coreweave/fp8"
+      ],
+      "requestTimeoutMs": 1500000
+    },
+    {
+      "name": "qwen_without",
+      "condition": "without",
+      "role": "economical",
+      "provider": "openai-compatible",
+      "model": "qwen/qwen3.8-27b",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "providerOrder": [
+        "ionstream/fp8",
+        "akashml/fp8",
+        "coreweave/fp8"
+      ],
+      "requestTimeoutMs": 1500000
+    },
+    {
+      "name": "sonnet_with",
+      "condition": "with",
+      "role": "frontier",
+      "provider": "cliproxy",
+      "model": "claude-sonnet-5"
+    },
+    {
+      "name": "sonnet_without",
+      "condition": "without",
+      "role": "frontier",
+      "provider": "cliproxy",
+      "model": "claude-sonnet-5"
+    },
+    {
+      "name": "opus_with",
+      "condition": "with",
+      "role": "frontier",
+      "provider": "cliproxy",
+      "model": "claude-opus-5"
+    },
+    {
+      "name": "opus_without",
+      "condition": "without",
+      "role": "frontier",
+      "provider": "cliproxy",
+      "model": "claude-opus-5"
+    }
+  ],
+  "judge": {
+    "provider": "cliproxy",
+    "model": "claude-fable-5-1",
+    "tag": "fable",
+    "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8"
+  },
+  "statistics": {
+    "margin": 5,
+    "alpha_one_sided": 0.025,
+    "contrasts": [
+      [
+        "glm_with",
+        "sonnet_without"
+      ],
+      [
+        "glm_with",
+        "opus_without"
+      ],
+      [
+        "qwen_with",
+        "sonnet_without"
+      ],
+      [
+        "qwen_with",
+        "opus_without"
+      ],
+      [
+        "glm_with",
+        "glm_without"
+      ],
+      [
+        "glm_with",
+        "qwen_without"
+      ],
+      [
+        "qwen_with",
+        "glm_without"
+      ],
+      [
+        "qwen_with",
+        "qwen_without"
+      ],
+      [
+        "sonnet_with",
+        "sonnet_without"
+      ],
+      [
+        "sonnet_with",
+        "opus_without"
+      ],
+      [
+        "opus_with",
+        "sonnet_without"
+      ],
+      [
+        "opus_with",
+        "opus_without"
+      ],
+      [
+        "glm_with",
+        "sonnet_with"
+      ],
+      [
+        "glm_with",
+        "opus_with"
+      ],
+      [
+        "qwen_with",
+        "sonnet_with"
+      ],
+      [
+        "qwen_with",
+        "opus_with"
+      ]
+    ],
+    "runs_per_task": 1
+  },
+  "price_basis": {}
+}

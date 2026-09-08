@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 10,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the matrix as RSEM expected counts, rounds them for DESeq2 with the rounding recorded, uses them unchanged in edgeR, never substitutes TPM/FPKM, states explicitly that the length offset is lost and names the per-sample genes.results files as the input needed; it loses a point only for not spelling out the tximport type='rsem' import path (with zero effective lengths set to one) that those files would enable. QC includes library sizes, PCA and distance heatmap coloured by condition with an explicit keep-and-inspect policy for sample_01 plus a labelled sensitivity refit. Filtering is minimal and tied to the smallest group size, normalization is inside the model (median-of-ratios / TMM), the design and control reference level and contrast are explicit, BH at 0.05 with apeglm shrinkage and lfcThreshold-in-test are stated. Enrichment is correctly omitted and the report records method, versions, design, thresholds, tested/significant counts, seed, sessionInfo and the design caveats."
+}

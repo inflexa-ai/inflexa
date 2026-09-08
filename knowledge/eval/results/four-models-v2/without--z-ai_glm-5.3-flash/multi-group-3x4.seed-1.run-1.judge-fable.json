@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 5,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: one DESeq2 ~condition fit on all twelve samples, LRT against ~1 for the omnibus question, and two apeglm-shrunk Wald contrasts against control from the same fit with BH at 0.05, with explicit acceptance that all three tests share the filtered gene set and dispersion estimates. QC (library sizes, PCA/clustering by condition, stated outlier policy) and a group-size-justified low count filter precede the model, and the report requirements name method, versions, thresholds, DE counts and the low-power caveat. Normalization is never stated — size factors are implied by using DESeq2 on raw counts but not named, and the rounding of Salmon counts is a pre-model adjustment, so that criterion scores low. The reference level for the contrasts is implied rather than explicitly set. Enrichment was not asked for; the added fgsea step names collection, version, size window and BH, but hedges on the ranking metric (shrunk LFC vs Wald stat) and gives no universe for the omnibus ORA check."
+}

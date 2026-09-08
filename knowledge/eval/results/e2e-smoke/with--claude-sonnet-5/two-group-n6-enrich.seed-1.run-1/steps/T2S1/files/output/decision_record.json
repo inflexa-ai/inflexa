@@ -1,0 +1,146 @@
+{
+  "schema": "inflexa.decision_record/0.1",
+  "template": {
+    "id": "tpl-fgsea-preranked",
+    "version": "1.0.0",
+    "label": "fgsea preranked gene set enrichment on a differential expression results table",
+    "method": "M-0010"
+  },
+  "snapshot": {
+    "date": "2026-09-06",
+    "digest": "sha256:90c687582244894c67c212e63855415984027bcd54c896821c4e065cf8b5467a"
+  },
+  "rendered_at": "2026-09-07T09:23:39.886Z",
+  "slots": [
+    {
+      "name": "results_path",
+      "value": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/runs/619852b4-1723-48f1-b3fe-f19dbee5d2d9/T1S2/output/deseq2_results.csv",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        20
+      ]
+    },
+    {
+      "name": "rank_metric",
+      "value": "stat",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        21
+      ]
+    },
+    {
+      "name": "gmt_path",
+      "value": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/runs/619852b4-1723-48f1-b3fe-f19dbee5d2d9/T2S1/output/reactome_pathways_human.gmt",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        22
+      ]
+    },
+    {
+      "name": "min_size",
+      "value": 15,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        23
+      ]
+    },
+    {
+      "name": "max_size",
+      "value": 500,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        24
+      ]
+    },
+    {
+      "name": "eps",
+      "value": 0,
+      "source": "default",
+      "adaptable": false,
+      "default_source": "doi:10.1101/060012",
+      "lines": [
+        25
+      ]
+    },
+    {
+      "name": "seed",
+      "value": 42,
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        26
+      ]
+    },
+    {
+      "name": "output_prefix",
+      "value": "reactome",
+      "source": "caller",
+      "adaptable": true,
+      "lines": [
+        27
+      ]
+    }
+  ],
+  "environment": {
+    "match": "exact",
+    "pins": [
+      {
+        "name": "fgsea",
+        "track": "bioconductor",
+        "version": "1.38.0",
+        "farm": "1.38.0",
+        "status": "exact"
+      },
+      {
+        "name": "ggplot2",
+        "track": "cran",
+        "version": "4.0.3",
+        "farm": "4.0.3",
+        "status": "exact"
+      },
+      {
+        "name": "jsonlite",
+        "track": "cran",
+        "version": "2.0.0",
+        "farm": "2.0.0",
+        "status": "exact"
+      }
+    ]
+  },
+  "syntax": {
+    "status": "ok"
+  },
+  "citations": [
+    {
+      "doi": "10.1073/pnas.0506580102",
+      "title": "Gene set enrichment analysis: a knowledge-based approach for interpreting genome-wide expression profiles",
+      "year": 2005,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1101/060012",
+      "title": "Fast gene set enrichment analysis",
+      "year": 2021,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1038/s41596-018-0103-9",
+      "title": "Pathway enrichment analysis and visualization of omics data using g:Profiler, GSEA, Cytoscape and EnrichmentMap",
+      "year": 2019,
+      "direction": "supports"
+    },
+    {
+      "doi": "10.1016/j.cels.2015.12.004",
+      "title": "The Molecular Signatures Database (MSigDB) hallmark gene set collection",
+      "year": 2015,
+      "direction": "supports"
+    }
+  ],
+  "unvetted_edits": [],
+  "script_path": "/eval-e2e-smoke-with-two-group-n6-enrich-s1-1/runs/619852b4-1723-48f1-b3fe-f19dbee5d2d9/T2S1/scripts/fgsea_reactome.R"
+}

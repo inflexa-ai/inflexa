@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 8,
+    "normalization": 5,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 7
+  },
+  "rationale": "The DESeq2 NB Wald model on ~condition with controls as the explicit reference fits the unpaired single-batch 60 vs 60 design, and the plan's treatment of the effect-size question is exemplary: apeglm shrinkage, a formal lfcThreshold test compared against the naive post-hoc intersection, and BH at a stated alpha. QC covers library sizes, PCA coloured by condition, composition outliers with a stated keep-and-describe policy, and hidden-structure checks that are reported rather than fitted blind, though the sex check against XIST/Y-linked genes is not stated explicitly. Normalization is never named — the plan relies on DESeq2's size factors implicitly and does not say so, and the non-integer handling (rounding) is a caveat rather than a length-aware path. Enrichment uses fgsea on the full ranked Wald statistic with named collections and a 15–500 size window, but no collection version is stated; the report specifies counts and caveats but does not commit to recording package versions."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference: limma-voom with a fixed-effects model on an unpaired single-batch 60 vs 60 cohort, filterByExpr grouped by condition, TMM inside voom, explicit control reference level and case-vs-control contrast, BH at 0.05 with a TREAT test at log2FC 0.5 inside the model plus CIs, and ranked enrichment (camera and fgsea on the moderated t) against versioned Hallmark/Reactome/WikiPathways with a 15-500 size window. QC covers PCA, distances, library sizes and a documented exclusion policy but omits the sex check against XIST/Y-linked genes; the design formula is implied rather than written as ~condition. Enrichment still leaves an ORA on a cutoff list open if more than ~50 genes are significant, without an explicit universe for that case. The report section is thorough, including versions, seeds, counts at each stage, and the length-correction and cohort-method caveats; the large-cohort citation is misattributed but the substance is correct."
+}

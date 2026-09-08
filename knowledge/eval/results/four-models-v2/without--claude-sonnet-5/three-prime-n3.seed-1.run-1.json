@@ -1,0 +1,310 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "three-prime-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:10:55.097Z",
+  "elapsedMs": 34422,
+  "outcome": "plan_submitted",
+  "planId": "pln-ad6bb5eb",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC and filter raw count matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "3' tag-seq gives one read per transcript, so do not apply TPM/FPKM length normalization anywhere downstream",
+          "Confirm condition label spelling/casing in metadata before building the DESeq2 design formula"
+        ],
+        "context": "Raw integer gene-level counts from STAR/featureCounts, 12000 genes x 7 columns (6 samples + gene ID column) in counts.csv; metadata.csv has 6 rows with condition (treated/control). Single batch, unpaired 3v3 design. This is a Lexogen QuantSeq FWD 3' tag-seq library — no gene-length normalization should be applied at any stage.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do the 6 liver samples in counts.csv match the 3 treated vs 3 control grouping in metadata.csv, and which of the 12000 genes have sufficient counts to be tested for differential expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv columns match metadata.csv rows exactly (order and identity)",
+          "Library size (total counts per sample) and count distribution reported per sample",
+          "Low-count genes filtered using a standard rule (e.g., minimum count across samples or CPM-based filter) with the number of genes retained reported",
+          "Filtered count matrix and matched metadata saved for the DE step"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression: treated vs control",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "n=3 per group is small — treat nominal-p-value-only findings cautiously and rely on padj",
+          "Single batch means no batch correction is needed or should be added to the design",
+          "Do not use vst/rlog-normalized values as if they were length-normalized abundances; they remain library-size-normalized only"
+        ],
+        "context": "Filtered raw counts (STAR/featureCounts gene-level, 3' tag-seq) and matched metadata for 3 treated vs 3 control liver samples, single batch, unpaired design, from T1S1.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "EnhancedVolcano"
+        ],
+        "question": "Which of the filtered liver genes are significantly differentially expressed between treated (n=3) and control (n=3) samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 run with design ~condition on raw filtered counts (no length/TPM normalization, consistent with 3' tag-seq)",
+          "Log2 fold-change shrinkage applied (apeglm or ashr) given the small n=3 per group",
+          "Results table reports gene ID, baseMean, log2FoldChange, shrunken LFC, p-value, and BH-adjusted p-value (padj) for every tested gene",
+          "Significant gene list defined at padj < 0.05 (and log2FC threshold stated explicitly) reported separately from the full results table",
+          "A volcano plot and PCA/sample-distance plot of the 6 samples included as QC of the contrast"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Pathway enrichment of DE genes",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Reactome GMT covers all species in one file — filter to Homo sapiens using ReactomePathways.txt species column before testing",
+          "GO/hallmark/pathway sets are a hierarchy or overlapping families in places — do not report raw hit counts as independent findings",
+          "Report as an annotation layer: if none of the pathway reference files are found in the environment at run time, state that explicitly rather than fabricating enrichment results"
+        ],
+        "context": "DESeq2 differential expression results (gene symbols, log2FoldChange, stat, padj) for treated vs control human liver samples from T1S2. Human pathway gene sets are available in the environment: WikiPathways human (2026.07.10 snapshot, HGNC symbols), MSigDB Hallmark human (2026.1, 50 sets, HGNC symbols), and Reactome pathways (current, GMT with gene symbols, multi-species — filter to Homo sapiens via the accompanying pathway index).",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "clusterProfiler",
+          "gseapy"
+        ],
+        "question": "Which biological pathways are enriched among the genes differentially expressed between treated and control liver samples?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis (or ranked GSEA using the DESeq2 stat/LFC) run against human WikiPathways and MSigDB Hallmark gene sets at minimum; Reactome included if time/scope allows",
+          "Gene symbols from the DESeq2 results matched to gene set identifiers, with the match rate reported (genes tested vs genes mapped)",
+          "Enrichment results table reports pathway name, gene set size, overlap/leading-edge genes, p-value and adjusted p-value (BH/FDR)",
+          "Report explicitly which reference gene-set files were used and their version/date"
+        ]
+      }
+    ],
+    "title": "Liver 3' tag-seq treated vs control DE + pathway enrichment",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "This is a bulk RNA-seq dataset (12000 genes x 6 samples, 3 treated vs 3 control liver samples, unpaired, single batch) generated with Lexogen QuantSeq FWD 3' tag-seq. Because it is a 3' tag-seq library (one read per transcript molecule, no length dependence), standard length-normalization (TPM/FPKM using gene body length) is not appropriate — DESeq2's median-of-ratios normalization on raw counts is the correct approach and needs no gene-length correction. The plan: (1) QC the raw counts and metadata to confirm sample-condition mapping and filter low-count genes, (2) run DESeq2 differential expression with a simple ~condition design (single batch, unpaired, no covariates to adjust for), applying apeglm/ashr shrinkage for stable fold-change estimates given n=3/group, (3) enrich the DE gene list against human pathway databases (WikiPathways, MSigDB Hallmark, Reactome) to interpret the treatment's biological impact on liver. All steps operate on human (Homo sapiens, taxon 9606) data and use human-specific reference gene sets available in the environment."
+  },
+  "usage": {
+    "inputTokens": 265132,
+    "outputTokens": 2844,
+    "cacheCreationInputTokens": 113645,
+    "cacheReadInputTokens": 151427,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01SbX8zhD7wwoimoARwVPhrM",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human",
+        "category": "pathways"
+      },
+      "outcome": "ok",
+      "durationMs": 1
+    },
+    {
+      "toolUseId": "toolu_01GxLpTPx2R9Q7jxQd24HGaC",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways-human"
+      },
+      "outcome": "ok",
+      "durationMs": 62
+    },
+    {
+      "toolUseId": "toolu_01LEaAaGvjJZaBdT48yJHgfk",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 65
+    },
+    {
+      "toolUseId": "toolu_01NgCh75naS4fyxYyX2nSeGy",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 62
+    },
+    {
+      "toolUseId": "toolu_01Ee111XhjwEiHxdh6jVyMRt",
+      "name": "list_available_refs",
+      "input": {
+        "query": "reactome"
+      },
+      "outcome": "ok",
+      "durationMs": 64
+    },
+    {
+      "toolUseId": "toolu_0118cowa8STEN5GUQPUt6YF9",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "pydeseq2",
+          "rnanorm",
+          "apeglm",
+          "ashr",
+          "fgsea",
+          "clusterProfiler",
+          "EnhancedVolcano"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_013HgZaYcaA4irbYo7R82MHe",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver 3' tag-seq treated vs control DE + pathway enrichment",
+          "analytical_narrative": "This is a bulk RNA-seq dataset (12000 genes x 6 samples, 3 treated vs 3 control liver samples, unpaired, single batch) generated with Lexogen QuantSeq FWD 3' tag-seq. Because it is a 3' tag-seq library (one read per transcript molecule, no length dependence), standard length-normalization (TPM/FPKM using gene body length) is not appropriate — DESeq2's median-of-ratios normalization on raw counts is the correct approach and needs no gene-length correction. The plan: (1) QC the raw counts and metadata to confirm sample-condition mapping and filter low-count genes, (2) run DESeq2 differential expression with a simple ~condition design (single batch, unpaired, no covariates to adjust for), applying apeglm/ashr shrinkage for stable fold-change estimates given n=3/group, (3) enrich the DE gene list against human pathway databases (WikiPathways, MSigDB Hallmark, Reactome) to interpret the treatment's biological impact on liver. All steps operate on human (Homo sapiens, taxon 9606) data and use human-specific reference gene sets available in the environment.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC and filter raw count matrix",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 6 liver samples in counts.csv match the 3 treated vs 3 control grouping in metadata.csv, and which of the 12000 genes have sufficient counts to be tested for differential expression?",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv columns match metadata.csv rows exactly (order and identity)",
+                "Library size (total counts per sample) and count distribution reported per sample",
+                "Low-count genes filtered using a standard rule (e.g., minimum count across samples or CPM-based filter) with the number of genes retained reported",
+                "Filtered count matrix and matched metadata saved for the DE step"
+              ],
+              "packages": [
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Raw integer gene-level counts from STAR/featureCounts, 12000 genes x 7 columns (6 samples + gene ID column) in counts.csv; metadata.csv has 6 rows with condition (treated/control). Single batch, unpaired 3v3 design. This is a Lexogen QuantSeq FWD 3' tag-seq library — no gene-length normalization should be applied at any stage.",
+              "caveats": [
+                "3' tag-seq gives one read per transcript, so do not apply TPM/FPKM length normalization anywhere downstream",
+                "Confirm condition label spelling/casing in metadata before building the DESeq2 design formula"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression: treated vs control",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "Which of the filtered liver genes are significantly differentially expressed between treated (n=3) and control (n=3) samples?",
+              "acceptance_criteria": [
+                "DESeq2 run with design ~condition on raw filtered counts (no length/TPM normalization, consistent with 3' tag-seq)",
+                "Log2 fold-change shrinkage applied (apeglm or ashr) given the small n=3 per group",
+                "Results table reports gene ID, baseMean, log2FoldChange, shrunken LFC, p-value, and BH-adjusted p-value (padj) for every tested gene",
+                "Significant gene list defined at padj < 0.05 (and log2FC threshold stated explicitly) reported separately from the full results table",
+                "A volcano plot and PCA/sample-distance plot of the 6 samples included as QC of the contrast"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "EnhancedVolcano"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Filtered raw counts (STAR/featureCounts gene-level, 3' tag-seq) and matched metadata for 3 treated vs 3 control liver samples, single batch, unpaired design, from T1S1.",
+              "caveats": [
+                "n=3 per group is small — treat nominal-p-value-only findings cautiously and rely on padj",
+                "Single batch means no batch correction is needed or should be added to the design",
+                "Do not use vst/rlog-normalized values as if they were length-normalized abundances; they remain library-size-normalized only"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Pathway enrichment of DE genes",
+              "track": "T1",
+              "step_type": "enrichment",
+              "question": "Which biological pathways are enriched among the genes differentially expressed between treated and control liver samples?",
+              "acceptance_criteria": [
+                "Over-representation analysis (or ranked GSEA using the DESeq2 stat/LFC) run against human WikiPathways and MSigDB Hallmark gene sets at minimum; Reactome included if time/scope allows",
+                "Gene symbols from the DESeq2 results matched to gene set identifiers, with the match rate reported (genes tested vs genes mapped)",
+                "Enrichment results table reports pathway name, gene set size, overlap/leading-edge genes, p-value and adjusted p-value (BH/FDR)",
+                "Report explicitly which reference gene-set files were used and their version/date"
+              ],
+              "packages": [
+                "fgsea",
+                "clusterProfiler",
+                "gseapy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent",
+              "context": "DESeq2 differential expression results (gene symbols, log2FoldChange, stat, padj) for treated vs control human liver samples from T1S2. Human pathway gene sets are available in the environment: WikiPathways human (2026.07.10 snapshot, HGNC symbols), MSigDB Hallmark human (2026.1, 50 sets, HGNC symbols), and Reactome pathways (current, GMT with gene symbols, multi-species — filter to Homo sapiens via the accompanying pathway index).",
+              "caveats": [
+                "Reactome GMT covers all species in one file — filter to Homo sapiens using ReactomePathways.txt species column before testing",
+                "GO/hallmark/pathway sets are a hierarchy or overlapping families in places — do not report raw hit counts as independent findings",
+                "Report as an annotation layer: if none of the pathway reference files are found in the environment at run time, state that explicitly rather than fabricating enrichment results"
+              ]
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 50
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

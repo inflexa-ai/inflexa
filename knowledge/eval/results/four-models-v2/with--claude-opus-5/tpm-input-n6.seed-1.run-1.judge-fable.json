@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference: it recognizes TPM is not a count, excludes DESeq2/edgeR/voom, fits limma on log2(TPM+1) with eBayes(trend=TRUE, robust=TRUE) on a ~0 + condition design with control as the explicit reference and a lesional - control contrast, and applies BH at 0.05 through topTable with TREAT for the fold-change threshold rather than a post hoc filter. QC (PCA/MDS on top 500 genes, distance heatmap, detected genes) runs on the log scale with an explicit no-removal outlier policy, and the filter (TPM >= 1 in >= 6 samples) is tied to the smallest group size. The request for raw counts or quant directories appears only as a caveat rather than a formal step, and library-size QC is necessarily approximated by detected-gene counts given TPM input. Enrichment is correctly omitted with stated reason, and the report step names method, versions, design, thresholds, gene counts, sessionInfo, and design limitations."
+}

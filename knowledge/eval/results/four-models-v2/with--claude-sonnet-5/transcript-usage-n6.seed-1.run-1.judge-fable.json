@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 2,
+    "low_count_filter": 1,
+    "normalization": 2,
+    "model_formula_contrasts": 2,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 4
+  },
+  "rationale": "The planner correctly recognized that gene-level counts cannot answer an isoform-switch question, stopped, and asked for the per-sample Salmon quant.sf files and a transcript-to-gene map, naming the appropriate DTU tools (DRIMSeq, DEXSeq, stageR); this matches the reference outcome, though it omitted the annotation version and unwisely offered a 'best-effort proxy' on data that carries no isoform signal. Because no plan was submitted, nothing is stated about sample QC or a policy for the shallow sample_01, the dmFilter-style expression/proportion filter, tximport scaledTPM/dtuScaledTPM import, the design or contrast, the overall FDR level, or the reported effect as a change in proportion. Enrichment is correctly absent. The clarification is the right deliverable but stops short of laying out the downstream method of record once the data arrive."
+}

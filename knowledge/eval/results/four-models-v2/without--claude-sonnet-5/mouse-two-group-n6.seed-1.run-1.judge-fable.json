@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 0,
+    "normalization": 6,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 5
+  },
+  "rationale": "DESeq2 on raw counts for an unpaired 6 vs 6 single-batch design fits, and the sample_01 sensitivity rerun is a sensible policy, but the QC omits PCA and sample-distance inspection colored by condition. No low-count filter is stated at all, the design formula and reference level are never written out, and no fold-change shrinkage (apeglm) is planned; the |log2FC| cutoff is applied post hoc rather than in the test. Enrichment correctly uses the mouse Hallmark collection with a stated Wald-statistic ranking, but gives no collection version or set-size window and is internally inconsistent (48 vs 50 sets). The report lacks package versions and an explicit model statement."
+}

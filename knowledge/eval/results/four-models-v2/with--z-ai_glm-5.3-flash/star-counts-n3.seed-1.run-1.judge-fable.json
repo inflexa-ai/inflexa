@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the STAR/featureCounts matrix as integer gene-level counts entering DESeqDataSetFromMatrix directly, explicitly rules out tximport and length correction, and fits ~condition with control releveled as reference and a named (condition, treated, control) contrast for an unpaired single-batch 3-vs-3 design. QC (blind VST, PCA on top 500 genes, sample distances, library sizes, colored by condition with a stated no-silent-exclusion outlier policy) precedes the test; the filter (>=10 counts in >=3 samples, the smallest group) is minimal and justified, normalization is median-of-ratios/TMM inside the models, BH at alpha 0.05 via results() with independent filtering, and apeglm shrinkage is applied with unshrunken and shrunken LFCs kept side by side. Power at n=3 is stated explicitly and enrichment is correctly omitted. The only reservation is the edgeR-intersection rule as the high-confidence set, which is defensible but further reduces already low power and is not required by the design; the report specification is otherwise complete with versions, design, thresholds, tested/significant counts, diagnostics, and caveats."
+}

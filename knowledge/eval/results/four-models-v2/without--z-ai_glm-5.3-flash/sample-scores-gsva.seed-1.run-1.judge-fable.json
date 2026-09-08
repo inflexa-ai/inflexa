@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 2,
+    "normalization": 9,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan correctly frames this as a per-sample scoring problem: DESeq2 size factors and vst feed GSVA with a Gaussian kernel over the named, versioned Hallmark collection, and limma eBayes with BH on the 50 x 12 score matrix identifies separating pathways, with a z-scored, condition-annotated heatmap. QC covers library sizes, gene detection, and a condition-labelled PCA with an explicit keep-unless-failed policy for sample_01, though it does not say the score matrix itself is inspected for that sample. No low-count gene filter is stated anywhere before vst or GSVA, the reference level is not explicitly set, and no FDR alpha is named, which leaves the significance threshold undefined even though BH is applied."
+}

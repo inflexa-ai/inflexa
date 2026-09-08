@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the essentials: VST input rather than raw counts, a signed WGCNA network, power chosen at scale-free fit 0.8 with the fit and mean connectivity reported, TOM with dynamic tree cut (min 30) and eigengene merge at 0.25, eigengene-vs-binary-trait correlation with BH across modules, and ORA against Hallmark/WikiPathways with the network genes as the explicit universe. It falls short by building the network on all filterByExpr-retained genes rather than the top ~5000 variable genes, by ranking hubs on kME alone without gene significance, by flagging but not stating a removal policy for an outlier sample, and by not stating a gene-set size window. The QC and report sections are otherwise specific to this 120-sample single-batch design and well documented."
+}

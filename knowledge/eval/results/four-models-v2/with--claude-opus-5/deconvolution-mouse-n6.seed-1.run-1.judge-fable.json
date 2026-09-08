@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the decisive points: it uses the species-matched mMCP-counter (version named), explicitly forbids the human references and any symbol coercion, feeds a linear CPM matrix rather than counts or logs, states that scores are within-population relative abundances and not fractions, keeps sample_01 with a blind-VST PCA, distance heatmap and depth table, and tests each population between arms with BH across populations, reporting the difference with a CI beside the adjusted p-value. Minor deviations: mMCP-counter is specified on linear CPM whereas the reference (and the package) score on log2 CPM; limma's moderated variance across populations on different arbitrary scales is a less clean choice than a per-population t-test or Wilcoxon; the DESeq2 size factors are estimated but the CPM matrix is built from plain library-size scaling, leaving the size-factor step somewhat decorative; and no alpha is stated for the BH threshold. Reference level is implied rather than fixed explicitly. Enrichment is correctly omitted, and the report step covers tool, version, marker coverage, input scale rationale, sample_01 handling, power caveat and reproducibility record."
+}

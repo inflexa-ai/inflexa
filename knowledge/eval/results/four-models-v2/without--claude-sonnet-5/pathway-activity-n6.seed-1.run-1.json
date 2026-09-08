@@ -1,0 +1,811 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "pathway-activity-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:40:11.814Z",
+  "elapsedMs": 137413,
+  "outcome": "plan_submitted",
+  "planId": "pln-b070a9c7",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "QC counts/metadata and library-size flag resolution",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "DESeq2"
+        ],
+        "question": "Do the 12000x12 Salmon gene counts and the 12-sample metadata (6 cytokine-treated vs 6 vehicle) pass basic QC, and how should sample_01 (library size ~4x below median) be handled before differential expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Reports per-sample library size, total counts, and detected-gene count for all 12 samples, explicitly quantifying sample_01's library size relative to the cohort median",
+          "Performs a PCA/sample-correlation check on normalized counts (e.g. rlog/vst) to see whether sample_01 is an outlier beyond its library depth, or whether depth alone explains its position",
+          "States an explicit decision for sample_01: retain with size-factor normalization, or exclude, with the reasoning and the effect on group balance (5v6 vs 6v6) if excluded",
+          "Confirms metadata condition labels align 1:1 with the 12 count columns and that gene identifiers are usable symbols/Ensembl IDs for downstream footprint scoring"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "DESeq2 differential expression, cytokine-treated vs vehicle",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "ashr",
+          "pandas"
+        ],
+        "question": "What is the genome-wide differential expression signature (log2FC, Wald statistic, adjusted p-value) of cytokine-treated versus vehicle-control bronchial epithelial samples, after applying the sample_01 QC decision from T1S1?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "differential_expression",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "Uses DESeq2 with raw counts and the resolved sample set/weights from T1S1, standard size-factor normalization and independent filtering",
+          "Reports the full gene-level results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all ~12000 genes, not just significant hits",
+          "Applies lfcShrink (apeglm or ashr) to produce a stable effect-size estimate, and retains the unshrunk Wald statistic separately since footprint methods need a signed per-gene statistic",
+          "States how many genes are significant at padj<0.05 and flags if sample_01 exclusion changed the DE gene count materially"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "PROGENy footprint-based pathway activity inference",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "rpy2"
+        ],
+        "question": "Which of the 14 PROGENy signaling pathways (e.g. EGFR, MAPK, PI3K, TNFa, NFkB, JAK-STAT, TGFb, p53, Hypoxia) show significant footprint-based activity change between cytokine-treated and vehicle-control samples, using the DE Wald statistic as input rather than raw gene expression?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "pathway_activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Loads the PROGENy human pathway-responsive-gene weight model from the reference store (organism must be human, matching this Homo sapiens dataset) and converts it to a source/target/weight network usable by decoupler",
+          "Runs decoupler's linear-model-based footprint scoring (e.g. run_mlm or run_ulm) on the DESeq2 Wald statistic vector from T1S2, producing one activity score and p-value per pathway for the treated-vs-control contrast",
+          "Reports ranked pathway activities with direction (activated vs suppressed) and significance, distinguishing this footprint-based result explicitly from simple pathway-member differential expression",
+          "If the PROGENy human reference is unavailable at run time, reports that gap rather than substituting a non-human model or a member-expression proxy"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "CollecTRI/DoRothEA transcription-factor footprint activity",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "decoupler",
+          "pandas",
+          "numpy",
+          "rpy2"
+        ],
+        "question": "Which transcription-factor regulons show significant footprint-based activity change between cytokine-treated and vehicle-control samples, as a complementary downstream-regulatory-footprint view to the PROGENy pathway scores?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "regulatory_activity",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Loads the human CollecTRI regulon network from the reference store as the primary network (literature-curated TF-target interactions with signed weights), and cross-checks the top hits against the human DoRothEA confidence-filtered (A-C) regulons for concordance",
+          "Runs decoupler's consensus or ulm/mlm scoring on the same DESeq2 Wald statistic vector from T1S2 to obtain per-TF activity scores and significance for the contrast",
+          "Reports the top up- and down-regulated TFs by activity score, and notes any TF whose CollecTRI result is not concordant in direction with the DoRothEA cross-check",
+          "Explicitly ties any top TF hit back to a plausible upstream pathway from T2S1 where the biology supports it, but does not overclaim a mechanistic link not supported by both analyses"
+        ]
+      },
+      {
+        "id": "T2S3",
+        "name": "Member-expression pathway enrichment as contrast baseline",
+        "agent": "enrichment-agent",
+        "track": "T2",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea",
+          "pandas"
+        ],
+        "question": "Which pathways appear enriched by conventional pathway-member differential expression (hallmark and WikiPathways gene sets) for the same cytokine-treated vs vehicle contrast, and how does this list differ from the footprint-based PROGENy/CollecTRI results?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "enrichment",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "Runs a ranked gene-set enrichment (e.g. fgsea) on the DESeq2 stat-ranked gene list from T1S2 against the MSigDB human hallmark gene sets and the WikiPathways human gene sets from the reference store",
+          "Reports enriched pathways at a standard FDR cutoff with normalized enrichment score and direction",
+          "Produces a side-by-side comparison table against the T2S1 PROGENy footprint results, explicitly naming any pathway that appears enriched by member expression but is NOT supported by the footprint score (or vice versa), since this is the distinction the research question asks for",
+          "Does not present member-expression enrichment results as equivalent evidence to footprint-based activity — labels this step's output as the baseline/contrast, not the primary answer"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Synthesis: footprint-based pathway activity report with QC sensitivity check",
+        "agent": "enrichment-agent",
+        "track": "T3",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "pandas"
+        ],
+        "question": "What is the final ranked list of signaling pathways and transcription-factor regulons whose transcriptional footprint indicates altered activity in cytokine-treated versus vehicle bronchial epithelial samples, and how robust is that ranking to the sample_01 library-depth issue?",
+        "resources": {
+          "cpu": 1,
+          "memoryGb": 2
+        },
+        "step_type": "synthesis",
+        "depends_on": [
+          "T2S1",
+          "T2S2",
+          "T2S3"
+        ],
+        "acceptance_criteria": [
+          "Integrates T2S1 (PROGENy), T2S2 (CollecTRI/DoRothEA), and T2S3 (member-expression baseline) into one report that leads with footprint-supported pathways/TFs as the primary answer to the research question",
+          "Explicitly flags any pathway or TF whose activity call would plausibly change under the alternative sample_01 handling (retain vs exclude) noted in T1S1, rather than presenting a single number as certain",
+          "States clearly which pathways are footprint-supported only, member-expression-supported only, or both, and avoids claiming mechanistic causality beyond what the statistics support",
+          "Notes the small sample size (n=6 per group, further reduced if sample_01 is excluded) as a limitation on statistical power for both DE and downstream footprint calls"
+        ]
+      }
+    ],
+    "title": "Footprint-based pathway activity, cytokine vs vehicle HBEC",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question explicitly asks for pathway activity judged by transcriptional footprint (downstream target/response-gene signatures) rather than by expression of pathway members themselves — this rules out simple over-representation of pathway-gene DE lists and calls for footprint-based methods (PROGENy for signaling pathways, CollecTRI/DoRothEA for TF activity as a complementary regulatory-footprint layer) applied to a proper differential contrast. The data is 12 bronchial epithelial samples (6 cytokine-treated vs 6 vehicle, unpaired, single batch), raw Salmon gene-level counts (12000 genes x 13 columns incl. gene id). sample_01 has library size ~4x below median, which is a QC flag that must be handled explicitly (assessed for exclusion or verified robust to size-factor normalization) rather than silently left in — dropping or down-weighting a single sample in a 6v6 design measurably changes power, so this is reported, not just fixed. The pipeline: (1) QC the count matrix and metadata jointly, flag/resolve sample_01; (2) run a single genome-wide DESeq2 differential expression contrast (treated vs control) to get a gene-level statistic (Wald/LRT stat or moderated log2FC) that decoupler-style footprint methods can consume as input, since footprint scoring requires a per-gene signed statistic, not a DE gene list; (3) run PROGENy-based pathway activity (via decoupler, using the human PROGENy model weights available in the reference store) on that per-gene statistic to get per-pathway activity scores/directions for the treated-vs-control contrast; (4) run TF-activity footprint inference (via decoupler with the CollecTRI human network, cross-checked against DoRothEA confidence-filtered regulons) as a complementary regulatory footprint, since PROGENy captures 14 curated signaling pathways while CollecTRI covers a much larger space of transcriptional regulators sitting downstream of those pathways; (5) run a conventional pathway member-expression enrichment (hallmark/WikiPathways gene-set enrichment on the same DE ranking) purely as a contrast baseline, so the report can explicitly show how footprint-based conclusions differ from (and are more defensible than) member-expression-based conclusions, honoring the question's framing; (6) synthesize into a single pathway-activity report ranking pathways/TFs by consistent, statistically supported activity change, flagging any result that is sensitive to the sample_01 QC decision."
+  },
+  "usage": {
+    "inputTokens": 2122103,
+    "outputTokens": 7859,
+    "cacheCreationInputTokens": 110941,
+    "cacheReadInputTokens": 2010694,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01JAoG2XRfhukV8uVA1mtqJc",
+      "name": "list_available_refs",
+      "input": {
+        "query": "progeny footprint pathway"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_01HgvVEwvgJS5LLh3CWBXWsM",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea regulon"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01JLWEcHZw95XuCrJ98Eyk2L",
+      "name": "list_available_refs",
+      "input": {
+        "category": "pathway-activity"
+      },
+      "outcome": "ok",
+      "durationMs": 6
+    },
+    {
+      "toolUseId": "toolu_01UpLBLgW14MYqoStLSCeWst",
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_019Ynot4jvMSFnAZse8GuR7k",
+      "name": "list_available_refs",
+      "input": {
+        "query": "pathway-activity"
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_01F3mnC2iYkYUkyscTobfhX8",
+      "name": "list_available_refs",
+      "input": {
+        "query": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_018Gkc6B49eLvTAScKfngfdn",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "decoupler",
+          "decoupleR",
+          "pydeseq2",
+          "rpy2"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01Y4Jp4WThQf2UFewq4wFomB",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/decoupler",
+        "query": "PROGENy pathway activity inference with contrast / differential expression stats, mlm ulm methods, use with DESeq2 stat"
+      },
+      "outcome": "error",
+      "durationMs": 1518
+    },
+    {
+      "toolUseId": "toolu_01L61QXHXRhN2rk38NudJz2Y",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "decoupler footprint pathway activity inference PROGENy bulk RNA-seq contrast",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 9222
+    },
+    {
+      "toolUseId": "toolu_01VhuNrStpNAvYknmNZ3Az6t",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupler footprint pathway activity PROGENy bulk RNA-seq transcriptomics",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 262
+    },
+    {
+      "toolUseId": "toolu_01Qyh5sMdgvJSJi9nMpu8ARK",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupleR consensus pathway transcription factor activity inference benchmark",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 516
+    },
+    {
+      "toolUseId": "toolu_011XpJChFmiHXzN83Je6dq71",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PROGENy pathway responsive genes footprint transcriptomics",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 447
+    },
+    {
+      "toolUseId": "toolu_019EeAh3UbQNaAN9PT234NH8",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "PROGENy pathway",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 1046
+    },
+    {
+      "toolUseId": "toolu_01UJbyd9X8x2TT1NrD841LL5",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Schubert Garcia-Alonso Saez-Rodriguez PROGENy pathway RNA",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 492
+    },
+    {
+      "toolUseId": "toolu_01BHNcNJJT4SCK4HfW7uWcas",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Perturbation-response genes reveal signaling footprints cancer gene expression",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 679
+    },
+    {
+      "toolUseId": "toolu_01NNHueRwy8wpfCxtBJ3tkDL",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "29295995"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 681
+    },
+    {
+      "toolUseId": "toolu_0142iDDpF7VyEhi69tPgTgdg",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupleR ensemble methods enrichment functional genomics footprint transcriptomics",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 444
+    },
+    {
+      "toolUseId": "toolu_01BZZaHFDsgf8PZU7sAwK1uV",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "decoupleR unified framework transcription factor pathway activities omics data",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 458
+    },
+    {
+      "toolUseId": "toolu_01Vg5dZ5b5uTS5KQmC5JBKE5",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Badia-i-Mompel decoupleR",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 430
+    },
+    {
+      "toolUseId": "toolu_01PDUtLcjJ9WgkYPRL8utjep",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "36699385"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 674
+    },
+    {
+      "toolUseId": "toolu_017gEABQUJ9D7xg4TLLUZqSM",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/saezlab/decoupler-py",
+        "query": "run_mlm or run_ulm with PROGENy network and contrast t-statistics from DESeq2 bulk RNA-seq"
+      },
+      "outcome": "error",
+      "durationMs": 1534
+    },
+    {
+      "toolUseId": "toolu_01HEu9cHSWFPWnjQsDtegBmn",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "decoupler",
+        "query": "pathway activity inference mlm ulm PROGENy"
+      },
+      "outcome": "error",
+      "durationMs": 1573
+    },
+    {
+      "toolUseId": "toolu_01YV9qPGwp9mXGwggcbHZt5m",
+      "name": "search_github_repos",
+      "input": {
+        "query": "decoupler-py progeny mlm bulk",
+        "language": "python",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 398
+    },
+    {
+      "toolUseId": "toolu_01LwtXs7y87efchcoYKpr1NK",
+      "name": "search_github_repos",
+      "input": {
+        "query": "saezlab decoupler",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 268
+    },
+    {
+      "toolUseId": "toolu_017oLjUM3QuTkaE7HAUApHLh",
+      "name": "search_arxiv",
+      "input": {
+        "query": "pathway activity inference footprint gene expression decoupler PROGENy",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 520
+    },
+    {
+      "toolUseId": "toolu_01QZojKH3VvgKx3HQA5XAb9q",
+      "name": "list_available_packages",
+      "input": {
+        "query": "decoupler"
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_015paBskDjiHBnsYA9gEcgjE",
+      "name": "list_available_packages",
+      "input": {
+        "query": "progeny"
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_015FZ3RNNSc36zLi1SxWj3gT",
+      "name": "list_available_packages",
+      "input": {
+        "query": "apeglm"
+      },
+      "outcome": "ok",
+      "durationMs": 10
+    },
+    {
+      "toolUseId": "toolu_018YqkvJTFY7ZTi2UQAjorm6",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnhancedVolcano",
+          "fgsea",
+          "GSEABase",
+          "biomaRt",
+          "org.Hs.eg.db",
+          "IHW"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_0111ugKturj79s9NSFcC7cAe",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "toolu_018GthNv71kohmAuC3eCGB8f",
+      "name": "list_available_refs",
+      "input": {
+        "query": "CollecTRI"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01YAdMakB1LEvdBwyiUsktKA",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human idmapping uniprot human"
+      },
+      "outcome": "ok",
+      "durationMs": 24
+    },
+    {
+      "toolUseId": "toolu_01Ko5UKGAhaaSse1fAtNqNhE",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gene-identifiers human"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01Ppy6X74bRAC2G2ZWVu9eno",
+      "name": "list_available_refs",
+      "input": {
+        "category": "gene-identifiers"
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "toolu_014KXZFVBpsM8VmVGoBkXptv",
+      "name": "list_available_refs",
+      "input": {
+        "query": "idmapping"
+      },
+      "outcome": "ok",
+      "durationMs": 21
+    },
+    {
+      "toolUseId": "toolu_01BthiD3TRUVTqmnbF9r4DiR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode human annotation gene symbol counts"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_011FrpWPhBRPJMqEnraEdiNK",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "EnsDb.Hsapiens.v86",
+          "biomaRt",
+          "GENCODE"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 13
+    },
+    {
+      "toolUseId": "toolu_01NgzujHjLsU7eSxkVGBi1T8",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "bronchial epithelial cells cytokine stimulation IL-13 IL-4 IFN transcriptomic response",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 688
+    },
+    {
+      "toolUseId": "toolu_01UX15dQniTaCQqH1LnWPpD7",
+      "name": "search_geo_datasets",
+      "input": {
+        "query": "bronchial epithelial cells cytokine stimulation RNA-seq",
+        "datasetType": "gse",
+        "limit": 5,
+        "organism": "Homo sapiens"
+      },
+      "outcome": "ok",
+      "durationMs": 606
+    },
+    {
+      "toolUseId": "toolu_018ZftoxzUGsskmm8EXKd72t",
+      "name": "list_available_refs",
+      "input": {
+        "path": "/mnt/refs/managed",
+        "limit": 200
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01N7dYmHEohCMixyd1xz9NgF",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "biomaRt",
+          "GENCODE",
+          "clusterProfiler",
+          "AnnotationDbi",
+          "org.Hs.eg.db"
+        ]
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01F9KY89FMkP5B7gN8HvN4WJ",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Footprint-based pathway activity, cytokine vs vehicle HBEC",
+          "created_at": "2026-09-08T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The research question explicitly asks for pathway activity judged by transcriptional footprint (downstream target/response-gene signatures) rather than by expression of pathway members themselves — this rules out simple over-representation of pathway-gene DE lists and calls for footprint-based methods (PROGENy for signaling pathways, CollecTRI/DoRothEA for TF activity as a complementary regulatory-footprint layer) applied to a proper differential contrast. The data is 12 bronchial epithelial samples (6 cytokine-treated vs 6 vehicle, unpaired, single batch), raw Salmon gene-level counts (12000 genes x 13 columns incl. gene id). sample_01 has library size ~4x below median, which is a QC flag that must be handled explicitly (assessed for exclusion or verified robust to size-factor normalization) rather than silently left in — dropping or down-weighting a single sample in a 6v6 design measurably changes power, so this is reported, not just fixed. The pipeline: (1) QC the count matrix and metadata jointly, flag/resolve sample_01; (2) run a single genome-wide DESeq2 differential expression contrast (treated vs control) to get a gene-level statistic (Wald/LRT stat or moderated log2FC) that decoupler-style footprint methods can consume as input, since footprint scoring requires a per-gene signed statistic, not a DE gene list; (3) run PROGENy-based pathway activity (via decoupler, using the human PROGENy model weights available in the reference store) on that per-gene statistic to get per-pathway activity scores/directions for the treated-vs-control contrast; (4) run TF-activity footprint inference (via decoupler with the CollecTRI human network, cross-checked against DoRothEA confidence-filtered regulons) as a complementary regulatory footprint, since PROGENy captures 14 curated signaling pathways while CollecTRI covers a much larger space of transcriptional regulators sitting downstream of those pathways; (5) run a conventional pathway member-expression enrichment (hallmark/WikiPathways gene-set enrichment on the same DE ranking) purely as a contrast baseline, so the report can explicitly show how footprint-based conclusions differ from (and are more defensible than) member-expression-based conclusions, honoring the question's framing; (6) synthesize into a single pathway-activity report ranking pathways/TFs by consistent, statistically supported activity change, flagging any result that is sensitive to the sample_01 QC decision.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "QC counts/metadata and library-size flag resolution",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 12000x12 Salmon gene counts and the 12-sample metadata (6 cytokine-treated vs 6 vehicle) pass basic QC, and how should sample_01 (library size ~4x below median) be handled before differential expression?",
+              "acceptance_criteria": [
+                "Reports per-sample library size, total counts, and detected-gene count for all 12 samples, explicitly quantifying sample_01's library size relative to the cohort median",
+                "Performs a PCA/sample-correlation check on normalized counts (e.g. rlog/vst) to see whether sample_01 is an outlier beyond its library depth, or whether depth alone explains its position",
+                "States an explicit decision for sample_01: retain with size-factor normalization, or exclude, with the reasoning and the effect on group balance (5v6 vs 6v6) if excluded",
+                "Confirms metadata condition labels align 1:1 with the 12 count columns and that gene identifiers are usable symbols/Ensembl IDs for downstream footprint scoring"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "DESeq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "DESeq2 differential expression, cytokine-treated vs vehicle",
+              "track": "T1",
+              "step_type": "differential_expression",
+              "question": "What is the genome-wide differential expression signature (log2FC, Wald statistic, adjusted p-value) of cytokine-treated versus vehicle-control bronchial epithelial samples, after applying the sample_01 QC decision from T1S1?",
+              "acceptance_criteria": [
+                "Uses DESeq2 with raw counts and the resolved sample set/weights from T1S1, standard size-factor normalization and independent filtering",
+                "Reports the full gene-level results table (baseMean, log2FoldChange, lfcSE, stat, pvalue, padj) for all ~12000 genes, not just significant hits",
+                "Applies lfcShrink (apeglm or ashr) to produce a stable effect-size estimate, and retains the unshrunk Wald statistic separately since footprint methods need a signed per-gene statistic",
+                "States how many genes are significant at padj<0.05 and flags if sample_01 exclusion changed the DE gene count materially"
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "ashr",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "PROGENy footprint-based pathway activity inference",
+              "track": "T2",
+              "step_type": "pathway_activity",
+              "question": "Which of the 14 PROGENy signaling pathways (e.g. EGFR, MAPK, PI3K, TNFa, NFkB, JAK-STAT, TGFb, p53, Hypoxia) show significant footprint-based activity change between cytokine-treated and vehicle-control samples, using the DE Wald statistic as input rather than raw gene expression?",
+              "acceptance_criteria": [
+                "Loads the PROGENy human pathway-responsive-gene weight model from the reference store (organism must be human, matching this Homo sapiens dataset) and converts it to a source/target/weight network usable by decoupler",
+                "Runs decoupler's linear-model-based footprint scoring (e.g. run_mlm or run_ulm) on the DESeq2 Wald statistic vector from T1S2, producing one activity score and p-value per pathway for the treated-vs-control contrast",
+                "Reports ranked pathway activities with direction (activated vs suppressed) and significance, distinguishing this footprint-based result explicitly from simple pathway-member differential expression",
+                "If the PROGENy human reference is unavailable at run time, reports that gap rather than substituting a non-human model or a member-expression proxy"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "CollecTRI/DoRothEA transcription-factor footprint activity",
+              "track": "T2",
+              "step_type": "regulatory_activity",
+              "question": "Which transcription-factor regulons show significant footprint-based activity change between cytokine-treated and vehicle-control samples, as a complementary downstream-regulatory-footprint view to the PROGENy pathway scores?",
+              "acceptance_criteria": [
+                "Loads the human CollecTRI regulon network from the reference store as the primary network (literature-curated TF-target interactions with signed weights), and cross-checks the top hits against the human DoRothEA confidence-filtered (A-C) regulons for concordance",
+                "Runs decoupler's consensus or ulm/mlm scoring on the same DESeq2 Wald statistic vector from T1S2 to obtain per-TF activity scores and significance for the contrast",
+                "Reports the top up- and down-regulated TFs by activity score, and notes any TF whose CollecTRI result is not concordant in direction with the DoRothEA cross-check",
+                "Explicitly ties any top TF hit back to a plausible upstream pathway from T2S1 where the biology supports it, but does not overclaim a mechanistic link not supported by both analyses"
+              ],
+              "packages": [
+                "decoupler",
+                "pandas",
+                "numpy",
+                "rpy2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T2S3",
+              "name": "Member-expression pathway enrichment as contrast baseline",
+              "track": "T2",
+              "step_type": "enrichment",
+              "question": "Which pathways appear enriched by conventional pathway-member differential expression (hallmark and WikiPathways gene sets) for the same cytokine-treated vs vehicle contrast, and how does this list differ from the footprint-based PROGENy/CollecTRI results?",
+              "acceptance_criteria": [
+                "Runs a ranked gene-set enrichment (e.g. fgsea) on the DESeq2 stat-ranked gene list from T1S2 against the MSigDB human hallmark gene sets and the WikiPathways human gene sets from the reference store",
+                "Reports enriched pathways at a standard FDR cutoff with normalized enrichment score and direction",
+                "Produces a side-by-side comparison table against the T2S1 PROGENy footprint results, explicitly naming any pathway that appears enriched by member expression but is NOT supported by the footprint score (or vice versa), since this is the distinction the research question asks for",
+                "Does not present member-expression enrichment results as equivalent evidence to footprint-based activity — labels this step's output as the baseline/contrast, not the primary answer"
+              ],
+              "packages": [
+                "fgsea",
+                "pandas"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T3S1",
+              "name": "Synthesis: footprint-based pathway activity report with QC sensitivity check",
+              "track": "T3",
+              "step_type": "synthesis",
+              "question": "What is the final ranked list of signaling pathways and transcription-factor regulons whose transcriptional footprint indicates altered activity in cytokine-treated versus vehicle bronchial epithelial samples, and how robust is that ranking to the sample_01 library-depth issue?",
+              "acceptance_criteria": [
+                "Integrates T2S1 (PROGENy), T2S2 (CollecTRI/DoRothEA), and T2S3 (member-expression baseline) into one report that leads with footprint-supported pathways/TFs as the primary answer to the research question",
+                "Explicitly flags any pathway or TF whose activity call would plausibly change under the alternative sample_01 handling (retain vs exclude) noted in T1S1, rather than presenting a single number as certain",
+                "States clearly which pathways are footprint-supported only, member-expression-supported only, or both, and avoids claiming mechanistic causality beyond what the statistics support",
+                "Notes the small sample size (n=6 per group, further reduced if sample_01 is excluded) as a limitation on statistical power for both DE and downstream footprint calls"
+              ],
+              "packages": [
+                "pandas"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T2S2",
+                "T2S3"
+              ],
+              "resources": {
+                "cpu": 1,
+                "memoryGb": 2
+              },
+              "agent": "enrichment-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 45
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

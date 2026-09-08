@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 8,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 6,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "DESeq2 with ~condition is a valid fit for an unpaired 60 vs 60 single-batch cohort, though the reference prefers limma-voom at this size and the plan never searches for hidden structure (no sex check via XIST/Y genes, no library-size plot, no outlier policy) — the composition-deconvolution step partly compensates. Normalization is correctly inside the model with the tximport offset assumption stated; the zero-count/independent filtering is minimal but only loosely justified. BH at 0.05 and apeglm shrinkage are explicit, but the |LFC|>=1 cutoff is applied post hoc to shrunken estimates rather than tested via lfcThreshold/TREAT, and no CI is reported per gene. Enrichment names Hallmark and WikiPathways with an explicit tested-gene universe and a full ranked GSEA, but omits collection versions, a size window, and ranks by shrunk LFC rather than a t-like statistic; the report lists thresholds, gene counts and caveats but no software versions."
+}

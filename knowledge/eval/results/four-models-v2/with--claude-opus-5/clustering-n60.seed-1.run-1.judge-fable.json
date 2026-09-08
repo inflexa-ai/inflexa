@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference closely: blind vst on raw Salmon counts, filterByExpr, top-2000 gene-centered variance selection, ConsensusClusterPlus over k=2..8 with 1000 resamples at 80% item and feature subsampling, stated Pearson/average linkage plus a pam sensitivity run, k chosen from CDF, delta area and PAC (not silhouette alone), an explicit permutation and simulated null, ARI/Jaccard stability distributions, and confounder tables against condition, library size and detected genes with chi-square/Fisher and Kruskal-Wallis. QC precedes clustering with library sizes, PCA and sample distances coloured by condition and a flag-don't-drop outlier policy; batch is correctly noted as unavailable. Enrichment is correctly omitted with a stated reason, and the report lists all required elements including seeds and versions. The marker step uses BH and labels the p-values circular but states no alpha or fold-change threshold and no shrinkage, so fdr_shrinkage is only partially met; the model formulas for the container and marker steps are explicit, though the marker design is peripheral to the clustering question."
+}

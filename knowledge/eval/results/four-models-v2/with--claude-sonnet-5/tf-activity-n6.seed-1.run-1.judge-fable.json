@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 7,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The count model is correct for a 6 vs 6 unpaired single-batch design: DESeq2 Wald with ~condition, vehicle as reference, median-of-ratios inside the model, a justified 10-in-6 filter, apeglm shrinkage for the reported effect, and BH at 0.05 with independent filtering. The TF step feeds the full Wald statistic into decoupleR ulm on CollecTRI 2.0 with signed edges and min regulon size 5, which matches the reference, but it never states BH adjustment across the regulators tested, omits mlm as a second estimator, and has no per-sample activity matrix to check replicate consistency. The fgsea add-on is properly specified (full ranked list, stat metric, versioned collections, 15-500 window) though it is peripheral to the question. The report covers method, versions, design, thresholds, n tested/significant, regulator counts, and the tissue-agnostic prior caveat, but does not explicitly state that activity is an inference from targets rather than a measurement of the factor."
+}

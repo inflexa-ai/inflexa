@@ -1,0 +1,2 @@
+"is_integer_valued","n_negative_values","value_min","value_max","library_size_min","library_size_max","library_size_median","tpm_like_sums_to_1e6","gene_set_matches_length_reference","n_genes_counts","n_genes_length_reference","spearman_rho_meancount_vs_length","spearman_p_meancount_vs_length"
+TRUE,0,0,26238,420347,2694991,1614280,FALSE,TRUE,12000,12000,-0.0132864378362374,0.145567145474451

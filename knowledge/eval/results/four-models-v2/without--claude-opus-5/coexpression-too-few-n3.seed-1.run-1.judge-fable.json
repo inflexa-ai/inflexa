@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 3,
+    "qc_present": 8,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly diagnoses that six samples cannot support a WGCNA network (4 residual df, uninformative scale-free fit, below the 15-20 sample floor) and then builds the network anyway, spending three steps on modules, exact-permutation p-values with a 0.1 floor, and leave-one-out Jaccard stability on 5-sample reclusterings; the reference calls for stopping the network step or substituting a prior network (STRING, named version and cutoff) projected onto DESeq2 hits, which this plan never considers. The supporting DE machinery is sound: filterByExpr on the condition vector, size factors inside DESeq2 with ~condition and control as reference, apeglm shrinkage, BH at 0.05 with counts reported. Enrichment uses the retained-gene universe and named collections but omits collection versions and a set-size window, and runs ORA on modules the plan itself admits may be arbitrary. The report is thorough on caveats and thresholds but does not commit to reporting package or resource versions."
+}

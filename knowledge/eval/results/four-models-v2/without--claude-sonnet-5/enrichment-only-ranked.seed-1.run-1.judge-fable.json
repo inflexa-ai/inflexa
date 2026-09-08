@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 5,
+    "low_count_filter": 6,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly does not redo the DE and runs preranked fgsea on the full ranked list with a stated signed metric (Wald stat or sign(LFC)*-log10 p), a fixed seed, BH at 0.05 on pathways, leading-edge output, and explicit NES direction for lesional vs control, which matches the reference's core. It falls short on the enrichment specifics: no gene-set size window (15-500), no MSigDB version, no adaptive permutation scheme, and no explicit check that the results table carries every tested gene with no cutoff applied. Sample-level QC is limited to carrying sample_01 forward as a caveat rather than any inspection, and the report omits fgsea and collection versions. Count filtering and normalization are not applicable here and the plan does nothing wrong, but it says nothing about how the upstream independent filtering (NA padj) is handled beyond keeping genes with non-missing LFC and p."
+}

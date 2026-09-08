@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan correctly treats the QuantSeq counts as length-independent: no tximport, no length offset, no TPM/FPKM, raw counts straight into DESeq2 Wald with median-of-ratios inside the model, apeglm shrinkage, BH at 0.05 with independent filtering, and an edgeR QL check with TMM on the same gene universe. The pre-filter (>=5 counts in >=3 samples) matches the reference floor and is justified as the smallest group size, and the QC step (blind vst PCA, distance heatmap, library sizes, outlier flagging policy) precedes testing with an explicit 3-vs-3 power caveat. Minor deductions: the design formula itself is never written out (only the contrast and reference level), one constraint label reads 'tximport_raw_counts_no_offset' and another 'lfc_threshold_policy = test_against_threshold' without stating a threshold, contradicting the padj-only narrative, and the RSeQC strandedness constraint is listed although it cannot run on counts. Enrichment is correctly omitted, and the report specification covers method, versions, design, thresholds, n_tested, n_DE, and caveats."
+}

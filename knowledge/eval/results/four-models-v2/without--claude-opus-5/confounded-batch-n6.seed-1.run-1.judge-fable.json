@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 8,
+    "low_count_filter": 7,
+    "normalization": 8,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference: it recognises the perfect aliasing, formally shows the rank deficiency, fits ~condition only, forbids ComBat/removeBatchEffect/SVA, and forces the confounding caveat onto every artifact, with a sensible sensitivity layer (edgeR QL, leave-one-out) and a statement of the design change actually needed. QC is thorough (library size, detected genes, VST PCA, correlation heatmap, both annotations) though the outlier/shallow-sample policy is only implicit via the no-dropping rule. Weaknesses: the low-count threshold value is never stated numerically, size-factor normalisation is implied rather than named, the reference level is not explicitly set, and the |log2FC|>1 cut is applied post hoc rather than via lfcThreshold in the test. Enrichment names the collections and the ranked-list approach but gives no collection version, size window, or explicit ORA universe, and the ranking metric is left to be decided at run time."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 10,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan matches the reference on every point: pydeseq2 Wald with design ~condition, control as explicit reference and lesional-vs-control contrast, median-of-ratios inside the model with no pre-normalization, BH at 0.05 with apeglm-style shrinkage and lfcThreshold inside the test if an effect size is wanted. QC covers library sizes, detected genes, blind VST, PCA on 500 genes, distance heatmap, and a stated keep-by-default policy for sample_01 with a sensitivity run if dropped. Enrichment uses gseapy prerank on the full list ranked by the Wald statistic, MSigDB Hallmark 2026.1 named, 15-500 window, seed recorded, and unmapped-gene share reported. The low-count filter (>=10 in >=6 samples) is justified by the smallest group size but is somewhat more than minimal; the report step names methods, versions, design, thresholds, counts, and the specific caveats (shallow library, missing length offset, modest n)."
+}

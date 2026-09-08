@@ -1,0 +1,439 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "signature-scores-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T00:06:25.092Z",
+  "elapsedMs": 88340,
+  "outcome": "plan_submitted",
+  "planId": "pln-e2d73cef",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Normalize counts and quantify sample_01 depth effect",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A 4x depth deficit inflates zeros and compresses dynamic range; VST reduces but does not remove this.",
+          "With 12,000 genes the matrix is pre-filtered — hallmark set coverage will be incomplete and must be measured, not assumed.",
+          "Do not batch-correct: the design is recorded as single batch, so any correction would remove condition signal."
+        ],
+        "context": "Human (taxon 9606) ileal biopsies, bulk RNA-seq, 6 Crohn disease inflamed vs 6 control, unpaired, single batch. The matrix carries only 12,000 genes, so it has already been pre-filtered upstream; do not assume a full transcriptome. The recorded caveat is that sample_01 has a library size about 4x below the median, which matters because single-sample gene-set scoring is depth-sensitive.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "SummarizedExperiment",
+          "org.Hs.eg.db",
+          "AnnotationDbi",
+          "ggplot2",
+          "pheatmap",
+          "data.table"
+        ],
+        "question": "After CPM-based filtering and depth-robust normalization of the 12,000 x 12 Salmon count matrix, does sample_01 (library size ~4x below median) still behave as an outlier, and how many of the 12,000 genes map to HGNC symbols usable against the hallmark gene sets?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Do not remove sample_01 in this step — quantify its behaviour and hand the full 12-sample matrix downstream; exclusion is tested as a sensitivity analysis in T1S3.",
+          "Filter on CPM in at least 6 samples, never on raw count sums, so the shallow library is not doubly penalized.",
+          "Save both the VST matrix and the TMM log2-CPM matrix to disk with gene symbols as row names.",
+          "Report the exact condition level names from metadata.csv and set control as the reference level.",
+          "Report the number of genes surviving filtering and the number with a usable HGNC symbol; do not silently drop unmapped rows without counting them."
+        ],
+        "description": "Load /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene-level counts from Salmon) and /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id alignment between the two files and record the exact condition labels as they appear (Crohn disease inflamed vs control). Filter genes on a CPM basis — require expression above a small CPM threshold in at least 6 samples (the smaller group size) — so the shallow sample_01 is not the reason a gene is dropped. Produce two normalized matrices: (a) DESeq2 variance-stabilizing transform (VST, blind=TRUE) and (b) edgeR TMM log2-CPM with prior.count, and save both; downstream scoring uses the VST matrix with TMM-logCPM retained as a sensitivity alternative. Map row identifiers to HGNC gene symbols (if rows are already symbols, verify and report the fraction matching the hallmark universe; if they are Ensembl IDs, use the staged human UniProt ID-mapping resource or an installed annotation package) and collapse duplicate symbols by keeping the highest-mean row. QC output must include: per-sample library size table with sample_01's ratio to the median stated numerically, per-sample number of detected genes, sample-sample Spearman correlation heatmap, PCA on VST (PC1/PC2 coloured by condition and sized/labelled by library size), and a per-sample RLE plot. State plainly whether sample_01 separates on PC1/PC2 by depth rather than by condition.",
+        "acceptance_criteria": [
+          "A filtered, symbol-keyed VST matrix and a TMM log2-CPM matrix are written, with gene and sample counts reported.",
+          "Per-sample library sizes and detected-gene counts are tabulated and sample_01's depth ratio to the median is stated as a number.",
+          "PCA, sample-correlation, and RLE diagnostics exist and the text states explicitly whether sample_01 is an outlier and whether the separation tracks depth or condition.",
+          "Duplicate-symbol collapsing and unmapped-identifier counts are reported."
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Per-sample hallmark scores (ssGSEA + singscore)",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "ssGSEA scores are relative to the sample cohort — they are not absolute pathway activities and cannot be compared across datasets.",
+          "Low set coverage in a 12,000-gene matrix makes some hallmark scores unstable; a flagged set's score should not be interpreted biologically.",
+          "If sample_01's scores sit at the extreme of many sets at once, that pattern is depth, not biology."
+        ],
+        "context": "This step produces the direct answer to the first half of the research question — a score for every hallmark signature in every sample. The organism is human, so the human hallmark collection must be used; the mouse hallmark file staged alongside it is the wrong species and must not be substituted.",
+        "maxSteps": 200,
+        "packages": [
+          "GSVA",
+          "GSEABase",
+          "singscore",
+          "SummarizedExperiment",
+          "pheatmap",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "What is the score of each of the 50 MSigDB hallmark signatures in each of the 12 ileal samples, and how many members of each hallmark set are actually detected in this 12,000-gene matrix?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the human hallmark gene sets (HGNC symbols); never the mouse collection.",
+          "Score all 12 samples including sample_01.",
+          "Report ssGSEA and singscore side by side; do not present only one.",
+          "Emit the per-set coverage table and propagate a low-coverage flag (<10 detected members or <30% of set) into all downstream outputs.",
+          "Report the per-hallmark correlation between score and library size — this is how a depth artifact declares itself."
+        ],
+        "description": "Compute a 50 x 12 hallmark signature score matrix from the VST matrix produced by T1S1. Primary method: GSVA with the ssGSEA method (kcdf appropriate to a log-scale continuous input), producing one score per hallmark per sample. Cross-check method: singscore rank-based per-sample scoring on the same matrix, which is invariant to monotone transforms and therefore a useful control for the depth artifact on sample_01. Also recompute the primary scores on the TMM log2-CPM matrix as a normalization-sensitivity check. The step needs the human MSigDB hallmark gene set collection (50 HALLMARK_* sets, HGNC symbols) — resolve it from the environment's reference store; it is present as a symbols GMT. Before scoring, report per hallmark set the number of member genes present in the filtered matrix and the fraction of the full set that represents; flag any set with fewer than 10 detected members or under 30% coverage as low-confidence and carry that flag through every downstream table and figure. Deliverables: the score matrix as CSV (rows = hallmark, columns = sample), a coverage table, a heatmap of scores with samples annotated by condition and by library size, the Spearman correlation between ssGSEA and singscore scores per hallmark, and the correlation of each hallmark's score vector with per-sample library size across the 12 samples.",
+        "acceptance_criteria": [
+          "A 50 x 12 hallmark score matrix is written as CSV with hallmark names as rows and the 12 sample IDs as columns.",
+          "A per-hallmark coverage table (detected members / total members / fraction) exists and low-coverage sets are flagged.",
+          "singscore scores and TMM-based ssGSEA scores are computed and their agreement with the primary ssGSEA scores is quantified.",
+          "Score-vs-library-size correlation is reported per hallmark, and any hallmark whose score is strongly depth-driven is named."
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Test hallmark scores: inflamed vs control, with leave-one-out",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Testing derived scores rather than genes means the tests are correlated across hallmarks with shared genes; BH is anti-conservative here and the q values are approximate.",
+          "With 6 vs 6, absence of a significant hallmark is not evidence of no difference.",
+          "Inflamed vs control biopsies differ in cell composition (immune infiltration, epithelial loss) — a hallmark shift may reflect changed tissue composition rather than changed per-cell pathway activity, and must be phrased that way."
+        ],
+        "context": "n=6 vs n=6, unpaired, single batch. This is a small study: it can detect large, coherent shifts (in inflamed ileal Crohn tissue, inflammatory hallmarks such as TNFA_SIGNALING_VIA_NFKB, INFLAMMATORY_RESPONSE, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING, COMPLEMENT, EPITHELIAL_MESENCHYMAL_TRANSITION are the a priori expectation) but is underpowered for modest effects. The user explicitly raised the shallow sample, so the leave-one-out result must be reported as a headline, not buried.",
+        "maxSteps": 200,
+        "packages": [
+          "limma",
+          "ggplot2",
+          "ggrepel",
+          "data.table",
+          "statmod"
+        ],
+        "question": "Which of the 50 hallmark signature scores differ between the 6 Crohn disease inflamed and 6 control ileal samples, and do those differences survive dropping the shallow sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Use control as the reference level so a positive difference means higher in inflamed.",
+          "BH-adjust across the 50 hallmark tests; report both raw and adjusted p.",
+          "Report the sample_01-excluded re-analysis in the same table as the full-cohort result, not as an appendix.",
+          "Carry the T1S2 low-coverage flag into the results table and exclude flagged sets from the headline conclusions.",
+          "State the sample size (6 vs 6, and 5 vs 6 after exclusion) alongside every significance claim, and do not describe any result as established biology on this n."
+        ],
+        "description": "Take the 50 x 12 ssGSEA score matrix from T1S2 and test each hallmark for a difference between the inflamed and control groups. Primary test: limma on the score matrix with design ~ condition (control as reference), empirical-Bayes moderation across the 50 sets, BH adjustment across the 50 tests. Report for every hallmark: mean score per group, difference in means with a 95% confidence interval, moderated t, raw p, BH q, and the low-coverage flag from T1S2. Add a non-parametric Wilcoxon rank-sum p per hallmark as a robustness check, acknowledging that with n=6 vs 6 the minimum achievable Wilcoxon p is ~0.002 and no set can reach a small q by that route alone. Then run three sensitivity analyses: (i) repeat the full limma test with sample_01 excluded (5 vs 6) and tabulate which hallmarks change significance status and how the effect sizes move; (ii) repeat on the singscore matrix; (iii) leave-one-out across all 12 samples, reporting for each significant hallmark the range of its effect size across the 12 leave-one-out fits, so single-sample-driven hits are exposed. Deliverables: a ranked results table, a volcano or effect-size-vs-q plot, per-sample score dotplots for the top hallmarks with sample_01 marked, and a plain-language summary of which hallmarks are robust and which are fragile.",
+        "acceptance_criteria": [
+          "A results table covers all 50 hallmarks with group means, effect size + 95% CI, moderated t, raw p, BH q, Wilcoxon p, and coverage flag.",
+          "A sample_01-excluded re-analysis is reported side by side and hallmarks that change status are named explicitly.",
+          "Leave-one-out effect-size ranges are reported for every hallmark called significant.",
+          "The written summary distinguishes robust hits from those dependent on a single sample, and states the power limitation of 6 vs 6."
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Gene-level DE and ranked-list hallmark GSEA concordance check",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "DESeq2 with 6 vs 6 and one shallow library has limited power; dispersion estimates for low-count genes are weakly informed.",
+          "fgsea p values on 50 correlated sets are approximate; use q values only for ranking, not as strict error control.",
+          "Concordance between two methods run on the same 12 samples is internal consistency, not external validation."
+        ],
+        "context": "Per-sample scoring and preranked GSEA answer the same biological question through different statistics. Agreement between them is the strongest evidence available from n=6 vs 6; disagreement localizes the problem to the method rather than to biology. DESeq2 on raw counts models the depth of sample_01 directly through its size factor, which the score-based route does not.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "apeglm",
+          "fgsea",
+          "ggplot2",
+          "data.table"
+        ],
+        "question": "Do the hallmarks that differ by per-sample score also come out enriched in a conventional DESeq2 + ranked-list GSEA of inflamed vs control, or are the score-level hits an artifact of single-sample scoring?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1",
+          "T1S3"
+        ],
+        "constraints": [
+          "Run DESeq2 on the raw filtered counts, not on VST or CPM values.",
+          "Use the same human hallmark collection as T1S2 so the two routes are comparable set-for-set.",
+          "Report the number of genes with BH q < 0.05 at the gene level, and do not describe individual genes as validated on n=6 vs 6.",
+          "Produce an explicit concordance table between preranked GSEA NES and the T1S3 score-level effect sizes."
+        ],
+        "description": "Independently of the scoring route, run gene-level differential expression on the filtered count matrix from T1S1 with DESeq2, design ~ condition, control as reference, apheglm LFC shrinkage, BH-adjusted. Rank all tested genes by the shrunken log2 fold change (or by the signed Wald statistic) and run preranked GSEA against the same human hallmark gene set collection using fgsea, with BH adjustment across the 50 sets. Report normalized enrichment score, p, q, and leading-edge genes per hallmark. Then compare directly against the T1S3 score-level results: a scatter of hallmark NES against the T1S3 effect size, the rank concordance between the two rankings, and an explicit list of hallmarks significant by one route but not the other. Also repeat the DESeq2 fit with sample_01 excluded and report how many of the top hallmarks by NES are preserved. The written output must state which hallmarks are supported by both routes — those are the defensible conclusions — and which rest on a single route.",
+        "acceptance_criteria": [
+          "A DESeq2 results table (full and sample_01-excluded) is written with shrunken LFC, p, and BH q.",
+          "A preranked fgsea hallmark table with NES, p, q, and leading-edge genes is written.",
+          "A concordance analysis between the ranked-GSEA and score-level results exists, naming hallmarks supported by both and hallmarks supported by only one.",
+          "The summary names the defensible, dual-supported hallmark conclusions and flags the rest as provisional."
+        ]
+      }
+    ],
+    "title": "Hallmark ssGSEA scoring: CD inflamed vs control ileum",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is per-sample hallmark signature scores plus a between-group test on those scores, for 12 human ileal bulk RNA-seq samples (6 Crohn disease inflamed vs 6 control, unpaired, single batch, 12,000 genes x 12 samples of Salmon gene-level counts). Two data facts drive the design. First, sample_01 has a library size ~4x below the median — single-sample gene-set scoring methods are sensitive to library depth and to the resulting inflated dropout, so the pipeline must normalize on a depth-robust basis and must explicitly check whether sample_01's scores are outliers before any biological reading. Second, only 12,000 genes are present (a pre-filtered matrix, not a full transcriptome), so hallmark set coverage will be incomplete and must be quantified per set — a hallmark with few detected members gives an unstable score and should be flagged rather than reported alongside well-covered sets.\n\nT1S1 prepares the expression matrix: filter low-count genes on a CPM basis (not raw counts, which would penalize sample_01 twice), normalize with a between-sample method robust to depth (DESeq2 size factors / VST, or TMM-logCPM), map row identifiers to HGNC symbols since the hallmark GMT is symbol-keyed, resolve duplicate symbols, and quantify sample_01's depth effect (library sizes, per-sample detected-gene counts, sample-sample correlation, PCA) so the caveat is measured rather than assumed. T1S2 computes the actual answer: a 50 x 12 hallmark score matrix by ssGSEA/GSVA on the normalized matrix, with singscore as an independent rank-based cross-check, plus per-set coverage. T1S3 tests each hallmark score for a difference between inflamed and control with limma on the score matrix (moderated t, BH across the 50 sets), reports effect sizes and CIs, and repeats the test with sample_01 dropped as a leave-one-out sensitivity check — with n=6 per group a single influential sample can create or destroy a hit. T2S1 runs a gene-level differential expression and a hallmark GSEA on the DESeq2-ranked gene list as an orthogonal route to the same conclusion; a hallmark that moves in the score test but not in the ranked GSEA is a scoring artifact, not biology. It runs in parallel from T1S1 and its result is compared in T1S3's reporting? No — the concordance comparison lives in T2S1 itself, which depends on both T1S2 and T1S3, keeping the DAG acyclic."
+  },
+  "usage": {
+    "inputTokens": 93013,
+    "outputTokens": 6517,
+    "cacheCreationInputTokens": 74027,
+    "cacheReadInputTokens": 18962,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01L2oDCdJzwdLmBWAubwXAie",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark"
+      },
+      "outcome": "ok",
+      "durationMs": 28
+    },
+    {
+      "toolUseId": "toolu_01MKEAg5Ab39o4xKtQVyRXcA",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "GSVA",
+          "singscore",
+          "decoupleR",
+          "limma",
+          "DESeq2",
+          "edgeR",
+          "UCell",
+          "gseapy",
+          "decoupler",
+          "fgsea",
+          "GSEABase",
+          "msigdbr"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 9
+    },
+    {
+      "toolUseId": "toolu_01B5uzbWFmHUBSHxLhWhgpKQ",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Hallmark ssGSEA scoring: CD inflamed vs control ileum",
+          "analytical_narrative": "The question is per-sample hallmark signature scores plus a between-group test on those scores, for 12 human ileal bulk RNA-seq samples (6 Crohn disease inflamed vs 6 control, unpaired, single batch, 12,000 genes x 12 samples of Salmon gene-level counts). Two data facts drive the design. First, sample_01 has a library size ~4x below the median — single-sample gene-set scoring methods are sensitive to library depth and to the resulting inflated dropout, so the pipeline must normalize on a depth-robust basis and must explicitly check whether sample_01's scores are outliers before any biological reading. Second, only 12,000 genes are present (a pre-filtered matrix, not a full transcriptome), so hallmark set coverage will be incomplete and must be quantified per set — a hallmark with few detected members gives an unstable score and should be flagged rather than reported alongside well-covered sets.\n\nT1S1 prepares the expression matrix: filter low-count genes on a CPM basis (not raw counts, which would penalize sample_01 twice), normalize with a between-sample method robust to depth (DESeq2 size factors / VST, or TMM-logCPM), map row identifiers to HGNC symbols since the hallmark GMT is symbol-keyed, resolve duplicate symbols, and quantify sample_01's depth effect (library sizes, per-sample detected-gene counts, sample-sample correlation, PCA) so the caveat is measured rather than assumed. T1S2 computes the actual answer: a 50 x 12 hallmark score matrix by ssGSEA/GSVA on the normalized matrix, with singscore as an independent rank-based cross-check, plus per-set coverage. T1S3 tests each hallmark score for a difference between inflamed and control with limma on the score matrix (moderated t, BH across the 50 sets), reports effect sizes and CIs, and repeats the test with sample_01 dropped as a leave-one-out sensitivity check — with n=6 per group a single influential sample can create or destroy a hit. T2S1 runs a gene-level differential expression and a hallmark GSEA on the DESeq2-ranked gene list as an orthogonal route to the same conclusion; a hallmark that moves in the score test but not in the ranked GSEA is a scoring artifact, not biology. It runs in parallel from T1S1 and its result is compared in T1S3's reporting? No — the concordance comparison lives in T2S1 itself, which depends on both T1S2 and T1S3, keeping the DAG acyclic.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Normalize counts and quantify sample_01 depth effect",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After CPM-based filtering and depth-robust normalization of the 12,000 x 12 Salmon count matrix, does sample_01 (library size ~4x below median) still behave as an outlier, and how many of the 12,000 genes map to HGNC symbols usable against the hallmark gene sets?",
+              "description": "Load /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples, gene-level counts from Salmon) and /eval-four-models-v2-without-signature-scores-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows, sample id + condition). Verify sample id alignment between the two files and record the exact condition labels as they appear (Crohn disease inflamed vs control). Filter genes on a CPM basis — require expression above a small CPM threshold in at least 6 samples (the smaller group size) — so the shallow sample_01 is not the reason a gene is dropped. Produce two normalized matrices: (a) DESeq2 variance-stabilizing transform (VST, blind=TRUE) and (b) edgeR TMM log2-CPM with prior.count, and save both; downstream scoring uses the VST matrix with TMM-logCPM retained as a sensitivity alternative. Map row identifiers to HGNC gene symbols (if rows are already symbols, verify and report the fraction matching the hallmark universe; if they are Ensembl IDs, use the staged human UniProt ID-mapping resource or an installed annotation package) and collapse duplicate symbols by keeping the highest-mean row. QC output must include: per-sample library size table with sample_01's ratio to the median stated numerically, per-sample number of detected genes, sample-sample Spearman correlation heatmap, PCA on VST (PC1/PC2 coloured by condition and sized/labelled by library size), and a per-sample RLE plot. State plainly whether sample_01 separates on PC1/PC2 by depth rather than by condition.",
+              "context": "Human (taxon 9606) ileal biopsies, bulk RNA-seq, 6 Crohn disease inflamed vs 6 control, unpaired, single batch. The matrix carries only 12,000 genes, so it has already been pre-filtered upstream; do not assume a full transcriptome. The recorded caveat is that sample_01 has a library size about 4x below the median, which matters because single-sample gene-set scoring is depth-sensitive.",
+              "constraints": [
+                "Do not remove sample_01 in this step — quantify its behaviour and hand the full 12-sample matrix downstream; exclusion is tested as a sensitivity analysis in T1S3.",
+                "Filter on CPM in at least 6 samples, never on raw count sums, so the shallow library is not doubly penalized.",
+                "Save both the VST matrix and the TMM log2-CPM matrix to disk with gene symbols as row names.",
+                "Report the exact condition level names from metadata.csv and set control as the reference level.",
+                "Report the number of genes surviving filtering and the number with a usable HGNC symbol; do not silently drop unmapped rows without counting them."
+              ],
+              "acceptance_criteria": [
+                "A filtered, symbol-keyed VST matrix and a TMM log2-CPM matrix are written, with gene and sample counts reported.",
+                "Per-sample library sizes and detected-gene counts are tabulated and sample_01's depth ratio to the median is stated as a number.",
+                "PCA, sample-correlation, and RLE diagnostics exist and the text states explicitly whether sample_01 is an outlier and whether the separation tracks depth or condition.",
+                "Duplicate-symbol collapsing and unmapped-identifier counts are reported."
+              ],
+              "caveats": [
+                "A 4x depth deficit inflates zeros and compresses dynamic range; VST reduces but does not remove this.",
+                "With 12,000 genes the matrix is pre-filtered — hallmark set coverage will be incomplete and must be measured, not assumed.",
+                "Do not batch-correct: the design is recorded as single batch, so any correction would remove condition signal."
+              ],
+              "packages": [
+                "DESeq2",
+                "edgeR",
+                "limma",
+                "SummarizedExperiment",
+                "org.Hs.eg.db",
+                "AnnotationDbi",
+                "ggplot2",
+                "pheatmap",
+                "data.table"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Per-sample hallmark scores (ssGSEA + singscore)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What is the score of each of the 50 MSigDB hallmark signatures in each of the 12 ileal samples, and how many members of each hallmark set are actually detected in this 12,000-gene matrix?",
+              "description": "Compute a 50 x 12 hallmark signature score matrix from the VST matrix produced by T1S1. Primary method: GSVA with the ssGSEA method (kcdf appropriate to a log-scale continuous input), producing one score per hallmark per sample. Cross-check method: singscore rank-based per-sample scoring on the same matrix, which is invariant to monotone transforms and therefore a useful control for the depth artifact on sample_01. Also recompute the primary scores on the TMM log2-CPM matrix as a normalization-sensitivity check. The step needs the human MSigDB hallmark gene set collection (50 HALLMARK_* sets, HGNC symbols) — resolve it from the environment's reference store; it is present as a symbols GMT. Before scoring, report per hallmark set the number of member genes present in the filtered matrix and the fraction of the full set that represents; flag any set with fewer than 10 detected members or under 30% coverage as low-confidence and carry that flag through every downstream table and figure. Deliverables: the score matrix as CSV (rows = hallmark, columns = sample), a coverage table, a heatmap of scores with samples annotated by condition and by library size, the Spearman correlation between ssGSEA and singscore scores per hallmark, and the correlation of each hallmark's score vector with per-sample library size across the 12 samples.",
+              "context": "This step produces the direct answer to the first half of the research question — a score for every hallmark signature in every sample. The organism is human, so the human hallmark collection must be used; the mouse hallmark file staged alongside it is the wrong species and must not be substituted.",
+              "constraints": [
+                "Use the human hallmark gene sets (HGNC symbols); never the mouse collection.",
+                "Score all 12 samples including sample_01.",
+                "Report ssGSEA and singscore side by side; do not present only one.",
+                "Emit the per-set coverage table and propagate a low-coverage flag (<10 detected members or <30% of set) into all downstream outputs.",
+                "Report the per-hallmark correlation between score and library size — this is how a depth artifact declares itself."
+              ],
+              "acceptance_criteria": [
+                "A 50 x 12 hallmark score matrix is written as CSV with hallmark names as rows and the 12 sample IDs as columns.",
+                "A per-hallmark coverage table (detected members / total members / fraction) exists and low-coverage sets are flagged.",
+                "singscore scores and TMM-based ssGSEA scores are computed and their agreement with the primary ssGSEA scores is quantified.",
+                "Score-vs-library-size correlation is reported per hallmark, and any hallmark whose score is strongly depth-driven is named."
+              ],
+              "caveats": [
+                "ssGSEA scores are relative to the sample cohort — they are not absolute pathway activities and cannot be compared across datasets.",
+                "Low set coverage in a 12,000-gene matrix makes some hallmark scores unstable; a flagged set's score should not be interpreted biologically.",
+                "If sample_01's scores sit at the extreme of many sets at once, that pattern is depth, not biology."
+              ],
+              "packages": [
+                "GSVA",
+                "GSEABase",
+                "singscore",
+                "SummarizedExperiment",
+                "pheatmap",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Test hallmark scores: inflamed vs control, with leave-one-out",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 50 hallmark signature scores differ between the 6 Crohn disease inflamed and 6 control ileal samples, and do those differences survive dropping the shallow sample_01?",
+              "description": "Take the 50 x 12 ssGSEA score matrix from T1S2 and test each hallmark for a difference between the inflamed and control groups. Primary test: limma on the score matrix with design ~ condition (control as reference), empirical-Bayes moderation across the 50 sets, BH adjustment across the 50 tests. Report for every hallmark: mean score per group, difference in means with a 95% confidence interval, moderated t, raw p, BH q, and the low-coverage flag from T1S2. Add a non-parametric Wilcoxon rank-sum p per hallmark as a robustness check, acknowledging that with n=6 vs 6 the minimum achievable Wilcoxon p is ~0.002 and no set can reach a small q by that route alone. Then run three sensitivity analyses: (i) repeat the full limma test with sample_01 excluded (5 vs 6) and tabulate which hallmarks change significance status and how the effect sizes move; (ii) repeat on the singscore matrix; (iii) leave-one-out across all 12 samples, reporting for each significant hallmark the range of its effect size across the 12 leave-one-out fits, so single-sample-driven hits are exposed. Deliverables: a ranked results table, a volcano or effect-size-vs-q plot, per-sample score dotplots for the top hallmarks with sample_01 marked, and a plain-language summary of which hallmarks are robust and which are fragile.",
+              "context": "n=6 vs n=6, unpaired, single batch. This is a small study: it can detect large, coherent shifts (in inflamed ileal Crohn tissue, inflammatory hallmarks such as TNFA_SIGNALING_VIA_NFKB, INFLAMMATORY_RESPONSE, INTERFERON_GAMMA_RESPONSE, IL6_JAK_STAT3_SIGNALING, COMPLEMENT, EPITHELIAL_MESENCHYMAL_TRANSITION are the a priori expectation) but is underpowered for modest effects. The user explicitly raised the shallow sample, so the leave-one-out result must be reported as a headline, not buried.",
+              "constraints": [
+                "Use control as the reference level so a positive difference means higher in inflamed.",
+                "BH-adjust across the 50 hallmark tests; report both raw and adjusted p.",
+                "Report the sample_01-excluded re-analysis in the same table as the full-cohort result, not as an appendix.",
+                "Carry the T1S2 low-coverage flag into the results table and exclude flagged sets from the headline conclusions.",
+                "State the sample size (6 vs 6, and 5 vs 6 after exclusion) alongside every significance claim, and do not describe any result as established biology on this n."
+              ],
+              "acceptance_criteria": [
+                "A results table covers all 50 hallmarks with group means, effect size + 95% CI, moderated t, raw p, BH q, Wilcoxon p, and coverage flag.",
+                "A sample_01-excluded re-analysis is reported side by side and hallmarks that change status are named explicitly.",
+                "Leave-one-out effect-size ranges are reported for every hallmark called significant.",
+                "The written summary distinguishes robust hits from those dependent on a single sample, and states the power limitation of 6 vs 6."
+              ],
+              "caveats": [
+                "Testing derived scores rather than genes means the tests are correlated across hallmarks with shared genes; BH is anti-conservative here and the q values are approximate.",
+                "With 6 vs 6, absence of a significant hallmark is not evidence of no difference.",
+                "Inflamed vs control biopsies differ in cell composition (immune infiltration, epithelial loss) — a hallmark shift may reflect changed tissue composition rather than changed per-cell pathway activity, and must be phrased that way."
+              ],
+              "packages": [
+                "limma",
+                "ggplot2",
+                "ggrepel",
+                "data.table",
+                "statmod"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Gene-level DE and ranked-list hallmark GSEA concordance check",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Do the hallmarks that differ by per-sample score also come out enriched in a conventional DESeq2 + ranked-list GSEA of inflamed vs control, or are the score-level hits an artifact of single-sample scoring?",
+              "description": "Independently of the scoring route, run gene-level differential expression on the filtered count matrix from T1S1 with DESeq2, design ~ condition, control as reference, apheglm LFC shrinkage, BH-adjusted. Rank all tested genes by the shrunken log2 fold change (or by the signed Wald statistic) and run preranked GSEA against the same human hallmark gene set collection using fgsea, with BH adjustment across the 50 sets. Report normalized enrichment score, p, q, and leading-edge genes per hallmark. Then compare directly against the T1S3 score-level results: a scatter of hallmark NES against the T1S3 effect size, the rank concordance between the two rankings, and an explicit list of hallmarks significant by one route but not the other. Also repeat the DESeq2 fit with sample_01 excluded and report how many of the top hallmarks by NES are preserved. The written output must state which hallmarks are supported by both routes — those are the defensible conclusions — and which rest on a single route.",
+              "context": "Per-sample scoring and preranked GSEA answer the same biological question through different statistics. Agreement between them is the strongest evidence available from n=6 vs 6; disagreement localizes the problem to the method rather than to biology. DESeq2 on raw counts models the depth of sample_01 directly through its size factor, which the score-based route does not.",
+              "constraints": [
+                "Run DESeq2 on the raw filtered counts, not on VST or CPM values.",
+                "Use the same human hallmark collection as T1S2 so the two routes are comparable set-for-set.",
+                "Report the number of genes with BH q < 0.05 at the gene level, and do not describe individual genes as validated on n=6 vs 6.",
+                "Produce an explicit concordance table between preranked GSEA NES and the T1S3 score-level effect sizes."
+              ],
+              "acceptance_criteria": [
+                "A DESeq2 results table (full and sample_01-excluded) is written with shrunken LFC, p, and BH q.",
+                "A preranked fgsea hallmark table with NES, p, q, and leading-edge genes is written.",
+                "A concordance analysis between the ranked-GSEA and score-level results exists, naming hallmarks supported by both and hallmarks supported by only one.",
+                "The summary names the defensible, dual-supported hallmark conclusions and flags the rest as provisional."
+              ],
+              "caveats": [
+                "DESeq2 with 6 vs 6 and one shallow library has limited power; dispersion estimates for low-count genes are weakly informed.",
+                "fgsea p values on 50 correlated sets are approximate; use q values only for ranking, not as strict error control.",
+                "Concordance between two methods run on the same 12 samples is internal consistency, not external validation."
+              ],
+              "packages": [
+                "DESeq2",
+                "apeglm",
+                "fgsea",
+                "ggplot2",
+                "data.table"
+              ],
+              "depends_on": [
+                "T1S1",
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 47
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

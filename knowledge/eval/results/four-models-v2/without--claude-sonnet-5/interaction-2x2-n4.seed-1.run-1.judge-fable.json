@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 8,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 7
+  },
+  "rationale": "The plan correctly frames the question as an interaction test with an explicit ~genotype + treatment + genotype:treatment design, stated reference levels, a Wald test on the named interaction coefficient, an LRT against the stated additive reduced model, and simple effects derived from the same fit rather than refits — this is the reference answer. Normalization is explicitly left to DESeq2 size factors with no TPM/FPKM pre-step, and QC covers library size, detection rate, PCA/correlation, and an explicit flag-not-drop outlier policy, though coloring by condition is not stated. No explicit low-count pre-filter is described (only DESeq2 independent filtering is mentioned), shrinkage is stated for simple effects but not clearly for the reported interaction effect, and BH/lfcThreshold are implicit rather than stated. Enrichment names the collection and version but gives no ORA universe or gene-set size window, and the top-N fallback is arbitrary; the report omits package versions and the count of genes tested."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 6,
+    "qc_present": 6,
+    "low_count_filter": 4,
+    "normalization": 9,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 7,
+    "enrichment_universe_sets": 6,
+    "report_completeness": 6
+  },
+  "rationale": "The count model (DESeq2 Wald, size factors, apeglm, shallow sample kept with sensitivity rerun) fits a 6 vs 6 unpaired single-batch design and the plan states the footprint-versus-membership distinction. It falls short on the footprint inference itself: it runs decoupleR on the vst matrix rather than stating an mlm on the Wald statistics, never names the PROGENy version or the number of top responsive genes, proposes WikiPathways membership as a drop-in substitute for PROGENy weights, and makes an 'active' call contingent on agreement with membership-based GSEA, which mixes the two readings the question asks it to separate. QC lacks PCA or sample distances colored by condition, the low-count filter rule is unstated, the design formula and reference level are not written out, and BH is not named with an explicit alpha for the DE step."
+}

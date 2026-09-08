@@ -1,0 +1,503 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "suspected-batch-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T06:21:46.172Z",
+  "elapsedMs": 258100,
+  "outcome": "plan_submitted",
+  "planId": "pln-031c2e00",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Input audit and PCA-structure characterization",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If counts are non-integer scaledTPM, rounding them for DESeq2 would distort the mean-variance fit — use the tximport path instead",
+          "If the cluster is NOT crossed with condition (partially aligned), say so plainly — the sensitivity model in T1S2 is then biased and this changes its interpretation",
+          "k-means on PCA scores is only a labelling device; if the 6/6 split is ambiguous (silhouette near 0), report that rather than forcing labels"
+        ],
+        "context": "Data: /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples + ID column, Salmon gene-level counts, human kidney) and /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample id + condition, 6 treated vs 6 control). Prior profiling shows PCA separates two clusters of 6 that do not follow condition and no batch is recorded. The counts CSV may or may not be raw integer counts — Salmon 'counts' exports are sometimes scaledTPM.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "tximport==1.40.0",
+          "data.table==1.18.4",
+          "ggplot2==4.0.3"
+        ],
+        "question": "For the 12 kidney samples (6 treated vs 6 control): are the Salmon gene counts usable as-is by DESeq2, and is the unexplained 6/6 PCA cluster crossed with condition, aligned with it, or independent of it?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "description": "Load counts.csv and metadata.csv, reconcile sample IDs, test whether the Salmon-derived counts are integers (raw counts) or scaledTPM-like (needing length correction), compute PCA on variance-stabilized values, assign the two 6/6 cluster labels, and quantify the relationship between cluster and condition (cross-tab + Fisher exact test) plus the rank of the ~condition + cluster design matrix. Outputs: QC/structure report, VST matrix, cluster labels, and the input-mode decision feeding T1S2.",
+        "acceptance_criteria": [
+          "Sample names in counts.csv and metadata.csv reconcile 1:1 (12 samples, 6 per condition)",
+          "Count matrix characterized: integer vs non-integer values reported, and the DESeq2 input mode (raw counts vs tximport-style correction) decided and recorded",
+          "PCA on variance-stabilized values reproduced; the two 6/6 clusters confirmed or refuted, cluster labels assigned per sample and saved",
+          "Cross-tabulation of cluster vs condition reported with a Fisher exact test; full-rank check of ~condition + cluster design matrix reported",
+          "Library sizes and detected-gene counts per sample reported"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Differential expression: primary and cluster-adjusted models",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "With 12 samples and 6/6 structure, surrogate-variable methods (svaseq/RUV) are unstable; the explicit cluster covariate is the pre-specified sensitivity analysis, not SVA",
+          "If the cluster covariate is biological (e.g., cell-type composition) rather than technical, the sensitivity model removes real biology — interpret it as 'what survives', not as the truth",
+          "Genes with all-zero or near-zero counts must be pre-filtered before fitting (DESeq2 independent filtering is not a substitute)"
+        ],
+        "context": "Uses the VST matrix, cluster labels, and input-mode decision from T1S1. Raw Salmon gene-level counts, 12,000 genes, 6 treated vs 6 control human kidney, unpaired, no recorded batch. The PCA cluster is a data-driven 6/6 factor orthogonal (or not) to condition.",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2==1.52.0",
+          "apeglm==1.34.0",
+          "data.table==1.18.4",
+          "ggplot2==4.0.3",
+          "EnhancedVolcano==1.30.0"
+        ],
+        "question": "Which genes differ between treated and control kidney samples, and which of those calls survive adjustment for the unexplained 6/6 sample structure?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "description": "Fit DESeq2 with design ~condition as the primary model on the 12 samples, with size-factor estimation and apeglm LFC shrinkage. Then fit the pre-specified sensitivity model ~condition + PCA-cluster (from T1S1) when the design matrix is full rank, and compare the two: overlapping significant genes, genes unique to each model, and correlation of log2FCs. Output: full DE tables for both models, a comparison table, MA and volcano plots.",
+        "acceptance_criteria": [
+          "Primary DESeq2 model (~condition) fitted on all 12 samples with Wald test; full DE table with log2FC, stat, p-value, BH-adjusted p, and base mean saved",
+          "Sensitivity model (~condition + cluster) fitted only if full rank; if rank-deficient, the limitation is stated in the output instead of a fitted model",
+          "Disagreement between the two models quantified (e.g., correlation of statistics, count of genes losing/gaining significance at FDR<0.05) and reported",
+          "LFC shrunk estimates (apeglm) for the primary model; number of significant genes at FDR<0.05 reported for both models",
+          "No gene is called differential on the sensitivity model alone without the primary-model result shown alongside"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "WikiPathways enrichment of the DE signature",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "GMT members are HGNC symbols; the count matrix gene IDs must be matched to the same namespace, and the match rate reported — a low match rate invalidates the enrichment",
+          "With ~50-200 significant genes at most in a 6v6 design, ORA is coarse; GSEA on the full ranking is the primary readout",
+          "Pathway-level results from the primary model must not be presented as adjusted-for-structure without the sensitivity comparison"
+        ],
+        "context": "Reference data needed: a WikiPathways Homo sapiens pathway gene-set collection in GMT form with HGNC gene symbols (provisioned in this environment, 2026.07.10 release). Input from T1S2: DE table with Wald statistics and FDR-adjusted p-values for 12,000 genes.",
+        "maxSteps": 200,
+        "packages": [
+          "fgsea==1.38.0",
+          "clusterProfiler==4.20.0",
+          "GSEABase==1.74.0",
+          "data.table==1.18.4"
+        ],
+        "question": "Which WikiPathways human pathways are enriched among genes differing between treated and control kidney samples, and do the calls hold under the cluster-adjusted model?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "description": "Run fgsea on the DE results against the provisioned WikiPathways Homo sapiens GMT (HGNC symbols): primary input is the ranking by Wald statistic from the ~condition model; secondary input is the ranking from the ~condition + cluster model for comparison. Also run over-representation analysis (clusterProfiler enricher) on the FDR<0.05 gene list with the tested genes as universe. Output: enrichment tables (NES, p, padj) for both models and a comparison of pathway calls.",
+        "acceptance_criteria": [
+          "GSEA run on the full ranked gene list (Wald statistic, primary model) against the WikiPathways human GMT; NES, p-value, FDR per pathway saved",
+          "ORA on the significant-gene set (FDR<0.05 from the primary model) with the same GMT, background = all tested genes",
+          "Both analyses repeated with the sensitivity-model ranking; pathways whose significance depends on the model choice flagged in the output",
+          "Minimum set size (e.g., 10) and maximum (e.g., 500) recorded; number of pathways tested reported",
+          "If the WikiPathways human gene-set resource is absent at run time, the step reports the gap and exits cleanly rather than substituting a non-human set"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Integrated DE and structure report",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Do not overclaim mechanism: this is one 6v6 contrast with an unexplained 6/6 structure; the result is a hypothesis list, not validated targets",
+          "If the two DE models disagree materially, the headline gene list must be the robust intersection, with the primary-only genes clearly separated",
+          "State the sample-size limitation: 6 vs 6 gives power only for large effects"
+        ],
+        "context": "All inputs from T1S1-T1S3: structure report, DE tables (primary and sensitivity), enrichment tables. Dataset: 12 human kidney samples, 6 treated vs 6 control, Salmon gene-level counts, unexplained 6/6 PCA structure not following condition.",
+        "maxSteps": 200,
+        "packages": [],
+        "question": "Which genes differ between treated and control kidney samples, how confident are those calls given the unexplained 6/6 sample structure, and what pathways do they implicate?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T1S3"
+        ],
+        "description": "Produce the final integrated report: QC and structure findings, the primary DE gene list with the cluster-adjusted comparison, pathway-level results, and an explicit statement of what the unexplained 6/6 structure does and does not change. This is a text-plus-tables synthesis step, no new statistics.",
+        "acceptance_criteria": [
+          "A single written report integrating QC, both DE models, and the enrichment comparison",
+          "Explicit answer to 'which genes differ': the list of genes significant in the primary model, annotated with which of them survive the cluster-adjusted model",
+          "The unexplained 6/6 structure is discussed: what it could be (unrecorded technical factor, biological heterogeneity), that it cannot be resolved from this data alone, and what extra metadata would resolve it",
+          "No batch is claimed to exist; the structure is described as unexplained, and no spurious 'batch' label is invented",
+          "Top DE genes and pathways presented with effect sizes and FDR, not p-values alone"
+        ]
+      }
+    ],
+    "title": "Kidney treated-vs-control DE with PCA-structure audit",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-24T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The dataset is 12 human kidney bulk-RNA samples (6 treated vs 6 control, unpaired) with raw Salmon gene-level counts for 12,000 genes. The research question is which genes differ between treated and control, but the profiler flagged a real confound: PCA on these samples shows two clusters of six that do NOT follow condition. Because both the cluster split and the condition split are 6-vs-6, the two variables are either crossed (estimable together) or partially aligned — this must be quantified before any DE result is trusted. The plan therefore (1) verifies the count matrix, decides the correct DESeq2 input mode for Salmon-derived counts (integer counts vs corrected abundance, since the record does not say whether Salmon's length correction was applied), and characterizes the PCA structure explicitly — testing whether the 6/6 cluster is crossed with, aligned with, or independent of condition; (2) runs the primary DESeq2 analysis on ~condition and a pre-specified sensitivity analysis adding the data-driven cluster factor when the design matrix is full rank, reporting both models side by side rather than silently choosing one; (3) maps the DE result to WikiPathways human gene sets (provisioned, HGNC-symbol GMT matching this organism) via ranked-list GSEA and ORA; and (4) integrates everything into an honest report that states which genes are robust to the unknown structure and which are not. No batch variable exists in the metadata, so the cluster covariate is the only lever on the unwanted structure; the plan never treats it as a recorded batch."
+  },
+  "usage": {
+    "inputTokens": 101166,
+    "outputTokens": 7575,
+    "cacheReadInputTokens": 80384,
+    "reasoningTokens": 1727
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_c1b1588be3db402ab2b51311",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Kidney treated-vs-control DE with PCA-structure audit",
+          "created_at": "2026-07-24T00:00:00Z",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "analytical_narrative": "The dataset is 12 human kidney bulk-RNA samples (6 treated vs 6 control, unpaired) with raw Salmon gene-level counts for 12,000 genes. The research question is which genes differ between treated and control, but the profiler flagged a real confound: PCA on these samples shows two clusters of six that do NOT follow condition. Because both the cluster split and the condition split are 6-vs-6, the two variables are either crossed (estimable together) or partially aligned — this must be quantified before any DE result is trusted. The plan therefore (1) verifies the count matrix, decides the correct DESeq2 input mode for Salmon-derived counts (integer counts vs corrected abundance, since the record does not say whether Salmon's length correction was applied), and characterizes the PCA structure explicitly — testing whether the 6/6 cluster is crossed with, aligned with, or independent of condition; (2) runs the primary DESeq2 analysis on ~condition and a pre-specified sensitivity analysis adding the data-driven cluster factor when the design matrix is full rank, reporting both models side by side rather than silently choosing one; (3) maps the DE result to WikiPathways human gene sets (provisioned, HGNC-symbol GMT matching this organism) via ranked-list GSEA and ORA; and (4) integrates everything into an honest report that states which genes are robust to the unknown structure and which are not. No batch variable exists in the metadata, so the cluster covariate is the only lever on the unwanted structure; the plan never treats it as a recorded batch."
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 3
+    },
+    {
+      "toolUseId": "call_46d2b2f9dbd94abd8aaf1867",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is 12 human kidney bulk-RNA samples (6 treated vs 6 control, unpaired) with raw Salmon gene-level counts for 12,000 genes. The research question is which genes differ between treated and control, but the profiler flagged a real confound: PCA on these samples shows two clusters of six that do NOT follow condition. Because both the cluster split and the condition split are 6-vs-6, the two variables are either crossed (estimable together) or partially aligned — this must be quantified before any DE result is trusted. The plan therefore (1) verifies the count matrix, decides the correct DESeq2 input mode for Salmon-derived counts (integer counts vs corrected abundance, since the record does not say whether Salmon's length correction was applied), and characterizes the PCA structure explicitly — testing whether the 6/6 cluster is crossed with, aligned with, or independent of condition; (2) runs the primary DESeq2 analysis on ~condition and a pre-specified sensitivity analysis adding the data-driven cluster factor when the design matrix is full rank, reporting both models side by side rather than silently choosing one; (3) maps the DE result to WikiPathways human gene sets (provisioned, HGNC-symbol GMT matching this organism) via ranked-list GSEA and ORA; and (4) integrates everything into an honest report that states which genes are robust to the unknown structure and which are not. No batch variable exists in the metadata, so the cluster covariate is the only lever on the unwanted structure; the plan never treats it as a recorded batch.",
+          "created_at": "2026-07-24T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Sample names in counts.csv and metadata.csv reconcile 1:1 (12 samples, 6 per condition)",
+                "Count matrix characterized: integer vs non-integer values reported, and the DESeq2 input mode (raw counts vs tximport-style correction) decided and recorded",
+                "PCA on variance-stabilized values reproduced; the two 6/6 clusters confirmed or refuted, cluster labels assigned per sample and saved",
+                "Cross-tabulation of cluster vs condition reported with a Fisher exact test; full-rank check of ~condition + cluster design matrix reported",
+                "Library sizes and detected-gene counts per sample reported"
+              ],
+              "context": "Data: /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples + ID column, Salmon gene-level counts, human kidney) and /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample id + condition, 6 treated vs 6 control). Prior profiling shows PCA separates two clusters of 6 that do not follow condition and no batch is recorded. The counts CSV may or may not be raw integer counts — Salmon 'counts' exports are sometimes scaledTPM.",
+              "caveats": [
+                "If counts are non-integer scaledTPM, rounding them for DESeq2 would distort the mean-variance fit — use the tximport path instead",
+                "If the cluster is NOT crossed with condition (partially aligned), say so plainly — the sensitivity model in T1S2 is then biased and this changes its interpretation",
+                "k-means on PCA scores is only a labelling device; if the 6/6 split is ambiguous (silhouette near 0), report that rather than forcing labels"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv and metadata.csv, reconcile sample IDs, test whether the Salmon-derived counts are integers (raw counts) or scaledTPM-like (needing length correction), compute PCA on variance-stabilized values, assign the two 6/6 cluster labels, and quantify the relationship between cluster and condition (cross-tab + Fisher exact test) plus the rank of the ~condition + cluster design matrix. Outputs: QC/structure report, VST matrix, cluster labels, and the input-mode decision feeding T1S2.",
+              "id": "T1S1",
+              "name": "Input audit and PCA-structure characterization",
+              "packages": [
+                "DESeq2==1.52.0",
+                "tximport==1.40.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3"
+              ],
+              "question": "For the 12 kidney samples (6 treated vs 6 control): are the Salmon gene counts usable as-is by DESeq2, and is the unexplained 6/6 PCA cluster crossed with condition, aligned with it, or independent of it?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Primary DESeq2 model (~condition) fitted on all 12 samples with Wald test; full DE table with log2FC, stat, p-value, BH-adjusted p, and base mean saved",
+                "Sensitivity model (~condition + cluster) fitted only if full rank; if rank-deficient, the limitation is stated in the output instead of a fitted model",
+                "Disagreement between the two models quantified (e.g., correlation of statistics, count of genes losing/gaining significance at FDR<0.05) and reported",
+                "LFC shrunk estimates (apeglm) for the primary model; number of significant genes at FDR<0.05 reported for both models",
+                "No gene is called differential on the sensitivity model alone without the primary-model result shown alongside"
+              ],
+              "context": "Uses the VST matrix, cluster labels, and input-mode decision from T1S1. Raw Salmon gene-level counts, 12,000 genes, 6 treated vs 6 control human kidney, unpaired, no recorded batch. The PCA cluster is a data-driven 6/6 factor orthogonal (or not) to condition.",
+              "caveats": [
+                "With 12 samples and 6/6 structure, surrogate-variable methods (svaseq/RUV) are unstable; the explicit cluster covariate is the pre-specified sensitivity analysis, not SVA",
+                "If the cluster covariate is biological (e.g., cell-type composition) rather than technical, the sensitivity model removes real biology — interpret it as 'what survives', not as the truth",
+                "Genes with all-zero or near-zero counts must be pre-filtered before fitting (DESeq2 independent filtering is not a substitute)"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 with design ~condition as the primary model on the 12 samples, with size-factor estimation and apeglm LFC shrinkage. Then fit the pre-specified sensitivity model ~condition + PCA-cluster (from T1S1) when the design matrix is full rank, and compare the two: overlapping significant genes, genes unique to each model, and correlation of log2FCs. Output: full DE tables for both models, a comparison table, MA and volcano plots.",
+              "id": "T1S2",
+              "name": "Differential expression: primary and cluster-adjusted models",
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3",
+                "EnhancedVolcano==1.30.0"
+              ],
+              "question": "Which genes differ between treated and control kidney samples, and which of those calls survive adjustment for the unexplained 6/6 sample structure?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "GSEA run on the full ranked gene list (Wald statistic, primary model) against the WikiPathways human GMT; NES, p-value, FDR per pathway saved",
+                "ORA on the significant-gene set (FDR<0.05 from the primary model) with the same GMT, background = all tested genes",
+                "Both analyses repeated with the sensitivity-model ranking; pathways whose significance depends on the model choice flagged in the output",
+                "Minimum set size (e.g., 10) and maximum (e.g., 500) recorded; number of pathways tested reported",
+                "If the WikiPathways human gene-set resource is absent at run time, the step reports the gap and exits cleanly rather than substituting a non-human set"
+              ],
+              "context": "Reference data needed: a WikiPathways Homo sapiens pathway gene-set collection in GMT form with HGNC gene symbols (provisioned in this environment, 2026.07.10 release). Input from T1S2: DE table with Wald statistics and FDR-adjusted p-values for 12,000 genes.",
+              "caveats": [
+                "GMT members are HGNC symbols; the count matrix gene IDs must be matched to the same namespace, and the match rate reported — a low match rate invalidates the enrichment",
+                "With ~50-200 significant genes at most in a 6v6 design, ORA is coarse; GSEA on the full ranking is the primary readout",
+                "Pathway-level results from the primary model must not be presented as adjusted-for-structure without the sensitivity comparison"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run fgsea on the DE results against the provisioned WikiPathways Homo sapiens GMT (HGNC symbols): primary input is the ranking by Wald statistic from the ~condition model; secondary input is the ranking from the ~condition + cluster model for comparison. Also run over-representation analysis (clusterProfiler enricher) on the FDR<0.05 gene list with the tested genes as universe. Output: enrichment tables (NES, p, padj) for both models and a comparison of pathway calls.",
+              "id": "T1S3",
+              "name": "WikiPathways enrichment of the DE signature",
+              "packages": [
+                "fgsea==1.38.0",
+                "clusterProfiler==4.20.0",
+                "GSEABase==1.74.0",
+                "data.table==1.18.4"
+              ],
+              "question": "Which WikiPathways human pathways are enriched among genes differing between treated and control kidney samples, and do the calls hold under the cluster-adjusted model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "A single written report integrating QC, both DE models, and the enrichment comparison",
+                "Explicit answer to 'which genes differ': the list of genes significant in the primary model, annotated with which of them survive the cluster-adjusted model",
+                "The unexplained 6/6 structure is discussed: what it could be (unrecorded technical factor, biological heterogeneity), that it cannot be resolved from this data alone, and what extra metadata would resolve it",
+                "No batch is claimed to exist; the structure is described as unexplained, and no spurious 'batch' label is invented",
+                "Top DE genes and pathways presented with effect sizes and FDR, not p-values alone"
+              ],
+              "context": "All inputs from T1S1-T1S3: structure report, DE tables (primary and sensitivity), enrichment tables. Dataset: 12 human kidney samples, 6 treated vs 6 control, Salmon gene-level counts, unexplained 6/6 PCA structure not following condition.",
+              "caveats": [
+                "Do not overclaim mechanism: this is one 6v6 contrast with an unexplained 6/6 structure; the result is a hypothesis list, not validated targets",
+                "If the two DE models disagree materially, the headline gene list must be the robust intersection, with the primary-only genes clearly separated",
+                "State the sample-size limitation: 6 vs 6 gives power only for large effects"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "description": "Produce the final integrated report: QC and structure findings, the primary DE gene list with the cluster-adjusted comparison, pathway-level results, and an explicit statement of what the unexplained 6/6 structure does and does not change. This is a text-plus-tables synthesis step, no new statistics.",
+              "id": "T1S4",
+              "name": "Integrated DE and structure report",
+              "packages": [],
+              "question": "Which genes differ between treated and control kidney samples, how confident are those calls given the unexplained 6/6 sample structure, and what pathways do they implicate?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ],
+          "title": "Kidney treated-vs-control DE with PCA-structure audit"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "call_baf6fc540b224af5b25fe90a",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "analytical_narrative": "The dataset is 12 human kidney bulk-RNA samples (6 treated vs 6 control, unpaired) with raw Salmon gene-level counts for 12,000 genes. The research question is which genes differ between treated and control, but the profiler flagged a real confound: PCA on these samples shows two clusters of six that do NOT follow condition. Because both the cluster split and the condition split are 6-vs-6, the two variables are either crossed (estimable together) or partially aligned — this must be quantified before any DE result is trusted. The plan therefore (1) verifies the count matrix, decides the correct DESeq2 input mode for Salmon-derived counts (integer counts vs corrected abundance, since the record does not say whether Salmon's length correction was applied), and characterizes the PCA structure explicitly — testing whether the 6/6 cluster is crossed with, aligned with, or independent of condition; (2) runs the primary DESeq2 analysis on ~condition and a pre-specified sensitivity analysis adding the data-driven cluster factor when the design matrix is full rank, reporting both models side by side rather than silently choosing one; (3) maps the DE result to WikiPathways human gene sets (provisioned, HGNC-symbol GMT matching this organism) via ranked-list GSEA and ORA; and (4) integrates everything into an honest report that states which genes are robust to the unknown structure and which are not. No batch variable exists in the metadata, so the cluster covariate is the only lever on the unwanted structure; the plan never treats it as a recorded batch.",
+          "created_at": "2026-07-24T00:00:00Z",
+          "omicsSubtype": "bulk-rna-seq",
+          "omicsType": "transcriptomics",
+          "steps": [
+            {
+              "acceptance_criteria": [
+                "Sample names in counts.csv and metadata.csv reconcile 1:1 (12 samples, 6 per condition)",
+                "Count matrix characterized: integer vs non-integer values reported, and the DESeq2 input mode (raw counts vs tximport-style correction) decided and recorded",
+                "PCA on variance-stabilized values reproduced; the two 6/6 clusters confirmed or refuted, cluster labels assigned per sample and saved",
+                "Cross-tabulation of cluster vs condition reported with a Fisher exact test; full-rank check of ~condition + cluster design matrix reported",
+                "Library sizes and detected-gene counts per sample reported"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Data: /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/counts/counts.csv (12,000 genes x 12 samples + ID column, Salmon gene-level counts, human kidney) and /eval-four-models-v2-without-suspected-batch-n6-s1-1/data/inputs/metadata/metadata.csv (12 rows: sample id + condition, 6 treated vs 6 control). Prior profiling shows PCA separates two clusters of 6 that do not follow condition and no batch is recorded. The counts CSV may or may not be raw integer counts — Salmon 'counts' exports are sometimes scaledTPM.",
+              "caveats": [
+                "If counts are non-integer scaledTPM, rounding them for DESeq2 would distort the mean-variance fit — use the tximport path instead",
+                "If the cluster is NOT crossed with condition (partially aligned), say so plainly — the sensitivity model in T1S2 is then biased and this changes its interpretation",
+                "k-means on PCA scores is only a labelling device; if the 6/6 split is ambiguous (silhouette near 0), report that rather than forcing labels"
+              ],
+              "depends_on": [],
+              "description": "Load counts.csv and metadata.csv, reconcile sample IDs, test whether the Salmon-derived counts are integers (raw counts) or scaledTPM-like (needing length correction), compute PCA on variance-stabilized values, assign the two 6/6 cluster labels, and quantify the relationship between cluster and condition (cross-tab + Fisher exact test) plus the rank of the ~condition + cluster design matrix. Outputs: QC/structure report, VST matrix, cluster labels, and the input-mode decision feeding T1S2.",
+              "id": "T1S1",
+              "name": "Input audit and PCA-structure characterization",
+              "packages": [
+                "DESeq2==1.52.0",
+                "tximport==1.40.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3"
+              ],
+              "question": "For the 12 kidney samples (6 treated vs 6 control): are the Salmon gene counts usable as-is by DESeq2, and is the unexplained 6/6 PCA cluster crossed with condition, aligned with it, or independent of it?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "Primary DESeq2 model (~condition) fitted on all 12 samples with Wald test; full DE table with log2FC, stat, p-value, BH-adjusted p, and base mean saved",
+                "Sensitivity model (~condition + cluster) fitted only if full rank; if rank-deficient, the limitation is stated in the output instead of a fitted model",
+                "Disagreement between the two models quantified (e.g., correlation of statistics, count of genes losing/gaining significance at FDR<0.05) and reported",
+                "LFC shrunk estimates (apeglm) for the primary model; number of significant genes at FDR<0.05 reported for both models",
+                "No gene is called differential on the sensitivity model alone without the primary-model result shown alongside"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "Uses the VST matrix, cluster labels, and input-mode decision from T1S1. Raw Salmon gene-level counts, 12,000 genes, 6 treated vs 6 control human kidney, unpaired, no recorded batch. The PCA cluster is a data-driven 6/6 factor orthogonal (or not) to condition.",
+              "caveats": [
+                "With 12 samples and 6/6 structure, surrogate-variable methods (svaseq/RUV) are unstable; the explicit cluster covariate is the pre-specified sensitivity analysis, not SVA",
+                "If the cluster covariate is biological (e.g., cell-type composition) rather than technical, the sensitivity model removes real biology — interpret it as 'what survives', not as the truth",
+                "Genes with all-zero or near-zero counts must be pre-filtered before fitting (DESeq2 independent filtering is not a substitute)"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "description": "Fit DESeq2 with design ~condition as the primary model on the 12 samples, with size-factor estimation and apeglm LFC shrinkage. Then fit the pre-specified sensitivity model ~condition + PCA-cluster (from T1S1) when the design matrix is full rank, and compare the two: overlapping significant genes, genes unique to each model, and correlation of log2FCs. Output: full DE tables for both models, a comparison table, MA and volcano plots.",
+              "id": "T1S2",
+              "name": "Differential expression: primary and cluster-adjusted models",
+              "packages": [
+                "DESeq2==1.52.0",
+                "apeglm==1.34.0",
+                "data.table==1.18.4",
+                "ggplot2==4.0.3",
+                "EnhancedVolcano==1.30.0"
+              ],
+              "question": "Which genes differ between treated and control kidney samples, and which of those calls survive adjustment for the unexplained 6/6 sample structure?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "GSEA run on the full ranked gene list (Wald statistic, primary model) against the WikiPathways human GMT; NES, p-value, FDR per pathway saved",
+                "ORA on the significant-gene set (FDR<0.05 from the primary model) with the same GMT, background = all tested genes",
+                "Both analyses repeated with the sensitivity-model ranking; pathways whose significance depends on the model choice flagged in the output",
+                "Minimum set size (e.g., 10) and maximum (e.g., 500) recorded; number of pathways tested reported",
+                "If the WikiPathways human gene-set resource is absent at run time, the step reports the gap and exits cleanly rather than substituting a non-human set"
+              ],
+              "agent": "enrichment-agent",
+              "context": "Reference data needed: a WikiPathways Homo sapiens pathway gene-set collection in GMT form with HGNC gene symbols (provisioned in this environment, 2026.07.10 release). Input from T1S2: DE table with Wald statistics and FDR-adjusted p-values for 12,000 genes.",
+              "caveats": [
+                "GMT members are HGNC symbols; the count matrix gene IDs must be matched to the same namespace, and the match rate reported — a low match rate invalidates the enrichment",
+                "With ~50-200 significant genes at most in a 6v6 design, ORA is coarse; GSEA on the full ranking is the primary readout",
+                "Pathway-level results from the primary model must not be presented as adjusted-for-structure without the sensitivity comparison"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "description": "Run fgsea on the DE results against the provisioned WikiPathways Homo sapiens GMT (HGNC symbols): primary input is the ranking by Wald statistic from the ~condition model; secondary input is the ranking from the ~condition + cluster model for comparison. Also run over-representation analysis (clusterProfiler enricher) on the FDR<0.05 gene list with the tested genes as universe. Output: enrichment tables (NES, p, padj) for both models and a comparison of pathway calls.",
+              "id": "T1S3",
+              "name": "WikiPathways enrichment of the DE signature",
+              "packages": [
+                "fgsea==1.38.0",
+                "clusterProfiler==4.20.0",
+                "GSEABase==1.74.0",
+                "data.table==1.18.4"
+              ],
+              "question": "Which WikiPathways human pathways are enriched among genes differing between treated and control kidney samples, and do the calls hold under the cluster-adjusted model?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "analysis",
+              "track": "T1"
+            },
+            {
+              "acceptance_criteria": [
+                "A single written report integrating QC, both DE models, and the enrichment comparison",
+                "Explicit answer to 'which genes differ': the list of genes significant in the primary model, annotated with which of them survive the cluster-adjusted model",
+                "The unexplained 6/6 structure is discussed: what it could be (unrecorded technical factor, biological heterogeneity), that it cannot be resolved from this data alone, and what extra metadata would resolve it",
+                "No batch is claimed to exist; the structure is described as unexplained, and no spurious 'batch' label is invented",
+                "Top DE genes and pathways presented with effect sizes and FDR, not p-values alone"
+              ],
+              "agent": "bulk-transcriptomics-agent",
+              "context": "All inputs from T1S1-T1S3: structure report, DE tables (primary and sensitivity), enrichment tables. Dataset: 12 human kidney samples, 6 treated vs 6 control, Salmon gene-level counts, unexplained 6/6 PCA structure not following condition.",
+              "caveats": [
+                "Do not overclaim mechanism: this is one 6v6 contrast with an unexplained 6/6 structure; the result is a hypothesis list, not validated targets",
+                "If the two DE models disagree materially, the headline gene list must be the robust intersection, with the primary-only genes clearly separated",
+                "State the sample-size limitation: 6 vs 6 gives power only for large effects"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T1S3"
+              ],
+              "description": "Produce the final integrated report: QC and structure findings, the primary DE gene list with the cluster-adjusted comparison, pathway-level results, and an explicit statement of what the unexplained 6/6 structure does and does not change. This is a text-plus-tables synthesis step, no new statistics.",
+              "id": "T1S4",
+              "name": "Integrated DE and structure report",
+              "packages": [],
+              "question": "Which genes differ between treated and control kidney samples, how confident are those calls given the unexplained 6/6 sample structure, and what pathways do they implicate?",
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "step_type": "report",
+              "track": "T1"
+            }
+          ],
+          "title": "Kidney treated-vs-control DE with PCA-structure audit"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

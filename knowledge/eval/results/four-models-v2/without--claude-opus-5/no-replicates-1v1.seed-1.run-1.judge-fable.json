@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 5,
+    "qc_present": 7,
+    "low_count_filter": 7,
+    "normalization": 7,
+    "model_formula_contrasts": 6,
+    "fdr_shrinkage": 3,
+    "enrichment_universe_sets": 5,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly diagnoses the 1v1 design, refuses data-estimated dispersion, and delivers normalized counts with descriptive log2FC and a carried-through no-replication caveat, which is the core of the reference. It then undercuts itself by running edgeR exactTest at three assumed BCVs and emitting p-value/FDR columns and FDR<0.05 counts; however heavily labelled, this is exactly the p-value-producing run the reference calls wrong, and it also never names the replicated design (>=2, preferably >=3 per group) needed for inference. QC is reasonable for two samples (library sizes, zeros, correlation, MA plot) but lacks a shallow-sample policy; the CPM>=1-in-one-sample filter and library-size/TMM normalization are adequate. Enrichment is not warranted here and is included anyway, with no stated ORA universe, size window or collection version, so it earns only partial credit."
+}

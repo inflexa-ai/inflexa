@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 10,
+    "model_formula_contrasts": 10,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference on the essential point: tximport at gene level with the named tx2gene.csv, countsFromAbundance = 'no', DESeqDataSetFromTximport carrying the length offsets, no manual rounding and no TPM as counts, with the transcript drop rate reported; the edgeR confirmation correctly uses scaleOffset with TMM and the QL F-test. Design is explicit (~ condition, control as reference, lesional/control contrast stated), the pre-filter is minimal and tied to the smallest group size, BH at 0.05 with apeglm shrinkage is specified, and the lfcThreshold test is done inside the model rather than post hoc. QC is blind VST PCA, distance heatmap and library sizes with a clear no-drop policy and reporting both with and without a flagged sample. Enrichment is correctly omitted with a stated reason, and the report step lists method, versions, design, thresholds, tested/significant counts and design caveats. The only gap versus the reference is that the annotation version behind the tx2gene map is never named, which slightly weakens the method and report criteria."
+}

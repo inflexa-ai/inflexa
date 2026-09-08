@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 10,
+    "qc_present": 9,
+    "low_count_filter": 10,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 10,
+    "enrichment_universe_sets": 10,
+    "report_completeness": 10
+  },
+  "rationale": "The plan identifies the question as the condition:time interaction and tests it with the DESeq2 LRT of ~condition + time + condition:time against ~condition + time, matching the reference exactly, with per-time-point interaction contrasts shrunk by ashr (correctly noting apeglm is coefficient-only) to describe the pattern. QC is blind-VST PCA, distance heatmap and library sizes coloured by condition and time with a stated flag-only policy; the pre-filter (>=10 counts in >=3 samples, smallest group) is minimal and justified; normalization stays inside the model with a sensible handling of the missing length offset. Reference levels are set explicitly but the condition reference level is not named in the plan itself, a small gap. BH at alpha 0.05 with selection by padj only, enrichment correctly omitted and justified, and the report specifies versions, formulas, thresholds, tested/significant counts, power and length-offset caveats, plus sessionInfo; the edgeR intersection arm is an unrequested extra but does not compromise the primary analysis."
+}

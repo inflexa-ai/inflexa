@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference on the essentials: mMCP-counter on linear TMM-CPM with an explicit ban on human-trained matrices and ortholog-by-case mapping, marker coverage reported per population, scores declared comparable only within a population, Wilcoxon per population with BH and effect sizes, and sample_01 kept, inspected on PCA/correlation and re-run as a sensitivity analysis. Filtering (filterByExpr grouped by condition), normalization (TMM for scores, DESeq2 size factors on raw counts), and the ~condition design with isotype as reference are all stated. The GSEA step is well specified (ranking metric, mouse collections, 10-500 size window) but is not really warranted by a composition question and adds scope; the alpha for the population tests is implied rather than stated. The report is otherwise thorough but never commits to naming tool versions."
+}

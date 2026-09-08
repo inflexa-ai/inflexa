@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 5,
+    "low_count_filter": 4,
+    "normalization": 8,
+    "model_formula_contrasts": 5,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 7,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly matches DESeq2 Wald with a single condition factor to a 3-vs-3 unpaired single-batch design and states the low-power caveat, and it handles the zebrafish enrichment problem well: ortholog mapping via a named offline table restricted to 1:1 orthologs with coverage reported, plus a native GO route with its sparse-annotation caveat. Weaknesses: the design formula, reference level and contrast are never written explicitly; the low-count filter is left as a vague 'e.g.' with no threshold or justification; QC lacks library sizes, coloring by condition, and any outlier/shallow-sample policy. Enrichment collections and the ortholog table are named but not versioned, no gene-set size window is given, and fgsea is listed without a ranked list or ranking metric. The report plan omits package versions and the Ensembl release, though it does name the identifier space and the study caveats."
+}

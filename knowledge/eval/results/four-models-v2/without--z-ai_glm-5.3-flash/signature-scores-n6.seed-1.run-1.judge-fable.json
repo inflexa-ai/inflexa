@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 7,
+    "normalization": 9,
+    "model_formula_contrasts": 8,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 9,
+    "report_completeness": 8
+  },
+  "rationale": "The plan matches the reference closely: counts are filtered, TMM/size-factor normalized and log-transformed before per-sample scoring with GSVA and UCell over the named MSigDB 2026.1 Hallmark collection, with per-set overlap reported and a minimum-overlap rule for testing. Score matrices go to limma with score ~ condition, eBayes and BH across the 50 sets, with mean-score differences reported beside FDR, a row-scaled condition-annotated heatmap, and a sensible policy for sample_01 (keep, quantify on PCA/correlation, sensitivity rerun). Minor gaps: the CPM>1 in 4 samples filter is stated as an example rather than justified, the reference level and limma trend option are not explicit, the FDR alpha is only implied (0.1), and package versions are listed as names without version reporting."
+}

@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 8,
+    "qc_present": 9,
+    "low_count_filter": 9,
+    "normalization": 9,
+    "model_formula_contrasts": 4,
+    "fdr_shrinkage": 4,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 8
+  },
+  "rationale": "The plan does the essential thing the reference demands: it states that six samples cannot support a correlation network, gives the 15-20 sample floor, forbids WGCNA and soft-thresholding, and substitutes a named prior network (STRING v12.0, combined_score >= 700) with a stated module-size window, presenting the result as prior knowledge rather than as the answer. QC, filter (>=10 in >=3, justified by smallest group), and in-model median-of-ratios normalization are explicit and design-specific, with a flag-not-drop outlier policy. Where it falls short of the reference is the gene-level test: it builds ~condition but never runs a DESeq2/edgeR contrast with a stated reference level, BH alpha, or apeglm shrinkage; instead it scores modules by PC1/mean-z on VST and applies Wilcoxon/t with BH across modules, honestly noting the 0.1 floor but leaving the reference's anchor of DE genes projected onto the prior network absent. The report section is thorough on versions, seed, thresholds, and caveats, lacking only the tested/significant gene counts that a DE step would have supplied."
+}

@@ -1,0 +1,368 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "z-ai/glm-5.3-flash",
+  "task": "deconvolution-tpm-n6",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-08T07:29:00.057Z",
+  "elapsedMs": 92235,
+  "outcome": "plan_submitted",
+  "planId": "pln-c8feb4db",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Verify cohort and QC the TPM matrix",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "If metadata sample IDs do not match TPM column names exactly, report the mismatch and stop rather than guessing an order"
+        ],
+        "context": "TPM abundances from Salmon; no raw counts exist, so no count-based normalization or DESeq2-style modeling is possible anywhere in this plan. TPM normalizes within-sample depth, but a ~4x lower-depth sample has fewer detectable genes, which shows up as inflated zeros rather than scale shift.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Are the 12 samples correctly annotated as 6 anti-PD-1-treated vs 6 untreated, does the TPM table (12,000 genes x 13 columns, first column gene symbol) join cleanly to metadata.csv, and how abnormal is sample_01 (sequenced at ~1/4 median depth)?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [],
+        "constraints": [
+          "Do not renormalize or batch-correct the TPM values; log2(TPM+1) for visualization only",
+          "Keep the raw TPM matrix as the single input artifact passed to T1S2"
+        ],
+        "description": "Load /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv and /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv; verify dimensions (12,000 x 12 samples after dropping the gene-symbol column), symbol uniqueness, missing values, and the 6v6 condition split. Compute per-sample QC: fraction of genes with TPM > 1, median and 90th-percentile TPM, correlation of each sample to the cohort median profile, PCA and hierarchical clustering on log2(TPM+1) colored by condition. Quantify sample_01's detectability deficit explicitly and write a QC report with these tables and plots as the pass/fail record for downstream steps.",
+        "acceptance_criteria": [
+          "Sample-to-condition mapping verified for all 12 samples, 6 treated vs 6 control confirmed",
+          "QC metrics table written: per-sample detectable-gene fraction (TPM>1), median/90th-percentile log2TPM, correlation to cohort median",
+          "PCA and clustering plots on log2(TPM+1) generated and saved",
+          "sample_01 depth deficit quantified and flagged in the report"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Multi-method immune and stromal deconvolution",
+        "agent": "immune-profiling-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "Deconvolution estimates bulk proportions and cannot resolve cell states (e.g. exhausted vs effector CD8); interpret values as relative composition",
+          "A 12,000-gene subset of the transcriptome may omit low-abundance marker genes; the coverage report quantifies this"
+        ],
+        "context": "12,000 HGNC symbols may not cover every signature gene; quanTIseq and EPIC degrade gracefully with partial gene coverage but their output then includes a larger 'uncharacterized/other' fraction — report this per sample. If the immunedeconv umbrella wrapper has issues, call the individual installed packages (quantiseqr::quantiseq, EPIC::EPIC, MCPcounter::MCPcounter.estimate, xCell analysis) directly; they are all installed.",
+        "maxSteps": 200,
+        "packages": [
+          "immunedeconv",
+          "quantiseqr",
+          "EPIC",
+          "MCPcounter",
+          "mMCPcounter",
+          "xCell"
+        ],
+        "question": "What is the immune and stromal cell composition (per-cell-type fractions or enrichment scores) of each of the 12 melanoma samples, estimated by complementary methods suited to TPM input?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Use the raw TPM matrix from T1S1 as-is for TPM-native methods; no additional normalization",
+          "Do not use CIBERSORT: its LM22 wrapper requires a network download that is unavailable in the sandbox"
+        ],
+        "description": "Run a panel of deconvolution methods via the installed immunedeconv package (R), which orchestrates quanTIseq and EPIC (both TPM-native, returning cell fractions), xCell (enrichment scores, 64 immune/stromal cell types), MCP-counter and mMCP-counter (abundance scores for 8-10 immune/stromal populations), and ConsensusTME if its wrapper runs. These methods bundle their own signature matrices, so no external reference file is needed. Feed the raw TPM matrix directly to quanTIseq/EPIC and log2(TPM+1) to the score-based methods. For each method record which signature genes were found in the 12,000-gene TPM table and which were missing (coverage per cell type), then write one tidy long-format table: sample, method, cell type, value, plus per-method coverage reports.",
+        "acceptance_criteria": [
+          "Cell-type score/fraction table produced for all 12 samples from at least three methods (quanTIseq or EPIC, xCell, MCP-counter)",
+          "Per-method signature-gene coverage report written (matched vs missing genes)",
+          "Any method that fails offline is logged with its error and the panel proceeds with the rest"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Test cell composition treated vs control",
+        "agent": "statistical-modeling-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "xCell scores are signed and not fractions; compare them only within method, never pool across methods"
+        ],
+        "context": "Unpaired design, single batch — no covariate adjustment is possible or needed beyond the group term. TPM-derived composition scores are not counts; use rank-based tests, not count models.",
+        "maxSteps": 200,
+        "packages": [
+          "scipy",
+          "statsmodels",
+          "pandas",
+          "numpy"
+        ],
+        "question": "Do any immune or stromal cell types differ between the 6 anti-PD-1-treated and 6 untreated melanoma samples, and do the differences survive removal of the low-depth sample sample_01?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "FDR corrected within method, not across methods (methods are not independent)",
+          "Report effect sizes as primary, p-values as secondary",
+          "No multiple-comparison claims of 'no difference' — absence of significance at this n is uninformative"
+        ],
+        "description": "From the T1S2 long-format deconvolution table, test each cell type within each method for treated-vs-control difference: two-sided Wilcoxon rank-sum test, Hedges' g effect size with bootstrap CI, and Benjamini-Hochberg FDR across cell types within each method. Summarize direction and magnitude for every tested cell type. Then repeat the full comparison on the 11-sample cohort without sample_01 and report which findings are concordant between the two analyses. As a descriptive checkpoint readout, compare log2TPM of PDCD1, CD274, CTLA4, LAG3, HAVCR2 between groups with the same test. Write a results table (method, cell type, median treated, median control, effect size, CI, p, q, direction, robust-to-sample_01 flag) and state plainly that with n=6 vs 6 only large effects can be detected and results are exploratory.",
+        "acceptance_criteria": [
+          "Results table covering every cell type from every successful method, with effect size and FDR",
+          "Sensitivity table showing the same tests without sample_01, with a robustness flag per cell type",
+          "Checkpoint-gene log2TPM comparison table (descriptive)",
+          "Explicit power statement in the report: n=6 per arm, unpaired, exploratory"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "TME signature scoring and method concordance",
+        "agent": "immune-profiling-agent",
+        "track": "tme-composition",
+        "status": "pending",
+        "caveats": [
+          "Pathway gene sets built from full-transcriptome annotations will have partial coverage of the 12,000-gene matrix; report the fraction of signature genes found per set and down-weight sets below ~50% coverage rather than dropping them silently"
+        ],
+        "context": "The reference store carries human WikiPathways gene sets (HGNC symbols, GMT format) suitable for the pathway-level signatures; the executing agent should resolve them against what the environment actually holds at run time. If absent, use bundled signatures (e.g. the method gene lists already loaded in T1S2, or the classic 8-10 gene IFN-gamma/cytolytic signatures hardcoded from published marker sets) and say so in the output.",
+        "maxSteps": 200,
+        "packages": [
+          "gseapy",
+          "decoupler",
+          "pandas",
+          "numpy",
+          "scipy",
+          "seaborn",
+          "matplotlib"
+        ],
+        "question": "Do pathway-level TME signatures (IFN-gamma response, cytolytic activity, T-cell and myeloid markers) corroborate the deconvolution-based treated-vs-control differences, and how concordant are the deconvolution methods with each other?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "Score signatures on log2(TPM+1); do not re-derive from raw TPM without the +1 offset",
+          "Signature-level differences are corroboration, not independent confirmation — label them as such"
+        ],
+        "description": "Score each sample on log2(TPM+1) for curated TME signatures: IFN-gamma response, cytolytic activity (GZMB/PRF1), CD8 T-cell, Treg, myeloid/macrophage, and antigen-presentation signatures — using single-sample methods (gseapy ssGSEA or decoupler run_ulm/mean on the log matrix). Prefer human pathway gene sets (WikiPathways, HGNC symbols) staged in the reference store for the pathway-level signatures; if that resource is absent, fall back to the signature gene lists bundled with the installed packages and report the fallback. Then compute cross-method concordance: Spearman correlation between methods for shared cell types (e.g. CD8 T cells across quanTIseq/EPIC/xCell/MCP-counter) and between signature scores and corresponding deconvolution estimates. Produce a per-sample signature-score table, a concordance matrix, and a summary heatmap (samples x cell types/signatures, annotated by condition), and note which treated-vs-control differences from T1S3 are corroborated at the signature level.",
+        "acceptance_criteria": [
+          "Per-sample signature score table for all named signatures on all 12 samples",
+          "Concordance matrix (Spearman) across methods for shared cell types and against signature scores",
+          "Summary heatmap with samples annotated by condition",
+          "Explicit note whether the pathway gene-set reference was used or the bundled-signature fallback was taken"
+        ]
+      }
+    ],
+    "title": "Anti-PD-1 melanoma TME deconvolution",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-07-15T12:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The core delivered only a gene-level TPM matrix (12,000 HGNC symbols x 12 melanoma biopsies: 6 anti-PD-1-treated vs 6 untreated, unpaired, single batch) plus a two-column metadata table. TPM-only input precludes count-based differential-expression modeling, but it is exactly the input scale several immune/stromal deconvolution methods expect (quanTIseq and EPIC are TPM-native; xCell, MCP-counter, mMCP-counter and ConsensusTME run on log-scale expression and carry their signature matrices internally, so no external reference is required). The plan therefore runs a multi-method deconvolution panel on all 12 samples, tests treated-vs-control differences per cell type with nonparametric tests and effect sizes (n=6 vs 6 gives little power, so robustness matters more than p-values), and repeats every comparison after dropping sample_01 — flagged by the profiler as sequenced at ~1/4 median depth, which with TPM shows up mainly as reduced gene detectability. A final signature-scoring step (IFN-gamma response, cytolytic activity, checkpoint genes) on log2-TPM corroborates the deconvolution estimates and quantifies cross-method concordance, using the human WikiPathways gene sets staged in the reference store when present, with bundled signatures as fallback."
+  },
+  "usage": {
+    "inputTokens": 31230,
+    "outputTokens": 6114,
+    "cacheReadInputTokens": 0,
+    "reasoningTokens": 3363
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "call_90218a3ebba342348a1f9b3a",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Anti-PD-1 melanoma TME deconvolution",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-07-15T12:00:00Z",
+          "analytical_narrative": "The core delivered only a gene-level TPM matrix (12,000 HGNC symbols x 12 melanoma biopsies: 6 anti-PD-1-treated vs 6 untreated, unpaired, single batch) plus a two-column metadata table. TPM-only input precludes count-based differential-expression modeling, but it is exactly the input scale several immune/stromal deconvolution methods expect (quanTIseq and EPIC are TPM-native; xCell, MCP-counter, mMCP-counter and ConsensusTME run on log-scale expression and carry their signature matrices internally, so no external reference is required). The plan therefore runs a multi-method deconvolution panel on all 12 samples, tests treated-vs-control differences per cell type with nonparametric tests and effect sizes (n=6 vs 6 gives little power, so robustness matters more than p-values), and repeats every comparison after dropping sample_01 — flagged by the profiler as sequenced at ~1/4 median depth, which with TPM shows up mainly as reduced gene detectability. A final signature-scoring step (IFN-gamma response, cytolytic activity, checkpoint genes) on log2-TPM corroborates the deconvolution estimates and quantifies cross-method concordance, using the human WikiPathways gene sets staged in the reference store when present, with bundled signatures as fallback.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Verify cohort and QC the TPM matrix",
+              "track": "tme-composition",
+              "step_type": "analysis",
+              "question": "Are the 12 samples correctly annotated as 6 anti-PD-1-treated vs 6 untreated, does the TPM table (12,000 genes x 13 columns, first column gene symbol) join cleanly to metadata.csv, and how abnormal is sample_01 (sequenced at ~1/4 median depth)?",
+              "description": "Load /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/abundance/tpm.csv and /eval-four-models-v2-without-deconvolution-tpm-n6-s1-1/data/inputs/metadata/metadata.csv; verify dimensions (12,000 x 12 samples after dropping the gene-symbol column), symbol uniqueness, missing values, and the 6v6 condition split. Compute per-sample QC: fraction of genes with TPM > 1, median and 90th-percentile TPM, correlation of each sample to the cohort median profile, PCA and hierarchical clustering on log2(TPM+1) colored by condition. Quantify sample_01's detectability deficit explicitly and write a QC report with these tables and plots as the pass/fail record for downstream steps.",
+              "acceptance_criteria": [
+                "Sample-to-condition mapping verified for all 12 samples, 6 treated vs 6 control confirmed",
+                "QC metrics table written: per-sample detectable-gene fraction (TPM>1), median/90th-percentile log2TPM, correlation to cohort median",
+                "PCA and clustering plots on log2(TPM+1) generated and saved",
+                "sample_01 depth deficit quantified and flagged in the report"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "context": "TPM abundances from Salmon; no raw counts exist, so no count-based normalization or DESeq2-style modeling is possible anywhere in this plan. TPM normalizes within-sample depth, but a ~4x lower-depth sample has fewer detectable genes, which shows up as inflated zeros rather than scale shift.",
+              "constraints": [
+                "Do not renormalize or batch-correct the TPM values; log2(TPM+1) for visualization only",
+                "Keep the raw TPM matrix as the single input artifact passed to T1S2"
+              ],
+              "caveats": [
+                "If metadata sample IDs do not match TPM column names exactly, report the mismatch and stop rather than guessing an order"
+              ]
+            },
+            {
+              "id": "T1S2",
+              "name": "Multi-method immune and stromal deconvolution",
+              "track": "tme-composition",
+              "step_type": "analysis",
+              "question": "What is the immune and stromal cell composition (per-cell-type fractions or enrichment scores) of each of the 12 melanoma samples, estimated by complementary methods suited to TPM input?",
+              "description": "Run a panel of deconvolution methods via the installed immunedeconv package (R), which orchestrates quanTIseq and EPIC (both TPM-native, returning cell fractions), xCell (enrichment scores, 64 immune/stromal cell types), MCP-counter and mMCP-counter (abundance scores for 8-10 immune/stromal populations), and ConsensusTME if its wrapper runs. These methods bundle their own signature matrices, so no external reference file is needed. Feed the raw TPM matrix directly to quanTIseq/EPIC and log2(TPM+1) to the score-based methods. For each method record which signature genes were found in the 12,000-gene TPM table and which were missing (coverage per cell type), then write one tidy long-format table: sample, method, cell type, value, plus per-method coverage reports.",
+              "acceptance_criteria": [
+                "Cell-type score/fraction table produced for all 12 samples from at least three methods (quanTIseq or EPIC, xCell, MCP-counter)",
+                "Per-method signature-gene coverage report written (matched vs missing genes)",
+                "Any method that fails offline is logged with its error and the panel proceeds with the rest"
+              ],
+              "packages": [
+                "immunedeconv",
+                "quantiseqr",
+                "EPIC",
+                "MCPcounter",
+                "mMCPcounter",
+                "xCell"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "context": "12,000 HGNC symbols may not cover every signature gene; quanTIseq and EPIC degrade gracefully with partial gene coverage but their output then includes a larger 'uncharacterized/other' fraction — report this per sample. If the immunedeconv umbrella wrapper has issues, call the individual installed packages (quantiseqr::quantiseq, EPIC::EPIC, MCPcounter::MCPcounter.estimate, xCell analysis) directly; they are all installed.",
+              "constraints": [
+                "Use the raw TPM matrix from T1S1 as-is for TPM-native methods; no additional normalization",
+                "Do not use CIBERSORT: its LM22 wrapper requires a network download that is unavailable in the sandbox"
+              ],
+              "caveats": [
+                "Deconvolution estimates bulk proportions and cannot resolve cell states (e.g. exhausted vs effector CD8); interpret values as relative composition",
+                "A 12,000-gene subset of the transcriptome may omit low-abundance marker genes; the coverage report quantifies this"
+              ]
+            },
+            {
+              "id": "T1S3",
+              "name": "Test cell composition treated vs control",
+              "track": "tme-composition",
+              "step_type": "analysis",
+              "question": "Do any immune or stromal cell types differ between the 6 anti-PD-1-treated and 6 untreated melanoma samples, and do the differences survive removal of the low-depth sample sample_01?",
+              "description": "From the T1S2 long-format deconvolution table, test each cell type within each method for treated-vs-control difference: two-sided Wilcoxon rank-sum test, Hedges' g effect size with bootstrap CI, and Benjamini-Hochberg FDR across cell types within each method. Summarize direction and magnitude for every tested cell type. Then repeat the full comparison on the 11-sample cohort without sample_01 and report which findings are concordant between the two analyses. As a descriptive checkpoint readout, compare log2TPM of PDCD1, CD274, CTLA4, LAG3, HAVCR2 between groups with the same test. Write a results table (method, cell type, median treated, median control, effect size, CI, p, q, direction, robust-to-sample_01 flag) and state plainly that with n=6 vs 6 only large effects can be detected and results are exploratory.",
+              "acceptance_criteria": [
+                "Results table covering every cell type from every successful method, with effect size and FDR",
+                "Sensitivity table showing the same tests without sample_01, with a robustness flag per cell type",
+                "Checkpoint-gene log2TPM comparison table (descriptive)",
+                "Explicit power statement in the report: n=6 per arm, unpaired, exploratory"
+              ],
+              "packages": [
+                "scipy",
+                "statsmodels",
+                "pandas",
+                "numpy"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "statistical-modeling-agent",
+              "context": "Unpaired design, single batch — no covariate adjustment is possible or needed beyond the group term. TPM-derived composition scores are not counts; use rank-based tests, not count models.",
+              "constraints": [
+                "FDR corrected within method, not across methods (methods are not independent)",
+                "Report effect sizes as primary, p-values as secondary",
+                "No multiple-comparison claims of 'no difference' — absence of significance at this n is uninformative"
+              ],
+              "caveats": [
+                "xCell scores are signed and not fractions; compare them only within method, never pool across methods"
+              ]
+            },
+            {
+              "id": "T1S4",
+              "name": "TME signature scoring and method concordance",
+              "track": "tme-composition",
+              "step_type": "analysis",
+              "question": "Do pathway-level TME signatures (IFN-gamma response, cytolytic activity, T-cell and myeloid markers) corroborate the deconvolution-based treated-vs-control differences, and how concordant are the deconvolution methods with each other?",
+              "description": "Score each sample on log2(TPM+1) for curated TME signatures: IFN-gamma response, cytolytic activity (GZMB/PRF1), CD8 T-cell, Treg, myeloid/macrophage, and antigen-presentation signatures — using single-sample methods (gseapy ssGSEA or decoupler run_ulm/mean on the log matrix). Prefer human pathway gene sets (WikiPathways, HGNC symbols) staged in the reference store for the pathway-level signatures; if that resource is absent, fall back to the signature gene lists bundled with the installed packages and report the fallback. Then compute cross-method concordance: Spearman correlation between methods for shared cell types (e.g. CD8 T cells across quanTIseq/EPIC/xCell/MCP-counter) and between signature scores and corresponding deconvolution estimates. Produce a per-sample signature-score table, a concordance matrix, and a summary heatmap (samples x cell types/signatures, annotated by condition), and note which treated-vs-control differences from T1S3 are corroborated at the signature level.",
+              "acceptance_criteria": [
+                "Per-sample signature score table for all named signatures on all 12 samples",
+                "Concordance matrix (Spearman) across methods for shared cell types and against signature scores",
+                "Summary heatmap with samples annotated by condition",
+                "Explicit note whether the pathway gene-set reference was used or the bundled-signature fallback was taken"
+              ],
+              "packages": [
+                "gseapy",
+                "decoupler",
+                "pandas",
+                "numpy",
+                "scipy",
+                "seaborn",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "immune-profiling-agent",
+              "context": "The reference store carries human WikiPathways gene sets (HGNC symbols, GMT format) suitable for the pathway-level signatures; the executing agent should resolve them against what the environment actually holds at run time. If absent, use bundled signatures (e.g. the method gene lists already loaded in T1S2, or the classic 8-10 gene IFN-gamma/cytolytic signatures hardcoded from published marker sets) and say so in the output.",
+              "constraints": [
+                "Score signatures on log2(TPM+1); do not re-derive from raw TPM without the +1 offset",
+                "Signature-level differences are corroboration, not independent confirmation — label them as such"
+              ],
+              "caveats": [
+                "Pathway gene sets built from full-transcriptome annotations will have partial coverage of the 12,000-gene matrix; report the fraction of signature genes found per set and down-weight sets below ~50% coverage rather than dropping them silently"
+              ]
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 98
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "providerOrder": [
+      "wafer",
+      "io-net/fp8",
+      "nextbit/fp8"
+    ],
+    "requestTimeoutMs": 1500000
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

@@ -1,0 +1,1147 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "with",
+  "model": "claude-opus-5",
+  "task": "classifier-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T22:31:56.283Z",
+  "elapsedMs": 113901,
+  "outcome": "plan_submitted",
+  "planId": "pln-7928bba0",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Sample structure QC",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Salmon import state is unknown; state in the output that counts are used as delivered and that no length re-correction was applied",
+          "Absence of visible separation on PCA does not mean absence of a classifiable signal — a multivariate model can find structure a top-500-gene PCA does not show"
+        ],
+        "context": "Human whole blood, bulk RNA-seq, gene-level counts as delivered by Salmon; the record does not state whether the length correction was applied, so counts are treated as an as-delivered gene-by-sample matrix and never re-scaled by an external length model. The profile records a single batch, 60 cases vs 60 controls, unpaired, and no quality flags. This step is diagnostic context for the classifier: strong unsupervised separation makes a high AUC unsurprising, absent separation makes a high AUC something to scrutinise, and a PC that tracks library size rather than condition is a warning that the classifier may learn depth.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "pandas",
+          "numpy",
+          "matplotlib",
+          "seaborn",
+          "pydeseq2"
+        ],
+        "question": "Do the 60 cases and 60 controls in the whole-blood cohort separate in unsupervised space, and is any sample or technical axis (library size, depth) dominating structure before a classifier is trained?",
+        "grounding": {
+          "claims": [
+            "R-0033@40bf"
+          ],
+          "reason": "Raw counts, so sample structure QC runs before any model: blind VST, PCA on the top 500 variable genes, sample distance heatmap, per R-0033@40bf",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "n_top_genes",
+              "step": "qc_sample_structure",
+              "value": 500,
+              "source": "doi:10.12688/f1000research.7035.1"
+            },
+            {
+              "name": "transform",
+              "step": "qc_sample_structure",
+              "value": "vst_blind",
+              "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-qc-python@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "qc",
+        "depends_on": [],
+        "constraints": [
+          "qc_sample_structure: n_top_genes = 500",
+          "qc_sample_structure: transform = vst_blind (design-blind, so the condition does not inform the transform)",
+          "Do not remove any sample at this step; report candidates only",
+          "Do not perform any condition-aware gene ranking here"
+        ],
+        "description": "Read /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 120 samples plus the gene identifier column) and /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows, sample and condition). Verify sample IDs match one-to-one between the two files and align column order to the metadata. Apply a design-blind variance stabilizing transformation, compute PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot library size per sample — all coloured/annotated by the case/control condition. Report the variance explained by PC1-PC4 and the association of each of PC1-PC4 with condition and with library size.",
+        "acceptance_criteria": [
+          "All 120 sample IDs in counts.csv match metadata.csv one-to-one; any mismatch is reported and the run stops rather than silently subsetting",
+          "PCA scatter (PC1/PC2), sample-distance heatmap, and library-size barplot are written, coloured by case/control",
+          "Variance explained by PC1-PC4 is reported, together with the correlation/association of each with condition and with log library size",
+          "Any sample sitting far from both group clouds is named, with its library size, and flagged for the modelling step (not removed automatically)"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Low-count gene filter (filterByExpr)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "The recommended template for filterByExpr exists in R only; the requested Python preference has no template realizing this method, so this step runs in R (edgeR) and hands a plain matrix to the Python or R modelling step",
+          "Using the condition as the group argument of filterByExpr affects only the count threshold, not gene ranking; it does not constitute supervised selection, but state this explicitly in the output so the CV estimate is not questioned"
+        ],
+        "context": "Population-scale cohort (60 per group), so the recommended path filters with filterByExpr before any normalization. The output of this step is the feature universe handed to the nested-CV classifier; supervised selection happens strictly inside training folds downstream.",
+        "maxSteps": 200,
+        "packages": [
+          "edgeR",
+          "limma"
+        ],
+        "question": "Which of the 12,000 genes carry worthwhile counts in the 120-sample blood cohort and so form the candidate feature space for the case/control classifier?",
+        "grounding": {
+          "claims": [
+            "R-0058@99e1",
+            "R-0002@087b",
+            "R-0057@31cc",
+            "R-0026@9ab1"
+          ],
+          "reason": "Population-scale cohort (60 per group): filterByExpr before normalization per R-0058@99e1; the alternative fixed 10-counts-in-smallest-group filter (R-0002@087b) is not used",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "filter",
+              "step": "filter_low_counts",
+              "value": "filterByExpr",
+              "source": "guide:edgeR/2026-04-25#filtering"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+          "template": "tpl-edger-ql@1.0.0"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "filter_low_counts: filter = filterByExpr, with the case/control condition passed as the group factor",
+          "Do not pre-normalize or transform the counts here — normalization belongs inside the model or inside each training fold"
+        ],
+        "description": "Build an edgeR DGEList from the aligned counts and metadata and apply filterByExpr with the case/control condition as the group factor, then recompute library sizes. Write the filtered count matrix (genes kept x 120 samples) and the kept-gene list as the input object for the modelling steps. Report the number of genes kept and removed. This is a cohort-level, expression-magnitude filter only — it is not feature selection and must not rank genes by their association with the condition.",
+        "acceptance_criteria": [
+          "Filtered count matrix and kept-gene list are written with all 120 samples retained",
+          "Number of genes kept and removed out of 12,000 is reported",
+          "No condition-aware ranking, no differential test, and no per-gene supervised score is computed at this step",
+          "Counts remain raw integers/as-delivered values; no scaling or transformation is written into the filtered matrix"
+        ]
+      },
+      {
+        "id": "T3S1",
+        "name": "Penalized logistic classifier with nested cross-validation",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "With 60 samples per class the AUC confidence interval is wide and the selected gene set is unstable across folds — state both explicitly rather than reporting a point estimate alone",
+          "A single cohort with no held-out external samples gives an internal estimate only; transportability to a new cohort or a new assay batch is untested and must not be claimed",
+          "If T1S1 showed a PC tracking library size, check whether classifier performance survives when depth-driven variation is accounted for, and report if it does not",
+          "Salmon length-correction state is unknown; because the same transform is applied per gene to all samples this does not bias the comparison, but note it"
+        ],
+        "context": "This step is the direct answer to the research question. The design is balanced (60 vs 60), single batch, unpaired, so no covariate or blocking term is needed and chance accuracy is 50%. The critical methodological point: any feature list produced by a supervised contrast on all 120 samples is already a selection, so the model must select again inside each training fold from the full filtered feature matrix from T1S2. If for any reason selection cannot be moved inside the folds, the resulting performance must be reported explicitly as optimistic and not as a generalisation estimate.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "numpy",
+          "pandas",
+          "matplotlib",
+          "glmnet"
+        ],
+        "question": "How accurately does a penalized logistic expression classifier distinguish a case from a control in this whole-blood cohort on a sample it has not seen — what is the outer cross-validated ROC AUC with its confidence interval?",
+        "grounding": {
+          "claims": [
+            "R-0134@0f16",
+            "R-0155@08c2",
+            "R-0133@ce76",
+            "R-0135@f02d"
+          ],
+          "reason": "The question is a classifier of samples into case/control from expression: penalized logistic regression with nested cross-validation and a ROC with its confidence interval per R-0155@08c2 and R-0134@0f16; preprocessing and selection are fit inside each training fold",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "classifier_model",
+              "step": "signature_scoring",
+              "value": "penalized_logistic_regression",
+              "source": "doi:10.18637/jss.v033.i01"
+            },
+            {
+              "name": "classifier_validation",
+              "step": "signature_scoring",
+              "value": "nested_cross_validation",
+              "source": "rule:R-0155"
+            },
+            {
+              "name": "classifier_performance",
+              "step": "signature_scoring",
+              "value": "roc_auc_with_confidence_interval",
+              "source": "doi:10.1186/1471-2105-12-77"
+            },
+            {
+              "name": "preprocessing_scope",
+              "step": "signature_scoring",
+              "value": "filter_and_scaling_inside_each_training_fold",
+              "source": "doi:10.1073/pnas.102102699"
+            },
+            {
+              "name": "score_test",
+              "step": "signature_scoring",
+              "value": "limma_on_scores_with_the_design",
+              "source": "doi:10.1186/1471-2105-14-7"
+            },
+            {
+              "name": "score_adjustment",
+              "step": "signature_scoring",
+              "value": "BH_across_signatures",
+              "source": "doi:10.1186/1471-2105-14-7"
+            },
+            {
+              "name": "signature_provenance",
+              "step": "signature_scoring",
+              "value": "source_version_and_genes_present",
+              "source": "doi:10.1371/journal.pcbi.1009935"
+            },
+            {
+              "name": "marker_source",
+              "step": "signature_scoring",
+              "value": "panglaodb_or_hpa_tissue",
+              "source": "doi:10.1093/database/baz046"
+            },
+            {
+              "name": "marker_species_and_tissue",
+              "step": "signature_scoring",
+              "value": "state_in_report",
+              "source": "doi:10.1126/science.1260419"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "signature_scoring: classifier_model = penalized_logistic_regression",
+          "signature_scoring: classifier_validation = nested_cross_validation",
+          "signature_scoring: classifier_performance = roc_auc_with_confidence_interval",
+          "signature_scoring: preprocessing_scope = filter_and_scaling_inside_each_training_fold",
+          "Never report a performance number computed on samples that trained the model",
+          "Do not use any differential-expression result computed on all 120 samples as the feature set for this model",
+          "Stratify every fold on the case/control label so each fold holds both classes",
+          "Fix and record the random seed"
+        ],
+        "description": "Train a penalized logistic regression (elastic net, glmnet family; equivalently sklearn LogisticRegression with elasticnet penalty and saga) on log-scale expression from the filtered matrix, using repeated stratified nested cross-validation over all 120 samples (60 cases, 60 controls). Outer loop: stratified k-fold (k=5 or 10, repeated at least 5 times with a fixed seed) whose held-out samples are never touched by any fitting. Inner loop on the outer training set only: choose lambda and alpha by cross-validated deviance/AUC. Every preprocessing step that could leak — TMM/CPM normalization reference, log transform parameters, per-gene centring/scaling, any variance or supervised gene filter, and the feature selection itself — is refit inside each outer training fold and applied unchanged to the held-out fold. Report: outer-fold pooled ROC curve and AUC with a confidence interval (stratified bootstrap or across-repeat spread), per-repeat AUC distribution, accuracy/sensitivity/specificity/PPV/NPV at the 0.5 threshold and at a Youden-optimal threshold derived within training folds only, a calibration plot of predicted probability against observed frequency, a confusion matrix from the outer predictions, and a label-permutation null (>=100 permutations of the case/control labels through the whole nested procedure) giving an empirical p-value for the observed AUC. Also report a baseline comparison against a trivial majority-class predictor.",
+        "acceptance_criteria": [
+          "Nested CV is demonstrably nested: the script shows that hyperparameter choice, normalization/scaling, and feature selection are all fit on outer training folds only",
+          "Outer-fold ROC AUC is reported with a confidence interval and with the per-repeat AUC spread; the pooled ROC curve is plotted",
+          "Sensitivity, specificity, accuracy, PPV, NPV and a confusion matrix from outer-fold predictions are reported at a stated threshold, with the threshold's provenance stated",
+          "A calibration plot and a label-permutation null distribution with an empirical p-value are produced",
+          "The report states the expected accuracy on a new sample as the outer-CV estimate with its interval, and states that no external cohort validates it",
+          "Random seed is fixed and recorded; the run is reproducible"
+        ]
+      },
+      {
+        "id": "T3S2",
+        "name": "Final model panel and feature stability",
+        "agent": "statistical-modeling-agent",
+        "track": "T3",
+        "status": "pending",
+        "caveats": [
+          "An elastic-net panel from 120 samples is one of many near-equivalent solutions when genes are correlated; do not present the selected genes as the unique or causal set",
+          "A gene selected in every fold is evidence of a consistent marginal signal, not of biological causation"
+        ],
+        "context": "The final-fit panel is a description of what the model leans on, useful for downstream biological interpretation, not a second performance result. With 60 per class, elastic-net panels are typically unstable across resamples, so the selection frequency is the honest summary of which genes are reliably informative.",
+        "maxSteps": 200,
+        "packages": [
+          "scikit-learn",
+          "numpy",
+          "pandas",
+          "matplotlib",
+          "glmnet"
+        ],
+        "question": "Which genes does the case/control classifier actually use, and how stable is that panel across cross-validation folds?",
+        "grounding": {
+          "claims": [
+            "R-0155@08c2"
+          ],
+          "reason": "R-0155@08c2 requires reporting the genes with a nonzero coefficient and stating gene-set instability across folds when samples per class are limited; this step carries that reporting and is kept separate from the performance estimate",
+          "status": "grounded",
+          "settings": [
+            {
+              "name": "classifier_model",
+              "step": "signature_scoring",
+              "value": "penalized_logistic_regression",
+              "source": "doi:10.18637/jss.v033.i01"
+            },
+            {
+              "name": "classifier_validation",
+              "step": "signature_scoring",
+              "value": "nested_cross_validation",
+              "source": "rule:R-0155"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T3S1"
+        ],
+        "constraints": [
+          "Do not report any resubstitution or in-sample performance figure",
+          "Gene identifiers must be reported in the identifier space of counts.csv; if symbol annotation is added, keep the original ID column alongside"
+        ],
+        "description": "After the unbiased performance estimate from T3S1 is fixed, refit one penalized logistic model on all 120 samples using the hyperparameters selected by the inner loops (report how they were consolidated across folds), to produce a deployable coefficient set. Report the genes with a nonzero coefficient, their signs and magnitudes, and — from the T3S1 outer folds — the selection frequency of each gene across folds and the size of the selected set per fold. Produce a stability plot (selection frequency versus coefficient) and list the consensus genes selected in a majority of folds. Do NOT compute or report any performance metric from this all-sample fit; the T3S1 outer-CV estimate is the only performance claim.",
+        "acceptance_criteria": [
+          "Nonzero-coefficient gene table from the all-sample fit is written, with coefficients and direction (up in cases or up in controls)",
+          "Per-fold selection frequency from the T3S1 outer folds is reported for every gene selected at least once, with a stability plot",
+          "Consensus genes (selected in >50% of outer folds) are listed separately from single-fold selections",
+          "No accuracy, AUC or other performance metric derived from the all-sample fit appears in the output; the report points to T3S1 for performance",
+          "How the inner-loop hyperparameters were consolidated for the final fit is stated explicitly"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Classifier report and reproducibility record",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "If T1S1 found strong unsupervised case/control separation, say so — a high AUC is then expected and less informative; if it found none, a high AUC deserves an explicit check for leakage"
+        ],
+        "context": "Final synthesis step. Its purpose is to keep the headline claim tied to the outer-CV number and to keep the caveats attached to it rather than in a footnote.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "matplotlib",
+          "session-info"
+        ],
+        "question": "What is the defensible answer to 'can expression tell a case from a control in this cohort, and how accurate on a new sample', with its assumptions and limits stated?",
+        "grounding": {
+          "claims": [
+            "R-0086@becf"
+          ],
+          "reason": "No rule covers the report step itself; the reproducibility record follows R-0086@becf",
+          "status": "ungrounded",
+          "settings": [
+            {
+              "name": "reproducibility_record",
+              "step": "report",
+              "value": [
+                "session_info",
+                "seed",
+                "package_versions",
+                "collection_version",
+                "annotation_release"
+              ],
+              "source": "doi:10.1371/journal.pcbi.1003285"
+            }
+          ],
+          "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "report",
+        "depends_on": [
+          "T1S2",
+          "T3S1",
+          "T3S2"
+        ],
+        "constraints": [
+          "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release",
+          "Do not report the T3S2 all-sample fit as a performance result"
+        ],
+        "description": "Assemble a single report: cohort description (120 whole-blood samples, 60 cases vs 60 controls, 12,000 genes as delivered from Salmon, single batch), the QC findings from T1S1, the gene universe from T1S2, the nested-CV performance from T3S1 as the headline answer (outer AUC with interval, sensitivity/specificity at the stated threshold, calibration, permutation null), and the panel and its stability from T3S2. State plainly: chance level is 50% in this balanced design; the performance figure is an internal cross-validated estimate with no external cohort; the Salmon length-correction state is unrecorded; and any unresolved confound noted at QC. Include the reproducibility record — session info, package versions, random seeds of every step that uses randomness, and the input file paths and their dimensions.",
+        "acceptance_criteria": [
+          "Report states the outer cross-validated AUC with its confidence interval as the answer to expected accuracy on a new sample, and does not substitute any in-sample figure",
+          "Report states chance level (50%) and the permutation-null result explicitly",
+          "Report names the limits: single cohort, no external validation, unknown Salmon length-correction state, and any QC confound found in T1S1",
+          "Reproducibility record with session info, package versions and all random seeds is stored with the results, not separately"
+        ]
+      }
+    ],
+    "title": "Blood RNA-seq case/control classifier with nested CV",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The research question is a prediction question, not a differential-expression question: can expression of the 12,000 genes in the 120-sample whole-blood cohort (counts.csv, 12000 x 121 with the gene-ID column; metadata.csv, 120 x 2 with the condition column) separate the 60 cases from the 60 controls, and what accuracy should be expected on a sample the model has never seen. The plan therefore centres on an honest generalisation estimate rather than on a gene list.\n\nT1S1 establishes sample structure first: a design-blind VST, PCA on the 500 most variable genes, sample-distance heatmap and library-size summary. This is diagnostic and it is also decisive for interpretation — if cases and controls already separate on PC1 the classifier is easy and the risk is that a technical axis (depth, an unrecorded batch) is doing the work; if they do not separate at all, a high cross-validated AUC later would be the surprising claim and would need scrutiny. The profile records a single batch and no quality flags, so no batch term enters any model; the counts came from Salmon with the length correction not stated, which is noted as an import caveat but does not change the classifier path (the same monotone per-gene transform is applied to every sample).\n\nT1S2 fixes the gene universe with edgeR filterByExpr against the condition factor. This is a cohort-level, condition-blind step that only removes genes with no worthwhile counts anywhere; it defines the candidate feature space and the object the modelling step reads. It is explicitly NOT feature selection — no per-gene ranking, no supervised filter, is allowed to touch the full cohort.\n\nT3S1 is the answer to the question: penalized logistic regression (glmnet, elastic net) with nested cross-validation — lambda and alpha chosen in an inner loop, performance measured only on outer folds whose training never saw the held-out samples. Every supervised operation (normalisation reference, scaling, variance/supervised filtering, feature selection) is refitted inside each training fold, because a selection performed once on all 120 samples is the classic route to an optimistic error estimate. The headline number is the outer-fold ROC AUC with a confidence interval, reported alongside sensitivity, specificity, accuracy at a stated threshold, a calibration check and a label-permutation null. With 60 per class the interval will be wide and the selected gene set will be unstable across folds; both are to be reported, not smoothed over.\n\nT3S2 is deliberately separated from T3S1: only after the unbiased estimate is fixed does a final model get refit on all 120 samples to name the genes carrying signal, with fold-selection frequency reported so that the instability of the panel is visible. Its performance is not re-estimated — the T3S1 number stands as the answer to 'how accurate on a new sample'. T1S3 collects everything into a report with the reproducibility record (seed, session info, package versions), and states plainly the limits: single cohort, no external validation set, so the outer-CV AUC is an internal estimate whose transportability to a new cohort is untested."
+  },
+  "usage": {
+    "inputTokens": 171462,
+    "outputTokens": 9188,
+    "cacheCreationInputTokens": 87750,
+    "cacheReadInputTokens": 83676,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01Nb8KRCwuADua43CHgGLT8r",
+      "name": "knowledge_recommend",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "classifier": true,
+        "preferred_language": "python"
+      },
+      "outcome": "ok",
+      "durationMs": 41
+    },
+    {
+      "toolUseId": "toolu_01GuVeNXAEmWa5qQHq7vypxf",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "scikit-learn",
+          "pydeseq2",
+          "DESeq2",
+          "edgeR",
+          "limma",
+          "glmnet",
+          "xgboost",
+          "shap",
+          "rnanorm"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 12
+    },
+    {
+      "toolUseId": "toolu_01CenVbxBtnrJnLnqeAxArbi",
+      "name": "knowledge_check",
+      "input": {
+        "question": "signature_scoring",
+        "modality": "bulk_rna_seq",
+        "data_state": "counts",
+        "count_source": "salmon",
+        "import_state": "unknown",
+        "organism": "human",
+        "n_groups": 2,
+        "n_per_group_min": 60,
+        "n_per_group_max": 60,
+        "paired": false,
+        "batch": "none",
+        "classifier": true,
+        "preferred_language": "python",
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST + PCA on top 500 variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter (edgeR)",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM scaling factors then log-CPM for the classifier feature matrix",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "method",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_model",
+                "value": "penalized_logistic_regression"
+              },
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "classifier_performance",
+                "value": "roc_auc_with_confidence_interval"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record and classifier report",
+            "package": "knitr",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions"
+              }
+            ]
+          }
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 4
+    },
+    {
+      "toolUseId": "toolu_0173DGua2VTkL12MTS7BHrz1",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Blood RNA-seq case/control classifier with nested CV",
+          "analytical_narrative": "The research question is a prediction question, not a differential-expression question: can expression of the 12,000 genes in the 120-sample whole-blood cohort (counts.csv, 12000 x 121 with the gene-ID column; metadata.csv, 120 x 2 with the condition column) separate the 60 cases from the 60 controls, and what accuracy should be expected on a sample the model has never seen. The plan therefore centres on an honest generalisation estimate rather than on a gene list.\n\nT1S1 establishes sample structure first: a design-blind VST, PCA on the 500 most variable genes, sample-distance heatmap and library-size summary. This is diagnostic and it is also decisive for interpretation — if cases and controls already separate on PC1 the classifier is easy and the risk is that a technical axis (depth, an unrecorded batch) is doing the work; if they do not separate at all, a high cross-validated AUC later would be the surprising claim and would need scrutiny. The profile records a single batch and no quality flags, so no batch term enters any model; the counts came from Salmon with the length correction not stated, which is noted as an import caveat but does not change the classifier path (the same monotone per-gene transform is applied to every sample).\n\nT1S2 fixes the gene universe with edgeR filterByExpr against the condition factor. This is a cohort-level, condition-blind step that only removes genes with no worthwhile counts anywhere; it defines the candidate feature space and the object the modelling step reads. It is explicitly NOT feature selection — no per-gene ranking, no supervised filter, is allowed to touch the full cohort.\n\nT3S1 is the answer to the question: penalized logistic regression (glmnet, elastic net) with nested cross-validation — lambda and alpha chosen in an inner loop, performance measured only on outer folds whose training never saw the held-out samples. Every supervised operation (normalisation reference, scaling, variance/supervised filtering, feature selection) is refitted inside each training fold, because a selection performed once on all 120 samples is the classic route to an optimistic error estimate. The headline number is the outer-fold ROC AUC with a confidence interval, reported alongside sensitivity, specificity, accuracy at a stated threshold, a calibration check and a label-permutation null. With 60 per class the interval will be wide and the selected gene set will be unstable across folds; both are to be reported, not smoothed over.\n\nT3S2 is deliberately separated from T3S1: only after the unbiased estimate is fixed does a final model get refit on all 120 samples to name the genes carrying signal, with fold-selection frequency reported so that the instability of the panel is visible. Its performance is not re-estimated — the T3S1 number stands as the answer to 'how accurate on a new sample'. T1S3 collects everything into a report with the reproducibility record (seed, session info, package versions), and states plainly the limits: single cohort, no external validation set, so the outer-CV AUC is an internal estimate whose transportability to a new cohort is untested.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Sample structure QC",
+              "track": "T1",
+              "step_type": "qc",
+              "question": "Do the 60 cases and 60 controls in the whole-blood cohort separate in unsupervised space, and is any sample or technical axis (library size, depth) dominating structure before a classifier is trained?",
+              "description": "Read /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 120 samples plus the gene identifier column) and /eval-four-models-v2-with-classifier-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows, sample and condition). Verify sample IDs match one-to-one between the two files and align column order to the metadata. Apply a design-blind variance stabilizing transformation, compute PCA on the 500 most variable genes, draw a Euclidean sample-distance heatmap, and plot library size per sample — all coloured/annotated by the case/control condition. Report the variance explained by PC1-PC4 and the association of each of PC1-PC4 with condition and with library size.",
+              "context": "Human whole blood, bulk RNA-seq, gene-level counts as delivered by Salmon; the record does not state whether the length correction was applied, so counts are treated as an as-delivered gene-by-sample matrix and never re-scaled by an external length model. The profile records a single batch, 60 cases vs 60 controls, unpaired, and no quality flags. This step is diagnostic context for the classifier: strong unsupervised separation makes a high AUC unsurprising, absent separation makes a high AUC something to scrutinise, and a PC that tracks library size rather than condition is a warning that the classifier may learn depth.",
+              "question_note": null,
+              "acceptance_criteria": [
+                "All 120 sample IDs in counts.csv match metadata.csv one-to-one; any mismatch is reported and the run stops rather than silently subsetting",
+                "PCA scatter (PC1/PC2), sample-distance heatmap, and library-size barplot are written, coloured by case/control",
+                "Variance explained by PC1-PC4 is reported, together with the correlation/association of each with condition and with log library size",
+                "Any sample sitting far from both group clouds is named, with its library size, and flagged for the modelling step (not removed automatically)"
+              ],
+              "constraints": [
+                "qc_sample_structure: n_top_genes = 500",
+                "qc_sample_structure: transform = vst_blind (design-blind, so the condition does not inform the transform)",
+                "Do not remove any sample at this step; report candidates only",
+                "Do not perform any condition-aware gene ranking here"
+              ],
+              "caveats": [
+                "Salmon import state is unknown; state in the output that counts are used as delivered and that no length re-correction was applied",
+                "Absence of visible separation on PCA does not mean absence of a classifiable signal — a multivariate model can find structure a top-500-gene PCA does not show"
+              ],
+              "packages": [
+                "scikit-learn",
+                "pandas",
+                "numpy",
+                "matplotlib",
+                "seaborn",
+                "pydeseq2"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0033@40bf"
+                ],
+                "template": "tpl-qc-python@1.0.0",
+                "reason": "Raw counts, so sample structure QC runs before any model: blind VST, PCA on the top 500 variable genes, sample distance heatmap, per R-0033@40bf",
+                "settings": [
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "n_top_genes",
+                    "value": 500,
+                    "source": "doi:10.12688/f1000research.7035.1"
+                  },
+                  {
+                    "step": "qc_sample_structure",
+                    "name": "transform",
+                    "value": "vst_blind",
+                    "source": "vignette:DESeq2/1.52.0#blind-dispersion-estimation"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S2",
+              "name": "Low-count gene filter (filterByExpr)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Which of the 12,000 genes carry worthwhile counts in the 120-sample blood cohort and so form the candidate feature space for the case/control classifier?",
+              "description": "Build an edgeR DGEList from the aligned counts and metadata and apply filterByExpr with the case/control condition as the group factor, then recompute library sizes. Write the filtered count matrix (genes kept x 120 samples) and the kept-gene list as the input object for the modelling steps. Report the number of genes kept and removed. This is a cohort-level, expression-magnitude filter only — it is not feature selection and must not rank genes by their association with the condition.",
+              "context": "Population-scale cohort (60 per group), so the recommended path filters with filterByExpr before any normalization. The output of this step is the feature universe handed to the nested-CV classifier; supervised selection happens strictly inside training folds downstream.",
+              "acceptance_criteria": [
+                "Filtered count matrix and kept-gene list are written with all 120 samples retained",
+                "Number of genes kept and removed out of 12,000 is reported",
+                "No condition-aware ranking, no differential test, and no per-gene supervised score is computed at this step",
+                "Counts remain raw integers/as-delivered values; no scaling or transformation is written into the filtered matrix"
+              ],
+              "constraints": [
+                "filter_low_counts: filter = filterByExpr, with the case/control condition passed as the group factor",
+                "Do not pre-normalize or transform the counts here — normalization belongs inside the model or inside each training fold"
+              ],
+              "caveats": [
+                "The recommended template for filterByExpr exists in R only; the requested Python preference has no template realizing this method, so this step runs in R (edgeR) and hands a plain matrix to the Python or R modelling step",
+                "Using the condition as the group argument of filterByExpr affects only the count threshold, not gene ranking; it does not constitute supervised selection, but state this explicitly in the output so the CV estimate is not questioned"
+              ],
+              "packages": [
+                "edgeR",
+                "limma"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0058@99e1",
+                  "R-0002@087b",
+                  "R-0057@31cc",
+                  "R-0026@9ab1"
+                ],
+                "template": "tpl-edger-ql@1.0.0",
+                "reason": "Population-scale cohort (60 per group): filterByExpr before normalization per R-0058@99e1; the alternative fixed 10-counts-in-smallest-group filter (R-0002@087b) is not used",
+                "settings": [
+                  {
+                    "step": "filter_low_counts",
+                    "name": "filter",
+                    "value": "filterByExpr",
+                    "source": "guide:edgeR/2026-04-25#filtering"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S1",
+              "name": "Penalized logistic classifier with nested cross-validation",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "How accurately does a penalized logistic expression classifier distinguish a case from a control in this whole-blood cohort on a sample it has not seen — what is the outer cross-validated ROC AUC with its confidence interval?",
+              "description": "Train a penalized logistic regression (elastic net, glmnet family; equivalently sklearn LogisticRegression with elasticnet penalty and saga) on log-scale expression from the filtered matrix, using repeated stratified nested cross-validation over all 120 samples (60 cases, 60 controls). Outer loop: stratified k-fold (k=5 or 10, repeated at least 5 times with a fixed seed) whose held-out samples are never touched by any fitting. Inner loop on the outer training set only: choose lambda and alpha by cross-validated deviance/AUC. Every preprocessing step that could leak — TMM/CPM normalization reference, log transform parameters, per-gene centring/scaling, any variance or supervised gene filter, and the feature selection itself — is refit inside each outer training fold and applied unchanged to the held-out fold. Report: outer-fold pooled ROC curve and AUC with a confidence interval (stratified bootstrap or across-repeat spread), per-repeat AUC distribution, accuracy/sensitivity/specificity/PPV/NPV at the 0.5 threshold and at a Youden-optimal threshold derived within training folds only, a calibration plot of predicted probability against observed frequency, a confusion matrix from the outer predictions, and a label-permutation null (>=100 permutations of the case/control labels through the whole nested procedure) giving an empirical p-value for the observed AUC. Also report a baseline comparison against a trivial majority-class predictor.",
+              "context": "This step is the direct answer to the research question. The design is balanced (60 vs 60), single batch, unpaired, so no covariate or blocking term is needed and chance accuracy is 50%. The critical methodological point: any feature list produced by a supervised contrast on all 120 samples is already a selection, so the model must select again inside each training fold from the full filtered feature matrix from T1S2. If for any reason selection cannot be moved inside the folds, the resulting performance must be reported explicitly as optimistic and not as a generalisation estimate.",
+              "acceptance_criteria": [
+                "Nested CV is demonstrably nested: the script shows that hyperparameter choice, normalization/scaling, and feature selection are all fit on outer training folds only",
+                "Outer-fold ROC AUC is reported with a confidence interval and with the per-repeat AUC spread; the pooled ROC curve is plotted",
+                "Sensitivity, specificity, accuracy, PPV, NPV and a confusion matrix from outer-fold predictions are reported at a stated threshold, with the threshold's provenance stated",
+                "A calibration plot and a label-permutation null distribution with an empirical p-value are produced",
+                "The report states the expected accuracy on a new sample as the outer-CV estimate with its interval, and states that no external cohort validates it",
+                "Random seed is fixed and recorded; the run is reproducible"
+              ],
+              "constraints": [
+                "signature_scoring: classifier_model = penalized_logistic_regression",
+                "signature_scoring: classifier_validation = nested_cross_validation",
+                "signature_scoring: classifier_performance = roc_auc_with_confidence_interval",
+                "signature_scoring: preprocessing_scope = filter_and_scaling_inside_each_training_fold",
+                "Never report a performance number computed on samples that trained the model",
+                "Do not use any differential-expression result computed on all 120 samples as the feature set for this model",
+                "Stratify every fold on the case/control label so each fold holds both classes",
+                "Fix and record the random seed"
+              ],
+              "caveats": [
+                "With 60 samples per class the AUC confidence interval is wide and the selected gene set is unstable across folds — state both explicitly rather than reporting a point estimate alone",
+                "A single cohort with no held-out external samples gives an internal estimate only; transportability to a new cohort or a new assay batch is untested and must not be claimed",
+                "If T1S1 showed a PC tracking library size, check whether classifier performance survives when depth-driven variation is accounted for, and report if it does not",
+                "Salmon length-correction state is unknown; because the same transform is applied per gene to all samples this does not bias the comparison, but note it"
+              ],
+              "packages": [
+                "scikit-learn",
+                "numpy",
+                "pandas",
+                "matplotlib",
+                "glmnet"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0134@0f16",
+                  "R-0155@08c2",
+                  "R-0133@ce76",
+                  "R-0135@f02d"
+                ],
+                "reason": "The question is a classifier of samples into case/control from expression: penalized logistic regression with nested cross-validation and a ROC with its confidence interval per R-0155@08c2 and R-0134@0f16; preprocessing and selection are fit inside each training fold",
+                "settings": [
+                  {
+                    "step": "signature_scoring",
+                    "name": "classifier_model",
+                    "value": "penalized_logistic_regression",
+                    "source": "doi:10.18637/jss.v033.i01"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "classifier_validation",
+                    "value": "nested_cross_validation",
+                    "source": "rule:R-0155"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "classifier_performance",
+                    "value": "roc_auc_with_confidence_interval",
+                    "source": "doi:10.1186/1471-2105-12-77"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "preprocessing_scope",
+                    "value": "filter_and_scaling_inside_each_training_fold",
+                    "source": "doi:10.1073/pnas.102102699"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_test",
+                    "value": "limma_on_scores_with_the_design",
+                    "source": "doi:10.1186/1471-2105-14-7"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "score_adjustment",
+                    "value": "BH_across_signatures",
+                    "source": "doi:10.1186/1471-2105-14-7"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "signature_provenance",
+                    "value": "source_version_and_genes_present",
+                    "source": "doi:10.1371/journal.pcbi.1009935"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "marker_source",
+                    "value": "panglaodb_or_hpa_tissue",
+                    "source": "doi:10.1093/database/baz046"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "marker_species_and_tissue",
+                    "value": "state_in_report",
+                    "source": "doi:10.1126/science.1260419"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T3S2",
+              "name": "Final model panel and feature stability",
+              "track": "T3",
+              "step_type": "analysis",
+              "question": "Which genes does the case/control classifier actually use, and how stable is that panel across cross-validation folds?",
+              "description": "After the unbiased performance estimate from T3S1 is fixed, refit one penalized logistic model on all 120 samples using the hyperparameters selected by the inner loops (report how they were consolidated across folds), to produce a deployable coefficient set. Report the genes with a nonzero coefficient, their signs and magnitudes, and — from the T3S1 outer folds — the selection frequency of each gene across folds and the size of the selected set per fold. Produce a stability plot (selection frequency versus coefficient) and list the consensus genes selected in a majority of folds. Do NOT compute or report any performance metric from this all-sample fit; the T3S1 outer-CV estimate is the only performance claim.",
+              "context": "The final-fit panel is a description of what the model leans on, useful for downstream biological interpretation, not a second performance result. With 60 per class, elastic-net panels are typically unstable across resamples, so the selection frequency is the honest summary of which genes are reliably informative.",
+              "acceptance_criteria": [
+                "Nonzero-coefficient gene table from the all-sample fit is written, with coefficients and direction (up in cases or up in controls)",
+                "Per-fold selection frequency from the T3S1 outer folds is reported for every gene selected at least once, with a stability plot",
+                "Consensus genes (selected in >50% of outer folds) are listed separately from single-fold selections",
+                "No accuracy, AUC or other performance metric derived from the all-sample fit appears in the output; the report points to T3S1 for performance",
+                "How the inner-loop hyperparameters were consolidated for the final fit is stated explicitly"
+              ],
+              "constraints": [
+                "Do not report any resubstitution or in-sample performance figure",
+                "Gene identifiers must be reported in the identifier space of counts.csv; if symbol annotation is added, keep the original ID column alongside"
+              ],
+              "caveats": [
+                "An elastic-net panel from 120 samples is one of many near-equivalent solutions when genes are correlated; do not present the selected genes as the unique or causal set",
+                "A gene selected in every fold is evidence of a consistent marginal signal, not of biological causation"
+              ],
+              "packages": [
+                "scikit-learn",
+                "numpy",
+                "pandas",
+                "matplotlib",
+                "glmnet"
+              ],
+              "depends_on": [
+                "T3S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "statistical-modeling-agent",
+              "grounding": {
+                "status": "grounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0155@08c2"
+                ],
+                "reason": "R-0155@08c2 requires reporting the genes with a nonzero coefficient and stating gene-set instability across folds when samples per class are limited; this step carries that reporting and is kept separate from the performance estimate",
+                "settings": [
+                  {
+                    "step": "signature_scoring",
+                    "name": "classifier_model",
+                    "value": "penalized_logistic_regression",
+                    "source": "doi:10.18637/jss.v033.i01"
+                  },
+                  {
+                    "step": "signature_scoring",
+                    "name": "classifier_validation",
+                    "value": "nested_cross_validation",
+                    "source": "rule:R-0155"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T1S3",
+              "name": "Classifier report and reproducibility record",
+              "track": "T1",
+              "step_type": "report",
+              "question": "What is the defensible answer to 'can expression tell a case from a control in this cohort, and how accurate on a new sample', with its assumptions and limits stated?",
+              "description": "Assemble a single report: cohort description (120 whole-blood samples, 60 cases vs 60 controls, 12,000 genes as delivered from Salmon, single batch), the QC findings from T1S1, the gene universe from T1S2, the nested-CV performance from T3S1 as the headline answer (outer AUC with interval, sensitivity/specificity at the stated threshold, calibration, permutation null), and the panel and its stability from T3S2. State plainly: chance level is 50% in this balanced design; the performance figure is an internal cross-validated estimate with no external cohort; the Salmon length-correction state is unrecorded; and any unresolved confound noted at QC. Include the reproducibility record — session info, package versions, random seeds of every step that uses randomness, and the input file paths and their dimensions.",
+              "context": "Final synthesis step. Its purpose is to keep the headline claim tied to the outer-CV number and to keep the caveats attached to it rather than in a footnote.",
+              "acceptance_criteria": [
+                "Report states the outer cross-validated AUC with its confidence interval as the answer to expected accuracy on a new sample, and does not substitute any in-sample figure",
+                "Report states chance level (50%) and the permutation-null result explicitly",
+                "Report names the limits: single cohort, no external validation, unknown Salmon length-correction state, and any QC confound found in T1S1",
+                "Reproducibility record with session info, package versions and all random seeds is stored with the results, not separately"
+              ],
+              "constraints": [
+                "report: reproducibility_record = session_info, seed, package_versions, collection_version, annotation_release",
+                "Do not report the T3S2 all-sample fit as a performance result"
+              ],
+              "caveats": [
+                "If T1S1 found strong unsupervised case/control separation, say so — a high AUC is then expected and less informative; if it found none, a high AUC deserves an explicit check for leakage"
+              ],
+              "packages": [
+                "pandas",
+                "matplotlib",
+                "session-info"
+              ],
+              "depends_on": [
+                "T1S2",
+                "T3S1",
+                "T3S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent",
+              "grounding": {
+                "status": "ungrounded",
+                "snapshot": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8",
+                "claims": [
+                  "R-0086@becf"
+                ],
+                "reason": "No rule covers the report step itself; the reproducibility record follows R-0086@becf",
+                "settings": [
+                  {
+                    "step": "report",
+                    "name": "reproducibility_record",
+                    "value": [
+                      "session_info",
+                      "seed",
+                      "package_versions",
+                      "collection_version",
+                      "annotation_release"
+                    ],
+                    "source": "doi:10.1371/journal.pcbi.1003285"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 49
+    }
+  ],
+  "knowledgeCalls": [
+    {
+      "seq": 1,
+      "op": "recommend",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "classifier": true
+        },
+        "response_format": "concise",
+        "preferences": {
+          "language": "python"
+        }
+      },
+      "response": {
+        "match": "applicable",
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "classifier": true
+        },
+        "procedure": [
+          {
+            "step": "qc_sample_structure",
+            "method": {
+              "id": "M-0006"
+            },
+            "template": "tpl-qc-python@1.0.0",
+            "rules": [
+              "R-0033@40bf"
+            ]
+          },
+          {
+            "step": "filter_low_counts",
+            "method": {
+              "id": "M-0022"
+            },
+            "template": "tpl-edger-ql@1.0.0",
+            "rules": [
+              "R-0058@99e1",
+              "R-0002@087b"
+            ]
+          },
+          {
+            "step": "normalize",
+            "method": {
+              "id": "M-0009"
+            },
+            "rules": [
+              "R-0057@31cc",
+              "R-0026@9ab1"
+            ]
+          },
+          {
+            "step": "signature_scoring",
+            "method": {
+              "id": "M-0055"
+            },
+            "rules": [
+              "R-0134@0f16",
+              "R-0155@08c2",
+              "R-0133@ce76",
+              "R-0135@f02d"
+            ]
+          },
+          {
+            "step": "report",
+            "rules": [
+              "R-0086@becf"
+            ]
+          }
+        ],
+        "claims": [
+          {
+            "id": "R-0134@0f16"
+          },
+          {
+            "id": "R-0057@31cc"
+          },
+          {
+            "id": "R-0058@99e1"
+          },
+          {
+            "id": "R-0155@08c2"
+          },
+          {
+            "id": "R-0026@9ab1"
+          },
+          {
+            "id": "R-0033@40bf"
+          },
+          {
+            "id": "R-0086@becf"
+          },
+          {
+            "id": "R-0002@087b"
+          },
+          {
+            "id": "R-0133@ce76"
+          },
+          {
+            "id": "R-0135@f02d"
+          }
+        ],
+        "flags": [],
+        "uncovered": []
+      },
+      "responseChars": 17068,
+      "elapsedMs": 14
+    },
+    {
+      "seq": 2,
+      "op": "check",
+      "request": {
+        "situation": {
+          "question": "signature_scoring",
+          "modality": "bulk_rna_seq",
+          "data_state": "counts",
+          "count_source": "salmon",
+          "import_state": "unknown",
+          "organism": "human",
+          "n_groups": 2,
+          "n_per_group_min": 60,
+          "n_per_group_max": 60,
+          "paired": false,
+          "batch": "none",
+          "classifier": true
+        },
+        "steps": [
+          {
+            "step_type": "qc_sample_structure",
+            "method": "blind VST + PCA on top 500 variable genes + sample distance heatmap",
+            "package": "DESeq2",
+            "parameters": [
+              {
+                "name": "n_top_genes",
+                "value": 500
+              },
+              {
+                "name": "transform",
+                "value": "vst_blind"
+              }
+            ]
+          },
+          {
+            "step_type": "filter_low_counts",
+            "method": "filterByExpr low count filter (edgeR)",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "filter",
+                "value": "filterByExpr"
+              }
+            ]
+          },
+          {
+            "step_type": "normalize",
+            "method": "TMM scaling factors then log-CPM for the classifier feature matrix",
+            "package": "edgeR",
+            "parameters": [
+              {
+                "name": "method",
+                "value": "TMM"
+              }
+            ]
+          },
+          {
+            "step_type": "signature_scoring",
+            "method": "Penalized logistic classifier with glmnet, nested cross-validation, and a pROC curve",
+            "package": "glmnet",
+            "parameters": [
+              {
+                "name": "classifier_model",
+                "value": "penalized_logistic_regression"
+              },
+              {
+                "name": "classifier_validation",
+                "value": "nested_cross_validation"
+              },
+              {
+                "name": "classifier_performance",
+                "value": "roc_auc_with_confidence_interval"
+              },
+              {
+                "name": "preprocessing_scope",
+                "value": "filter_and_scaling_inside_each_training_fold"
+              }
+            ]
+          },
+          {
+            "step_type": "report",
+            "method": "Reproducibility record and classifier report",
+            "package": "knitr",
+            "parameters": [
+              {
+                "name": "reproducibility_record",
+                "value": "session_info, seed, package_versions"
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "ok": true,
+        "snapshot": {
+          "date": "2026-09-07",
+          "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+        },
+        "violations": [],
+        "warnings": [],
+        "not_assessed": []
+      },
+      "responseChars": 175,
+      "elapsedMs": 4
+    }
+  ],
+  "snapshot": {
+    "date": "2026-09-07",
+    "digest": "sha256:40605ae40583456c222ca9f595c1a4c8c995b7a124a1f35c57cb03911412e5e8"
+  },
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

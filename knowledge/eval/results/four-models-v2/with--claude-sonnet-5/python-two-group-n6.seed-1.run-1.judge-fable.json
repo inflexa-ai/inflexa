@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 9,
+    "low_count_filter": 8,
+    "normalization": 10,
+    "model_formula_contrasts": 9,
+    "fdr_shrinkage": 9,
+    "enrichment_universe_sets": 8,
+    "report_completeness": 9
+  },
+  "rationale": "The plan matches the reference closely: PyDESeq2 Wald on raw counts with in-model median-of-ratios normalization, an explicit control reference level and named contrast, BH at 0.05 with shrinkage for the reported effect, and a QC step that keeps sample_01, inspects it on blind-VST PCA and sample distances, and removes it only for a stated reason. The low-count filter (>=10 in >=6 samples) is defensible and tied to group size, though it does not consider how the shallow sample interacts with a raw-count threshold. Enrichment uses the full list ranked by the Wald statistic against Hallmark v2026.1 with a 15-500 window, but the fixed seed is only mentioned in the report step rather than set as a constraint in the GSEA step, and some Cook's-distance language is borrowed from R DESeq2 rather than PyDESeq2 behavior. Reporting fields, versions, and caveats (including the unknown length-correction state) are thorough."
+}

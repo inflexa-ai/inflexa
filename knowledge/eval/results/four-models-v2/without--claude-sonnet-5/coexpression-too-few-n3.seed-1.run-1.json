@@ -1,0 +1,754 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-sonnet-5",
+  "task": "coexpression-too-few-n3",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T20:25:51.389Z",
+  "elapsedMs": 239032,
+  "outcome": "plan_submitted",
+  "planId": "pln-62a703fe",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Load counts, filter, and normalize for co-expression input",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2",
+          "matrixStats",
+          "pheatmap"
+        ],
+        "question": "Given the 12000 x 6 Salmon gene-level count matrix and the 6-sample metadata (3 treated, 3 control, unpaired, single batch), what is a variance-stabilized, low-noise expression matrix suitable as input to a correlation-based co-expression network?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "acceptance_criteria": [
+          "Counts and metadata are loaded and sample order/IDs are verified consistent between counts.csv and metadata.csv",
+          "Low-count genes (e.g., not expressed above a minimal threshold in at least half the samples) are filtered out before normalization, and the number of genes removed is reported",
+          "A variance-stabilizing transform (DESeq2 vst or rlog, appropriate for n=6) is applied and the resulting matrix is saved for downstream network construction",
+          "A PCA or sample-correlation heatmap of the 6 samples is produced to visually confirm no gross outlier sample or unexpected clustering by non-treatment factors",
+          "The report explicitly states the sample size (n=3 per group) and that any conclusions from downstream network analysis are exploratory given this size"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Build weighted gene co-expression network and detect modules",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "WGCNA",
+          "dynamicTreeCut",
+          "matrixStats"
+        ],
+        "question": "Across all 6 liver samples (3 treated, 3 control), what modules of co-expressed genes does WGCNA detect from the normalized 12000-gene matrix, and which modules' eigengenes correlate with the treated-vs-control trait?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "acceptance_criteria": [
+          "A signed WGCNA network is constructed from the VST-normalized matrix from T1S1, with soft-thresholding power chosen from the best available fit to scale-free topology at low sample number, and the fit R^2 achieved is reported explicitly (it will likely be poor at n=6 and this must be stated, not hidden)",
+          "Modules are detected via dynamic tree cut with a stated minimum module size, and module eigengenes are computed",
+          "Module eigengene correlation with a binary treated/control trait is computed and reported with correlation coefficient and nominal p-value, with an explicit caveat that p-values from n=3-per-group correlations have only 4 degrees of freedom (n-2) and are not robust to outliers or multiple testing correction beyond a token adjustment",
+          "Output includes a module-trait heatmap and a table of genes per module with intramodular connectivity (kME) for genes in trait-associated modules",
+          "The step's written summary states in plain language that with 3 samples per group, correlation estimates and module assignments are unstable and should be treated as hypothesis-generating rather than confirmatory; it recommends replication with more samples for any specific module claimed to track treatment"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Differential expression treated vs control (independent cross-check)",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "DESeq2"
+        ],
+        "question": "Using DESeq2 on the raw Salmon gene counts, which genes are differentially expressed between the 3 treated and 3 control liver samples, and how does this independently-derived gene list relate to the co-expression modules from T1S2?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "acceptance_criteria": [
+          "DESeq2 is run on raw (unnormalized) counts with the treated-vs-control factor as the sole design term (single batch, no covariates to adjust for per the data context)",
+          "Results table reports log2FoldChange, p-value, and BH-adjusted p-value for all tested genes; the number of genes at padj<0.05 and additionally at a more permissive nominal p<0.01 threshold are both reported, given that n=3/group is underpowered for strict FDR control",
+          "The DE gene set is cross-tabulated against WGCNA module membership from T1S2 (e.g., what fraction of each module's genes are nominally DE, and whether DE genes are enriched in the trait-correlated module(s) via hypergeometric/Fisher test)",
+          "The report explicitly notes that DESeq2 with n=3 per group has limited power and that DE and co-expression findings are complementary but both underpowered; convergent signal across the two methods is more trustworthy than either alone, but neither should be over-interpreted as confirmed biology"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Functional enrichment of treatment-associated modules",
+        "agent": "enrichment-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "clusterProfiler",
+          "fgsea",
+          "org.Hs.eg.db"
+        ],
+        "question": "What biological pathways/processes are enriched among genes in the WGCNA module(s) most correlated with treatment status, and do these pathways align with the independently DE genes from T1S3?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Over-representation analysis is run for each treatment-correlated module's gene list (from T1S2) against WikiPathways human gene sets (available at /mnt/refs under wikipathways-human) and, if reachable in the environment at run time, MSigDB Hallmark/GO human collections; if a resource is unavailable at run time, the step reports which ones it fell back to rather than failing silently",
+          "Enrichment results include gene set name, overlap genes, and BH-adjusted p-value; sets with fewer than 3 overlapping genes are excluded to avoid noise from tiny overlaps in a 12000-gene background",
+          "The step separately runs the same enrichment on the DESeq2 nominal-significant gene list from T1S3 and reports whether the top enriched terms overlap between the module-based and DE-based gene sets, as a convergence check",
+          "Report explicitly states these are descriptive/exploratory enrichment results given the small-sample module and DE inputs feeding them"
+        ]
+      },
+      {
+        "id": "T1S5",
+        "name": "Network-context check of treatment-associated genes via STRING PPI",
+        "agent": "network-agent",
+        "track": "T1",
+        "status": "pending",
+        "maxSteps": 200,
+        "packages": [
+          "igraph"
+        ],
+        "question": "Do the genes from the treatment-correlated WGCNA module(s) and the DESeq2 DE gene list form a more connected subnetwork than expected by chance in the human STRING protein-protein interaction network, supporting that they represent a coherent biological unit rather than a co-expression artifact of small sample size?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 4
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "acceptance_criteria": [
+          "Gene symbols from the trait-associated module(s) (T1S2) and the DE gene list (T1S3) are mapped to STRING protein IDs using the STRING human protein.info file, and edges are pulled from the STRING human protein.links file at combined_score >= 700",
+          "The induced subnetwork's edge density / largest connected component size is compared against a null distribution from randomly sampled gene sets of the same size (e.g., 1000 permutations) to assess whether the observed connectivity is greater than chance",
+          "Output includes the observed vs. permuted connectivity statistic and an empirical p-value, plus a list of any hub genes (high degree in the induced subnetwork)",
+          "The report states that a significant network-connectivity result would partially mitigate but not eliminate the small-sample-size concern, since STRING edges reflect known biology independent of this dataset's noise, whereas failure to find enrichment is uninformative given how few genes are likely to pass either upstream filter"
+        ]
+      }
+    ],
+    "title": "Liver drug-treatment co-expression module analysis (n=3 vs n=3)",
+    "created_at": "2026-09-08T00:00:00Z",
+    "analytical_narrative": "The design is bulk RNA-seq, human liver, 3 treated vs 3 control, unpaired, single batch, raw Salmon gene-level counts (12000 genes x 6 samples). This n=3-per-group design is far below the ~15-20 samples the WGCNA methodology (Langfelder & Horvath, BMC Bioinformatics 2008) was built around and validated on — pairwise Pearson/bicor correlations computed from 3 points per group are extremely unstable, and topological overlap and module-trait correlations computed on only 6 total samples will show high variance and are prone to spurious 'modules' driven by a handful of outlier values. The plan proceeds because the question was posed explicitly and a constrained, appropriately caveated network can still be built to identify groups of co-varying genes and their gross association with treatment, but every step must report this power limitation prominently and treat any module-trait or hub result as exploratory/hypothesis-generating only, not a validated finding. Steps: (1) load and normalize the count matrix (variance-stabilizing/rlog-style normalization suited for small n, plus filtering to expressed genes) using the bulk-transcriptomics agent — this is the correct home for a raw Salmon gene-count matrix; (2) build a signed weighted co-expression network across all 6 samples with the network-agent using WGCNA, choosing a soft-threshold power by best available scale-free fit (explicitly flagging the fit is unreliable at n=6), detect modules via dynamic tree cut, and correlate module eigengenes with the treated-vs-control trait, explicitly reporting the correlation p-values as descriptive only, given only 3 degrees of freedom per group; (3) run functional enrichment (WikiPathways human, MSigDB hallmark/GO if reachable) on the modules that show any treatment association, again as a hypothesis-generating annotation step, in the enrichment-agent; (4) as a complementary and more defensible approach given the tiny sample size, run a standard DESeq2 differential expression contrast (treated vs control) in the bulk-transcriptomics agent and cross-reference the DE gene list against the co-expression modules and against the STRING human PPI network to see whether treatment-associated genes cluster within specific modules/network neighborhoods — this triangulates the weak correlation-based module-trait signal against an independent, better-powered (though still small) statistical test. All steps state the n=3 caveat; no step overstates confidence in the module-trait relationships."
+  },
+  "usage": {
+    "inputTokens": 4144251,
+    "outputTokens": 7523,
+    "cacheCreationInputTokens": 238317,
+    "cacheReadInputTokens": 3905430,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01GAR19arUQa37Z3gxkisvae",
+      "name": "list_available_refs",
+      "input": {
+        "query": "wikipathways human"
+      },
+      "outcome": "ok",
+      "durationMs": 33
+    },
+    {
+      "toolUseId": "toolu_016wkczJ9tLdVGC96k2ZYuV1",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "WGCNA",
+          "DESeq2",
+          "limma",
+          "igraph",
+          "network-agent"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 18
+    },
+    {
+      "toolUseId": "toolu_01KdCrxJYHS6ns2UCwrSRjuq",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA small sample size co-expression network n=3 per group limitations",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 257
+    },
+    {
+      "toolUseId": "toolu_01TXTEj2c67VufQGGciqofD5",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA minimum sample size recommendation",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 488
+    },
+    {
+      "toolUseId": "toolu_01P6Z1ayp3aatTsL3MPh5Hbj",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA sample size requirements gene co-expression network",
+        "maxResults": 5,
+        "sort": "relevance"
+      },
+      "outcome": "ok",
+      "durationMs": 1078
+    },
+    {
+      "toolUseId": "toolu_01FGMAGVKHFnuH3i99AeiTJV",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "correlation network module detection underpowered small n RNA-seq alternative",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 459
+    },
+    {
+      "toolUseId": "toolu_011qQcycAoaVButa1GMo9yVF",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "WGCNA weighted gene co-expression network analysis minimum sample size guidance",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 10477
+    },
+    {
+      "toolUseId": "toolu_01DXqT972gYpwH6Wcmj24Z7M",
+      "name": "list_available_refs",
+      "input": {
+        "query": "string-ppi-human"
+      },
+      "outcome": "ok",
+      "durationMs": 34
+    },
+    {
+      "toolUseId": "toolu_01Rc5k32qwybBh5N7pYyJkss",
+      "name": "list_available_refs",
+      "input": {
+        "query": "human idmapping"
+      },
+      "outcome": "ok",
+      "durationMs": 30
+    },
+    {
+      "toolUseId": "toolu_01Hdy1Hq8H2sSTr9asZDcSxM",
+      "name": "list_available_refs",
+      "input": {
+        "query": "uniprot-idmapping-human"
+      },
+      "outcome": "ok",
+      "durationMs": 25
+    },
+    {
+      "toolUseId": "toolu_019e4dKWauoQghF17PWKZynZ",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "this is irrelevant, skip"
+      },
+      "outcome": "ok",
+      "durationMs": 913
+    },
+    {
+      "toolUseId": "toolu_01WBqf9zVszoxtLhT9x1RkSQ",
+      "name": "query_docs",
+      "input": {
+        "libraryId": "/scverse/scanpy",
+        "query": "n/a"
+      },
+      "outcome": "ok",
+      "durationMs": 614
+    },
+    {
+      "toolUseId": "toolu_01Mfd3YoJaKRDAk8hnu43K33",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "WGCNA",
+        "query": "blockwiseModules parameters minimum sample size for co-expression network"
+      },
+      "outcome": "ok",
+      "durationMs": 343
+    },
+    {
+      "toolUseId": "toolu_01QZxksuwKzkEDPjWGmQsqmD",
+      "name": "resolve_library_id",
+      "input": {
+        "libraryName": "WGCNA blockwiseModules",
+        "query": "blockwiseModules function signature soft threshold power minModuleSize"
+      },
+      "outcome": "error",
+      "durationMs": 1583
+    },
+    {
+      "toolUseId": "toolu_01Hjem9FnAx3dZQEVXTtPtz1",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "gene co-expression network small sample size n=3 limitations statistical power correlation reliability",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 18939
+    },
+    {
+      "toolUseId": "toolu_01PZGCFuvphkevsCGL38CHmw",
+      "name": "list_available_refs",
+      "input": {
+        "query": "msigdb"
+      },
+      "outcome": "ok",
+      "durationMs": 35
+    },
+    {
+      "toolUseId": "toolu_01YEfZzT1EiEvEGpZB7MdUxf",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark human"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01E1tFT3bw5g9Vjo6e7e4dE3",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "clusterProfiler",
+          "fgsea",
+          "enrichplot",
+          "STRINGdb",
+          "pheatmap",
+          "ComplexHeatmap"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_016DPQNWqVewv8UbNp5VM1fS",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "org.Hs.eg.db",
+          "rnanorm",
+          "edgeR",
+          "networkD3"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 17
+    },
+    {
+      "toolUseId": "toolu_01WSFftuk4ojgWV51hsD687o",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "DESeq2",
+          "sva",
+          "vsn",
+          "genefilter",
+          "matrixStats"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 15
+    },
+    {
+      "toolUseId": "toolu_01Ussg6nEMjcatyNMzArU9yH",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "igraph",
+          "reshape2",
+          "corrplot",
+          "dynamicTreeCut",
+          "flashClust"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 14
+    },
+    {
+      "toolUseId": "toolu_014v7d4G9zXXF43ZVdHf84vv",
+      "name": "list_available_refs",
+      "input": {
+        "query": "HUMAN_9606_idmapping"
+      },
+      "outcome": "ok",
+      "durationMs": 40
+    },
+    {
+      "toolUseId": "toolu_011RJiGugbbfBJLqdDP4VC2t",
+      "name": "list_available_refs",
+      "input": {
+        "query": "gencode"
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01VSdxLaFiJjeLe9DUFgaFwR",
+      "name": "list_available_refs",
+      "input": {
+        "query": "liver expression drug metabolism gene sets"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_011CrzVz7Nz3GuGmLFenqFfh",
+      "name": "list_available_refs",
+      "input": {
+        "category": "normal-expression"
+      },
+      "outcome": "ok",
+      "durationMs": 5
+    },
+    {
+      "toolUseId": "toolu_01VA9NFgFS73dYcm8g6vCjyy",
+      "name": "list_available_refs",
+      "input": {
+        "query": "pharmacogenomics"
+      },
+      "outcome": "ok",
+      "durationMs": 32
+    },
+    {
+      "toolUseId": "toolu_01UeeGQB5XEUVBHouNhx6Fqi",
+      "name": "list_available_refs",
+      "input": {
+        "category": "regulatory-networks"
+      },
+      "outcome": "ok",
+      "durationMs": 8
+    },
+    {
+      "toolUseId": "toolu_01XCWAoRhuMxjTm21xXq7soB",
+      "name": "list_available_refs",
+      "input": {
+        "query": "dorothea"
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01PHSSzG2kdtzMKQ2an5WoXK",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "weighted correlation network analysis small n three replicates per group RNA-seq module trait relationship caveats",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 494
+    },
+    {
+      "toolUseId": "toolu_01ReiJ92dDm1xajAGe2PqUGb",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "hepatotoxicity drug-induced liver injury transcriptomics co-expression network module",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 889
+    },
+    {
+      "toolUseId": "toolu_01Y8KgdrjbJ6b9FHRCBRPYXM",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "26725466"
+        ],
+        "maxAuthors": 3,
+        "maxMeshTerms": 5
+      },
+      "outcome": "ok",
+      "durationMs": 716
+    },
+    {
+      "toolUseId": "toolu_01Prdg316b758XQcm1WUHe87",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "correlation network module detection alternative to WGCNA underpowered small sample RNA-seq",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8961
+    },
+    {
+      "toolUseId": "toolu_019hSEuGE33zKSAkcE5ZBsV5",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "correlation network module detection underpowered small sample RNA-seq alternative WGCNA",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8975
+    },
+    {
+      "toolUseId": "toolu_01AnBNYZqbWvCve2MM5sFKx9",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "correlation network module small sample",
+        "limit": 3
+      },
+      "outcome": "ok",
+      "durationMs": 9405
+    },
+    {
+      "toolUseId": "toolu_016QCMi3HhTrCL2jSpAwzL4q",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "bicor biweight midcorrelation robust correlation gene expression small sample WGCNA",
+        "maxResults": 5
+      },
+      "outcome": "ok",
+      "durationMs": 475
+    },
+    {
+      "toolUseId": "toolu_0176t5dLF237L7v8pb1FGer4",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "WGCNA soft thresholding power scale free topology signed network methods",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 536
+    },
+    {
+      "toolUseId": "toolu_01UULPsP4zimSTwRK3bWSA1a",
+      "name": "pubmed",
+      "input": {
+        "action": "search",
+        "query": "Langfelder Horvath WGCNA package R",
+        "maxResults": 3
+      },
+      "outcome": "ok",
+      "durationMs": 705
+    },
+    {
+      "toolUseId": "toolu_01EPt6GbtUBEBZE768rEgXDU",
+      "name": "pubmed",
+      "input": {
+        "action": "details",
+        "pmids": [
+          "19114008"
+        ],
+        "maxAuthors": 2,
+        "maxMeshTerms": 3
+      },
+      "outcome": "ok",
+      "durationMs": 475
+    },
+    {
+      "toolUseId": "toolu_01VVUvydz4FYSPfczoVbHabi",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "WGCNA minimum sample size 15 20 recommendation",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 8876
+    },
+    {
+      "toolUseId": "toolu_01GXhHCGZNSHktLJg9nbK8SD",
+      "name": "search_arxiv",
+      "input": {
+        "query": "gene co-expression network small sample size reliability correlation stability",
+        "limit": 5
+      },
+      "outcome": "ok",
+      "durationMs": 892
+    },
+    {
+      "toolUseId": "toolu_01179d5QYSGZjSsLA6oZNG5R",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "minimum number of samples required weighted gene co-expression network analysis simulation study",
+        "limit": 5
+      },
+      "outcome": "error",
+      "durationMs": 0
+    },
+    {
+      "toolUseId": "toolu_01Wbna3A8GXUYFFTVUPbEFf5",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Liver drug-treatment co-expression module analysis (n=3 vs n=3)",
+          "analytical_narrative": "The design is bulk RNA-seq, human liver, 3 treated vs 3 control, unpaired, single batch, raw Salmon gene-level counts (12000 genes x 6 samples). This n=3-per-group design is far below the ~15-20 samples the WGCNA methodology (Langfelder & Horvath, BMC Bioinformatics 2008) was built around and validated on — pairwise Pearson/bicor correlations computed from 3 points per group are extremely unstable, and topological overlap and module-trait correlations computed on only 6 total samples will show high variance and are prone to spurious 'modules' driven by a handful of outlier values. The plan proceeds because the question was posed explicitly and a constrained, appropriately caveated network can still be built to identify groups of co-varying genes and their gross association with treatment, but every step must report this power limitation prominently and treat any module-trait or hub result as exploratory/hypothesis-generating only, not a validated finding. Steps: (1) load and normalize the count matrix (variance-stabilizing/rlog-style normalization suited for small n, plus filtering to expressed genes) using the bulk-transcriptomics agent — this is the correct home for a raw Salmon gene-count matrix; (2) build a signed weighted co-expression network across all 6 samples with the network-agent using WGCNA, choosing a soft-threshold power by best available scale-free fit (explicitly flagging the fit is unreliable at n=6), detect modules via dynamic tree cut, and correlate module eigengenes with the treated-vs-control trait, explicitly reporting the correlation p-values as descriptive only, given only 3 degrees of freedom per group; (3) run functional enrichment (WikiPathways human, MSigDB hallmark/GO if reachable) on the modules that show any treatment association, again as a hypothesis-generating annotation step, in the enrichment-agent; (4) as a complementary and more defensible approach given the tiny sample size, run a standard DESeq2 differential expression contrast (treated vs control) in the bulk-transcriptomics agent and cross-reference the DE gene list against the co-expression modules and against the STRING human PPI network to see whether treatment-associated genes cluster within specific modules/network neighborhoods — this triangulates the weak correlation-based module-trait signal against an independent, better-powered (though still small) statistical test. All steps state the n=3 caveat; no step overstates confidence in the module-trait relationships.",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Load counts, filter, and normalize for co-expression input",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "Given the 12000 x 6 Salmon gene-level count matrix and the 6-sample metadata (3 treated, 3 control, unpaired, single batch), what is a variance-stabilized, low-noise expression matrix suitable as input to a correlation-based co-expression network?",
+              "acceptance_criteria": [
+                "Counts and metadata are loaded and sample order/IDs are verified consistent between counts.csv and metadata.csv",
+                "Low-count genes (e.g., not expressed above a minimal threshold in at least half the samples) are filtered out before normalization, and the number of genes removed is reported",
+                "A variance-stabilizing transform (DESeq2 vst or rlog, appropriate for n=6) is applied and the resulting matrix is saved for downstream network construction",
+                "A PCA or sample-correlation heatmap of the 6 samples is produced to visually confirm no gross outlier sample or unexpected clustering by non-treatment factors",
+                "The report explicitly states the sample size (n=3 per group) and that any conclusions from downstream network analysis are exploratory given this size"
+              ],
+              "packages": [
+                "DESeq2",
+                "matrixStats",
+                "pheatmap"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Build weighted gene co-expression network and detect modules",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Across all 6 liver samples (3 treated, 3 control), what modules of co-expressed genes does WGCNA detect from the normalized 12000-gene matrix, and which modules' eigengenes correlate with the treated-vs-control trait?",
+              "acceptance_criteria": [
+                "A signed WGCNA network is constructed from the VST-normalized matrix from T1S1, with soft-thresholding power chosen from the best available fit to scale-free topology at low sample number, and the fit R^2 achieved is reported explicitly (it will likely be poor at n=6 and this must be stated, not hidden)",
+                "Modules are detected via dynamic tree cut with a stated minimum module size, and module eigengenes are computed",
+                "Module eigengene correlation with a binary treated/control trait is computed and reported with correlation coefficient and nominal p-value, with an explicit caveat that p-values from n=3-per-group correlations have only 4 degrees of freedom (n-2) and are not robust to outliers or multiple testing correction beyond a token adjustment",
+                "Output includes a module-trait heatmap and a table of genes per module with intramodular connectivity (kME) for genes in trait-associated modules",
+                "The step's written summary states in plain language that with 3 samples per group, correlation estimates and module assignments are unstable and should be treated as hypothesis-generating rather than confirmatory; it recommends replication with more samples for any specific module claimed to track treatment"
+              ],
+              "packages": [
+                "WGCNA",
+                "dynamicTreeCut",
+                "matrixStats"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "network-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Differential expression treated vs control (independent cross-check)",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Using DESeq2 on the raw Salmon gene counts, which genes are differentially expressed between the 3 treated and 3 control liver samples, and how does this independently-derived gene list relate to the co-expression modules from T1S2?",
+              "acceptance_criteria": [
+                "DESeq2 is run on raw (unnormalized) counts with the treated-vs-control factor as the sole design term (single batch, no covariates to adjust for per the data context)",
+                "Results table reports log2FoldChange, p-value, and BH-adjusted p-value for all tested genes; the number of genes at padj<0.05 and additionally at a more permissive nominal p<0.01 threshold are both reported, given that n=3/group is underpowered for strict FDR control",
+                "The DE gene set is cross-tabulated against WGCNA module membership from T1S2 (e.g., what fraction of each module's genes are nominally DE, and whether DE genes are enriched in the trait-correlated module(s) via hypergeometric/Fisher test)",
+                "The report explicitly notes that DESeq2 with n=3 per group has limited power and that DE and co-expression findings are complementary but both underpowered; convergent signal across the two methods is more trustworthy than either alone, but neither should be over-interpreted as confirmed biology"
+              ],
+              "packages": [
+                "DESeq2"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Functional enrichment of treatment-associated modules",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "What biological pathways/processes are enriched among genes in the WGCNA module(s) most correlated with treatment status, and do these pathways align with the independently DE genes from T1S3?",
+              "acceptance_criteria": [
+                "Over-representation analysis is run for each treatment-correlated module's gene list (from T1S2) against WikiPathways human gene sets (available at /mnt/refs under wikipathways-human) and, if reachable in the environment at run time, MSigDB Hallmark/GO human collections; if a resource is unavailable at run time, the step reports which ones it fell back to rather than failing silently",
+                "Enrichment results include gene set name, overlap genes, and BH-adjusted p-value; sets with fewer than 3 overlapping genes are excluded to avoid noise from tiny overlaps in a 12000-gene background",
+                "The step separately runs the same enrichment on the DESeq2 nominal-significant gene list from T1S3 and reports whether the top enriched terms overlap between the module-based and DE-based gene sets, as a convergence check",
+                "Report explicitly states these are descriptive/exploratory enrichment results given the small-sample module and DE inputs feeding them"
+              ],
+              "packages": [
+                "clusterProfiler",
+                "fgsea",
+                "org.Hs.eg.db"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "enrichment-agent"
+            },
+            {
+              "id": "T1S5",
+              "name": "Network-context check of treatment-associated genes via STRING PPI",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Do the genes from the treatment-correlated WGCNA module(s) and the DESeq2 DE gene list form a more connected subnetwork than expected by chance in the human STRING protein-protein interaction network, supporting that they represent a coherent biological unit rather than a co-expression artifact of small sample size?",
+              "acceptance_criteria": [
+                "Gene symbols from the trait-associated module(s) (T1S2) and the DE gene list (T1S3) are mapped to STRING protein IDs using the STRING human protein.info file, and edges are pulled from the STRING human protein.links file at combined_score >= 700",
+                "The induced subnetwork's edge density / largest connected component size is compared against a null distribution from randomly sampled gene sets of the same size (e.g., 1000 permutations) to assess whether the observed connectivity is greater than chance",
+                "Output includes the observed vs. permuted connectivity statistic and an empirical p-value, plus a list of any hub genes (high degree in the induced subnetwork)",
+                "The report states that a significant network-connectivity result would partially mitigate but not eliminate the small-sample-size concern, since STRING edges reflect known biology independent of this dataset's noise, whereas failure to find enrichment is uninformative given how few genes are likely to pass either upstream filter"
+              ],
+              "packages": [
+                "igraph"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 4
+              },
+              "agent": "network-agent"
+            }
+          ],
+          "created_at": "2026-09-08T00:00:00Z"
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 59
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

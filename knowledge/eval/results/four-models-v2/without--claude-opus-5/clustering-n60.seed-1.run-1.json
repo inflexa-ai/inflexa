@@ -1,0 +1,641 @@
+{
+  "campaign": "four-models-v2",
+  "condition": "without",
+  "model": "claude-opus-5",
+  "task": "clustering-n60",
+  "run": 1,
+  "seed": 1,
+  "split": "development",
+  "startedAt": "2026-09-07T23:48:08.256Z",
+  "elapsedMs": 125952,
+  "outcome": "plan_submitted",
+  "planId": "pln-fc9bf4ff",
+  "plan": {
+    "steps": [
+      {
+        "id": "T1S1",
+        "name": "Filter, normalize, variance-stabilize counts",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "Whole-blood libraries are globin-dominated; a small number of genes can account for a large fraction of reads and inflate apparent between-sample variance",
+          "If the Salmon counts turn out to be length-scaled TPM-like values, negative-binomial models downstream are approximations and must be labelled as such"
+        ],
+        "context": "Homo sapiens whole-blood bulk RNA-seq, gene-level counts from Salmon, single batch, unpaired 60 case vs 60 control cohort. All downstream subgroup discovery reads the matrices this step writes, so preprocessing must be decided once, here.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "matplotlib",
+          "seaborn",
+          "pydeseq2",
+          "rnanorm"
+        ],
+        "question": "After gene filtering and variance stabilization, what does the expression matrix for the 120 whole-blood samples look like, and is there any sample-level QC outlier that would distort unsupervised clustering?",
+        "resources": {
+          "cpu": 2,
+          "memoryGb": 8
+        },
+        "step_type": "preprocessing",
+        "depends_on": [],
+        "constraints": [
+          "Do not drop any of the 120 samples in this step",
+          "Do not batch-correct — the design is recorded as a single batch and there is no batch variable in metadata.csv",
+          "Report the actual condition level names from metadata.csv rather than generic 'case'/'control' labels"
+        ],
+        "description": "Load /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns — first column is the gene identifier, remaining 120 are samples) and /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns, one row per sample with a condition column). Verify the 120 sample IDs in the counts header match the metadata rows exactly and reorder to match; fail loudly on any mismatch. Report the observed condition levels and their counts (expected 60 cases vs 60 controls). Inspect the count values: the data profile states the record does NOT say whether a length correction was applied to the Salmon gene-level counts — check whether values are integers (raw/collapsed counts) or non-integer (length-scaled/TPM-like), state the finding explicitly, and round to integers only if they are near-integer. If values are clearly non-integer abundance-scaled, use the log-transformed matrix route for clustering and flag that raw-count models downstream must use the rounded matrix with that caveat recorded. Compute per-sample QC: library size, number of detected genes, and — because this is whole blood — the fraction of counts in haemoglobin genes (HBB, HBA1, HBA2, HBD, ALAS2) and in mitochondrial genes if present in the 12,000-gene set. Filter genes to those with sufficient expression (e.g. counts >= 10 in at least 20% of samples) and report how many of the 12,000 survive. Produce (a) a variance-stabilized matrix (DESeq2 VST, or log2(CPM+1) after TMM if VST is unavailable for the value type) and (b) the filtered raw-count matrix, both saved for downstream steps. Do NOT remove samples automatically; report candidate outliers with their QC values and keep them in, so the clustering step can test whether any cluster is simply an outlier set.",
+        "acceptance_criteria": [
+          "Sample IDs in counts.csv are confirmed to match the 120 metadata rows one-to-one; the mapping and any discrepancy is reported",
+          "Whether counts are integer or length-scaled non-integer is stated explicitly as an observed fact, with the consequence for downstream modelling recorded",
+          "Number of genes retained after expression filtering, out of 12000, is reported",
+          "A variance-stabilized (VST or log2-CPM) matrix and a filtered raw-count matrix are both written to disk with samples as columns",
+          "Per-sample library size, detected-gene count, and haemoglobin-gene fraction are tabulated; candidate outliers are flagged but not removed"
+        ]
+      },
+      {
+        "id": "T1S2",
+        "name": "Latent structure and covariate association",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A strong PC1 that tracks haemoglobin fraction or library size is a technical axis, not a subgroup",
+          "Absence of condition separation in PCA does not mean absence of a case/control effect — it means the effect is not among the largest variance axes"
+        ],
+        "context": "This step exists to prevent the classic failure of consensus clustering: it returns a k for any input, including pure noise and pure continua. The whole-blood setting makes a cell-composition gradient the most likely source of a spurious 'subgroup' structure.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "umap-learn",
+          "statsmodels",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Does the variance structure of the 120 samples suggest discrete subgroups, and how much of the leading variation is explained by the known case/control label versus technical covariates such as library size or globin content?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 8
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S1"
+        ],
+        "constraints": [
+          "Do not infer the number of clusters from the UMAP or PCA plots",
+          "Report associations for both the 1000- and 2000-gene selections so sensitivity to that choice is visible"
+        ],
+        "description": "Using the variance-stabilized matrix from T1S1, select the top variable genes (report results for both 1000 and 2000 to show the choice is not load-bearing) and run PCA. Report the scree/variance-explained profile for at least 10 components. For each of PC1..PC10: association with the condition label (point-biserial correlation and a two-sample test), and association with library size, detected-gene count, and haemoglobin fraction from T1S1 (Spearman). Report the fraction of total variance the condition label explains overall. Compute the sample-sample Spearman and Pearson correlation matrix and inspect whether its structure looks block-like (discrete groups) or gradient-like (a continuum): report the eigenvalue gap of the correlation matrix and the distribution of nearest-neighbour distances. Produce a UMAP embedding for visualization only, with the explicit note that UMAP geometry must not be used as evidence of cluster count. Deliver a plain statement of whether the data geometry supports a discrete-subgroup model at all, before any clustering is run.",
+        "acceptance_criteria": [
+          "Variance explained by each of the first 10 PCs is reported for both gene-selection sizes",
+          "Each of PC1..PC10 is tested for association with the condition label and with library size, detected genes, and haemoglobin fraction, with effect sizes and p-values",
+          "A reasoned verdict is given on whether the sample-sample structure looks discrete or continuous, citing the correlation-matrix eigenvalue profile",
+          "UMAP is presented as visualization only, with the caveat stated in the output"
+        ]
+      },
+      {
+        "id": "T1S3",
+        "name": "Consensus clustering and stability testing",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A low PAC at some k is not evidence of biology if permuted data reach comparable values",
+          "Cluster sizes of fewer than ~10 samples out of 120 are fragile and their stability estimates are wide",
+          "Hierarchical clustering on correlation distance and k-means on PCA space can agree for geometric reasons alone; the null run is what separates that from real structure"
+        ],
+        "context": "120 samples and ~12,000 genes is a modest cohort for subgroup discovery; consensus clustering will always return a partition, so the null comparison and the bootstrap Jaccard values are the load-bearing evidence, not the PAC curve alone.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "consensusclustering",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "How many reproducible subgroups do the 120 whole-blood samples support, and how stable is each subgroup under resampling, algorithm choice, and comparison to a null with no true structure?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S2"
+        ],
+        "constraints": [
+          "k=1 / no reproducible structure must be an admissible reported conclusion",
+          "Do not use the condition label anywhere in the clustering — this is unsupervised discovery",
+          "Use the same variance-stabilized matrix produced in T1S1; do not re-normalize",
+          "Report the PAC value against the permutation null, not in isolation"
+        ],
+        "description": "On the variance-stabilized top-variable-gene matrix from T1S1/T1S2, run consensus clustering over k = 2..8 with at least 500 subsampling iterations at 80% sample and 80% feature resampling, using two independent base algorithms: (a) k-means on the PCA-reduced space and (b) agglomerative hierarchical clustering with Ward linkage on 1-Pearson-correlation distance. For each k and each algorithm report the consensus matrix, the consensus CDF, the change in area under the CDF, the PAC (proportion of ambiguous clustering) score, per-cluster consensus, and mean silhouette width in the reduced space. Select k by PAC minimum, and explicitly report whether k=1 (no reproducible substructure) is the best-supported answer — that outcome must be reportable, not designed out. Assess stability further by: bootstrap Jaccard similarity per cluster over >=200 resamples (a cluster with median Jaccard < 0.6 is unstable, < 0.75 only weakly supported, >= 0.85 stable — state these thresholds in the output); adjusted Rand index between the k-means and hierarchical partitions at the chosen k; and ARI between partitions from the 1000- and 2000-gene feature selections. Build a null reference: repeat the full pipeline on at least 20 datasets where the gene-sample structure is destroyed (per-gene permutation of sample labels, preserving each gene's marginal distribution) and report the null distribution of PAC and silhouette, so the observed values are judged against what a structureless dataset of the same dimensions produces. Also report, per cluster, the size, the mean library size, mean detected genes, and mean haemoglobin fraction, so a technically driven cluster is visible immediately. Final deliverable: a per-sample cluster assignment table at the chosen k (and at the runner-up k), plus a direct answer to 'how many subgroups and how stable' with the evidence attached.",
+        "acceptance_criteria": [
+          "Consensus matrices, CDF curves, and PAC scores are reported for k=2..8 under both k-means and hierarchical base clustering",
+          "Per-cluster bootstrap Jaccard stability is reported with the stated interpretation thresholds",
+          "ARI is reported between algorithms and between the two feature-selection sizes at the chosen k",
+          "A null distribution of PAC and silhouette from >=20 permuted datasets is reported and the observed values are placed against it",
+          "A per-sample cluster assignment table is written for the selected k and the runner-up k",
+          "The report states plainly whether the evidence supports k>=2 or is consistent with no substructure beyond noise",
+          "Each cluster's mean library size, detected-gene count, and haemoglobin fraction are reported alongside its size"
+        ]
+      },
+      {
+        "id": "T1S4",
+        "name": "Relate subgroups to the known case/control split",
+        "agent": "statistical-modeling-agent",
+        "track": "T1",
+        "status": "pending",
+        "caveats": [
+          "A cluster/condition association can arise from a single technical covariate that differs between arms; check the QC covariates from T1S1 before calling it biological",
+          "With 60 per arm, a within-arm cluster of fewer than 10 samples carries very wide stability intervals"
+        ],
+        "context": "The research question specifically asks about structure BEYOND the case/control split, so the relationship between the unsupervised partition and the known labels is the answer, not an afterthought. Within-arm clustering is what distinguishes disease endotypes from a partition that merely rediscovers the design.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "scikit-learn",
+          "statsmodels",
+          "consensusclustering",
+          "matplotlib"
+        ],
+        "question": "Are the discovered subgroups independent of the known 60-case versus 60-control split, do they nest within one arm, or do they cut across both arms?",
+        "resources": {
+          "cpu": 8,
+          "memoryGb": 16
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Use exactly the cluster assignments produced by T1S3; do not re-cluster the full cohort here",
+          "Report results even when the conclusion is that no substructure beyond the known split exists"
+        ],
+        "description": "Take the per-sample cluster assignments from T1S3 and cross-tabulate against the condition label from metadata.csv. Report the contingency table, a chi-square or Fisher exact test of independence, Cramer's V, and the adjusted Rand index between the cluster partition and the binary condition partition. Classify the relationship explicitly: (i) clusters recapitulate case/control, (ii) clusters nest inside one arm only, (iii) clusters cut across both arms orthogonally, or (iv) no stable clusters exist. Then repeat the T1S3 consensus-clustering procedure restricted to the 60 cases alone and to the 60 controls alone, with the same k range and stability metrics, and report whether within-arm substructure is found and whether the within-case partition matches the subset of the whole-cohort partition (ARI). State explicitly that n=60 per arm halves the resampling stability precision and report bootstrap Jaccard values with that caveat attached. If T1S3 concluded there is no reproducible substructure, this step still runs the within-arm analysis and reports that result rather than being skipped.",
+        "acceptance_criteria": [
+          "Contingency table of cluster by condition with a test of independence, Cramer's V, and ARI is reported",
+          "The relationship is classified into one of the four stated categories with the evidence for the call",
+          "Within-case and within-control consensus clustering results with per-cluster stability are reported",
+          "The reduced power of n=60 per arm is stated explicitly alongside the within-arm stability numbers"
+        ]
+      },
+      {
+        "id": "T2S1",
+        "name": "Differential expression defining each subgroup",
+        "agent": "bulk-transcriptomics-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Clusters derived from expression and then tested on the same expression are circular; the p-values here characterize the clusters, they do not validate them",
+          "Small clusters give unstable dispersion estimates in negative-binomial models"
+        ],
+        "context": "A subgroup with no distinctive transcriptional signature after conditioning on the design is very likely a partition of noise. This step is the biological test of the clustering result.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "pydeseq2",
+          "scipy",
+          "statsmodels",
+          "matplotlib"
+        ],
+        "question": "Which genes distinguish each discovered subgroup from the remaining samples, after adjusting for the known case/control condition?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "analysis",
+        "depends_on": [
+          "T1S3"
+        ],
+        "constraints": [
+          "Include condition as a covariate in every model",
+          "Do not run differential expression on clusters whose median bootstrap Jaccard from T1S3 is below 0.6 without labelling those results as exploratory",
+          "State clearly that the cluster labels were derived from the same expression data, so these p-values are inflated by selection (double dipping) and are descriptive, not inferential"
+        ],
+        "description": "Conditional on T1S3 reporting at least one stable cluster (median bootstrap Jaccard >= 0.6): using the filtered raw-count matrix from T1S1 and the cluster assignments from T1S3, fit a negative-binomial model (DESeq2 via PyDESeq2, or DESeq2 in R) with design ~ condition + cluster, and test each cluster against the rest in a one-vs-rest contrast. Report per contrast: number of genes at padj < 0.05 with |log2FC| > 0.5, the top up- and down-regulated genes with shrunken effect sizes, and an MA/volcano summary. Also fit the reduced model without the cluster term and report the likelihood-ratio result, so it is clear how much transcriptional signal the cluster partition carries over and above condition. If T1S1 established the counts are length-scaled non-integer values, use the rounded matrix and state the approximation in the output; alternatively run limma-voom on the log-CPM matrix as the primary model and report the negative-binomial fit as a sensitivity check. If T1S3 found no stable cluster, this step must report that no subgroup contrast is justified and stop rather than analysing an unstable partition.",
+        "acceptance_criteria": [
+          "A one-vs-rest differential expression result table per stable cluster, with padj and shrunken log2 fold changes",
+          "The model includes the condition term so cluster effects are not a restatement of case versus control",
+          "A likelihood-ratio comparison of ~condition versus ~condition + cluster is reported",
+          "If no stable cluster exists, the step reports that and produces no subgroup contrasts"
+        ]
+      },
+      {
+        "id": "T2S2",
+        "name": "Pathway and blood cell-composition interpretation of subgroups",
+        "agent": "immune-profiling-agent",
+        "track": "T2",
+        "status": "pending",
+        "caveats": [
+          "Deconvolution methods are trained on specific tissue and platform contexts; absolute fractions from whole-blood bulk RNA-seq are approximate and only relative comparisons across clusters should be trusted",
+          "Globin content varies with sample handling and can distort deconvolution estimates; report globin fraction alongside the estimates",
+          "Hallmark sets are broad — significant hits name a state, not a mechanism"
+        ],
+        "context": "Whole blood is a mixture; the largest transcriptional axis in blood cohorts is usually cell composition. Deconvolution here is not decoration — it is the test that decides whether a discovered subgroup is a biological endotype or a differential blood count in disguise. Reference store confirmed to hold human hallmark and human GO BP/CC/MF gene sets, human WikiPathways, and a human UniProt ID-mapping table.",
+        "maxSteps": 200,
+        "packages": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "gseapy",
+          "decoupler",
+          "matplotlib",
+          "seaborn"
+        ],
+        "question": "Do the discovered subgroups correspond to distinct biological programmes, or are they driven by differences in blood cell composition such as neutrophil-to-lymphocyte shifts?",
+        "resources": {
+          "cpu": 4,
+          "memoryGb": 12
+        },
+        "step_type": "interpretation",
+        "depends_on": [
+          "T2S1",
+          "T1S4"
+        ],
+        "constraints": [
+          "Use human gene sets only — the data is Homo sapiens whole blood",
+          "Do not report an enrichment as a mechanism; enrichment on clusters derived from the same data is descriptive",
+          "If no stable cluster was found in T1S3, report the cohort-level composition estimates and their relationship to the condition label instead, and say why the subgroup interpretation was not run"
+        ],
+        "description": "Two parts. (1) Pathway read-out: take the ranked gene lists from T2S1 (one per cluster contrast) and run gene-set enrichment against human hallmark gene sets and human GO biological process gene sets — reference data needed: hallmark and GO gene sets for Homo sapiens with HGNC gene symbols, resolved from the environment's reference store at run time. If the gene identifiers in counts.csv are Ensembl or Entrez rather than symbols, map them first using a human identifier-mapping resource from the reference store, and report the mapping rate. If neither gene-set collection is available, report per-cluster top genes without enrichment and say so — this degrades the annotation, not the subgroup result. (2) Cell-composition read-out, which is the decisive control for whole blood: estimate immune cell fractions per sample from the variance-stabilized/CPM matrix using a deconvolution or signature-scoring method available in the environment, and test whether the estimated fractions (in particular neutrophil, lymphocyte, monocyte, and the neutrophil-to-lymphocyte ratio) differ across the clusters from T1S3 with a Kruskal-Wallis test plus effect sizes. Report how much of the between-cluster separation is attributable to composition: refit the cluster separation after regressing out the leading composition estimates and report whether the partition survives. Deliver a single verdict per cluster: composition-driven, programme-driven, or ambiguous.",
+        "acceptance_criteria": [
+          "Enrichment results per cluster contrast against hallmark and GO biological process sets, with FDR values, or an explicit statement that the gene sets were unavailable",
+          "Gene identifier mapping rate to symbols is reported when mapping was required",
+          "Per-sample immune cell fraction or signature-score estimates are produced and compared across clusters with a nonparametric test and effect sizes",
+          "The neutrophil-to-lymphocyte ratio is compared across clusters explicitly",
+          "Each cluster receives a composition-driven / programme-driven / ambiguous verdict with the evidence for it"
+        ]
+      }
+    ],
+    "title": "Whole-blood RNA-seq: unsupervised subgroup discovery + stability",
+    "omicsType": "transcriptomics",
+    "created_at": "2026-09-08T00:00:00Z",
+    "omicsSubtype": "bulk-rna-seq",
+    "analytical_narrative": "The question is whether the 120 whole-blood samples (60 cases, 60 controls; 12,000 genes x 121 columns in counts.csv, metadata.csv 120 x 2 with a condition column) carry structure beyond the labelled case/control split, how many subgroups there are, and how stable those subgroups are. Subgroup discovery on counts is dominated by preprocessing choices, so the plan front-loads a single, explicit normalization/variance-stabilization step (T1S1): VST/log-CPM on filtered genes, library-size diagnostics, and a check of whether the counts look length-corrected (the profile explicitly flags that this is unknown from the Salmon delivery). Everything downstream reads that one matrix so the clustering result is not an artefact of inconsistent scaling.\n\nT1S2 characterises the latent geometry before any clustering: PCA on the most variable genes, how much variance the leading components carry, how strongly each PC associates with the known condition label and with technical covariates (library size, detected genes, mitochondrial/globin fraction — globin matters specifically in whole blood), and whether the sample-sample correlation structure looks continuous or discrete. This is the step that decides whether 'subgroups' is even the right model; a whole-blood cohort with a strong globin/neutrophil gradient will produce clean-looking clusters that are cell-composition continua.\n\nT1S3 does the actual clustering and — the operative part of the question — the stability assessment. Consensus clustering over subsampled runs for k = 2..8 with two independent algorithms (k-means and hierarchical/Ward on correlation distance), reporting consensus CDF, PAC/proportion-of-ambiguous-clustering, per-cluster consensus, silhouette, and cross-algorithm agreement. Stability is also tested against a null: the same pipeline on permuted/rotated data, so that a PAC minimum is judged against what noise alone produces. The step must report 'k=1, no reproducible substructure' as an admissible and possibly correct answer.\n\nT1S4 asks whether the discovered partition is independent of the known split: cross-tabulation against condition, chi-square/Fisher, whether clusters nest inside cases or cut across both arms, and whether the partition survives being derived within the case arm and within the control arm separately (60 vs 60 — small, so stability there is reported with explicit caveats about power).\n\nT2S1 then gives the clusters a biological reading only if T1S3 found them stable: differential expression per cluster versus the rest with DESeq2/PyDESeq2 on raw counts, adjusting for condition so the cluster signature is not a restatement of case/control.\n\nT2S2 interprets those signatures against hallmark and GO gene sets staged for human, and — because this is whole blood — runs a cell-composition read-out so a 'subgroup' that is really a neutrophil-to-lymphocyte ratio shift is named as such rather than reported as a disease endotype. Deconvolution is routed to the immune-profiling agent since the data object is a bulk blood expression matrix and the question is immune composition."
+  },
+  "usage": {
+    "inputTokens": 199039,
+    "outputTokens": 8647,
+    "cacheCreationInputTokens": 86929,
+    "cacheReadInputTokens": 112062,
+    "reasoningTokens": 0
+  },
+  "toolCalls": [
+    {
+      "toolUseId": "toolu_01EFHyrBqV8hgukTjs1zejuo",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "consensusclustering",
+          "scikit-learn",
+          "pydeseq2",
+          "ConsensusClusterPlus",
+          "M3C",
+          "sva",
+          "umap-learn",
+          "kneed",
+          "DESeq2",
+          "limma",
+          "clusterProfiler",
+          "immunedeconv",
+          "xCell",
+          "gseapy",
+          "decoupler"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01Y176ziggmbDogsPG2u5At7",
+      "name": "search_semantic_scholar",
+      "input": {
+        "query": "consensus clustering stability assessment bulk RNA-seq patient subgroups number of clusters",
+        "limit": 8
+      },
+      "outcome": "ok",
+      "durationMs": 3207
+    },
+    {
+      "toolUseId": "toolu_01TqYZVPBS9riJfLBRHZqbVX",
+      "name": "list_available_packages",
+      "input": {
+        "names": [
+          "fpc",
+          "cluster",
+          "clusterCrit",
+          "NbClust",
+          "scipy",
+          "statsmodels",
+          "seaborn",
+          "hdbscan",
+          "harmonypy",
+          "PyWGCNA",
+          "WGCNA",
+          "matplotlib",
+          "pandas",
+          "numpy"
+        ]
+      },
+      "outcome": "ok",
+      "durationMs": 11
+    },
+    {
+      "toolUseId": "toolu_01Hcw3BDJtnickPnxa6kpq2C",
+      "name": "list_available_refs",
+      "input": {
+        "query": "hallmark",
+        "limit": 20
+      },
+      "outcome": "ok",
+      "durationMs": 29
+    },
+    {
+      "toolUseId": "toolu_01Mmyzd661GxrwyEDRAuDeHJ",
+      "name": "submit_plan",
+      "input": {
+        "plan": {
+          "title": "Whole-blood RNA-seq: unsupervised subgroup discovery + stability",
+          "analytical_narrative": "The question is whether the 120 whole-blood samples (60 cases, 60 controls; 12,000 genes x 121 columns in counts.csv, metadata.csv 120 x 2 with a condition column) carry structure beyond the labelled case/control split, how many subgroups there are, and how stable those subgroups are. Subgroup discovery on counts is dominated by preprocessing choices, so the plan front-loads a single, explicit normalization/variance-stabilization step (T1S1): VST/log-CPM on filtered genes, library-size diagnostics, and a check of whether the counts look length-corrected (the profile explicitly flags that this is unknown from the Salmon delivery). Everything downstream reads that one matrix so the clustering result is not an artefact of inconsistent scaling.\n\nT1S2 characterises the latent geometry before any clustering: PCA on the most variable genes, how much variance the leading components carry, how strongly each PC associates with the known condition label and with technical covariates (library size, detected genes, mitochondrial/globin fraction — globin matters specifically in whole blood), and whether the sample-sample correlation structure looks continuous or discrete. This is the step that decides whether 'subgroups' is even the right model; a whole-blood cohort with a strong globin/neutrophil gradient will produce clean-looking clusters that are cell-composition continua.\n\nT1S3 does the actual clustering and — the operative part of the question — the stability assessment. Consensus clustering over subsampled runs for k = 2..8 with two independent algorithms (k-means and hierarchical/Ward on correlation distance), reporting consensus CDF, PAC/proportion-of-ambiguous-clustering, per-cluster consensus, silhouette, and cross-algorithm agreement. Stability is also tested against a null: the same pipeline on permuted/rotated data, so that a PAC minimum is judged against what noise alone produces. The step must report 'k=1, no reproducible substructure' as an admissible and possibly correct answer.\n\nT1S4 asks whether the discovered partition is independent of the known split: cross-tabulation against condition, chi-square/Fisher, whether clusters nest inside cases or cut across both arms, and whether the partition survives being derived within the case arm and within the control arm separately (60 vs 60 — small, so stability there is reported with explicit caveats about power).\n\nT2S1 then gives the clusters a biological reading only if T1S3 found them stable: differential expression per cluster versus the rest with DESeq2/PyDESeq2 on raw counts, adjusting for condition so the cluster signature is not a restatement of case/control.\n\nT2S2 interprets those signatures against hallmark and GO gene sets staged for human, and — because this is whole blood — runs a cell-composition read-out so a 'subgroup' that is really a neutrophil-to-lymphocyte ratio shift is named as such rather than reported as a disease endotype. Deconvolution is routed to the immune-profiling agent since the data object is a bulk blood expression matrix and the question is immune composition.",
+          "omicsType": "transcriptomics",
+          "omicsSubtype": "bulk-rna-seq",
+          "created_at": "2026-09-08T00:00:00Z",
+          "steps": [
+            {
+              "id": "T1S1",
+              "name": "Filter, normalize, variance-stabilize counts",
+              "track": "T1",
+              "step_type": "preprocessing",
+              "question": "After gene filtering and variance stabilization, what does the expression matrix for the 120 whole-blood samples look like, and is there any sample-level QC outlier that would distort unsupervised clustering?",
+              "description": "Load /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/counts/counts.csv (12000 genes x 121 columns — first column is the gene identifier, remaining 120 are samples) and /eval-four-models-v2-without-clustering-n60-s1-1/data/inputs/metadata/metadata.csv (120 rows x 2 columns, one row per sample with a condition column). Verify the 120 sample IDs in the counts header match the metadata rows exactly and reorder to match; fail loudly on any mismatch. Report the observed condition levels and their counts (expected 60 cases vs 60 controls). Inspect the count values: the data profile states the record does NOT say whether a length correction was applied to the Salmon gene-level counts — check whether values are integers (raw/collapsed counts) or non-integer (length-scaled/TPM-like), state the finding explicitly, and round to integers only if they are near-integer. If values are clearly non-integer abundance-scaled, use the log-transformed matrix route for clustering and flag that raw-count models downstream must use the rounded matrix with that caveat recorded. Compute per-sample QC: library size, number of detected genes, and — because this is whole blood — the fraction of counts in haemoglobin genes (HBB, HBA1, HBA2, HBD, ALAS2) and in mitochondrial genes if present in the 12,000-gene set. Filter genes to those with sufficient expression (e.g. counts >= 10 in at least 20% of samples) and report how many of the 12,000 survive. Produce (a) a variance-stabilized matrix (DESeq2 VST, or log2(CPM+1) after TMM if VST is unavailable for the value type) and (b) the filtered raw-count matrix, both saved for downstream steps. Do NOT remove samples automatically; report candidate outliers with their QC values and keep them in, so the clustering step can test whether any cluster is simply an outlier set.",
+              "context": "Homo sapiens whole-blood bulk RNA-seq, gene-level counts from Salmon, single batch, unpaired 60 case vs 60 control cohort. All downstream subgroup discovery reads the matrices this step writes, so preprocessing must be decided once, here.",
+              "acceptance_criteria": [
+                "Sample IDs in counts.csv are confirmed to match the 120 metadata rows one-to-one; the mapping and any discrepancy is reported",
+                "Whether counts are integer or length-scaled non-integer is stated explicitly as an observed fact, with the consequence for downstream modelling recorded",
+                "Number of genes retained after expression filtering, out of 12000, is reported",
+                "A variance-stabilized (VST or log2-CPM) matrix and a filtered raw-count matrix are both written to disk with samples as columns",
+                "Per-sample library size, detected-gene count, and haemoglobin-gene fraction are tabulated; candidate outliers are flagged but not removed"
+              ],
+              "constraints": [
+                "Do not drop any of the 120 samples in this step",
+                "Do not batch-correct — the design is recorded as a single batch and there is no batch variable in metadata.csv",
+                "Report the actual condition level names from metadata.csv rather than generic 'case'/'control' labels"
+              ],
+              "caveats": [
+                "Whole-blood libraries are globin-dominated; a small number of genes can account for a large fraction of reads and inflate apparent between-sample variance",
+                "If the Salmon counts turn out to be length-scaled TPM-like values, negative-binomial models downstream are approximations and must be labelled as such"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "matplotlib",
+                "seaborn",
+                "pydeseq2",
+                "rnanorm"
+              ],
+              "depends_on": [],
+              "resources": {
+                "cpu": 2,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S2",
+              "name": "Latent structure and covariate association",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Does the variance structure of the 120 samples suggest discrete subgroups, and how much of the leading variation is explained by the known case/control label versus technical covariates such as library size or globin content?",
+              "description": "Using the variance-stabilized matrix from T1S1, select the top variable genes (report results for both 1000 and 2000 to show the choice is not load-bearing) and run PCA. Report the scree/variance-explained profile for at least 10 components. For each of PC1..PC10: association with the condition label (point-biserial correlation and a two-sample test), and association with library size, detected-gene count, and haemoglobin fraction from T1S1 (Spearman). Report the fraction of total variance the condition label explains overall. Compute the sample-sample Spearman and Pearson correlation matrix and inspect whether its structure looks block-like (discrete groups) or gradient-like (a continuum): report the eigenvalue gap of the correlation matrix and the distribution of nearest-neighbour distances. Produce a UMAP embedding for visualization only, with the explicit note that UMAP geometry must not be used as evidence of cluster count. Deliver a plain statement of whether the data geometry supports a discrete-subgroup model at all, before any clustering is run.",
+              "context": "This step exists to prevent the classic failure of consensus clustering: it returns a k for any input, including pure noise and pure continua. The whole-blood setting makes a cell-composition gradient the most likely source of a spurious 'subgroup' structure.",
+              "acceptance_criteria": [
+                "Variance explained by each of the first 10 PCs is reported for both gene-selection sizes",
+                "Each of PC1..PC10 is tested for association with the condition label and with library size, detected genes, and haemoglobin fraction, with effect sizes and p-values",
+                "A reasoned verdict is given on whether the sample-sample structure looks discrete or continuous, citing the correlation-matrix eigenvalue profile",
+                "UMAP is presented as visualization only, with the caveat stated in the output"
+              ],
+              "constraints": [
+                "Do not infer the number of clusters from the UMAP or PCA plots",
+                "Report associations for both the 1000- and 2000-gene selections so sensitivity to that choice is visible"
+              ],
+              "caveats": [
+                "A strong PC1 that tracks haemoglobin fraction or library size is a technical axis, not a subgroup",
+                "Absence of condition separation in PCA does not mean absence of a case/control effect — it means the effect is not among the largest variance axes"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "umap-learn",
+                "statsmodels",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S1"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 8
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T1S3",
+              "name": "Consensus clustering and stability testing",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "How many reproducible subgroups do the 120 whole-blood samples support, and how stable is each subgroup under resampling, algorithm choice, and comparison to a null with no true structure?",
+              "description": "On the variance-stabilized top-variable-gene matrix from T1S1/T1S2, run consensus clustering over k = 2..8 with at least 500 subsampling iterations at 80% sample and 80% feature resampling, using two independent base algorithms: (a) k-means on the PCA-reduced space and (b) agglomerative hierarchical clustering with Ward linkage on 1-Pearson-correlation distance. For each k and each algorithm report the consensus matrix, the consensus CDF, the change in area under the CDF, the PAC (proportion of ambiguous clustering) score, per-cluster consensus, and mean silhouette width in the reduced space. Select k by PAC minimum, and explicitly report whether k=1 (no reproducible substructure) is the best-supported answer — that outcome must be reportable, not designed out. Assess stability further by: bootstrap Jaccard similarity per cluster over >=200 resamples (a cluster with median Jaccard < 0.6 is unstable, < 0.75 only weakly supported, >= 0.85 stable — state these thresholds in the output); adjusted Rand index between the k-means and hierarchical partitions at the chosen k; and ARI between partitions from the 1000- and 2000-gene feature selections. Build a null reference: repeat the full pipeline on at least 20 datasets where the gene-sample structure is destroyed (per-gene permutation of sample labels, preserving each gene's marginal distribution) and report the null distribution of PAC and silhouette, so the observed values are judged against what a structureless dataset of the same dimensions produces. Also report, per cluster, the size, the mean library size, mean detected genes, and mean haemoglobin fraction, so a technically driven cluster is visible immediately. Final deliverable: a per-sample cluster assignment table at the chosen k (and at the runner-up k), plus a direct answer to 'how many subgroups and how stable' with the evidence attached.",
+              "context": "120 samples and ~12,000 genes is a modest cohort for subgroup discovery; consensus clustering will always return a partition, so the null comparison and the bootstrap Jaccard values are the load-bearing evidence, not the PAC curve alone.",
+              "acceptance_criteria": [
+                "Consensus matrices, CDF curves, and PAC scores are reported for k=2..8 under both k-means and hierarchical base clustering",
+                "Per-cluster bootstrap Jaccard stability is reported with the stated interpretation thresholds",
+                "ARI is reported between algorithms and between the two feature-selection sizes at the chosen k",
+                "A null distribution of PAC and silhouette from >=20 permuted datasets is reported and the observed values are placed against it",
+                "A per-sample cluster assignment table is written for the selected k and the runner-up k",
+                "The report states plainly whether the evidence supports k>=2 or is consistent with no substructure beyond noise",
+                "Each cluster's mean library size, detected-gene count, and haemoglobin fraction are reported alongside its size"
+              ],
+              "constraints": [
+                "k=1 / no reproducible structure must be an admissible reported conclusion",
+                "Do not use the condition label anywhere in the clustering — this is unsupervised discovery",
+                "Use the same variance-stabilized matrix produced in T1S1; do not re-normalize",
+                "Report the PAC value against the permutation null, not in isolation"
+              ],
+              "caveats": [
+                "A low PAC at some k is not evidence of biology if permuted data reach comparable values",
+                "Cluster sizes of fewer than ~10 samples out of 120 are fragile and their stability estimates are wide",
+                "Hierarchical clustering on correlation distance and k-means on PCA space can agree for geometric reasons alone; the null run is what separates that from real structure"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "consensusclustering",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T1S2"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T1S4",
+              "name": "Relate subgroups to the known case/control split",
+              "track": "T1",
+              "step_type": "analysis",
+              "question": "Are the discovered subgroups independent of the known 60-case versus 60-control split, do they nest within one arm, or do they cut across both arms?",
+              "description": "Take the per-sample cluster assignments from T1S3 and cross-tabulate against the condition label from metadata.csv. Report the contingency table, a chi-square or Fisher exact test of independence, Cramer's V, and the adjusted Rand index between the cluster partition and the binary condition partition. Classify the relationship explicitly: (i) clusters recapitulate case/control, (ii) clusters nest inside one arm only, (iii) clusters cut across both arms orthogonally, or (iv) no stable clusters exist. Then repeat the T1S3 consensus-clustering procedure restricted to the 60 cases alone and to the 60 controls alone, with the same k range and stability metrics, and report whether within-arm substructure is found and whether the within-case partition matches the subset of the whole-cohort partition (ARI). State explicitly that n=60 per arm halves the resampling stability precision and report bootstrap Jaccard values with that caveat attached. If T1S3 concluded there is no reproducible substructure, this step still runs the within-arm analysis and reports that result rather than being skipped.",
+              "context": "The research question specifically asks about structure BEYOND the case/control split, so the relationship between the unsupervised partition and the known labels is the answer, not an afterthought. Within-arm clustering is what distinguishes disease endotypes from a partition that merely rediscovers the design.",
+              "acceptance_criteria": [
+                "Contingency table of cluster by condition with a test of independence, Cramer's V, and ARI is reported",
+                "The relationship is classified into one of the four stated categories with the evidence for the call",
+                "Within-case and within-control consensus clustering results with per-cluster stability are reported",
+                "The reduced power of n=60 per arm is stated explicitly alongside the within-arm stability numbers"
+              ],
+              "constraints": [
+                "Use exactly the cluster assignments produced by T1S3; do not re-cluster the full cohort here",
+                "Report results even when the conclusion is that no substructure beyond the known split exists"
+              ],
+              "caveats": [
+                "A cluster/condition association can arise from a single technical covariate that differs between arms; check the QC covariates from T1S1 before calling it biological",
+                "With 60 per arm, a within-arm cluster of fewer than 10 samples carries very wide stability intervals"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "scikit-learn",
+                "statsmodels",
+                "consensusclustering",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 8,
+                "memoryGb": 16
+              },
+              "agent": "statistical-modeling-agent"
+            },
+            {
+              "id": "T2S1",
+              "name": "Differential expression defining each subgroup",
+              "track": "T2",
+              "step_type": "analysis",
+              "question": "Which genes distinguish each discovered subgroup from the remaining samples, after adjusting for the known case/control condition?",
+              "description": "Conditional on T1S3 reporting at least one stable cluster (median bootstrap Jaccard >= 0.6): using the filtered raw-count matrix from T1S1 and the cluster assignments from T1S3, fit a negative-binomial model (DESeq2 via PyDESeq2, or DESeq2 in R) with design ~ condition + cluster, and test each cluster against the rest in a one-vs-rest contrast. Report per contrast: number of genes at padj < 0.05 with |log2FC| > 0.5, the top up- and down-regulated genes with shrunken effect sizes, and an MA/volcano summary. Also fit the reduced model without the cluster term and report the likelihood-ratio result, so it is clear how much transcriptional signal the cluster partition carries over and above condition. If T1S1 established the counts are length-scaled non-integer values, use the rounded matrix and state the approximation in the output; alternatively run limma-voom on the log-CPM matrix as the primary model and report the negative-binomial fit as a sensitivity check. If T1S3 found no stable cluster, this step must report that no subgroup contrast is justified and stop rather than analysing an unstable partition.",
+              "context": "A subgroup with no distinctive transcriptional signature after conditioning on the design is very likely a partition of noise. This step is the biological test of the clustering result.",
+              "acceptance_criteria": [
+                "A one-vs-rest differential expression result table per stable cluster, with padj and shrunken log2 fold changes",
+                "The model includes the condition term so cluster effects are not a restatement of case versus control",
+                "A likelihood-ratio comparison of ~condition versus ~condition + cluster is reported",
+                "If no stable cluster exists, the step reports that and produces no subgroup contrasts"
+              ],
+              "constraints": [
+                "Include condition as a covariate in every model",
+                "Do not run differential expression on clusters whose median bootstrap Jaccard from T1S3 is below 0.6 without labelling those results as exploratory",
+                "State clearly that the cluster labels were derived from the same expression data, so these p-values are inflated by selection (double dipping) and are descriptive, not inferential"
+              ],
+              "caveats": [
+                "Clusters derived from expression and then tested on the same expression are circular; the p-values here characterize the clusters, they do not validate them",
+                "Small clusters give unstable dispersion estimates in negative-binomial models"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "pydeseq2",
+                "scipy",
+                "statsmodels",
+                "matplotlib"
+              ],
+              "depends_on": [
+                "T1S3"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "bulk-transcriptomics-agent"
+            },
+            {
+              "id": "T2S2",
+              "name": "Pathway and blood cell-composition interpretation of subgroups",
+              "track": "T2",
+              "step_type": "interpretation",
+              "question": "Do the discovered subgroups correspond to distinct biological programmes, or are they driven by differences in blood cell composition such as neutrophil-to-lymphocyte shifts?",
+              "description": "Two parts. (1) Pathway read-out: take the ranked gene lists from T2S1 (one per cluster contrast) and run gene-set enrichment against human hallmark gene sets and human GO biological process gene sets — reference data needed: hallmark and GO gene sets for Homo sapiens with HGNC gene symbols, resolved from the environment's reference store at run time. If the gene identifiers in counts.csv are Ensembl or Entrez rather than symbols, map them first using a human identifier-mapping resource from the reference store, and report the mapping rate. If neither gene-set collection is available, report per-cluster top genes without enrichment and say so — this degrades the annotation, not the subgroup result. (2) Cell-composition read-out, which is the decisive control for whole blood: estimate immune cell fractions per sample from the variance-stabilized/CPM matrix using a deconvolution or signature-scoring method available in the environment, and test whether the estimated fractions (in particular neutrophil, lymphocyte, monocyte, and the neutrophil-to-lymphocyte ratio) differ across the clusters from T1S3 with a Kruskal-Wallis test plus effect sizes. Report how much of the between-cluster separation is attributable to composition: refit the cluster separation after regressing out the leading composition estimates and report whether the partition survives. Deliver a single verdict per cluster: composition-driven, programme-driven, or ambiguous.",
+              "context": "Whole blood is a mixture; the largest transcriptional axis in blood cohorts is usually cell composition. Deconvolution here is not decoration — it is the test that decides whether a discovered subgroup is a biological endotype or a differential blood count in disguise. Reference store confirmed to hold human hallmark and human GO BP/CC/MF gene sets, human WikiPathways, and a human UniProt ID-mapping table.",
+              "acceptance_criteria": [
+                "Enrichment results per cluster contrast against hallmark and GO biological process sets, with FDR values, or an explicit statement that the gene sets were unavailable",
+                "Gene identifier mapping rate to symbols is reported when mapping was required",
+                "Per-sample immune cell fraction or signature-score estimates are produced and compared across clusters with a nonparametric test and effect sizes",
+                "The neutrophil-to-lymphocyte ratio is compared across clusters explicitly",
+                "Each cluster receives a composition-driven / programme-driven / ambiguous verdict with the evidence for it"
+              ],
+              "constraints": [
+                "Use human gene sets only — the data is Homo sapiens whole blood",
+                "Do not report an enrichment as a mechanism; enrichment on clusters derived from the same data is descriptive",
+                "If no stable cluster was found in T1S3, report the cohort-level composition estimates and their relationship to the condition label instead, and say why the subgroup interpretation was not run"
+              ],
+              "caveats": [
+                "Deconvolution methods are trained on specific tissue and platform contexts; absolute fractions from whole-blood bulk RNA-seq are approximate and only relative comparisons across clusters should be trusted",
+                "Globin content varies with sample handling and can distort deconvolution estimates; report globin fraction alongside the estimates",
+                "Hallmark sets are broad — significant hits name a state, not a mechanism"
+              ],
+              "packages": [
+                "pandas",
+                "numpy",
+                "scipy",
+                "statsmodels",
+                "gseapy",
+                "decoupler",
+                "matplotlib",
+                "seaborn"
+              ],
+              "depends_on": [
+                "T2S1",
+                "T1S4"
+              ],
+              "resources": {
+                "cpu": 4,
+                "memoryGb": 12
+              },
+              "agent": "immune-profiling-agent"
+            }
+          ]
+        }
+      },
+      "outcome": "ok",
+      "durationMs": 59
+    }
+  ],
+  "knowledgeCalls": [],
+  "connection": {
+    "provider": "cliproxy"
+  },
+  "manifest": {
+    "path": "/Users/radu/Development/projects/inflexa/inflexa/knowledge/eval/results/four-models-v2/manifest.json",
+    "digest": "sha256:8bceb1f00c635b270aa3bf8fab211823b39f9bd4800a66204eea15d467fb9623"
+  }
+}

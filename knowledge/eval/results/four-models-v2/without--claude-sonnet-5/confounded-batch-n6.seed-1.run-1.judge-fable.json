@@ -1,0 +1,18 @@
+{
+  "judge": "claude-fable-5-1",
+  "provider": "cliproxy",
+  "model": "claude-fable-5-1",
+  "tag": "fable",
+  "prompt_digest": "sha256:f9e66adcf4c33f9f28af45b5370dbd351e1c4481a326682160ba7f1b41a1b5f8",
+  "scores": {
+    "method_fits_design": 9,
+    "qc_present": 7,
+    "low_count_filter": 3,
+    "normalization": 6,
+    "model_formula_contrasts": 7,
+    "fdr_shrinkage": 8,
+    "enrichment_universe_sets": 4,
+    "report_completeness": 6
+  },
+  "rationale": "The plan correctly recognizes the perfect confound, refuses ComBat/SVA/removeBatchEffect and a batch covariate, fits ~condition only, and labels every result as batch+condition combined, which matches the reference. QC includes library sizes, PCA and clustering colored by condition/batch, but no policy for an outlier or shallow sample. The low-count filter is mentioned without any threshold or justification, size-factor normalization is only implied by 'standard DESeq2 workflow', and the reference level is not explicitly set. BH at padj<0.05 with apeglm shrinkage is explicit, but the enrichment step is weakly specified (no chosen method, no universe or ranking metric, no size window) on a list the reference would not enrich at all, and no package versions are requested in the report."
+}
