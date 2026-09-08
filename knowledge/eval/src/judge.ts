@@ -43,7 +43,8 @@ export type Criteria = readonly (readonly [string, string])[];
 
 export const JudgeVerdictSchema = z.object({
     scores: z.object(Object.fromEntries(CRITERIA.map(([key]) => [key, z.number().min(0).max(10)])) as Record<(typeof CRITERIA)[number][0], z.ZodNumber>),
-    rationale: z.string(),
+    /** The judge omits the rationale at times; the scores are the verdict, thus the file is a verdict without it. */
+    rationale: z.string().optional(),
 });
 export type JudgeVerdict = z.infer<typeof JudgeVerdictSchema>;
 
