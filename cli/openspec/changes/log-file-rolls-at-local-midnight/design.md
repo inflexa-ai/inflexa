@@ -141,8 +141,11 @@ retention". The docs regenerate from it with `bun run docs:gen`.
   for one offset window] → The pattern matches both. The sweep removes the
   old files within 7 days.
 - [The `file` cast reaches into a library field] → The invariant is in the
-  comment, and `reopen` is the documented rotation entry of sonic-boom. A
-  sonic-boom upgrade that renames the field fails the new test at once.
+  comment, and `reopen` is the documented rotation entry of sonic-boom. The
+  cast adds the field, thus the compiler does not find a rename. No test opens
+  a real destination. A sonic-boom upgrade that renames the field is silent.
+  The roll swallows the throw of `reopen`, and each record stays in the file of
+  the first day.
 - [A roll fires while the process exits] → D5. The old fd stays valid until
   the new open completes, and `flushLogsSync` swallows a throw.
 - [A clock jump backward before midnight] → The roll compares the new name
