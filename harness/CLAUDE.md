@@ -578,23 +578,30 @@ database state. Do not assert that method X was called N times with arguments Y,
 because that couples a test to an implementation detail.
 
 **Postgres testcontainer**: a test that touches the database uses
-`withSchema(testName)` from `__tests__/setup/postgres.ts`. The helper starts one
-`pgvector/pgvector:pg18` container for each `bun test` run. The cold start is about
-3 seconds on first use, and each subsequent test file uses the same container. The
-helper hands each test an isolated schema, scoped through `search_path`.
+`withSchema(testName)` from `__tests__/setup/postgres.ts`, which hands each test an
+isolated schema scoped through `search_path`, against one
+`pgvector/pgvector:pg18` database. The cold start is about 3 seconds.
 
 Set `CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex` to skip the
 container startup and point at a local Postgres, for instant feedback during tight
-iteration. The container fallback needs a reachable Docker API socket. The ryuk
-reaper container of testcontainers does not come up under podman. Thus a bare
-`bun test` on a podman host errors out the whole DB and DBOS portion of the suite,
-not only one file.
+iteration. That env var is also the only thing that makes one container serve a
+whole run: Bun gives each test file its own module state, so the memoized pool in
+`postgres.ts` is not shared, and the container fallback starts one container for
+each database test file rather than one for the run.
+
+Nothing but the ryuk sidecar removes those containers, and ryuk does not come up
+under podman. So the fallback refuses to start a container until it has confirmed
+a reaper is up to remove it again (`__tests__/setup/require-reaper.ts`), and the
+refusal names the routes below. The guard sits on the container-creation path
+rather than in a `pretest` script (`bun test` runs no lifecycle script) or a
+`bunfig.toml` preload (bun resolves bunfig from the cwd only), so a file that
+starts no container — any unit test — never meets it.
 
 There are two supported local routes. `bun run test:full` starts the one container
 itself and reaches podman through its docker-compat socket. As an alternative,
 export `CORTEX_TEST_PG_URL` at a Postgres that already runs.
-`TESTCONTAINERS_RYUK_DISABLED=true` forces the fallback through as a last resort,
-at the cost of one unreaped container for each DB test file.
+`CORTEX_TEST_ALLOW_LEAKED_PG=1` forces the fallback through as a last resort, at
+the cost of one unreaped container for each DB test file.
 
 A harness module receives its `Pool` as an injected construction dep
 (`createPool`). Thus a test passes the schema-scoped test pool directly into the

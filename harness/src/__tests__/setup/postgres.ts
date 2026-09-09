@@ -13,11 +13,14 @@
  *
  *  2. Fallback: with no `CORTEX_TEST_PG_URL`, a testcontainers-managed
  *     container is launched on the first `getTestPool()` call. Cold start
- *     is ~3s; the `ryuk` sidecar reaps it on process exit.
+ *     is ~3s; the `ryuk` sidecar reaps it on process exit. Because the
+ *     fallback starts one container per test file (see below), it refuses
+ *     to start anything unless a reaper is actually up to remove it again —
+ *     see `require-reaper.ts`.
  *
  * Why the runner owns the container for the full suite: Bun isolates module
  * state per test file, so a module-level singleton here is NOT shared across
- * the ~130 test files — each would spin its own container. A real OS-process
+ * the test files — each would spin its own container. A real OS-process
  * env var (`CORTEX_TEST_PG_URL`, exported before `bun test`) IS inherited by
  * every file, so all of them connect to the one container.
  *
@@ -28,6 +31,7 @@
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { Pool, type PoolConfig } from "pg";
 import { initCortexState } from "../../state/init.js";
+import { assertContainerWillBeReaped } from "./require-reaper.js";
 
 const PG_IMAGE = "pgvector/pgvector:pg18";
 const PG_USER = "cortex";
@@ -42,6 +46,10 @@ async function startContainer(): Promise<{ pool: Pool; container?: StartedTestCo
     if (override) {
         return { pool: new Pool({ connectionString: override }) };
     }
+
+    // Only the fallback creates a container, so only the fallback has to prove
+    // one will be removed again. Throws with both safe routes named otherwise.
+    await assertContainerWillBeReaped();
 
     // The default port-probe wait strategy hangs under Bun when run against
     // the postgres image (the port opens during the initdb bootstrap before
