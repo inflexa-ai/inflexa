@@ -327,11 +327,10 @@ at the composition root.
   Local realization: `createNoopUsageRecorder`
   (`billing/noop-usage-recorder.ts`) drops each record.
 - **`RunLauncher`** (`execution/run-launcher.ts`) — it starts a registered
-  workflow under an id that the caller chooses. `launch` is fire-and-forget.
-  `launchAndAwait` is inline with cancel-on-abort, and a discriminated
-  `LaunchOutcome` hides the cancellation. It is the DBOS quarantine seam, and it
-  is the reason that `execute_plan` and `run_ephemeral` do not import the
-  durability engine. One host-neutral realization, `createDbosRunLauncher`
+  workflow under an id that the caller chooses. `launch` is the one method, and
+  it is fire-and-forget. It is the DBOS quarantine seam, and it is the reason
+  that `execute_analysis` does not import the durability engine. One
+  host-neutral realization, `createDbosRunLauncher`
   (`execution/dbos-run-launcher.ts`), is shared by each embedder.
 
 ### Embedder and composition roots
