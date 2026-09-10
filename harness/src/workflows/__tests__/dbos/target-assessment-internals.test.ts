@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { ResultAsync, err, ok } from "neverthrow";
 
+import { sleep } from "../../../lib/async-utils.js";
 import { toProviderError } from "../../../providers/errors.js";
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
 import { silentLogger } from "../../../__tests__/setup/logger.js";
@@ -213,6 +214,43 @@ const emitPhaseSequenceHarness = DBOS.registerWorkflow(
     },
     { name: "ta-emit-phase-sequence-harness" },
 );
+
+/**
+ * Gate that holds `emitLivePhasesHarness` open, so a subscriber meets a stream
+ * whose workflow is still active. Every other reader case reads a drained
+ * stream, where the engine ends the read on its own and the seam's abort race
+ * is never the thing that settles the caller.
+ */
+let liveGate: { readonly wait: Promise<void>; readonly release: () => void } | undefined;
+
+function openLiveGate(): void {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    liveGate = { wait, release };
+}
+
+const emitLivePhasesHarness = DBOS.registerWorkflow(
+    async (input: { first: TargetAssessmentPhase; rest: TargetAssessmentPhase }): Promise<void> => {
+        if (!currentEmitArgs || !currentPool || !liveGate) {
+            throw new Error("test bug: live harness deps not installed");
+        }
+        await emitProgress(currentPool, silentLogger, currentEmitArgs.assessmentId, input.first);
+        await liveGate.wait;
+        await emitProgress(currentPool, silentLogger, currentEmitArgs.assessmentId, input.rest);
+    },
+    { name: "ta-emit-live-phases-harness" },
+);
+
+/** Poll until `predicate` holds, or throw once `timeoutMs` elapses. */
+async function until(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+        if (Date.now() > deadline) throw new Error("test bug: condition never held");
+        await sleep(10);
+    }
+}
 
 let currentPool: import("pg").Pool | undefined;
 
@@ -476,26 +514,39 @@ describe("target-assessment internals (DBOS)", () => {
             expect(seen[1]!.percent).toBe(100);
         });
 
-        it("settles promptly when the signal aborts", async () => {
+        it("settles promptly when the signal aborts on a still-running assessment", async () => {
             const assessmentId = await newAssessment("ENSG00000121879", "PIK3CA");
-            const handle = await DBOS.startWorkflow(emitPhaseSequenceHarness, { workflowID: assessmentId })({
-                phases: ["collecting", "deciding"],
+            openLiveGate();
+            const handle = await DBOS.startWorkflow(emitLivePhasesHarness, { workflowID: assessmentId })({
+                first: "collecting",
+                rest: "deciding",
             });
-            await handle.getResult();
 
             const controller = new AbortController();
             const seen: TargetAssessmentProgressEvent[] = [];
-            await createTargetAssessmentProgressStream().subscribe({
+            const subscription = createTargetAssessmentProgressStream().subscribe({
                 assessmentId,
                 onEvent: (event) => {
                     seen.push(event);
-                    controller.abort();
                 },
                 signal: controller.signal,
             });
 
-            // The abort lands inside the first handler call, so the second event is
-            // never delivered even though the stream holds it.
+            // The first event proves the read is attached while the workflow is
+            // still active — the engine's reader is now parked awaiting the next
+            // write, which is the only state where the seam's abort race is what
+            // settles the caller rather than the stream draining.
+            await until(() => seen.length === 1);
+            controller.abort();
+
+            const outcome = await Promise.race([subscription.then(() => "settled" as const), sleep(5_000).then(() => "hung" as const)]);
+            expect(outcome).toBe("settled");
+            expect(seen.map((e) => e.phase)).toEqual(["collecting"]);
+
+            // Release the workflow so it does not outlive the case, and confirm the
+            // abort tore down only the read: the writer still reaches its last phase.
+            liveGate!.release();
+            await handle.getResult();
             expect(seen.map((e) => e.phase)).toEqual(["collecting"]);
         });
 
