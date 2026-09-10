@@ -29,7 +29,9 @@ import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/db
 import { silentLogger } from "../../../__tests__/setup/logger.js";
 import { insertAssessment, getAssessment } from "../../../state/target-assessments.js";
 import { BUDGET_EXCEEDED_SENTINEL, BUDGET_EXCEEDED_TOPIC, runLlmStep, type BudgetExceededMarker } from "../../target-assessment/lib/llm-step.js";
-import { emitProgress } from "../../target-assessment/progress.js";
+import { emitProgress, TA_PROGRESS_STREAM_KEY } from "../../target-assessment/progress.js";
+import { createTargetAssessmentProgressStream } from "../../target-assessment/progress-stream.js";
+import type { TargetAssessmentPhase, TargetAssessmentProgressEvent } from "../../../contracts/target-dossier.js";
 import type { AgentChat, ChatRequest, ChatResponse } from "../../../providers/types.js";
 import { makeMessage, textBlock } from "../../../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../../../auth/local-auth-context.js";
@@ -193,6 +195,25 @@ const emitProgressHarness = DBOS.registerWorkflow(
     { name: "ta-emit-progress-harness" },
 );
 
+// Drives several phases through one workflow so the read side has a stream with
+// order to assert on. `junkFirst` writes a value the progress contract does not
+// describe, which is the only way to reach the reader's drop path — `emitProgress`
+// itself can never produce one.
+const emitPhaseSequenceHarness = DBOS.registerWorkflow(
+    async (input: { phases: TargetAssessmentPhase[]; junkFirst?: boolean }): Promise<void> => {
+        if (!currentEmitArgs || !currentPool) {
+            throw new Error("test bug: emit harness deps not installed");
+        }
+        if (input.junkFirst === true) {
+            await DBOS.runStep(async () => DBOS.writeStream(TA_PROGRESS_STREAM_KEY, { type: "not-a-progress-part" }), { name: "ta-progress-junk" });
+        }
+        for (const phase of input.phases) {
+            await emitProgress(currentPool, silentLogger, currentEmitArgs.assessmentId, phase);
+        }
+    },
+    { name: "ta-emit-phase-sequence-harness" },
+);
+
 let currentPool: import("pg").Pool | undefined;
 
 // ── Suite ──────────────────────────────────────────────────────────────
@@ -353,6 +374,142 @@ describe("target-assessment internals (DBOS)", () => {
 
             const row = (await getAssessment(rig.pool, assessmentId, "org_test"))._unsafeUnwrap();
             expect(row!.status).toBe("failed");
+        });
+    });
+
+    describe("createTargetAssessmentProgressStream", () => {
+        const newAssessment = async (targetId: string, targetLabel: string): Promise<string> => {
+            const id = (
+                await insertAssessment(rig.pool, {
+                    organizationId: "org_test",
+                    targetId,
+                    targetLabel,
+                    billingContextId: "bc_test",
+                    requestedBy: "user_test",
+                })
+            )._unsafeUnwrap();
+            currentEmitArgs = { assessmentId: id };
+            return id;
+        };
+
+        it("delivers each phase once, in write order, then settles", async () => {
+            const assessmentId = await newAssessment("ENSG00000141510", "TP53");
+            const handle = await DBOS.startWorkflow(emitPhaseSequenceHarness, { workflowID: assessmentId })({
+                phases: ["collecting", "deciding", "assembling"],
+            });
+            await handle.getResult();
+
+            const seen: TargetAssessmentProgressEvent[] = [];
+            await createTargetAssessmentProgressStream().subscribe({
+                assessmentId,
+                onEvent: (event) => {
+                    seen.push(event);
+                },
+                signal: new AbortController().signal,
+            });
+
+            // Settling at all is the terminal assertion: the workflow is done, so
+            // the stream drains rather than waiting on a live one.
+            expect(seen.map((e) => e.phase)).toEqual(["collecting", "deciding", "assembling"]);
+            expect(seen[1]!.percent).toBe(55);
+        });
+
+        it("drops a stream value outside the contract and keeps delivering", async () => {
+            const assessmentId = await newAssessment("ENSG00000012048", "BRCA1");
+            const handle = await DBOS.startWorkflow(emitPhaseSequenceHarness, { workflowID: assessmentId })({
+                phases: ["synthesizing"],
+                junkFirst: true,
+            });
+            await handle.getResult();
+
+            const seen: TargetAssessmentProgressEvent[] = [];
+            await createTargetAssessmentProgressStream().subscribe({
+                assessmentId,
+                onEvent: (event) => {
+                    seen.push(event);
+                },
+                signal: new AbortController().signal,
+            });
+
+            expect(seen.map((e) => e.phase)).toEqual(["synthesizing"]);
+        });
+
+        it("contains a handler throw and delivers the next event", async () => {
+            const assessmentId = await newAssessment("ENSG00000171862", "PTEN");
+            const handle = await DBOS.startWorkflow(emitPhaseSequenceHarness, { workflowID: assessmentId })({
+                phases: ["collecting", "deciding"],
+            });
+            await handle.getResult();
+
+            const seen: TargetAssessmentProgressEvent[] = [];
+            await createTargetAssessmentProgressStream().subscribe({
+                assessmentId,
+                onEvent: (event) => {
+                    seen.push(event);
+                    if (event.phase === "collecting") throw new Error("handler blew up");
+                },
+                signal: new AbortController().signal,
+            });
+
+            expect(seen.map((e) => e.phase)).toEqual(["collecting", "deciding"]);
+        });
+
+        it("delivers the suspended phase and settles there", async () => {
+            const assessmentId = await newAssessment("ENSG00000105976", "MET");
+            const handle = await DBOS.startWorkflow(emitPhaseSequenceHarness, { workflowID: assessmentId })({
+                phases: ["collecting", "suspended"],
+            });
+            await handle.getResult();
+
+            const seen: TargetAssessmentProgressEvent[] = [];
+            await createTargetAssessmentProgressStream().subscribe({
+                assessmentId,
+                onEvent: (event) => {
+                    seen.push(event);
+                },
+                signal: new AbortController().signal,
+            });
+
+            // A 402 self-cancel stops the workflow at this phase, so the read
+            // settles here rather than waiting on a later `resumeWorkflow`.
+            expect(seen.map((e) => e.phase)).toEqual(["collecting", "suspended"]);
+            expect(seen[1]!.percent).toBe(100);
+        });
+
+        it("settles promptly when the signal aborts", async () => {
+            const assessmentId = await newAssessment("ENSG00000121879", "PIK3CA");
+            const handle = await DBOS.startWorkflow(emitPhaseSequenceHarness, { workflowID: assessmentId })({
+                phases: ["collecting", "deciding"],
+            });
+            await handle.getResult();
+
+            const controller = new AbortController();
+            const seen: TargetAssessmentProgressEvent[] = [];
+            await createTargetAssessmentProgressStream().subscribe({
+                assessmentId,
+                onEvent: (event) => {
+                    seen.push(event);
+                    controller.abort();
+                },
+                signal: controller.signal,
+            });
+
+            // The abort lands inside the first handler call, so the second event is
+            // never delivered even though the stream holds it.
+            expect(seen.map((e) => e.phase)).toEqual(["collecting"]);
+        });
+
+        it("delivers nothing for an assessment id that names no workflow", async () => {
+            const seen: TargetAssessmentProgressEvent[] = [];
+            await createTargetAssessmentProgressStream().subscribe({
+                assessmentId: "00000000-0000-4000-8000-00000000dead",
+                onEvent: (event) => {
+                    seen.push(event);
+                },
+                signal: new AbortController().signal,
+            });
+
+            expect(seen).toEqual([]);
         });
     });
 });
