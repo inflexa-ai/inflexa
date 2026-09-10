@@ -38,6 +38,8 @@ import { getContainerRuntimeClient, getReaper } from "testcontainers";
 
 /** Set to any non-empty value to accept the leak and start the container anyway. */
 const ALLOW_LEAK_ENV = "CORTEX_TEST_ALLOW_LEAKED_PG";
+/** testcontainers' own switch: "true" swaps the real reaper for a no-op stand-in. */
+const RYUK_DISABLED_ENV = "TESTCONTAINERS_RYUK_DISABLED";
 
 const ROUTES = `Use one of the two routes that start ONE container for the whole run:
 
@@ -45,8 +47,13 @@ const ROUTES = `Use one of the two routes that start ONE container for the whole
   CORTEX_TEST_PG_URL=postgres://cortex:dev@localhost:5433/cortex bun test [paths...]
                                    points every file at a Postgres that already runs; starts nothing
 
-Set ${ALLOW_LEAK_ENV}=1 to start the container regardless, accepting one
-unreaped container for each database test file.`;
+To start the container regardless, accepting one unreaped container for each database
+test file, set BOTH:
+
+  ${ALLOW_LEAK_ENV}=1 ${RYUK_DISABLED_ENV}=true bun test [paths...]
+
+Both are needed on a host where ryuk cannot start: the first gets past this guard, and
+the second stops GenericContainer.start() from trying to start ryuk on its own.`;
 
 /**
  * The refusal a developer reads. It names what is missing and both safe routes,
@@ -73,8 +80,8 @@ export async function assertContainerWillBeReaped(): Promise<void> {
     // Checked here as well as inside getReaper: with ryuk disabled getReaper
     // hands back a no-op reaper rather than throwing, so the container would
     // start and never be removed — the exact leak this guard exists to stop.
-    if (process.env.TESTCONTAINERS_RYUK_DISABLED === "true") {
-        throw new Error(refusalMessage("TESTCONTAINERS_RYUK_DISABLED=true disables the ryuk reaper"));
+    if (process.env[RYUK_DISABLED_ENV] === "true") {
+        throw new Error(refusalMessage(`${RYUK_DISABLED_ENV}=true disables the ryuk reaper`));
     }
 
     let client;
@@ -91,7 +98,11 @@ export async function assertContainerWillBeReaped(): Promise<void> {
         throw new Error(refusalMessage(`the ryuk reaper could not be started (${describe(err)})`), { cause: err });
     }
 
-    // A reaper with no container behind it is testcontainers' disabled stand-in.
+    // Unreachable against testcontainers as it stands: the only reaper with an
+    // empty containerId is its DisabledReaper, and that is returned only under
+    // `RYUK_DISABLED_ENV === "true"`, which the check above already refuses. Kept
+    // as a backstop, so that a future upstream reaper that comes up with no
+    // container behind it cannot reopen the leak silently.
     if (!reaper.containerId) {
         throw new Error(refusalMessage("the ryuk reaper is not running"));
     }

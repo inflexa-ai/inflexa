@@ -44,6 +44,15 @@ describe("refusalMessage", () => {
         expect(message).toContain("the ryuk reaper is not running");
         expect(message).toContain("bun run test:full");
         expect(message).toContain("CORTEX_TEST_PG_URL=");
+    });
+
+    // The opt-in gets past this guard, but `GenericContainer.start()` then calls
+    // `getReaper` itself. On a host where ryuk cannot start, that call throws and
+    // no container is created. Thus the message has to name the second variable.
+    it("names both variables that the accept-the-leak route needs", () => {
+        const message = refusalMessage("the ryuk reaper is not running");
+
         expect(message).toContain("CORTEX_TEST_ALLOW_LEAKED_PG=1");
+        expect(message).toContain("TESTCONTAINERS_RYUK_DISABLED=true");
     });
 });
