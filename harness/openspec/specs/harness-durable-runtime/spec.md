@@ -139,9 +139,9 @@ is bound.
 
 #### Scenario: Tools reach the durability engine only through RunLauncher
 
-- **GIVEN** the `execute_plan` and `run_ephemeral` tools
-- **WHEN** they start a durable run
-- **THEN** they call `RunLauncher` (`launch` / `launchAndAwait`) and never import the DBOS engine directly
+- **GIVEN** the `execute_analysis` tool
+- **WHEN** it starts a durable run
+- **THEN** it calls `RunLauncher.launch` and never imports the DBOS engine directly
 
 #### Scenario: The OSS ArtifactRegistry realization never fails a registration
 
