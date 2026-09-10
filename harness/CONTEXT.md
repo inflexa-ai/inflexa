@@ -362,16 +362,12 @@ its process bootstrap, and any adapter that is not local.
   renders in-process, and it is not a DBOS workflow. There is no in-process sandbox consumer,
   and no in-memory exec transport. A sandbox exec callback routes only through
   `DBOS.send` and `DBOS.recv`.
-- **Turn-scoped workflow** — `runEphemeral` is a DBOS workflow with a deliberately
-  non-durable flavor. The `run_ephemeral` chat tool starts it. It is **awaited
-  inline** with `handle.getResult()`, and it is the only chat tool that blocks on
-  a workflow result. It is **canceled** with `DBOS.cancelWorkflow` when the chat
-  turn disconnects, and it is **not recovered** after the death of the process:
-  before the DBOS launch, the launch path cancels any `PENDING` `ephemeral:*`
-  workflow for this executor. Thus a re-run never starts, and no result goes to a
-  dead turn. It is a workflow only so that its sandbox callbacks route through
-  DBOS messaging like each other consumer. The **sandbox reaper** reaps its
-  machine on cancel. Refer to
+- **Legacy ephemeral rows** — No workflow of this runtime makes an
+  `ephemeral:*` workflow id. An older release did, thus a database can still
+  hold a `PENDING` row under that prefix. `sweepEphemeralWorkflows`
+  (`runtime/dbos.ts`) marks such a row as cancelled before the DBOS launch, and
+  the recovery query then excludes it. It is an upgrade migration, and it is
+  not a category of workflow. Refer to
   [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
 
 ### Application service layer
@@ -720,12 +716,12 @@ Other facts:
 - There is no ALS, no fetch-patch, and no wrapper. A read-only route never
   resolves the attribution, because the seam is lazy and fires only at the LLM or
   embedding call site.
-- A background task (a data profile trigger, an async memory write) and the
-  `run_ephemeral` chat tool construct an explicit `RunSession` through the
-  `RunAuthorizer` seam and pass it through. The scope is whatever resource the
-  task acts against. Ephemeral and data-profile both keep their synthetic
-  `RunFrame` literals (`"ephemeral"` and `"data-profile"`) as the run tag and the
-  step tag. The unique DBOS `workflowID` does the routing.
+- A background task (a data profile trigger, an async memory write) constructs
+  an explicit `RunSession` through the `RunAuthorizer` seam. The task then
+  carries that session. The scope is whatever resource the task acts against. The
+  data profile keeps its synthetic `RunFrame` literals
+  (`DATA_PROFILE_RUN_LITERAL` and `DATA_PROFILE_STEP_LITERAL`) as the run tag
+  and the step tag. The unique DBOS `workflowID` does the routing.
 
 ### Budget-exceeded resume
 
