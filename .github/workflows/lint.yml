@@ -1,9 +1,13 @@
 name: Lint
 
-# Lints/typechecks the independent subsystems. `cli/` has ESLint + a tsc
-# typecheck; `harness/` has a tsc typecheck plus ruff over its Python package
-# asset; `prov-kernel/` has ESLint + a tsc typecheck over its test-inclusive
-# config.
+# Lints/typechecks the independent subsystems. Each one has ESLint + a tsc
+# typecheck; `harness/` adds ruff over its Python package asset, and
+# `prov-kernel/` typechecks against its test-inclusive config.
+#
+# Every subsystem that ships an `eslint.config.js` and a `lint` script gets a
+# job step for it. Without one, `bun run lint` fails on a developer machine
+# while CI reports green, and the error survives every review that trusts the
+# check names.
 on:
   push:
     branches: [main]
@@ -89,6 +93,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: ESLint
+        run: bun run lint
 
       - name: Typecheck
         run: bunx tsc -p tsconfig.json --noEmit
