@@ -1373,14 +1373,19 @@ describe("failure logging", () => {
             logger,
         });
 
-        let threw = false;
+        // Reading `isOk` is what consumes the `Result`; which arm it holds does not
+        // matter here, only that the call resolved at all instead of rejecting.
+        // Recording the three outcomes apart tells a later reader whether a
+        // regression captured the abort as an `err` or swallowed it as an `ok`.
+        let outcome: "threw" | "ok" | "err";
         try {
-            await provider.chat(request, makeSession(), controller.signal);
+            const result = await provider.chat(request, makeSession(), controller.signal);
+            outcome = result.isOk() ? "ok" : "err";
         } catch {
-            threw = true;
+            outcome = "threw";
         }
 
-        expect(threw).toBe(true);
+        expect(outcome).toBe("threw");
         expect(errors).toHaveLength(0);
     });
 });
