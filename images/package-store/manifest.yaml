@@ -233,6 +233,11 @@ r:
         - EnhancedVolcano
         - singscore
         - rrvgo
+        - name: HDO.db
+          reason: >
+            The Disease Ontology data that DOSE 4 reads for enrichDO. DOSE
+            comes in as a dependency of clusterProfiler, but its ontology
+            data is a suggested package, thus enrichDO stops without it.
 
         # Network
         - WGCNA
