@@ -25,6 +25,9 @@
  *      legacy-workflow reap, an agent-switch install). Runs after registration
  *      so it may close over the registered callables.
  *   7. `launchDbos(...)` — the last registration-dependent step.
+ *   8. `observeDbosWorkflows(...)` — the stuck-workflow gauges. They bind to
+ *      the meter that step 1 registered, and they read the schema that step 7
+ *      migrated. With no meter registered, nothing calls them and no query runs.
  *
  * No step reads or rewrites stored conversation display. A boot that validated
  * every `messages` row is what let a single retired part key fail startup for a
@@ -44,7 +47,7 @@ import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
 import { assembleCoreRuntime, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
 import { assertConnectionBudget, type ConnectionBudgetConfig } from "./connection-budget.js";
-import { launchDbos, shutdownDbos, type DbosConfig } from "./dbos.js";
+import { launchDbos, observeDbosWorkflows, shutdownDbos, type DbosConfig } from "./dbos.js";
 import { markDraining } from "./lifecycle.js";
 import { runShutdownSequence } from "./shutdown.js";
 
@@ -106,6 +109,8 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
     await deps.beforeLaunch?.();
 
     await launchDbos({ config: deps.dbos, logger });
+
+    observeDbosWorkflows({ pool, logger });
 
     logger.named("boot").info("harness booted", { executorId: deps.dbos.executorId });
 

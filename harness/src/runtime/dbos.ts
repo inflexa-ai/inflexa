@@ -14,7 +14,8 @@
  */
 
 import { DBOS, type DBOSConfig, type DLogger } from "@dbos-inc/dbos-sdk";
-import type { Pool } from "pg";
+import { metrics } from "@opentelemetry/api";
+import type { Pool, QueryResult } from "pg";
 
 import type { LogFields, Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
@@ -277,6 +278,137 @@ export async function sweepEphemeralWorkflows({
         }
         logger.error("legacy ephemeral-row sweep failed", { executorID, ...logger.errorFields(err) });
     }
+}
+
+/**
+ * Age at which a PENDING or ENQUEUED workflow counts as stale: 6 h.
+ *
+ * The longest-lived healthy workflow is the parent of an analysis run, which
+ * stays PENDING for the whole run, and `cortex.run.duration` puts its last
+ * finite bucket at 4 h. Six hours clears that bound with margin, so the count
+ * holds only a workflow that no process drives to an end: an orphan of an
+ * executor that is gone, or a body blocked on a message that never arrives. A
+ * workflow that crash-loops is the task of the recovery-attempts gauge, which
+ * does not wait for age.
+ */
+export const STALE_WORKFLOW_AGE_MS = 6 * 60 * 60 * 1000;
+
+/** Server-side cap on the health query, which reads a partial index and takes about a millisecond. */
+const WORKFLOW_HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
+
+/**
+ * Client-side cap on one observation, the wait for a pool connection included.
+ * It sits well inside the 30 s export timeout, so a saturated app pool costs
+ * this gauge one sample and never costs the other instruments their export.
+ */
+const WORKFLOW_HEALTH_OBSERVE_TIMEOUT_MS = 5_000;
+
+/** The non-terminal DBOS statuses, less DELAYED, which waits for its start time by design. */
+const NON_TERMINAL_STATUSES = ["PENDING", "ENQUEUED"] as const;
+type NonTerminalStatus = (typeof NON_TERMINAL_STATUSES)[number];
+
+/**
+ * One grouped read of the non-terminal rows. `SET LOCAL` and the SELECT share
+ * the implicit transaction of one simple-protocol message (no bind values), so
+ * the timeout covers the SELECT and lapses with it on success or on error; the
+ * pooled connection keeps its own setting. `status IN (...)` matches the DBOS
+ * partial index `idx_workflow_status_in_flight`, so the cost follows the
+ * in-flight rows and not the table. `created_at` is epoch milliseconds, read
+ * against the database clock.
+ */
+const WORKFLOW_HEALTH_QUERY = `SET LOCAL statement_timeout = ${WORKFLOW_HEALTH_STATEMENT_TIMEOUT_MS};
+SELECT status,
+       count(*) FILTER (WHERE created_at < (extract(epoch FROM now()) * 1000)::bigint - ${STALE_WORKFLOW_AGE_MS}) AS stale,
+       max(recovery_attempts) AS max_recovery_attempts
+  FROM dbos.workflow_status
+ WHERE status IN ('PENDING', 'ENQUEUED')
+ GROUP BY status`;
+
+/** One row of the health query. `pg` returns a bigint as a string. */
+interface WorkflowHealthRow {
+    readonly status: NonTerminalStatus;
+    readonly stale: string;
+    readonly max_recovery_attempts: string | null;
+}
+
+async function queryWorkflowHealth(pool: Pool): Promise<readonly WorkflowHealthRow[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+            () => reject(new Error(`workflow health query exceeded ${WORKFLOW_HEALTH_OBSERVE_TIMEOUT_MS} ms`)),
+            WORKFLOW_HEALTH_OBSERVE_TIMEOUT_MS,
+        );
+    });
+    try {
+        // A message of two statements answers with one result for each; the SELECT is the last.
+        const results = (await Promise.race([pool.query(WORKFLOW_HEALTH_QUERY), deadline])) as unknown as readonly QueryResult<WorkflowHealthRow>[];
+        return results.at(-1)?.rows ?? [];
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * Observe the stuck-workflow gauges on `dbos.workflow_status`, once for each
+ * metric export:
+ *
+ *   - cortex.dbos.workflows.stale{status}          — PENDING and ENQUEUED workflows created more than `STALE_WORKFLOW_AGE_MS` ago
+ *   - cortex.dbos.workflows.recovery_attempts.max  — the highest `recovery_attempts` over PENDING and ENQUEUED workflows of any age
+ *
+ * DBOS increments `recovery_attempts` each time it starts a workflow, so a
+ * workflow that ran once reads 1, and one that every boot recovers climbs
+ * toward the SDK ceiling of 100.
+ *
+ * The table is fleet-wide, thus each replica reports the same values: an
+ * alert aggregates with `max`, never `sum`.
+ *
+ * `status` is the only label. The cumulative export repeats the last value of
+ * an attribute set that a collection does not observe, so every label set is
+ * observed each time, zero included. The workflow names are spread over the
+ * registrations of the harness and of the embedder, thus a name label could
+ * not be observed at zero and a cleared count would never fall. The id of a
+ * stuck workflow comes from the table itself.
+ *
+ * The gauges bind to the global meter, as every harness instrument does. With
+ * metric export off, or under a host that registers no MeterProvider (the
+ * CLI), that is the API no-op meter, which never calls the callback, thus no
+ * query runs. The callback also skips the query while DBOS is not launched:
+ * before launch the schema can be absent, and at shutdown the pool closes
+ * before the last export. A failed query logs a warning and observes nothing,
+ * so the export repeats the last values.
+ */
+export function observeDbosWorkflows({ pool, logger: injected }: { pool: Pool; logger: Logger }): void {
+    const logger = injected.named("dbos");
+    const meter = metrics.getMeter("cortex.dbos");
+    const stale = meter.createObservableGauge("cortex.dbos.workflows.stale", {
+        description: `PENDING or ENQUEUED DBOS workflows created more than ${STALE_WORKFLOW_AGE_MS / 3_600_000} h ago. Tagged by status.`,
+        unit: "{workflow}",
+    });
+    const recoveryAttempts = meter.createObservableGauge("cortex.dbos.workflows.recovery_attempts.max", {
+        description: "Highest recovery_attempts over PENDING and ENQUEUED DBOS workflows. A workflow that ran once reads 1.",
+        unit: "{attempt}",
+    });
+    meter.addBatchObservableCallback(
+        async (observer) => {
+            if (!state.launched) return;
+            let rows: readonly WorkflowHealthRow[];
+            try {
+                rows = await queryWorkflowHealth(pool);
+            } catch (err) {
+                logger.warn("workflow health query failed", logger.errorFields(err));
+                return;
+            }
+            const staleByStatus: Record<NonTerminalStatus, number> = { PENDING: 0, ENQUEUED: 0 };
+            let maxAttempts = 0;
+            for (const row of rows) {
+                staleByStatus[row.status] = Number(row.stale);
+                maxAttempts = Math.max(maxAttempts, Number(row.max_recovery_attempts ?? 0));
+            }
+            for (const status of NON_TERMINAL_STATUSES) observer.observe(stale, staleByStatus[status], { status });
+            observer.observe(recoveryAttempts, maxAttempts);
+        },
+        [stale, recoveryAttempts],
+    );
 }
 
 /** Snapshot of DBOS lifecycle state — read by the readiness probe. */

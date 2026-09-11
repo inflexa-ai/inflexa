@@ -18,8 +18,10 @@
  *          outcome instruments (`cortex.run.*`, `cortex.step.*`) and the
  *          reconcile counters are defined in metrics.ts; the agent loop, the
  *          thread memory, and the workflows hold their own instruments next
- *          to their record sites. Every instrument binds lazily to the
- *          provider registered here.
+ *          to their record sites, and `runtime/dbos.ts` observes the DBOS
+ *          workflow table at each export. Every instrument binds to the
+ *          provider registered here: a record site at its first use, the
+ *          DBOS gauges at boot, after this init.
  *
  * Resource: the host's `serviceName` / `serviceVersion` merged with the SDK
  *           env detector (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`);

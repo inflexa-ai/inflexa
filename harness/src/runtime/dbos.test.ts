@@ -1,17 +1,28 @@
 /**
  * Unit tests for the DBOS bootstrap module. The actual DBOS engine is not
- * launched — these tests cover idempotence, state reporting, shutdown, and
- * the legacy pre-recovery migration sweep.
+ * launched — these tests cover idempotence, state reporting, shutdown, the
+ * legacy pre-recovery migration sweep, and the workflow health gauges.
  *
  * End-to-end "launch a real DBOS against a testcontainer" coverage lives
  * with the durable workflow tests (change 8).
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { type Attributes, metrics } from "@opentelemetry/api";
+import { AggregationTemporality, type GaugeMetricData, InMemoryMetricExporter, MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import type { Pool } from "pg";
 
 import { createCapturingLogger, silentLogger } from "../__tests__/setup/logger.js";
-import { __resetDbosStateForTest, __setDbosStateForTest, dbosSdkConfig, dbosSdkLogger, dbosState, sweepEphemeralWorkflows, type DbosConfig } from "./dbos.js";
+import {
+    __resetDbosStateForTest,
+    __setDbosStateForTest,
+    dbosSdkConfig,
+    dbosSdkLogger,
+    dbosState,
+    observeDbosWorkflows,
+    sweepEphemeralWorkflows,
+    type DbosConfig,
+} from "./dbos.js";
 
 const stubConfig = {} as DbosConfig;
 
@@ -176,5 +187,101 @@ describe("legacy ephemeral workflow migration sweep", () => {
         expect(queries[0]!.text).toContain("executor_id = $2");
         expect(queries[0]!.text).toContain("workflow_uuid LIKE 'ephemeral:%'");
         expect(queries[0]!.values?.[1]).toBe("executor-1");
+    });
+});
+
+describe("workflow health gauges", () => {
+    let exporter: InMemoryMetricExporter;
+    let provider: MeterProvider;
+
+    beforeEach(() => {
+        exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+        provider = new MeterProvider({ readers: [new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 })] });
+    });
+
+    afterEach(async () => {
+        await provider.shutdown();
+        metrics.disable();
+    });
+
+    /** Run one collection and give the points of each gauge that it exported, by instrument name. */
+    async function collect(): Promise<Record<string, Array<[Attributes, number]>>> {
+        exporter.reset();
+        await provider.forceFlush();
+        const exported: Record<string, Array<[Attributes, number]>> = {};
+        for (const metric of exporter
+            .getMetrics()
+            .flatMap((rm) => rm.scopeMetrics)
+            .flatMap((sm) => sm.metrics)) {
+            const points = (metric as GaugeMetricData).dataPoints;
+            if (points.length > 0) exported[metric.descriptor.name] = points.map((point) => [point.attributes, point.value]);
+        }
+        return exported;
+    }
+
+    it("maps the grouped rows onto the gauges, and observes zero for a status that has no row", async () => {
+        metrics.setGlobalMeterProvider(provider);
+        __setDbosStateForTest({ launched: true });
+        // `pg` answers a message of two statements with one result for each, and a bigint as a string.
+        const answers = [
+            [{ rows: [] }, { rows: [{ status: "PENDING", stale: "2", max_recovery_attempts: "7" }] }],
+            [{ rows: [] }, { rows: [] }],
+        ];
+        const pool = { query: () => Promise.resolve(answers.shift()) } as unknown as Pool;
+        observeDbosWorkflows({ pool, logger: silentLogger });
+
+        expect(await collect()).toEqual({
+            "cortex.dbos.workflows.stale": [
+                [{ status: "PENDING" }, 2],
+                [{ status: "ENQUEUED" }, 0],
+            ],
+            "cortex.dbos.workflows.recovery_attempts.max": [[{}, 7]],
+        });
+        // The stuck workflow ended. The export repeats an attribute set that a
+        // collection leaves out, thus the gauges must fall back to zero here.
+        expect(await collect()).toEqual({
+            "cortex.dbos.workflows.stale": [
+                [{ status: "PENDING" }, 0],
+                [{ status: "ENQUEUED" }, 0],
+            ],
+            "cortex.dbos.workflows.recovery_attempts.max": [[{}, 0]],
+        });
+    });
+
+    it("logs a failed query as a warning and observes nothing", async () => {
+        metrics.setGlobalMeterProvider(provider);
+        __setDbosStateForTest({ launched: true });
+        const logger = createCapturingLogger();
+        const pool = { query: () => Promise.reject(new Error("Connection terminated unexpectedly")) } as unknown as Pool;
+        observeDbosWorkflows({ pool, logger });
+
+        expect(await collect()).toEqual({});
+        expect(logger.records.map((record) => [record.level, record.msg])).toEqual([["warn", "[dbos] workflow health query failed"]]);
+    });
+
+    it("issues no query while metric export is off or DBOS is not launched", async () => {
+        let queries = 0;
+        const pool = {
+            query: () => {
+                queries += 1;
+                return Promise.resolve([{ rows: [] }, { rows: [] }]);
+            },
+        } as unknown as Pool;
+
+        // Metric export off: the boot finds no MeterProvider, thus the gauges
+        // bind to the API no-op meter, which never calls back. A provider that
+        // is registered later does not adopt them.
+        __setDbosStateForTest({ launched: true });
+        observeDbosWorkflows({ pool, logger: silentLogger });
+        metrics.setGlobalMeterProvider(provider);
+        await collect();
+
+        // DBOS not launched: before launch the schema can be absent, and at
+        // shutdown the pool closes before the last export.
+        __setDbosStateForTest({ launched: false });
+        observeDbosWorkflows({ pool, logger: silentLogger });
+        await collect();
+
+        expect(queries).toBe(0);
     });
 });
