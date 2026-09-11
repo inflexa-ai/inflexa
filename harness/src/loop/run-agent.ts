@@ -19,7 +19,8 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { ATTR_INFLEXA_TOOL_USE_ID, stableSpan } from "../lib/otel-spans.js";
+import { traceAgentRun, traceToolCall, type AgentSpan } from "../lib/genai-spans.js";
+import { ATTR_INFLEXA_TOOL_USE_ID, stableSpan, supersedeStepSpan } from "../lib/otel-spans.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
@@ -163,7 +164,17 @@ export interface RunAgentOptions {
     readonly invocationId?: string;
 }
 
-export async function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
+export function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
+    return traceAgentRun(agent.id, session, (agentSpan) => runAgentLoop(agent, initial, session, opts, agentSpan));
+}
+
+async function runAgentLoop(
+    agent: AgentDefinition,
+    initial: readonly LoopMessage[],
+    session: AgentSession,
+    opts: RunAgentOptions,
+    agentSpan: AgentSpan,
+): Promise<RunAgentResult> {
     const { provider, signal, emit, runStep } = opts;
     const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
     const configuredFatalLoopError = opts.isFatalLoopError ?? (() => false);
@@ -403,6 +414,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 
     for (let i = 0; i < agent.maxIterations; i++) {
         iterations = i + 1;
+        agentSpan.iterated(iterations);
         const request: ChatRequest = {
             system: agent.systemPrompt,
             messages: withPromptCacheBreakpoint(messages, promptCache),
@@ -411,8 +423,9 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             reasoning,
         };
         const llmStepName = formatStepName.llm(i);
-        const reply = await resultStep(runStep)(llmStepName, () => provider.chat(request, session, signal));
+        const { reply, replayed } = await callModel(runStep, llmStepName, () => provider.chat(request, session, signal));
         accountForCall(reply, llmStepName);
+        const toolSpans: ToolSpans = { agentName: agent.id, replayed };
 
         if (reply.finishReason === "aborted") {
             // An interrupted turn keeps whatever the model produced before the cut, but
@@ -457,6 +470,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
                 runStep,
                 formatStepName.tool,
                 encoding,
+                toolSpans,
             );
             const errored = await settleRound(earlier, results, earlierDetails, resultDetails, durations);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
@@ -516,6 +530,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             runStep,
             formatStepName.tool,
             encoding,
+            toolSpans,
         );
         const errored = await settleRound(toolCalls, results, details, resultDetails, durations);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
@@ -532,7 +547,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // because it is the one call whose write is pure waste, and the
     // cache_write_tokens counter is what makes that waste visible.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
-    const wrapUp = await resultStep(runStep)(wrapUpStepName, () =>
+    const { reply: wrapUp } = await callModel(runStep, wrapUpStepName, () =>
         provider.chat(
             { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: {}, toolChoice: "none", reasoning },
             session,
@@ -736,7 +751,39 @@ function appendDeferredImages(messages: LoopMessage[], results: readonly ToolRes
 }
 
 /**
- * Dispatch one round of tool calls, and measure the time of each call.
+ * Run one model call as a step, in place of the DBOS span of that step, thus the
+ * chat span of the provider takes the place of the step span in a trace.
+ * `replayed` is true when the step handed back its recorded reply and the call
+ * did not run: a recovered workflow replays its completed steps this way.
+ */
+async function callModel(
+    runStep: RunStep,
+    stepName: string,
+    call: () => ReturnType<AgentChat["chat"]>,
+): Promise<{ readonly reply: ChatResponse; readonly replayed: boolean }> {
+    let ran = false;
+    const reply = await resultStep(runStep)(stepName, () => {
+        ran = true;
+        return supersedeStepSpan(stepName, call);
+    });
+    return { reply, replayed: !ran };
+}
+
+/**
+ * How the tool calls of one round are traced. A step-mode call opens its span
+ * inside its step body, which a replayed step never runs. A workflow- or
+ * inline-mode call runs outside a step, and it runs again when a recovered
+ * workflow replays the round. Thus it opens no span when the model reply of the
+ * round was `replayed`.
+ */
+interface ToolSpans {
+    readonly agentName: string;
+    readonly replayed: boolean;
+}
+
+/**
+ * Dispatch one round of tool calls, and measure the time of each call. Each call
+ * that runs opens an `execute_tool` span (refer to `ToolSpans`).
  *
  * `results`, `durations` and `resultDetails` are positionally aligned with `toolUses`.
  *
@@ -753,7 +800,16 @@ async function dispatchTools(
     runStep: RunStep,
     toolStepName: (toolName: string, toolUseId: string) => string,
     encoding: ResultEncoding,
+    spans: ToolSpans,
 ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> {
+    const traced = (tu: ToolCallPart): Promise<DispatchedCall> =>
+        traceToolCall(
+            { toolName: tu.toolName, toolCallId: tu.toolCallId, agentName: spans.agentName },
+            () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding),
+            (dispatched) => outcomeOf(dispatched.result),
+        );
+    const untracedOnReplay = (tu: ToolCallPart): Promise<DispatchedCall> =>
+        spans.replayed ? dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding) : traced(tu);
     const results = new Array<ToolResultPart>(toolUses.length);
     // The array starts with holes, which read as `undefined`. The element type
     // says so, thus it agrees with what `settleRound` accepts. Every index is in
@@ -778,10 +834,7 @@ async function dispatchTools(
         stepTools.map(({ tu, idx }) => {
             const startedAt = performance.now();
             const stepName = toolStepName(tu.toolName, tu.toolCallId);
-            return runStep(stepName, () => {
-                stableSpan(stepName, `tool:${tu.toolName}`, { [ATTR_INFLEXA_TOOL_USE_ID]: tu.toolCallId });
-                return dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
-            }).then((settled: DispatchedCall | ToolResultPart) => {
+            return runStep(stepName, () => supersedeStepSpan(stepName, () => traced(tu))).then((settled: DispatchedCall | ToolResultPart) => {
                 durations[idx] = elapsedMs(startedAt);
                 const dispatched = readDispatchedStep(settled);
                 results[idx] = dispatched.result;
@@ -792,14 +845,14 @@ async function dispatchTools(
 
     for (const { tu, idx } of workflowTools) {
         const startedAt = performance.now();
-        const dispatched = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+        const dispatched = await untracedOnReplay(tu);
         results[idx] = dispatched.result;
         if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
         durations[idx] = elapsedMs(startedAt);
     }
     for (const { tu, idx } of inlineTools) {
         const startedAt = performance.now();
-        const dispatched = await dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding);
+        const dispatched = await untracedOnReplay(tu);
         results[idx] = dispatched.result;
         if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
         durations[idx] = elapsedMs(startedAt);

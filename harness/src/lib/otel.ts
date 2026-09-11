@@ -10,7 +10,9 @@
  *         recorded (and its children with it), a replayed `cached=true` span
  *         is dropped before export, and a step body that calls `stableSpan`
  *         is exported under a stable name with its id in an `inflexa.*`
- *         attribute.
+ *         attribute. The GenAI spans of the loop and the providers
+ *         (genai-spans.ts) replace the DBOS spans of the model and tool steps
+ *         they describe, and the processor drops the replaced spans.
  *
  * Metrics: MeterProvider exports to OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is
  *          set and OTEL_METRICS_EXPORTER is not `none`. The export interval is
