@@ -69,7 +69,7 @@ func signCallback(secret []byte, execID string, ts int64, body []byte) string {
 var errCallbackGiveup = errors.New("callback giveup (4xx)")
 
 // post sends a signed callback with exponential backoff retry until 2xx or
-// context cancellation.
+// context cancellation. Each attempt carries the trace context of the exec.
 //
 // Every attempt is signed afresh. Cortex verifies the timestamp against a
 // symmetric freshness window (`DEFAULT_FRESHNESS_SECONDS`, 300s, in
@@ -79,7 +79,7 @@ var errCallbackGiveup = errors.New("callback giveup (4xx)")
 // ingress that was down for six minutes, say — could never be accepted again,
 // no matter how long the retries continued. The signature must age with the
 // attempt, not with the result.
-func (c *callbackClient) post(ctx context.Context, kind callbackKind, execID string, body []byte) error {
+func (c *callbackClient) post(ctx context.Context, kind callbackKind, execID string, trace traceContext, body []byte) error {
 	url := fmt.Sprintf("%s/sandbox/%s/%s", c.baseURL, execID, kind)
 
 	attempt := 0
@@ -89,7 +89,7 @@ func (c *callbackClient) post(ctx context.Context, kind callbackKind, execID str
 		ts := c.now().Unix()
 		sig := signCallback(c.secret, execID, ts, body)
 		start := c.now()
-		status, err := c.send(ctx, url, body, ts, sig)
+		status, err := c.send(ctx, url, body, ts, sig, trace)
 		dur := c.now().Sub(start).Milliseconds()
 
 		if status >= 200 && status < 300 {
@@ -142,7 +142,7 @@ func isRetryable(status int, err error) bool {
 	return false
 }
 
-func (c *callbackClient) send(ctx context.Context, url string, body []byte, ts int64, sig string) (int, error) {
+func (c *callbackClient) send(ctx context.Context, url string, body []byte, ts int64, sig string, trace traceContext) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
@@ -150,6 +150,14 @@ func (c *callbackClient) send(ctx context.Context, url string, body []byte, ts i
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(headerSignature, sig)
 	req.Header.Set(headerTimestamp, strconv.FormatInt(ts, 10))
+	// The signature covers the execId, the timestamp and the body digest only,
+	// so the trace headers leave it valid.
+	if trace.traceparent != "" {
+		req.Header.Set(headerTraceparent, trace.traceparent)
+		if trace.tracestate != "" {
+			req.Header.Set(headerTracestate, trace.tracestate)
+		}
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

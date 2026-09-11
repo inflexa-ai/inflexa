@@ -48,6 +48,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,6 +104,52 @@ func extractTraceId(r *http.Request) string {
 		return ""
 	}
 	return parts[1]
+}
+
+const (
+	headerTraceparent = "traceparent"
+	headerTracestate  = "tracestate"
+)
+
+// traceparentPattern is the shape of a W3C Trace Context traceparent: version,
+// trace id, parent id and flags, in lowercase hex.
+var traceparentPattern = regexp.MustCompile(`^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
+
+// traceContext is the W3C Trace Context that an exec arrived with. The zero
+// value carries no trace.
+//
+// sandbox-server records no spans, so it does not take part in the trace. It
+// sends the pair unchanged on each callback for the exec, and Cortex opens the
+// callback span as a child of the span that submitted the exec.
+type traceContext struct {
+	traceparent string
+	tracestate  string
+}
+
+// inboundTraceContext reads the trace context of a submit. It keeps a
+// traceparent only when the request carries exactly one, it matches
+// traceparentPattern, its version is not the reserved ff, and neither its trace
+// id nor its parent id is all zeros. Without that traceparent a tracestate
+// means nothing, so the result is then the zero value.
+func inboundTraceContext(r *http.Request) traceContext {
+	values := r.Header.Values(headerTraceparent)
+	if len(values) != 1 {
+		return traceContext{}
+	}
+	tp := values[0]
+	if !traceparentPattern.MatchString(tp) || tp[:2] == "ff" || allZeros(tp[3:35]) || allZeros(tp[36:52]) {
+		return traceContext{}
+	}
+	// A tracestate can arrive split over several header lines; a comma joins
+	// them back into one list, as HTTP defines for a repeated field.
+	return traceContext{
+		traceparent: tp,
+		tracestate:  strings.Join(r.Header.Values(headerTracestate), ","),
+	}
+}
+
+func allZeros(s string) bool {
+	return strings.Trim(s, "0") == ""
 }
 
 // truncateCommand joins a command slice and truncates to maxLen chars.

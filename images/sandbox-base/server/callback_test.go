@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"net/http"
@@ -51,7 +53,7 @@ func TestCallbackClient_HappyPath(t *testing.T) {
 
 	c := newCallbackClient(srv.URL, []byte("s"))
 	c.sleep = func(context.Context, time.Duration) {}
-	if err := c.post(context.Background(), callbackKindEvent, "x1", []byte(`{}`)); err != nil {
+	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	if got := atomic.LoadInt32(&attempts); got != 1 {
@@ -95,7 +97,7 @@ func TestCallbackClient_ReSignsEveryAttempt(t *testing.T) {
 		return time.Unix(1_700_000_000+ticks, 0)
 	}
 
-	if err := c.post(context.Background(), callbackKindEvent, "x1", []byte(`{}`)); err != nil {
+	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
 	if got := atomic.LoadInt32(&attempts); got != 2 {
@@ -130,7 +132,7 @@ func TestCallbackClient_EachAttemptSignatureVerifies(t *testing.T) {
 
 	c := newCallbackClient(srv.URL, secret)
 	c.sleep = func(context.Context, time.Duration) {}
-	if err := c.post(context.Background(), callbackKindComplete, "x1", body); err != nil {
+	if err := c.post(context.Background(), callbackKindComplete, "x1", traceContext{}, body); err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
 	if got := atomic.LoadInt32(&attempts); got != 3 {
@@ -173,7 +175,7 @@ func TestCallbackClient_DeliveryAfterFreshnessWindowCarriesFreshTimestamp(t *tes
 	c.sleep = func(context.Context, time.Duration) { clock = clock.Add(time.Minute) }
 	c.now = func() time.Time { return clock }
 
-	if err := c.post(context.Background(), callbackKindComplete, "x1", []byte(`{}`)); err != nil {
+	if err := c.post(context.Background(), callbackKindComplete, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected eventual success, got %v", err)
 	}
 	if !accepted {
@@ -194,7 +196,7 @@ func TestCallbackClient_GivesUpOn4xx(t *testing.T) {
 
 	c := newCallbackClient(srv.URL, []byte("s"))
 	c.sleep = func(context.Context, time.Duration) {}
-	err := c.post(context.Background(), callbackKindEvent, "x1", []byte(`{}`))
+	err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "giveup") {
 		t.Fatalf("expected giveup error, got %v", err)
 	}
@@ -219,7 +221,7 @@ func TestCallbackClient_RetriesOnNetworkError(t *testing.T) {
 
 	c := newCallbackClient(srv.URL, []byte("s"))
 	c.sleep = func(context.Context, time.Duration) {}
-	if err := c.post(context.Background(), callbackKindEvent, "x1", []byte(`{}`)); err != nil {
+	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("expected success after network retry, got %v", err)
 	}
 	if got := atomic.LoadInt32(&attempts); got != 3 {
@@ -247,7 +249,7 @@ func TestCallbackClient_SecretNotInRequest(t *testing.T) {
 
 	c := newCallbackClient(srv.URL, secret)
 	c.sleep = func(context.Context, time.Duration) {}
-	if err := c.post(context.Background(), callbackKindComplete, "x1", []byte(`{"exitCode":0}`)); err != nil {
+	if err := c.post(context.Background(), callbackKindComplete, "x1", traceContext{}, []byte(`{"exitCode":0}`)); err != nil {
 		t.Fatalf("post failed: %v", err)
 	}
 }
@@ -267,7 +269,7 @@ func TestCallbackClient_BackoffGrows(t *testing.T) {
 
 	c := newCallbackClient(srv.URL, []byte("s"))
 	c.sleep = func(_ context.Context, d time.Duration) { sleeps = append(sleeps, d) }
-	if err := c.post(context.Background(), callbackKindEvent, "x1", []byte(`{}`)); err != nil {
+	if err := c.post(context.Background(), callbackKindEvent, "x1", traceContext{}, []byte(`{}`)); err != nil {
 		t.Fatalf("post failed: %v", err)
 	}
 	if len(sleeps) < 2 {
@@ -278,5 +280,37 @@ func TestCallbackClient_BackoffGrows(t *testing.T) {
 	}
 	if sleeps[1] != callbackBackoffBase*2 {
 		t.Fatalf("expected second sleep %v, got %v", callbackBackoffBase*2, sleeps[1])
+	}
+}
+
+// Cortex verifies a callback as `verifyCallback` in harness/src/sandbox/hmac.ts
+// does: an HMAC-SHA256 over `${execId}:${timestamp}:${sha256Hex(body)}`, with no
+// header in the message. The stand-in below computes that message on its own,
+// so a callback that carries a trace context must still verify.
+func TestCallbackClient_TraceContextLeavesTheSignatureValid(t *testing.T) {
+	secret := []byte("topsecret")
+	trace := traceContext{traceparent: testTraceparent, tracestate: testTracestate}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Header.Get(headerTraceparent) != testTraceparent || r.Header.Get(headerTracestate) != testTracestate {
+			t.Errorf("callback carries traceparent=%q tracestate=%q, want the trace context",
+				r.Header.Get(headerTraceparent), r.Header.Get(headerTracestate))
+		}
+		digest := sha256.Sum256(body)
+		mac := hmac.New(sha256.New, secret)
+		mac.Write([]byte("traced:" + r.Header.Get(headerTimestamp) + ":" + hex.EncodeToString(digest[:])))
+		if !hmac.Equal([]byte(r.Header.Get(headerSignature)), []byte(hex.EncodeToString(mac.Sum(nil)))) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newCallbackClient(srv.URL, secret)
+	c.sleep = func(context.Context, time.Duration) {}
+	if err := c.post(context.Background(), callbackKindComplete, "traced", trace, []byte(`{"exitCode":0}`)); err != nil {
+		t.Fatalf("callback with a trace context did not verify: %v", err)
 	}
 }
