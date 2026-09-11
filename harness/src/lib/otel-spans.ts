@@ -23,9 +23,13 @@
  *   name itself is untouched: DBOS compares it against the recorded name on
  *   replay and throws `DBOSUnexpectedStepError` on a mismatch, so a rename
  *   would break every workflow in flight across a deploy.
+ * - A step whose work a GenAI span describes (a model call, a tool call; see
+ *   `genai-spans.ts`) runs its body in `supersedeStepSpan`. The helper marks
+ *   the DBOS step span, `DbosSpanProcessor` drops it at `onEnd`, and the body
+ *   runs under the parent of that span, so the GenAI span takes its place.
  */
 
-import { trace, type Attributes, type Context } from "@opentelemetry/api";
+import { context, trace, type Attributes, type Context } from "@opentelemetry/api";
 import {
     ParentBasedSampler,
     SamplingDecision,
@@ -78,13 +82,15 @@ export function createHarnessSampler(): Sampler {
     return new ParentBasedSampler({ root: new UntracedWorkflowRootSampler() });
 }
 
-/** The plan step id a `compose-step-seed` step carries. */
+/** The run id that the agent span of a run carries. */
+export const ATTR_INFLEXA_RUN_ID = "inflexa.run_id";
+/** The plan step id that a `compose-step-seed` step and the agent span of a run step carry. */
 export const ATTR_INFLEXA_STEP_ID = "inflexa.step_id";
 /** The provider tool-use id of a tool step. */
 export const ATTR_INFLEXA_TOOL_USE_ID = "inflexa.tool_use_id";
 /** The exec id (`${workflowId}:${stepId}:${fnId}`) of a sandbox exec step. */
 export const ATTR_INFLEXA_EXEC_ID = "inflexa.exec_id";
-/** The 1-based attempt counter of a sandbox poll, pull, or liveness-probe step. */
+/** The 1-based attempt counter of a sandbox poll, pull, or liveness-probe step, and of a failed attempt on a provider retry event. */
 export const ATTR_INFLEXA_ATTEMPT = "inflexa.attempt";
 /** The per-item key (a ChEMBL or NCT id) of a target-assessment fan-out step. */
 export const ATTR_INFLEXA_FANOUT_KEY = "inflexa.fanout_key";
@@ -109,9 +115,38 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
     span.setAttributes(attributes);
 }
 
+/** Marks a DBOS step span that a harness span replaces. The span processor drops a span that carries it. */
+const ATTR_SUPERSEDED = "inflexa.superseded";
+
+/**
+ * Run a step body in place of the DBOS span of its step. Wrap the whole body of
+ * a step whose work a harness span describes, with the DBOS step name as
+ * `dbosName`.
+ *
+ * The helper marks the DBOS step span, and `DbosSpanProcessor` drops it at
+ * `onEnd`. It runs `fn` under the parent of that span, thus each span that `fn`
+ * opens, each span below those, and the `traceparent` of each outbound request
+ * name an exported parent: no exported span points at the dropped one. DBOS
+ * opens no other span under a step span, and it records the step outside it.
+ *
+ * With tracing off, or on a path with no DBOS step (the chat route), the
+ * active span is not the step span, and the helper only runs `fn`.
+ */
+export function supersedeStepSpan<T>(dbosName: string, fn: () => T): T {
+    const span = trace.getActiveSpan();
+    if (span === undefined || !span.isRecording()) return fn();
+    // The API `Span` has no name or parent accessor; the SDK span the provider hands out has both.
+    const step = span as Partial<ReadableSpan>;
+    if (step.name !== dbosName) return fn();
+    span.setAttribute(ATTR_SUPERSEDED, true);
+    const parent = step.parentSpanContext;
+    const outer = parent === undefined ? trace.deleteSpan(context.active()) : trace.setSpanContext(context.active(), parent);
+    return context.with(outer, fn);
+}
+
 /**
  * Sits in front of the exporting processor and forwards every span except a
- * replayed one (`cached=true`), which it drops at `onEnd`.
+ * replayed one (`cached=true`) and a superseded one, which it drops at `onEnd`.
  */
 export class DbosSpanProcessor implements SpanProcessor {
     constructor(private readonly next: SpanProcessor) {}
@@ -125,7 +160,7 @@ export class DbosSpanProcessor implements SpanProcessor {
     }
 
     onEnd(span: ReadableSpan): void {
-        if (span.attributes.cached === true) return;
+        if (span.attributes.cached === true || span.attributes[ATTR_SUPERSEDED] === true) return;
         this.next.onEnd(span);
     }
 
