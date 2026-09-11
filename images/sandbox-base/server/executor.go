@@ -155,6 +155,7 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	traceID := extractTraceId(r)
+	trace := inboundTraceContext(r)
 	status, isNew := e.table.reserve(req.ExecID)
 	emitLog(execSubmittedLog{
 		Level: "info", Time: nowRFC3339(), Event: "exec.submitted",
@@ -166,13 +167,14 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go e.run(req, traceID)
+	go e.run(req, traceID, trace)
 	writeJSONResponse(w, http.StatusAccepted, execSubmitResponse{ExecID: req.ExecID, Status: string(execStatusRunning)})
 }
 
 // run executes the command in the background. It owns the full lifecycle:
-// spawn, structured logs, tree-diff emission, completion callback.
-func (e *executor) run(req execSubmitRequest, traceID string) {
+// spawn, structured logs, tree-diff emission, completion callback. Each
+// callback carries trace, the trace context that the exec arrived with.
+func (e *executor) run(req execSubmitRequest, traceID string, trace traceContext) {
 	cmdStr := truncateCommand(req.Command, commandMaxLen)
 	startedAt := time.Now()
 
@@ -201,17 +203,17 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stdout pipe: %s", err), provTracker, provenanceDisabled)
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stdout pipe: %s", err), provTracker, provenanceDisabled, trace)
 		return
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stderr pipe: %s", err), provTracker, provenanceDisabled)
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("stderr pipe: %s", err), provTracker, provenanceDisabled, trace)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: spawn failed: %s", err), provTracker, provenanceDisabled)
+		e.failBeforeSpawn(req.ExecID, traceID, cmdStr, req.Cwd, startedAt, fmt.Sprintf("sandbox-server: spawn failed: %s", err), provTracker, provenanceDisabled, trace)
 		return
 	}
 
@@ -237,7 +239,7 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 	go capturePipe(stdoutPipe, "stdout", traceID, req.ExecID, pid, stdoutBuilder, nil, nil, &wg)
 	go capturePipe(stderrPipe, "stderr", traceID, req.ExecID, pid, stderrBuilder, stderrBuf, &stderrBufMu, &wg)
 
-	diffStop := e.startTreeDiffer(ctx, req)
+	diffStop := e.startTreeDiffer(ctx, req, trace)
 
 	wg.Wait()
 	waitErr := cmd.Wait()
@@ -312,7 +314,7 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 		})
 	}
 
-	e.postCompletion(req.ExecID, completionPayload{
+	e.postCompletion(req.ExecID, trace, completionPayload{
 		ExecID:           req.ExecID,
 		ExitCode:         exitCode,
 		Stdout:           stdout,
@@ -328,7 +330,7 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 	})
 }
 
-func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedAt time.Time, errMsg string, tracker *ProvenanceTracker, provenanceDisabled bool) {
+func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedAt time.Time, errMsg string, tracker *ProvenanceTracker, provenanceDisabled bool, trace traceContext) {
 	durationMs := time.Since(startedAt).Milliseconds()
 	now := nowRFC3339()
 	emitLog(execStartLog{
@@ -347,7 +349,7 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 	})
 
 	prov := &provenancePayload{Disabled: provenanceDisabled}
-	e.postCompletion(execID, completionPayload{
+	e.postCompletion(execID, trace, completionPayload{
 		ExecID: execID, ExitCode: 127, Stderr: errMsg, DurationMs: durationMs, Provenance: prov,
 	})
 }
@@ -358,7 +360,7 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 // `GET /exec/{execId}` and never dials out; callback mode additionally pushes,
 // but a host that was down for the whole retry window can still pull the same
 // bytes (provenance frame included) once it comes back.
-func (e *executor) postCompletion(execID string, payload completionPayload) {
+func (e *executor) postCompletion(execID string, trace traceContext, payload completionPayload) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[completion] marshal failed for %s: %v", execID, err)
@@ -373,7 +375,7 @@ func (e *executor) postCompletion(execID string, payload completionPayload) {
 	if !e.table.claimCompletionPost(execID) {
 		return
 	}
-	if perr := e.callback.post(context.Background(), callbackKindComplete, execID, body); perr != nil {
+	if perr := e.callback.post(context.Background(), callbackKindComplete, execID, trace, body); perr != nil {
 		log.Printf("[completion] post failed for %s: %v", execID, perr)
 		e.table.releaseCompletionPost(execID)
 	}
@@ -381,7 +383,7 @@ func (e *executor) postCompletion(execID string, payload completionPayload) {
 
 // startTreeDiffer launches the periodic tree-diff loop for an exec. Returns a
 // stop function (nil when no diff root is configured for this exec).
-func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest) func() {
+func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest, trace traceContext) func() {
 	root := treeDiffRootForExec(req.Cwd)
 	if root == "" {
 		return nil
@@ -404,7 +406,7 @@ func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest) f
 				if !changed {
 					continue
 				}
-				e.emitTreeEvent(req.ExecID, delta)
+				e.emitTreeEvent(req.ExecID, trace, delta)
 			}
 		}
 	}()
@@ -412,12 +414,12 @@ func (e *executor) startTreeDiffer(ctx context.Context, req execSubmitRequest) f
 		close(stop)
 		<-done
 		if delta, changed := d.tick(); changed {
-			e.emitTreeEvent(req.ExecID, delta)
+			e.emitTreeEvent(req.ExecID, trace, delta)
 		}
 	}
 }
 
-func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
+func (e *executor) emitTreeEvent(execID string, trace traceContext, delta treeDiff) {
 	body, err := json.Marshal(eventPayload{
 		ExecID:    execID,
 		Kind:      "file-tree",
@@ -433,7 +435,7 @@ func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
 		e.table.appendEvent(execID, body)
 		return
 	}
-	if perr := e.callback.post(context.Background(), callbackKindEvent, execID, body); perr != nil {
+	if perr := e.callback.post(context.Background(), callbackKindEvent, execID, trace, body); perr != nil {
 		log.Printf("[event] post failed for %s: %v", execID, perr)
 	}
 }

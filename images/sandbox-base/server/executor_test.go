@@ -25,10 +25,12 @@ type callbackReceiver struct {
 }
 
 type receivedCallback struct {
-	ExecID    string
-	Signature string
-	Timestamp string
-	Body      []byte
+	ExecID      string
+	Signature   string
+	Timestamp   string
+	Traceparent string
+	Tracestate  string
+	Body        []byte
 }
 
 func (rec *callbackReceiver) handler() http.HandlerFunc {
@@ -42,10 +44,12 @@ func (rec *callbackReceiver) handler() http.HandlerFunc {
 		}
 		execID, kind := parts[1], parts[2]
 		cb := receivedCallback{
-			ExecID:    execID,
-			Signature: r.Header.Get(headerSignature),
-			Timestamp: r.Header.Get(headerTimestamp),
-			Body:      body,
+			ExecID:      execID,
+			Signature:   r.Header.Get(headerSignature),
+			Timestamp:   r.Header.Get(headerTimestamp),
+			Traceparent: r.Header.Get(headerTraceparent),
+			Tracestate:  r.Header.Get(headerTracestate),
+			Body:        body,
 		}
 		rec.mu.Lock()
 		if rec.failures < rec.maxFails {
@@ -114,9 +118,21 @@ func execIDFromBody(b []byte) string {
 
 func submit(t *testing.T, exe *executor, body any) *httptest.ResponseRecorder {
 	t.Helper()
+	return submitWithHeader(t, exe, body, nil)
+}
+
+// submitWithHeader is submit with extra request headers. The signature covers
+// the body only, so the headers have no part in it.
+func submitWithHeader(t *testing.T, exe *executor, body any, header http.Header) *httptest.ResponseRecorder {
+	t.Helper()
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(b))
 	signInbound(req, execIDFromBody(b), b, exe.auth.secret)
+	for name, values := range header {
+		for _, v := range values {
+			req.Header.Add(name, v)
+		}
+	}
 	rw := httptest.NewRecorder()
 	exe.handle(rw, req)
 	return rw
@@ -421,6 +437,74 @@ func TestExecHandler_NoEventsOnIdleTree(t *testing.T) {
 
 	if got := rec.eventsCount(); got != 0 {
 		t.Fatalf("expected 0 events on idle tree, got %d", got)
+	}
+}
+
+const (
+	testTraceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	testTracestate  = "vendor=opaque"
+)
+
+// Cortex opens the span of a callback as a child of the traceparent that the
+// callback carries. Each callback of an exec, event and completion alike, must
+// carry the trace context that the exec arrived with, unchanged, or it starts a
+// trace of its own.
+func TestExecHandler_CallbacksCarryTheTraceContextOfTheExec(t *testing.T) {
+	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
+	defer cleanup()
+
+	t.Setenv(envTreeDiffInterval, "50")
+	submitWithHeader(t, exe, map[string]any{
+		"command": []string{"sh", "-c", "sleep 0.4; touch newfile.txt; sleep 0.4"},
+		"execId":  "traced",
+		"cwd":     t.TempDir(),
+	}, http.Header{
+		"Traceparent": {testTraceparent},
+		"Tracestate":  {testTracestate},
+	})
+	waitFor(t, func() bool { return rec.completeCount() == 1 }, 5*time.Second)
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.events) == 0 {
+		t.Fatalf("expected at least one tree-diff event, got 0")
+	}
+	for _, cb := range append(append([]receivedCallback{}, rec.events...), rec.complete...) {
+		if cb.Traceparent != testTraceparent || cb.Tracestate != testTracestate {
+			t.Errorf("callback carries traceparent=%q tracestate=%q, want the trace context of the exec", cb.Traceparent, cb.Tracestate)
+		}
+	}
+}
+
+// Cortex must not receive a traceparent that it cannot parse. The callbacks of
+// an exec that arrives with no traceparent, or with a malformed one, thus carry
+// no trace header at all.
+func TestExecHandler_CallbacksCarryNoTraceContextWithoutAValidTraceparent(t *testing.T) {
+	cases := map[string]http.Header{
+		"absent":           {},
+		"tracestate only":  {"Tracestate": {testTracestate}},
+		"uppercase hex":    {"Traceparent": {strings.ToUpper(testTraceparent)}},
+		"extra field":      {"Traceparent": {testTraceparent + "-00"}},
+		"version ff":       {"Traceparent": {"ff" + testTraceparent[2:]}},
+		"zero trace id":    {"Traceparent": {"00-" + strings.Repeat("0", 32) + testTraceparent[35:]}},
+		"zero parent id":   {"Traceparent": {testTraceparent[:36] + strings.Repeat("0", 16) + testTraceparent[52:]}},
+		"two traceparents": {"Traceparent": {testTraceparent, testTraceparent}},
+	}
+	for name, header := range cases {
+		t.Run(name, func(t *testing.T) {
+			exe, rec, cleanup := newTestExecutor(t, []byte("s"))
+			defer cleanup()
+
+			submitWithHeader(t, exe, map[string]any{
+				"command": []string{"true"},
+				"execId":  "untraced",
+			}, header)
+			waitFor(t, func() bool { return rec.completeCount() == 1 }, 3*time.Second)
+
+			if cb := rec.lastComplete(); cb.Traceparent != "" || cb.Tracestate != "" {
+				t.Fatalf("callback carries traceparent=%q tracestate=%q, want none", cb.Traceparent, cb.Tracestate)
+			}
+		})
 	}
 }
 
