@@ -29,12 +29,7 @@ REFERENCE_LEVEL  <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL       <- {{test_level}}  # [adaptable: test_level]
 DESIGN           <- {{design}}  # [adaptable: design]
 MIN_COUNT        <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES      <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES      <- NA_integer_  # [adaptable: min_samples] NA: the smallest condition group size, computed below
-{{/unless}}
+MIN_SAMPLES      <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest condition group size, computed below
 ALPHA            <- {{alpha}}
 LFC_SHRINK       <- {{lfc_shrink}}  # [adaptable: lfc_shrink]
 LFC_THRESHOLD    <- {{lfc_threshold}}  # [adaptable: lfc_threshold]

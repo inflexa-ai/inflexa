@@ -35,8 +35,27 @@ const BODY = [
     "alpha <- {{alpha}}",
     "min_count <- {{min_count}}  # [adaptable: min_count]",
     'shrink <- {{shrink}}  # [adaptable: shrink]',
-    "{{#if batch}}batch <- {{batch}}  # [adaptable: batch]{{/if}}",
-    "{{#unless batch}}batch <- NULL{{/unless}}",
+    "batch <- {{batch}}  # [adaptable: batch]",
+].join("\n");
+
+const PYTHON_TEMPLATE: Template = {
+    ...TEMPLATE,
+    id: "tpl-py",
+    language: "python",
+    parameters: [
+        { name: "design", type: "formula", description: "d", adaptable: true },
+        { name: "batch", type: "string", description: "b", adaptable: true, required: false },
+        { name: "covariates", type: "string_list", description: "c", adaptable: true, required: false },
+        { name: "min_samples", type: "integer", description: "m", adaptable: true, required: false },
+    ],
+    body_file: "body.py",
+};
+
+const PYTHON_BODY = [
+    "DESIGN = {{design}}  # [adaptable: design]",
+    "BATCH = {{batch}}  # [adaptable: batch]",
+    "COVARIATES = {{covariates}}  # [adaptable: covariates]",
+    "MIN_SAMPLES = {{min_samples}}  # [adaptable: min_samples]",
 ].join("\n");
 
 describe("renderTemplate", () => {
@@ -48,7 +67,7 @@ describe("renderTemplate", () => {
         expect(result.script).toContain('contrast <- c("condition", "treated", "control")');
         expect(result.script).toContain("alpha <- 0.05");
         expect(result.script).toContain('shrink <- "apeglm"');
-        expect(result.script).toContain("batch <- NULL");
+        expect(result.script).toContain("batch <- NA_character_");
         expect(result.script).not.toContain("{{");
         const alpha = result.slots.find((s) => s.name === "alpha")!;
         expect(alpha).toMatchObject({ source: "default", adaptable: false, default_source: "doi:x", lines: [3] });
@@ -72,10 +91,30 @@ describe("renderTemplate", () => {
         expect(result.issues[0]).toMatchObject({ slot: "design" });
     });
 
-    it("keeps an if block when the slot is given", () => {
+    it("renders an optional slot when the caller gives it", () => {
         const result = renderTemplate(TEMPLATE, BODY, { design: "~ batch + condition", contrast: ["condition", "b", "a"], batch: "batch" });
         expect(result.ok && result.script).toContain('batch <- "batch"');
-        expect(result.ok && result.script).not.toContain("batch <- NULL");
+        expect(result.ok && result.script).not.toContain("NA_character_");
+    });
+
+    it("renders the absent literal of the language and the type for an optional slot with no value", () => {
+        const r = renderTemplate(
+            { ...TEMPLATE, parameters: [...TEMPLATE.parameters, { name: "order", type: "string_list", description: "o", adaptable: true, required: false }, { name: "n", type: "integer", description: "n", adaptable: true, required: false }] },
+            `${BODY}\norder <- {{order}}  # [adaptable: order]\nn <- {{n}}  # [adaptable: n]`,
+            { design: "~ condition", contrast: ["condition", "b", "a"] },
+        );
+        expect(r.ok && r.script).toContain("order <- character(0)");
+        expect(r.ok && r.script).toContain("n <- NA_integer_");
+        const py = renderTemplate(PYTHON_TEMPLATE, PYTHON_BODY, { design: "~ condition" });
+        expect(py.ok).toBe(true);
+        if (!py.ok) return;
+        expect(py.script).toContain("BATCH = None");
+        expect(py.script).toContain("COVARIATES = []");
+        expect(py.script).toContain("MIN_SAMPLES = None");
+        expect(py.slots.map((slot) => slot.name)).toEqual(["design"]);
+        const given = renderTemplate(PYTHON_TEMPLATE, PYTHON_BODY, { design: "~ condition", covariates: ["age"], min_samples: 3 });
+        expect(given.ok && given.script).toContain('COVARIATES = ["age"]');
+        expect(given.ok && given.script).toContain("MIN_SAMPLES = 3");
     });
 
     it("finds the body slots and the unmarked adaptable slots", () => {
@@ -140,7 +179,7 @@ describe("renderTemplate — the import branch of tpl-deseq2-two-group", () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(result.script).toContain('IMPORT_STATE     <- "quantifications"');
-        expect(result.script).toContain("COUNTS_PATH      <- NULL");
+        expect(result.script).toContain("COUNTS_PATH      <- NA_character_");
         expect(result.script).toContain('QUANT_DIR        <- "/work/data/quant"');
         expect(result.script).toContain('COUNTS_FROM_ABUNDANCE <- "no"');
         expect(result.script).toContain("LENGTH_OFFSET    <- TRUE");
@@ -156,8 +195,8 @@ describe("renderTemplate — the import branch of tpl-deseq2-two-group", () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(result.script).toContain('COUNTS_PATH      <- "/work/data/counts.csv"');
-        expect(result.script).toContain("QUANT_DIR        <- NULL");
-        expect(result.script).toContain("TX2GENE_PATH     <- NULL");
-        expect(result.script).toContain("LENGTHS_PATH     <- NULL");
+        expect(result.script).toContain("QUANT_DIR        <- NA_character_");
+        expect(result.script).toContain("TX2GENE_PATH     <- NA_character_");
+        expect(result.script).toContain("LENGTHS_PATH     <- NA_character_");
     });
 });

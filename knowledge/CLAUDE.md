@@ -128,9 +128,11 @@ CLI runtime on the same campaign database.
 - The golden test `src/service/tree.test.ts` encodes the intended winner of
   each evaluation situation and of the edge situations. A rule that changes
   a winner fails there first. Add a case when you add a situation.
-- A template body uses three constructs only: `{{slot}}`, `{{#if slot}}`, and
-  `{{#unless slot}}`. Every adaptable slot lands on a line that ends with
-  `# [adaptable: slot]`. A pinned slot carries a default and a source.
+- A template body uses one construct only: `{{slot}}`. An optional slot with
+  no value renders as the absent literal of the language and the type, for
+  example `NA_character_`, `character(0)`, `None`, or `[]`. The script tests
+  the absent value at run time. Every adaptable slot lands on a line that ends
+  with `# [adaptable: slot]`. A pinned slot carries a default and a source.
 - A template is R (`body.R`, run with `Rscript`) or Python (`body.py`, run
   with `python3`). A Python template that runs the same test attaches to the
   same method as its R mirror, after the R templates, with the same

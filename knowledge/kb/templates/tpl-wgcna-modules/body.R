@@ -34,12 +34,7 @@ CONDITION_COLUMN     <- {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL      <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL           <- {{test_level}}  # [adaptable: test_level]
 MIN_COUNT            <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES          <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES          <- NA_integer_  # [adaptable: min_samples] NA: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES          <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 N_TOP_GENES          <- {{n_top_genes}}  # [adaptable: n_top_genes]
 SCALE_FREE_R_SQUARED <- {{scale_free_r_squared}}  # [adaptable: scale_free_r_squared]
 NETWORK_TYPE         <- {{network_type}}

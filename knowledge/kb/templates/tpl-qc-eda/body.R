@@ -23,12 +23,7 @@ COUNTS_PATH      <- {{counts_path}}  # [adaptable: counts_path]
 METADATA_PATH    <- {{metadata_path}}  # [adaptable: metadata_path]
 SAMPLE_ID_COLUMN <- {{sample_id_column}}  # [adaptable: sample_id_column]
 CONDITION_COLUMN <- {{condition_column}}  # [adaptable: condition_column]
-{{#if batch_column}}
-BATCH_COLUMN     <- {{batch_column}}  # [adaptable: batch_column]
-{{/if}}
-{{#unless batch_column}}
-BATCH_COLUMN     <- NA_character_  # [adaptable: batch_column] NA: no batch column, one point shape in the PCA
-{{/unless}}
+BATCH_COLUMN     <- {{batch_column}}  # [adaptable: batch_column] absent: no batch column, one point shape in the PCA
 N_TOP_GENES_PCA  <- {{n_top_genes_pca}}  # [adaptable: n_top_genes_pca]
 LOW_DEPTH_RATIO  <- {{low_depth_ratio}}  # [adaptable: low_depth_ratio]
 OUTPUT_PREFIX    <- {{output_prefix}}  # [adaptable: output_prefix]

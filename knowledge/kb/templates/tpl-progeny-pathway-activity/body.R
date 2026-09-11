@@ -31,12 +31,7 @@ CONDITION_COLUMN     <- {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL      <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL           <- {{test_level}}  # [adaptable: test_level]
 DESIGN               <- {{design}}  # [adaptable: design]
-{{#if results_path}}
-RESULTS_PATH         <- {{results_path}}  # [adaptable: results_path]
-{{/if}}
-{{#unless results_path}}
-RESULTS_PATH         <- NA_character_  # [adaptable: results_path] NA: the script fits the contrast itself
-{{/unless}}
+RESULTS_PATH         <- {{results_path}}  # [adaptable: results_path] absent: the script fits the contrast itself
 MODEL_PATH           <- {{model_path}}  # [adaptable: model_path]
 TOP_RESPONSIVE_GENES <- {{top_responsive_genes}}  # [adaptable: top_responsive_genes]
 ACTIVITY_METHOD      <- {{activity_method}}  # [adaptable: activity_method]

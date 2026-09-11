@@ -29,12 +29,7 @@ SAMPLE_ID_COLUMN     <- {{sample_id_column}}  # [adaptable: sample_id_column]
 TIME_COLUMN          <- {{time_column}}  # [adaptable: time_column]
 EVENT_COLUMN         <- {{event_column}}  # [adaptable: event_column]
 SIGNATURE_GENES      <- {{signature_genes}}  # [adaptable: signature_genes]
-{{#if covariates}}
-COVARIATES           <- {{covariates}}  # [adaptable: covariates]
-{{/if}}
-{{#unless covariates}}
-COVARIATES           <- character(0)  # [adaptable: covariates] none: the model holds the score only
-{{/unless}}
+COVARIATES           <- {{covariates}}  # [adaptable: covariates] absent: the model holds the score only
 MIN_COUNT            <- {{min_count}}  # [adaptable: min_count]
 MIN_TOTAL_COUNT      <- {{min_total_count}}  # [adaptable: min_total_count]
 NORMALIZATION_METHOD <- {{normalization_method}}  # [adaptable: normalization_method]

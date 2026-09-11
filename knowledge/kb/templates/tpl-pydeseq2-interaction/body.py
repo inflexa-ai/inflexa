@@ -42,12 +42,7 @@ FACTOR_B_COLUMN    = {{factor_b_column}}  # [adaptable: factor_b_column]
 FACTOR_B_REFERENCE = {{factor_b_reference}}  # [adaptable: factor_b_reference]
 DESIGN             = "~ factor_a + factor_b + factor_a:factor_b"
 MIN_COUNT          = {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES        = {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES        = None  # [adaptable: min_samples] None: the smallest cell size, computed below
-{{/unless}}
+MIN_SAMPLES        = {{min_samples}}  # [adaptable: min_samples] absent: the smallest cell size, computed below
 ALPHA              = {{alpha}}
 LFC_SHRINK         = {{lfc_shrink}}  # [adaptable: lfc_shrink]
 LFC_THRESHOLD      = {{lfc_threshold}}  # [adaptable: lfc_threshold]

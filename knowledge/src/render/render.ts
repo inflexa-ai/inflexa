@@ -1,11 +1,14 @@
 /**
  * The template renderer.
  *
- * A template body is logic-light. It holds three constructs and nothing else:
+ * A template body is logic-free. It holds one construct and nothing else:
  *
- *   {{name}}                         the value of a slot, rendered as a literal of the language
- *   {{#if name}} ... {{/if}}         kept when the slot is truthy
- *   {{#unless name}} ... {{/unless}} kept when the slot is falsy
+ *   {{name}}   the value of a slot, rendered as a literal of the language
+ *
+ * An optional slot that the caller does not fill renders as the absent literal
+ * of the language and the type (`absentLiteral`). The script then tests the
+ * value at run time, in the language, where an interpreter and a test can see
+ * the branch.
  *
  * The caller fills only the slots that the contract marks adaptable. A pinned
  * slot comes from the template default, and a caller that sends one gets a
@@ -66,12 +69,28 @@ function literal(language: Template["language"], parameter: TemplateParameter, v
     }
 }
 
-function truthy(value: SlotValue | undefined): boolean {
-    if (value === undefined) return false;
-    if (typeof value === "boolean") return value;
-    if (typeof value === "number") return value !== 0;
-    if (typeof value === "string") return value.trim().length > 0;
-    return value.length > 0;
+/**
+ * The literal of an optional slot that has no value. R keeps the type of the
+ * slot, thus `is.na` works on a scalar and `length` on a list. Python has one
+ * absent scalar, and an empty list stands for an absent list, thus a script
+ * iterates it without a guard.
+ */
+export function absentLiteral(language: Template["language"], type: TemplateParameter["type"]): string {
+    if (language === "python") return type === "string_list" ? "[]" : "None";
+    switch (type) {
+        case "string":
+            return "NA_character_";
+        case "integer":
+            return "NA_integer_";
+        case "number":
+            return "NA_real_";
+        case "boolean":
+            return "NA";
+        case "string_list":
+            return "character(0)";
+        case "formula":
+            return "NULL";
+    }
 }
 
 const FORMULA_PATTERN = /^~\s*[A-Za-z0-9_.:*+\s()-]+$/;
@@ -114,10 +133,10 @@ export function validateSlot(parameter: TemplateParameter, value: unknown): Slot
     }
 }
 
-/** The slot names the body references, in the three constructs. */
+/** The slot names the body references. */
 export function bodySlotNames(body: string): Set<string> {
     const names = new Set<string>();
-    for (const match of body.matchAll(/\{\{\s*(?:#if|#unless)?\s*([a-z][a-z0-9_]*)\s*\}\}/g)) names.add(match[1]!);
+    for (const match of body.matchAll(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g)) names.add(match[1]!);
     return names;
 }
 
@@ -126,21 +145,6 @@ export function unmarkedAdaptableSlots(template: Template, body: string): string
     const marked = new Set<string>();
     for (const match of body.matchAll(ADAPTABLE_MARKER)) marked.add(match[1]!);
     return template.parameters.filter((parameter) => parameter.adaptable && !marked.has(parameter.name)).map((parameter) => parameter.name);
-}
-
-function expandBlocks(body: string, values: ReadonlyMap<string, SlotValue>): string {
-    const block = /\{\{#(if|unless)\s+([a-z][a-z0-9_]*)\s*\}\}([\s\S]*?)\{\{\/\1\}\}/g;
-    let previous = "";
-    let current = body;
-    // Blocks do not nest in the corpus, and a fixed point still handles an accidental nest one level at a time.
-    while (previous !== current) {
-        previous = current;
-        current = current.replace(block, (_whole, kind: string, name: string, inner: string) => {
-            const keep = kind === "if" ? truthy(values.get(name)) : !truthy(values.get(name));
-            return keep ? inner : "";
-        });
-    }
-    return current;
 }
 
 export function renderTemplate(template: Template, body: string, callerSlots: Readonly<Record<string, unknown>>): RenderResult {
@@ -186,18 +190,18 @@ export function renderTemplate(template: Template, body: string, callerSlots: Re
     }
     if (issues.length > 0) return { ok: false, issues };
 
-    const expanded = expandBlocks(body, values);
-    const script = expanded.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (_whole, name: string) => {
+    const script = body.replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (_whole, name: string) => {
         const parameter = byName.get(name);
+        if (!parameter) return absentLiteral(template.language, "formula");
         const value = values.get(name);
-        if (!parameter || value === undefined) return "NULL";
+        if (value === undefined) return absentLiteral(template.language, parameter.type);
         return literal(template.language, parameter, value);
     });
 
     const lines = script.split("\n");
     const located = report.map((entry) => {
         const found: number[] = [];
-        for (const match of expanded.split("\n").entries()) {
+        for (const match of body.split("\n").entries()) {
             if (match[1].includes(`{{${entry.name}}}`) || match[1].includes(`{{ ${entry.name} }}`)) found.push(match[0] + 1);
         }
         return { ...entry, lines: found.filter((line) => line <= lines.length) };

@@ -31,12 +31,7 @@ REFERENCE_LEVEL     <- {{reference_level}}  # [adaptable: reference_level]
 FULL_DESIGN         <- {{full_design}}  # [adaptable: full_design]
 REDUCED_DESIGN      <- {{reduced_design}}  # [adaptable: reduced_design]
 MIN_COUNT           <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES         <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES         <- NA_integer_  # [adaptable: min_samples] NA: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES         <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 ALPHA               <- {{alpha}}
 LFC_SHRINK          <- {{lfc_shrink}}  # [adaptable: lfc_shrink]
 N_TOP_GENES_PCA     <- {{n_top_genes_pca}}  # [adaptable: n_top_genes_pca]

@@ -31,12 +31,7 @@ REFERENCE_LEVEL         <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL              <- {{test_level}}  # [adaptable: test_level]
 MAX_SURROGATE_VARIABLES <- {{max_surrogate_variables}}  # [adaptable: max_surrogate_variables]
 MIN_COUNT               <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES             <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES             <- NA_integer_  # [adaptable: min_samples] NA: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES             <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 SVA_MIN_MEAN_COUNT      <- {{sva_min_mean_count}}  # [adaptable: sva_min_mean_count]
 ALPHA                   <- {{alpha}}
 LFC_SHRINK              <- {{lfc_shrink}}  # [adaptable: lfc_shrink]

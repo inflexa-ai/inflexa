@@ -26,21 +26,11 @@ SAMPLE_ID_COLUMN    <- {{sample_id_column}}  # [adaptable: sample_id_column]
 CONDITION_COLUMN    <- {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL     <- {{reference_level}}  # [adaptable: reference_level]
 TIME_COLUMN         <- {{time_column}}  # [adaptable: time_column]
-{{#if time_order}}
-TIME_ORDER          <- {{time_order}}  # [adaptable: time_order]
-{{/if}}
-{{#unless time_order}}
-TIME_ORDER          <- NULL  # [adaptable: time_order] NULL: the order of first appearance in the sample table
-{{/unless}}
+TIME_ORDER          <- {{time_order}}  # [adaptable: time_order] absent: the order of first appearance in the sample table
 FULL_DESIGN         <- {{full_design}}  # [adaptable: full_design]
 REDUCED_DESIGN      <- {{reduced_design}}  # [adaptable: reduced_design]
 MIN_COUNT           <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES         <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES         <- NA_integer_  # [adaptable: min_samples] NA: the smallest condition-by-time cell, computed below
-{{/unless}}
+MIN_SAMPLES         <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest condition-by-time cell, computed below
 ALPHA               <- {{alpha}}
 N_TOP_GENES_PCA     <- {{n_top_genes_pca}}  # [adaptable: n_top_genes_pca]
 N_TOP_GENES_HEATMAP <- {{n_top_genes_heatmap}}  # [adaptable: n_top_genes_heatmap]
@@ -86,7 +76,7 @@ if (nlevels(metadata$condition) < 2) stop("The condition column holds one level 
 metadata$condition <- relevel(metadata$condition, ref = REFERENCE_LEVEL)
 
 time_values <- as.character(metadata[[TIME_COLUMN]])
-if (is.null(TIME_ORDER)) {
+if (length(TIME_ORDER) == 0) {
   time_levels <- unique(time_values)
 } else {
   if (!setequal(TIME_ORDER, unique(time_values)) || anyDuplicated(TIME_ORDER) > 0) {

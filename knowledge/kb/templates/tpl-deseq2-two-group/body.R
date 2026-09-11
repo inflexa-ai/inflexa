@@ -24,30 +24,10 @@ suppressPackageStartupMessages({
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 IMPORT_STATE     <- {{import_state}}  # [adaptable: import_state]
-{{#if counts_path}}
-COUNTS_PATH      <- {{counts_path}}  # [adaptable: counts_path]
-{{/if}}
-{{#unless counts_path}}
-COUNTS_PATH      <- NULL  # [adaptable: counts_path] NULL: the quantifications state takes quant_dir
-{{/unless}}
-{{#if quant_dir}}
-QUANT_DIR        <- {{quant_dir}}  # [adaptable: quant_dir]
-{{/if}}
-{{#unless quant_dir}}
-QUANT_DIR        <- NULL  # [adaptable: quant_dir] NULL: the state is not quantifications
-{{/unless}}
-{{#if tx2gene_path}}
-TX2GENE_PATH     <- {{tx2gene_path}}  # [adaptable: tx2gene_path]
-{{/if}}
-{{#unless tx2gene_path}}
-TX2GENE_PATH     <- NULL  # [adaptable: tx2gene_path] NULL: the state is not quantifications
-{{/unless}}
-{{#if lengths_path}}
-LENGTHS_PATH     <- {{lengths_path}}  # [adaptable: lengths_path]
-{{/if}}
-{{#unless lengths_path}}
-LENGTHS_PATH     <- NULL  # [adaptable: lengths_path] NULL: the state is not estimated_counts_with_lengths
-{{/unless}}
+COUNTS_PATH      <- {{counts_path}}  # [adaptable: counts_path] absent: the quantifications state takes quant_dir
+QUANT_DIR        <- {{quant_dir}}  # [adaptable: quant_dir] absent: the state is not quantifications
+TX2GENE_PATH     <- {{tx2gene_path}}  # [adaptable: tx2gene_path] absent: the state is not quantifications
+LENGTHS_PATH     <- {{lengths_path}}  # [adaptable: lengths_path] absent: the state is not estimated_counts_with_lengths
 COUNTS_FROM_ABUNDANCE <- {{counts_from_abundance}}  # [adaptable: counts_from_abundance]
 LENGTH_OFFSET    <- {{length_offset}}  # [adaptable: length_offset]
 METADATA_PATH    <- {{metadata_path}}  # [adaptable: metadata_path]
@@ -57,12 +37,7 @@ REFERENCE_LEVEL  <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL       <- {{test_level}}  # [adaptable: test_level]
 DESIGN           <- {{design}}  # [adaptable: design]
 MIN_COUNT        <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES      <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES      <- NA_integer_  # [adaptable: min_samples] NA: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES      <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 ALPHA            <- {{alpha}}
 LFC_SHRINK       <- {{lfc_shrink}}  # [adaptable: lfc_shrink]
 LFC_THRESHOLD    <- {{lfc_threshold}}  # [adaptable: lfc_threshold]
@@ -90,7 +65,7 @@ rownames(metadata) <- as.character(metadata[[SAMPLE_ID_COLUMN]])
 
 sha256 <- function(path) unname(tools::sha256sum(path))
 require_input <- function(value, slot, what) {
-  if (is.null(value)) stop("The import state ", IMPORT_STATE, " needs ", what, ": set the slot ", slot)
+  if (is.na(value)) stop("The import state ", IMPORT_STATE, " needs ", what, ": set the slot ", slot)
   if (!file.exists(value)) stop("The ", what, " is missing: ", value)
   value
 }
@@ -111,7 +86,7 @@ if (IMPORT_STATE == "quantifications") {
   suppressPackageStartupMessages(library(tximport))
   require_input(QUANT_DIR, "quant_dir", "the quantification directory")
   require_input(TX2GENE_PATH, "tx2gene_path", "the transcript-to-gene map")
-  if (!is.null(COUNTS_PATH)) message("counts_path is not read: the quantifications state imports the quant.sf files")
+  if (!is.na(COUNTS_PATH)) message("counts_path is not read: the quantifications state imports the quant.sf files")
   samples <- rownames(metadata)
   files <- setNames(file.path(QUANT_DIR, samples, "quant.sf"), samples)
   absent <- samples[!file.exists(files)]

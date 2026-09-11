@@ -32,19 +32,9 @@ SAMPLE_ID_COLUMN = {{sample_id_column}}  # [adaptable: sample_id_column]
 CONDITION_COLUMN = {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL  = {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL       = {{test_level}}  # [adaptable: test_level]
-{{#if covariates}}
-COVARIATES       = {{covariates}}  # [adaptable: covariates]
-{{/if}}
-{{#unless covariates}}
-COVARIATES       = []  # [adaptable: covariates] empty: the design is ~ condition
-{{/unless}}
+COVARIATES       = {{covariates}}  # [adaptable: covariates] absent: the design is ~ condition
 MIN_COUNT        = {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES      = {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES      = None  # [adaptable: min_samples] None: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES      = {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 ALPHA            = {{alpha}}
 LFC_SHRINK       = {{lfc_shrink}}  # [adaptable: lfc_shrink]
 LFC_THRESHOLD    = {{lfc_threshold}}  # [adaptable: lfc_threshold]

@@ -27,12 +27,7 @@ SAMPLE_ID_COLUMN     <- {{sample_id_column}}  # [adaptable: sample_id_column]
 CONDITION_COLUMN     <- {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL      <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL           <- {{test_level}}  # [adaptable: test_level]
-{{#if covariates}}
-COVARIATES           <- {{covariates}}  # [adaptable: covariates]
-{{/if}}
-{{#unless covariates}}
-COVARIATES           <- character(0)  # [adaptable: covariates] none: the design is ~ condition
-{{/unless}}
+COVARIATES           <- {{covariates}}  # [adaptable: covariates] absent: the design is ~ condition
 MIN_COUNT            <- {{min_count}}  # [adaptable: min_count]
 MIN_TOTAL_COUNT      <- {{min_total_count}}  # [adaptable: min_total_count]
 NORMALIZATION_METHOD <- {{normalization_method}}  # [adaptable: normalization_method]

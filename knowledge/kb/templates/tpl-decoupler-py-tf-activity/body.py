@@ -43,12 +43,7 @@ SAMPLE_ID_COLUMN = {{sample_id_column}}  # [adaptable: sample_id_column]
 CONDITION_COLUMN = {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL = {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL = {{test_level}}  # [adaptable: test_level]
-{{#if results_path}}
-RESULTS_PATH = {{results_path}}  # [adaptable: results_path]
-{{/if}}
-{{#unless results_path}}
-RESULTS_PATH = None  # [adaptable: results_path] None: fit pydeseq2 on the counts for the contrast statistic
-{{/unless}}
+RESULTS_PATH = {{results_path}}  # [adaptable: results_path] absent: fit pydeseq2 on the counts for the contrast statistic
 NETWORK_PATH = {{network_path}}  # [adaptable: network_path]
 REGULON_COLLECTION = {{regulon_collection}}  # [adaptable: regulon_collection]
 ACTIVITY_METHOD = {{activity_method}}

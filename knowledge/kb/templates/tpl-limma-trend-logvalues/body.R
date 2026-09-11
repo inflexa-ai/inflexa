@@ -30,12 +30,7 @@ DESIGN           <- {{design}}  # [adaptable: design]
 VALUES_ARE_LOG   <- {{values_are_log}}  # [adaptable: values_are_log]
 LOG_OFFSET       <- {{log_offset}}  # [adaptable: log_offset]
 EXPRESSION_FLOOR <- {{expression_floor}}  # [adaptable: expression_floor]
-{{#if min_samples}}
-MIN_SAMPLES      <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES      <- NA_integer_  # [adaptable: min_samples] NA: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES      <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 TREND            <- {{trend}}
 ROBUST           <- {{robust}}  # [adaptable: robust]
 ALPHA            <- {{alpha}}

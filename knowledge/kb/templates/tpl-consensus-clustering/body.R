@@ -34,12 +34,7 @@ METADATA_PATH           <- {{metadata_path}}  # [adaptable: metadata_path]
 SAMPLE_ID_COLUMN        <- {{sample_id_column}}  # [adaptable: sample_id_column]
 CONDITION_COLUMN        <- {{condition_column}}  # [adaptable: condition_column]
 MIN_COUNT               <- {{min_count}}  # [adaptable: min_count]
-{{#if min_samples}}
-MIN_SAMPLES             <- {{min_samples}}  # [adaptable: min_samples]
-{{/if}}
-{{#unless min_samples}}
-MIN_SAMPLES             <- NA_integer_  # [adaptable: min_samples] NA: the smallest group size, computed below
-{{/unless}}
+MIN_SAMPLES             <- {{min_samples}}  # [adaptable: min_samples] absent: the smallest group size, computed below
 N_TOP_GENES             <- {{n_top_genes}}  # [adaptable: n_top_genes]
 DISTANCE                <- {{distance}}  # [adaptable: distance]
 LINKAGE                 <- {{linkage}}  # [adaptable: linkage]
