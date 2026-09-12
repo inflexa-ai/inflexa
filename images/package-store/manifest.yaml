@@ -225,6 +225,11 @@ r:
         - limma
         - sva
         - variancePartition
+        - name: tximport
+          reason: >
+            The import path of tpl-deseq2-two-group 1.1.0. It summarizes the
+            Salmon and kallisto transcript quantifications to the gene level,
+            and it gives DESeq2 the average transcript lengths as the offset.
 
         # Pathway / enrichment
         - GSVA
