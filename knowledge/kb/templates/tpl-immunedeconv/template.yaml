@@ -1,11 +1,11 @@
 id: tpl-immunedeconv
-version: 1.0.0
-label: "Cell type deconvolution with immunedeconv: MCP-counter, xCell, EPIC, or quanTIseq"
+version: 1.1.0
+label: "Cell type deconvolution with immunedeconv: MCP-counter, xCell, EPIC, or quanTIseq on human samples, mMCP-counter on mouse samples"
 language: R
 method: M-0041
 step_types: [deconvolution]
 edam_operations: [EDAM:operation_3629]
-citations: [S-0098, S-0099, S-0100, S-0101, S-0102]
+citations: [S-0098, S-0099, S-0100, S-0101, S-0102, S-0147]
 license: Apache-2.0
 applicability:
   modality: bulk_rna_seq
@@ -22,7 +22,8 @@ applicability:
   notes: >-
     A linear-scale expression matrix whose first column is the gene symbol
     (HGNC for human, MGI for mouse) and whose header holds the sample
-    identifiers, plus a sample table with one row per sample. The input is
+    identifiers, plus a sample table with one row per sample. A mouse matrix
+    runs mMCP-counter only, with the mouse symbols as they are. The input is
     TPM as it is, or raw counts that the script scales to CPM; a log matrix
     stops the script. One immunedeconv method runs: MCP-counter (the
     default) and xCell give a score per cell type that is comparable
@@ -30,9 +31,9 @@ applicability:
     quanTIseq give an absolute fraction per cell type with an uncharacterized
     remainder. The MCP-counter marker table lives inside the script because
     the sandbox has no network. xCell needs at least 5000 genes shared with
-    its reference, thus it stops on a small matrix. A mouse matrix is mapped
-    to the human orthologs with babelgene, one-to-one pairs only, before the
-    method runs. The condition column is renamed to `condition` inside the
+    its reference, thus it stops on a small matrix. A mouse matrix runs
+    mMCP-counter with the MGI symbols as they are, and a human method on
+    mouse symbols stops the script. The condition column is renamed to `condition` inside the
     script, and a Wilcoxon rank-sum test per cell type compares the test
     level against the reference level, with a Benjamini-Hochberg adjustment.
 parameters:
@@ -70,14 +71,14 @@ parameters:
     enum: [tpm, counts]
   - name: method
     type: string
-    description: "The immunedeconv method: mcp_counter and xcell give scores, epic and quantiseq give absolute fractions."
+    description: "The immunedeconv method: mcp_counter and xcell give scores, epic and quantiseq give absolute fractions, on human samples. mmcp_counter gives scores on mouse samples with the mouse symbols as they are, and it is the only method for species mouse."
     adaptable: true
     default: mcp_counter
     default_source: "doi:10.1186/s13059-016-1070-5"
-    enum: [mcp_counter, xcell, epic, quantiseq]
+    enum: [mcp_counter, xcell, epic, quantiseq, mmcp_counter]
   - name: species
     type: string
-    description: "The species of the gene symbols: human symbols are used as they are, mouse symbols are mapped to the human orthologs."
+    description: "The species of the gene symbols. human takes HGNC symbols with mcp_counter, xcell, epic, or quantiseq. mouse takes MGI symbols with mmcp_counter only: a human reference on mouse symbols, mapped or upper-cased, stops the script."
     adaptable: true
     default: human
     default_source: "doi:10.1093/bioinformatics/btz363"
@@ -151,8 +152,8 @@ environment:
   - name: quantiseqr
     version: "1.20.0"
     track: bioconductor
-  - name: babelgene
-    version: "22.9"
+  - name: mMCPcounter
+    version: "1.1.0"
     track: cran
   - name: ggplot2
     version: "4.0.3"
@@ -228,3 +229,25 @@ tests:
       - "exists figures/quantiseq_composition.png"
       - "json output/quantiseq_summary.json value_type == fractions"
       - "json output/quantiseq_summary.json tool == quantiseqr"
+  - name: mmcp-counter-mouse
+    dataset: mouse_two_group_n6/seed-1
+    slots:
+      expression_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      input_scale: counts
+      method: mmcp_counter
+      species: mouse
+      output_prefix: mmcp
+    expect:
+      - "exists output/mmcp_fractions.csv"
+      - "csv_rows output/mmcp_fractions.csv >= 5"
+      - "exists output/mmcp_comparison.csv"
+      - "exists output/mmcp_summary.json"
+      - "exists figures/mmcp_heatmap.png"
+      - "exists figures/mmcp_comparison.png"
+      - "json output/mmcp_summary.json value_type == scores"
+      - "json output/mmcp_summary.json tool == mMCPcounter"
+      - "json output/mmcp_summary.json species == mouse"

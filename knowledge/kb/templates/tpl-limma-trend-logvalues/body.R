@@ -193,7 +193,7 @@ save_figure(volcano_plot, "volcano")
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 summary_record <- list(
-  template = "tpl-limma-trend-logvalues@1.0.0",
+  template = "tpl-limma-trend-logvalues@1.1.0",
   method = if (LFC_THRESHOLD > 0) "limma-trend, treat" else "limma-trend, moderated t-test",
   contrast = list(factor = "condition", test = TEST_LEVEL, reference = REFERENCE_LEVEL, coefficient = coefficient),
   design = deparse(DESIGN),

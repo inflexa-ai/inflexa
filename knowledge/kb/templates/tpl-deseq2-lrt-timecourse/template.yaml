@@ -1,11 +1,11 @@
 id: tpl-deseq2-lrt-timecourse
-version: 1.0.0
-label: "DESeq2 likelihood ratio test for a condition-by-time course"
+version: 1.2.0
+label: "DESeq2 likelihood ratio test for a time course, with a condition or with one group"
 language: R
 method: M-0002
-step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
+step_types: [filter_low_counts, normalize, model_design, differential_expression, shrink_lfc, multiple_testing]
 edam_operations: [EDAM:operation_3223]
-citations: [S-0001, S-0002, S-0040, S-0042]
+citations: [S-0001, S-0002, S-0009, S-0010, S-0021, S-0040, S-0042]
 license: Apache-2.0
 applicability:
   modality: bulk_rna_seq
@@ -17,11 +17,12 @@ applicability:
     - field: n_timepoints
       op: gte
       value: 3
-    - field: import_state
-      op: not_in
-      value: [quantifications, estimated_counts_with_lengths]
   notes: >-
-    A count matrix whose first column is the gene identifier and whose header
+    The input follows the import state, as in tpl-deseq2-two-group: per-sample
+    quantifications with a transcript-to-gene map (tximport, the average
+    transcript length per gene and sample as the offset), count estimates with
+    a length table (the same offset), corrected counts or integer counts (no
+    offset); an unknown state stops and names the missing input. A count matrix whose first column is the gene identifier and whose header
     holds the sample identifiers, plus a sample table with one row per sample.
     The condition column is renamed to `condition` and the time column to
     `time` inside the script. Time is a factor whose levels come in the order
@@ -30,10 +31,45 @@ applicability:
     that it finds are the genes whose condition effect changes across time
     under the default designs. One test, no contrast.
 parameters:
+  - name: import_state
+    type: string
+    description: "The import state of the input: quantifications (per-sample quant.sf plus a transcript-to-gene map), estimated_counts_with_lengths (a fractional gene count table plus an average transcript length table), corrected_counts (lengthScaledTPM or scaledTPM counts), integer_counts (aligner counts with no length data), or unknown (the script stops and names the missing input)."
+    adaptable: true
+    required: true
+    enum: [quantifications, estimated_counts_with_lengths, corrected_counts, integer_counts, unknown]
   - name: counts_path
     type: string
-    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    description: "Path of the count matrix CSV, first column gene id, header sample ids. Integer counts for integer_counts, counts from abundance for corrected_counts, fractional estimates for estimated_counts_with_lengths. Absent for quantifications."
     adaptable: true
+    required: false
+  - name: quant_dir
+    type: string
+    description: "Path of the quantification directory for quantifications: one file <quant_dir>/<sample id>/quant.sf per sample of the sample table."
+    adaptable: true
+    required: false
+  - name: tx2gene_path
+    type: string
+    description: "Path of the transcript-to-gene map CSV for quantifications, with the columns transcript and gene, in the identifier space of the quant.sf Name column."
+    adaptable: true
+    required: false
+  - name: lengths_path
+    type: string
+    description: "Path of the average transcript length CSV for estimated_counts_with_lengths: first column gene id, header sample ids, one length per gene and sample."
+    adaptable: true
+    required: false
+  - name: counts_from_abundance
+    type: string
+    description: "The countsFromAbundance mode: of the tximport call for quantifications, or of the delivered table for corrected_counts. no keeps the estimated counts and gives the model the length offset. lengthScaledTPM or scaledTPM puts the length correction inside the counts, and the model takes no offset."
+    adaptable: true
+    default: "no"
+    default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+    enum: ["no", lengthScaledTPM, scaledTPM]
+  - name: length_offset
+    type: boolean
+    description: "True gives the model the average transcript length per gene and sample as an offset, when the import state carries lengths. False fits the model on the counts alone and loses the correction for a change in isoform use."
+    adaptable: true
+    default: true
+    default_source: "doi:10.12688/f1000research.7563.2"
   - name: metadata_path
     type: string
     description: "Path of the sample table CSV with one row per sample."
@@ -45,12 +81,14 @@ parameters:
     default: sample
   - name: condition_column
     type: string
-    description: "The column of the sample table that holds the condition of interest."
+    description: "The column of the sample table that holds the condition of interest. Absent for one group over time; then the designs name time only."
     adaptable: true
+    required: false
   - name: reference_level
     type: string
-    description: "The level of the condition that is the denominator of the per-timepoint fold changes, for example control."
+    description: "The level of the condition that is the denominator of the per-timepoint fold changes, for example control. Absent for one group over time."
     adaptable: true
+    required: false
   - name: time_column
     type: string
     description: "The column of the sample table that holds the time point of each sample. The script treats it as a factor."
@@ -62,14 +100,14 @@ parameters:
     required: false
   - name: full_design
     type: formula
-    description: "The full design. It must name condition and time, and it holds the terms that the test removes. Put a balanced batch or a covariate first, for example ~ batch + condition + time + condition:time."
+    description: "The full design. It must name time, and condition when a condition column is set, and it holds the terms that the test removes. Put a balanced batch or a covariate first, for example ~ batch + condition + time + condition:time. For one group over time: ~ time."
     adaptable: true
     default: "~ condition + time + condition:time"
     default_source: "vignette:DESeq2/1.52.0#time-series-experiments"
-    pattern: "^(?=.*\\bcondition\\b)(?=.*\\btime\\b)"
+    pattern: "\\btime\\b"
   - name: reduced_design
     type: formula
-    description: "The reduced design. Each of its terms must be in the full design. The test asks whether the terms that only the full design holds matter together."
+    description: "The reduced design. Each of its terms must be in the full design. The test asks whether the terms that only the full design holds matter together. For one group over time: ~ 1."
     adaptable: true
     default: "~ condition + time"
     default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
@@ -92,6 +130,13 @@ parameters:
     adaptable: false
     default: 0.05
     default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing"
+  - name: lfc_shrink
+    type: string
+    description: "The shrinkage of the per-timepoint contrasts: ashr shrinks each Wald contrast on the full model, none reports the maximum likelihood values only. apeglm takes one coefficient and no contrast, thus it is not an option here."
+    adaptable: true
+    default: ashr
+    default_source: "doi:10.1093/biostatistics/kxw041"
+    enum: [ashr, none]
   - name: n_top_genes_pca
     type: integer
     description: "The number of most variable genes for the PCA."
@@ -115,7 +160,18 @@ inputs:
   - name: counts
     path: "{{counts_path}}"
     format: EDAM:format_3752
-    description: "Gene by sample raw integer counts, CSV."
+    description: "Gene by sample counts, CSV: integer counts, counts from abundance, or fractional estimates, by the import state. Absent for quantifications."
+  - name: quantifications
+    path: "{{quant_dir}}/<sample>/quant.sf"
+    description: "Per-sample Salmon quantification files with the columns Name, Length, EffectiveLength, TPM, NumReads, for quantifications."
+  - name: tx2gene
+    path: "{{tx2gene_path}}"
+    format: EDAM:format_3752
+    description: "Transcript-to-gene map with the columns transcript and gene, CSV, for quantifications."
+  - name: gene_lengths
+    path: "{{lengths_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample average transcript lengths, CSV, for estimated_counts_with_lengths."
   - name: metadata
     path: "{{metadata_path}}"
     format: EDAM:format_3752
@@ -128,7 +184,15 @@ outputs:
   - name: timepoint_lfc
     path: "output/{prefix}_timepoint_lfc.csv"
     format: EDAM:format_3752
-    description: "One row per significant gene: gene, adjusted_pvalue, then one log2 fold change of each non-reference condition level against the reference within each time level, from the coefficients of the full model."
+    description: "The significant genes with the LRT adjusted p-value and one column per contrast: lfc_<level>_vs_<reference>_at_<time> for the condition effect at each time point, lfc_<time>_vs_<first>[_in_<level>] for each time point against the first, and shrunken_lfc_<contrast> (ashr) beside each when lfc_shrink is ashr."
+  - name: import_counts
+    path: "output/{prefix}_import_counts.csv"
+    format: EDAM:format_3752
+    description: "Gene by sample count estimates as imported, before the rounding and the filter."
+  - name: import_lengths
+    path: "output/{prefix}_import_lengths.csv"
+    format: EDAM:format_3752
+    description: "Gene by sample average transcript lengths as imported. Absent when the import state carries no lengths."
   - name: summary
     path: "output/{prefix}_summary.json"
     format: EDAM:format_3464
@@ -146,6 +210,12 @@ environment:
   - name: DESeq2
     version: "1.52.0"
     track: bioconductor
+  - name: tximport
+    version: "1.40.0"
+    track: bioconductor
+  - name: ashr
+    version: "2.2-63"
+    track: cran
   - name: ggplot2
     version: "4.0.3"
     track: cran
@@ -161,6 +231,7 @@ tests:
   - name: timecourse-2x4-n3
     dataset: timecourse_2x4_n3/seed-1
     slots:
+      import_state: integer_counts
       counts_path: /work/data/counts.csv
       metadata_path: /work/data/metadata.csv
       condition_column: condition
@@ -179,3 +250,54 @@ tests:
       - "json output/de_summary.json df_tested == 3"
       - "truth_recall output/de_lrt_results.csv >= 0.3"
       - "truth_fdr output/de_lrt_results.csv <= 0.15"
+      - "csv_rows output/de_timepoint_lfc.csv >= 100"
+  - name: timecourse-1x4-n3
+    dataset: timecourse_1x4_n3/seed-1
+    slots:
+      import_state: integer_counts
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      time_column: time
+      full_design: "~ time"
+      reduced_design: "~ 1"
+      output_prefix: time
+    expect:
+      - "exists output/time_lrt_results.csv"
+      - "exists output/time_timepoint_lfc.csv"
+      - "exists output/time_summary.json"
+      - "exists figures/time_pca.png"
+      - "exists figures/time_top_genes_heatmap.png"
+      - "csv_rows output/time_lrt_results.csv >= 5000"
+      - "csv_rows output/time_timepoint_lfc.csv >= 100"
+      - "json output/time_summary.json df_tested == 3"
+      - "json output/time_summary.json n_condition_levels == 1"
+      - "truth_recall output/time_lrt_results.csv >= 0.3"
+      - "truth_fdr output/time_lrt_results.csv <= 0.15"
+  - name: quantifications
+    dataset: timecourse_2x4_n3/seed-1
+    slots:
+      import_state: quantifications
+      quant_dir: /work/data/quant
+      tx2gene_path: /work/data/tx2gene.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      time_column: time
+      output_prefix: quant
+    expect:
+      - "exists output/quant_import_counts.csv"
+      - "exists output/quant_import_lengths.csv"
+      - "json output/quant_summary.json import.mode == tximport_avg_tx_length_offset"
+      - "exists output/quant_lrt_results.csv"
+      - "exists output/quant_timepoint_lfc.csv"
+      - "exists output/quant_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/quant_pca.png"
+      - "exists figures/quant_pca.pdf"
+      - "exists figures/quant_top_genes_heatmap.png"
+      - "exists figures/quant_top_genes_heatmap.pdf"
+      - "csv_rows output/quant_lrt_results.csv >= 5000"
+      - "json output/quant_summary.json df_tested == 3"
+      - "truth_recall output/quant_lrt_results.csv >= 0.3"
+      - "truth_fdr output/quant_lrt_results.csv <= 0.15"
+      - "csv_rows output/quant_timepoint_lfc.csv >= 100"

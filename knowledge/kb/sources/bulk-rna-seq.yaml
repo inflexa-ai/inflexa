@@ -913,3 +913,10 @@
   title: "Selection bias in gene extraction on the basis of microarray gene-expression data"
   year: 2002
   venue: PNAS
+
+- id: S-0147
+  doi: 10.1186/s13073-020-00783-w
+  title: "The murine Microenvironment Cell Population counter method to estimate abundance of tissue-infiltrating immune and stromal cell populations in murine samples using gene expression"
+  year: 2020
+  venue: Genome Medicine
+  license: CC BY 4.0

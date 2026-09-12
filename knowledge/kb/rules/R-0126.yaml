@@ -21,6 +21,9 @@ action:
   step_type: deconvolution
   method: M-0042
   parameters:
+    - name: method
+      value: xcell
+      default_source: "doi:10.1186/s13059-017-1349-1"
     - name: cell_types
       value: 64_types_with_spillover_compensation
       default_source: "doi:10.1186/s13059-017-1349-1"

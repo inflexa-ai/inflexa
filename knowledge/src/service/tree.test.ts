@@ -123,7 +123,7 @@ describe("the curated tree on the evaluation situations", () => {
     it("paired: DESeq2 with the subject as a block; repeated measures over time: a random subject effect", () => {
         const paired = answer({ ...BASE, paired: true, blocking_factor: "subject", n_per_group_min: 5, n_per_group_max: 5 });
         expect(step(paired, "differential_expression").method?.id).toBe("M-0001");
-        expect(step(paired, "differential_expression").template).toBe("tpl-deseq2-blocked@1.0.0");
+        expect(step(paired, "differential_expression").template).toBe("tpl-deseq2-blocked@1.1.0");
         expect(parameter(paired, "differential_expression", "design_terms")).toEqual(["subject", "condition"]);
         expect(step(paired, "differential_expression").alternatives?.map((a) => a.method)).toContain("M-0004");
         const repeated = answer({ ...BASE, paired: true, n_timepoints: 3, n_per_group_min: 4, n_per_group_max: 4 });
@@ -146,11 +146,11 @@ describe("the curated tree on the evaluation situations", () => {
     it("interaction: the interaction template; time course: the LRT template", () => {
         const interaction = answer({ ...BASE, interaction: true, n_groups: 4, n_per_group_min: 4, n_per_group_max: 4 });
         expect(step(interaction, "differential_expression").method?.id).toBe("M-0001");
-        expect(step(interaction, "differential_expression").template).toBe("tpl-deseq2-interaction@1.0.0");
+        expect(step(interaction, "differential_expression").template).toBe("tpl-deseq2-interaction@1.1.0");
         expect(parameter(interaction, "differential_expression", "test")).toBe("interaction");
         const course = answer({ ...BASE, n_timepoints: 4, n_groups: 2, n_per_group_min: 3, n_per_group_max: 3 });
         expect(step(course, "differential_expression").method?.id).toBe("M-0002");
-        expect(step(course, "differential_expression").template).toBe("tpl-deseq2-lrt-timecourse@1.0.0");
+        expect(step(course, "differential_expression").template).toBe("tpl-deseq2-lrt-timecourse@1.2.0");
         expect(parameter(course, "differential_expression", "reduced")).toBe("~ condition + time");
         expect(parameter(course, "differential_expression", "test")).not.toBe("Wald");
     });
@@ -225,17 +225,20 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(python, "differential_expression").limit?.requested_language).toBe("python");
         expect(step(python, "differential_expression").substitution).toBeUndefined();
         // Every count template without an import branch is excluded from the quantification states.
-        const excluded = [...snapshot.templates.values()].filter((template) => template.step_types.includes("model_design") && template.id !== "tpl-deseq2-two-group" && template.id !== "tpl-limma-trend-logvalues");
-        expect(excluded.length).toBe(13);
+        const importing = new Set(["tpl-deseq2-two-group", "tpl-deseq2-blocked", "tpl-deseq2-interaction", "tpl-deseq2-multigroup", "tpl-deseq2-lrt-timecourse", "tpl-deseq2-sva"]);
+        const excluded = [...snapshot.templates.values()].filter((template) => template.step_types.includes("model_design") && !importing.has(template.id) && !template.id.startsWith("tpl-limma-trend-"));
+        expect(excluded.length).toBe(9);
         for (const state of ["quantifications", "estimated_counts_with_lengths"] as const) {
             for (const template of excluded) {
                 expect(templateHolds(template, "differential_expression", { ...situation, import_state: state })).toBe(false);
             }
         }
-        for (const groups of [{ n_per_group_min: 2, n_per_group_max: 2 }, { n_per_group_min: 60, n_per_group_max: 60 }, { paired: true, blocking_factor: "subject" }]) {
+        for (const groups of [{ n_per_group_min: 2, n_per_group_max: 2 }, { n_per_group_min: 60, n_per_group_max: 60 }]) {
             const other = answer({ ...situation, ...groups });
             expect(step(other, "differential_expression").template).toBeUndefined();
         }
+        // The blocked DESeq2 template imports the quantifications the same way.
+        expect(step(answer({ ...situation, paired: true, blocking_factor: "subject" }), "differential_expression").template).toBe("tpl-deseq2-blocked@1.1.0");
     });
 
     it("estimated counts with lengths and corrected counts: each state carries its import and its required fact", () => {
@@ -333,7 +336,7 @@ describe("the curated tree on the evaluation situations", () => {
     it("three groups: the LRT with pairwise contrasts and ashr; paired with three groups: the subject in both models", () => {
         const three = answer({ ...BASE, n_groups: 3, n_per_group_min: 4, n_per_group_max: 4 });
         expect(step(three, "differential_expression").method?.id).toBe("M-0002");
-        expect(step(three, "differential_expression").template).toBe("tpl-deseq2-multigroup@1.0.0");
+        expect(step(three, "differential_expression").template).toBe("tpl-deseq2-multigroup@1.1.0");
         expect(parameter(three, "differential_expression", "test")).toBe("LRT_then_pairwise_Wald");
         expect(step(three, "differential_expression").alternatives?.map((a) => a.method)).toContain("M-0003");
         expect(step(three, "shrink_lfc").method?.id).toBe("M-0014");
@@ -349,7 +352,7 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(tpm, "qc_sample_structure").template).toBe("tpl-qc-log-abundance@1.0.0");
         expect(step(tpm, "filter_low_counts").method?.id).toBe("M-0027");
         expect(parameter(tpm, "normalize", "normalization")).toBe("log2_plus_1_only");
-        expect(step(tpm, "differential_expression").template).toBe("tpl-limma-trend-logvalues@1.0.0");
+        expect(step(tpm, "differential_expression").template).toBe("tpl-limma-trend-logvalues@1.1.0");
         const log = answer({ ...BASE, data_state: "log_normalized" });
         expect(parameter(log, "normalize", "normalization")).toBe("none_already_normalized");
         expect(step(log, "differential_expression").method?.id).toBe("M-0005");
@@ -368,7 +371,7 @@ describe("the curated tree on the evaluation situations", () => {
     it("suspected batch: surrogate variables on the design with the sva template, and a warn on the multiple testing", () => {
         const response = answer({ ...BASE, batch: "suspected" });
         expect(step(response, "model_design").method?.id).toBe("M-0025");
-        expect(step(response, "model_design").template).toBe("tpl-deseq2-sva@1.0.0");
+        expect(step(response, "model_design").template).toBe("tpl-deseq2-sva@1.1.0");
         expect(step(response, "multiple_testing").flags?.some((flag) => flag.severity === "warn")).toBe(true);
     });
 
@@ -485,13 +488,17 @@ describe("the curated tree on the evaluation situations", () => {
         const r = answer(BASE, { language: "R" });
         expect(step(r, "differential_expression").template).toBe("tpl-deseq2-two-group@1.1.0");
         expect(step(answer(BASE), "enrichment").template).toBe("tpl-fgsea-preranked@1.0.0");
-        // A paired design has no Python template that honors the pair: the R template stays, and the step reports the limit.
+        // A paired design has a Python mirror that honors the pair, thus the preference selects it with no limit.
         const paired = answer({ ...BASE, paired: true }, { language: "python" });
         expect(step(paired, "differential_expression").method?.id).toBe("M-0001");
-        expect(step(paired, "differential_expression").template).toBe("tpl-deseq2-blocked@1.0.0");
-        expect(step(paired, "differential_expression").package?.name).toBe("DESeq2");
-        expect(step(paired, "differential_expression").limit?.requested_language).toBe("python");
+        expect(step(paired, "differential_expression").template).toBe("tpl-pydeseq2-blocked@1.0.0");
+        expect(step(paired, "differential_expression").package?.name).toBe("pydeseq2");
+        expect(step(paired, "differential_expression").limit).toBeUndefined();
         expect(step(paired, "differential_expression").substitution).toBeUndefined();
+        // A repeated-measures design has no Python template: the R template stays, and the step reports the limit.
+        const repeated = answer({ ...BASE, paired: true, n_timepoints: 3, n_per_group_min: 3, n_per_group_max: 3 }, { language: "python" });
+        expect(step(repeated, "differential_expression").template).toBe("tpl-dream-repeated@1.0.0");
+        expect(step(repeated, "differential_expression").limit?.requested_language).toBe("python");
         expect(step(python, "differential_expression").limit).toBeUndefined();
         const none = answer({ ...BASE, n_per_group_min: 1, n_per_group_max: 1 }, { language: "python" });
         expect(step(none, "differential_expression").template).toBe("tpl-descriptive-python@1.0.0");
@@ -598,6 +605,69 @@ describe("the curated tree on the evaluation situations", () => {
         expect(step(extra, "differential_expression").method?.id).toBe("M-0001");
         const transcripts = answer({ ...BASE, extra_analyses: ["transcript_level"] });
         expect(transcripts.flags.some((flag) => flag.outcome?.startsWith("stop"))).toBe(true);
+    });
+
+    it("one group: a differential expression question stops, and a time course takes the LRT of time with ashr on the contrasts", () => {
+        const none = answer({ ...BASE, question: "differential_expression", n_groups: 1 });
+        expect(none.match).toBe("flag");
+        expect(none.flags.some((flag) => flag.outcome === "stop_no_comparison_group")).toBe(true);
+        const course = answer({ ...BASE, question: "differential_expression", n_groups: 1, n_per_group_min: 3, n_per_group_max: 3, n_timepoints: 4 });
+        expect(course.match).toBe("applicable");
+        expect(step(course, "differential_expression").method?.id).toBe("M-0002");
+        expect(step(course, "differential_expression").rules[0]).toMatch(/^R-0171@/);
+        expect(parameter(course, "differential_expression", "full")).toBe("~ time");
+        expect(parameter(course, "differential_expression", "reduced")).toBe("~ 1");
+        expect(step(course, "differential_expression").template).toBe("tpl-deseq2-lrt-timecourse@1.2.0");
+        expect(step(course, "shrink_lfc").method?.id).toBe("M-0014");
+        expect(step(course, "shrink_lfc").rules[0]).toMatch(/^R-0172@/);
+        // A two-group time course shrinks its contrasts the same way, and the multi-group LRT keeps its own ashr rule.
+        const two = answer({ ...BASE, n_per_group_min: 3, n_per_group_max: 3, n_timepoints: 4 });
+        expect(step(two, "differential_expression").rules[0]).toMatch(/^R-0014@/);
+        expect(step(two, "shrink_lfc").rules[0]).toMatch(/^R-0172@/);
+        expect(step(answer({ ...BASE, n_groups: 3, n_per_group_min: 4, n_per_group_max: 4 }), "shrink_lfc").rules[0]).toMatch(/^R-0040@/);
+    });
+
+    it("mouse deconvolution takes mMCP-counter through the immunedeconv template, and the absolute methods take the same template", () => {
+        const mouse = answer({ ...BASE, question: "deconvolution", organism: "mouse" });
+        expect(mouse.match).toBe("applicable");
+        expect(step(mouse, "deconvolution").method?.id).toBe("M-0061");
+        expect(step(mouse, "deconvolution").template).toBe("tpl-immunedeconv@1.1.0");
+        expect(parameter(mouse, "deconvolution", "method")).toBe("mmcp_counter");
+        expect(step(mouse, "deconvolution").forbids).toEqual(expect.arrayContaining(["M-0041", "M-0042", "M-0043", "M-0044"]));
+        const tpm = answer({ ...BASE, question: "deconvolution", data_state: "tpm_or_fpkm" });
+        expect(step(tpm, "deconvolution").method?.id).toBe("M-0043");
+        expect(step(tpm, "deconvolution").template).toBe("tpl-immunedeconv@1.1.0");
+        expect(parameter(tpm, "deconvolution", "method")).toBe("epic");
+    });
+
+    it("log-scale input reaches a limma-trend template for a paired, a multi-group, a time course, and an interaction design", () => {
+        const tpm: Situation = { ...BASE, data_state: "tpm_or_fpkm" };
+        expect(step(answer({ ...tpm, paired: true }), "differential_expression").template).toBe("tpl-limma-trend-logvalues@1.1.0");
+        expect(step(answer({ ...tpm, n_groups: 3, n_per_group_min: 4, n_per_group_max: 4 }), "differential_expression").template).toBe("tpl-limma-trend-multigroup@1.0.0");
+        expect(step(answer({ ...tpm, n_per_group_min: 3, n_per_group_max: 3, n_timepoints: 4 }), "differential_expression").template).toBe("tpl-limma-trend-timecourse@1.0.0");
+        expect(step(answer({ ...tpm, n_groups: 1, n_per_group_min: 3, n_per_group_max: 3, n_timepoints: 4 }), "differential_expression").template).toBe("tpl-limma-trend-timecourse@1.0.0");
+        expect(step(answer({ ...tpm, n_groups: 4, n_per_group_min: 4, n_per_group_max: 4, interaction: true }), "differential_expression").template).toBe("tpl-limma-trend-interaction@1.0.0");
+        for (const template of ["tpl-limma-trend-multigroup", "tpl-limma-trend-timecourse", "tpl-limma-trend-interaction"]) {
+            expect(snapshot.templates.get(template)?.method).toBe("M-0005");
+        }
+    });
+
+    it("the classifier and the penalized Cox have a template, and the Python mirrors follow the preference", () => {
+        const classifier = answer({ ...BASE, question: "signature_scoring", classifier: true, n_per_group_min: 60, n_per_group_max: 60 });
+        expect(step(classifier, "signature_scoring").template).toBe("tpl-glmnet-classifier@1.0.0");
+        expect(snapshot.templates.get("tpl-glmnet-cox")?.method).toBe("M-0054");
+        expect(templateHolds(snapshot.templates.get("tpl-glmnet-cox")!, "survival", { ...BASE, question: "survival", n_per_group_min: 60, n_per_group_max: 60 })).toBe(true);
+        const paired = answer({ ...BASE, paired: true, blocking_factor: "subject" }, { language: "python" });
+        expect(step(paired, "differential_expression").template).toBe("tpl-pydeseq2-blocked@1.0.0");
+        expect(step(paired, "differential_expression").substitution).toBeUndefined();
+        const pathways = answer({ ...BASE, question: "tf_activity" }, { language: "python" });
+        expect(step(pathways, "pathway_activity").template).toBe("tpl-decoupler-py-pathway-activity@1.0.0");
+        // A human gene list: the Disease Ontology complement has a template, and it holds for that situation only.
+        const list: Situation = { ...BASE, question: "enrichment", enrichment_input: "gene_list" };
+        expect(snapshot.templates.get("tpl-dose-ora")?.method).toBe("M-0058");
+        expect(templateHolds(snapshot.templates.get("tpl-dose-ora")!, "enrichment", list)).toBe(true);
+        expect(templateHolds(snapshot.templates.get("tpl-dose-ora")!, "enrichment", { ...list, organism: "mouse" })).toBe(false);
+        expect(step(answer(list), "enrichment").alternatives?.some((alternative) => alternative.method === "M-0058")).toBe(true);
     });
 
     it("the answer carries the claims the procedure references and no other, for each question kind and under a flag", () => {

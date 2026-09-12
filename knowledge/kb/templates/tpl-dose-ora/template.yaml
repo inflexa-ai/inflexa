@@ -1,0 +1,141 @@
+id: tpl-dose-ora
+version: 1.0.0
+label: "Disease Ontology over-representation of a human gene list with DOSE enrichDO"
+language: R
+method: M-0058
+step_types: [enrichment]
+edam_operations: [EDAM:operation_3501]
+citations: [S-0126, S-0026, S-0027, S-0046]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  conditions:
+    - field: organism
+      op: eq
+      value: human
+    - field: enrichment_input
+      op: eq
+      value: gene_list
+  notes: >-
+    A differential expression results table with the columns `gene`,
+    `log2_fold_change`, and `adjusted_pvalue`, with the genes as HGNC symbols.
+    DOSE 4 downloads its gene sets at the first call, and the sandbox has no
+    network, thus the script builds the same gene sets from the HDO.db
+    package: a term holds its own genes and the genes of its offspring. The
+    Disease Ontology annotates human genes by their Entrez identifier,
+    thus the script maps the symbols with org.Hs.eg.db and reports the
+    unmapped share of the gene list and of the universe. The universe is the
+    set of tested genes: every row with a non-missing adjusted p-value. The
+    gene list is the rows under the adjusted p-value cutoff and over the fold
+    change cutoff, both signs. The test is the hypergeometric test of
+    DOSE::enrichDO with Benjamini-Hochberg adjustment, and every term is
+    reported. The test is a complement to the GO over-representation with
+    the same universe rules.
+parameters:
+  - name: results_path
+    type: string
+    description: "Path of the differential expression results CSV with the columns gene, log2_fold_change, and adjusted_pvalue."
+    adaptable: true
+  - name: ontology
+    type: string
+    description: "The ontology of DOSE 4: HDO, the Human Disease Ontology. The gene sets come from the HDO.db annotation package, because the sandbox has no network for the file that DOSE downloads."
+    adaptable: false
+    default: HDO
+    default_source: "doi:10.1093/bioinformatics/btu684"
+    enum: [HDO]
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that puts a gene of the results table into the gene list."
+    adaptable: true
+    default: 0.05
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 0
+  - name: lfc_cutoff
+    type: number
+    description: "The absolute log2 fold change a gene needs, beside the adjusted p-value, to enter the gene list. 0 takes every significant gene."
+    adaptable: true
+    default: 0
+    minimum: 0
+  - name: min_size
+    type: integer
+    description: "The smallest number of universe genes a term needs to enter the test."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 1
+  - name: max_size
+    type: integer
+    description: "The largest number of universe genes a term can hold and enter the test."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.1038/s41596-018-0103-9"
+    minimum: 1
+  - name: term_padj_cutoff
+    type: number
+    description: "The adjusted p-value that counts a term as significant in the summary and the figure. Every term is reported."
+    adaptable: false
+    default: 0.05
+    default_source: "doi:10.1111/j.2517-6161.1995.tb02031.x"
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example do_ora."
+    adaptable: true
+    default: do_ora
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: results
+    path: "{{results_path}}"
+    format: EDAM:format_3752
+    description: "Differential expression results, one row per gene, HGNC symbols, CSV."
+outputs:
+  - name: results
+    path: "output/{prefix}_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested Human Disease Ontology term: pathway (the DOID), term, gene_ratio, bg_ratio, fold_enrichment, pvalue, padj, count, genes (semicolon-joined symbols)."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The inputs, the ontology, the identifier space, the size of the gene list and of the universe with their unmapped share, the counts of tested and significant terms, the thresholds, the package versions."
+  - name: dot_plot
+    path: "figures/{prefix}_dotplot.png"
+    description: "Dot plot of the top 20 terms by adjusted p-value: fold enrichment against term, sized by count, colored by padj (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: DOSE
+    version: "4.6.0"
+    track: bioconductor
+  - name: HDO.db
+    version: "1.0.0"
+    track: bioconductor
+  - name: org.Hs.eg.db
+    version: "3.23.1"
+    track: bioconductor
+  - name: AnnotationDbi
+    version: "1.74.0"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n6-do
+    dataset: two_group_n6/seed-1
+    slots:
+      results_path: /work/data/de_results.csv
+    expect:
+      - "exists output/do_ora_results.csv"
+      - "exists output/do_ora_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/do_ora_dotplot.png"
+      - "exists figures/do_ora_dotplot.pdf"
+      - "csv_rows output/do_ora_results.csv >= 100"
+      - "json output/do_ora_summary.json n_universe >= 5000"
+      - "json output/do_ora_summary.json n_terms_tested >= 100"
+      - "json output/do_ora_summary.json ontology == HDO"
+      - "json output/do_ora_summary.json ontology_source.n_terms >= 5000"

@@ -16,3 +16,5 @@ packages:
   - name: scikit-survival
     track: python
     version_range: ">=0.22"
+templates:
+  - tpl-glmnet-cox

@@ -10,6 +10,9 @@ assertion: >-
   ortholog map. Report the release of the ontology and the size window of
   the term sets, and do not present a disease term as a diagnosis of the
   samples.
+  The plan names the source of the disease gene sets: DOSE 4 downloads them
+  at the first call, and a sandbox without network builds the same sets from
+  the HDO.db package, each term with the genes of its offspring terms.
 modality: bulk_rna_seq
 conditions:
   - field: enrichment_input
@@ -25,6 +28,10 @@ action:
     - name: disease_ontology_ora
       value: enrichDO_same_universe_as_go
       default_source: "doi:10.1093/bioinformatics/btu684"
+    - name: disease_gene_sets
+      value: HDO.db_terms_with_the_genes_of_their_offspring
+      default_source: "doi:10.1093/bioinformatics/btu684"
+      required: true
 severity: info
 strength: common_practice
 evidence_quality: moderate
@@ -57,5 +64,5 @@ license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true
 drafting_model: "claude-fable-5-1"
-curated: "2026-09-06"
+curated: "2026-09-12"
 tags: [enrichment, disease-ontology, human]

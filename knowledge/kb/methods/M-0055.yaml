@@ -16,3 +16,5 @@ packages:
   - name: scikit-learn
     track: python
     version_range: ">=1.3"
+templates:
+  - tpl-glmnet-classifier

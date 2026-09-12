@@ -17,3 +17,5 @@ packages:
     track: bioconductor
     version_range: ">=3.20"
     bioconductor: "3.23"
+templates:
+  - tpl-dose-ora

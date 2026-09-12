@@ -10,7 +10,24 @@
 #   two_group_n3, two_group_n6, paired_n5, batch_balanced_n6, interaction_2x2_n4,
 #   timecourse_2x4_n3, confounded_batch_n6, no_replicates_1v1, multi_group_3x4,
 #   outlier_n5, two_group_n60, covariates_n6, timecourse_2x2_n3, paired_3groups_n4,
-#   survival_n60, regulons_n6, coexpression_n60, salmon_two_group_n6, isoform_switch_n6
+#   survival_n60, regulons_n6, coexpression_n60, salmon_two_group_n6, isoform_switch_n6,
+#   timecourse_1x4_n3, mouse_two_group_n6
+#
+# timecourse_1x4_n3 follows one group over four time points with three
+# replicates each: 15% of the expressed genes carry a slope over time
+# (planted_set "time"), and no condition column exists.
+#
+# mouse_two_group_n6 takes the design of two_group_n6 and writes the gene
+# symbols in the title case of a mouse symbol (CD3E becomes Cd3e). The case
+# change is a fixture device for a mouse marker table, not an ortholog map;
+# the hallmark sets do not match these names, thus no hallmark set is planted.
+#
+# Quantification patterns (QUANT_PATTERNS below) also write quant/<sample>/quant.sf
+# and tx2gene.csv from the gene counts, after every other output: each gene
+# gets one to four isoforms with log-normal lengths around its gene length and
+# a usage per sample, and the reads of a gene split over its isoforms by that
+# usage. The sum of NumReads per gene stays the gene count up to a small
+# multi-mapping noise, thus a length offset changes the fit and not the truth.
 #
 # Salmon patterns: salmon_two_group_n6 and isoform_switch_n6 take the design of
 # two_group_n6 and draw the counts per transcript, not per gene. Each gene has
@@ -57,6 +74,7 @@ HALLMARK <- option("--hallmark", NULL)
 REGULONS <- option("--regulons", NULL)
 N_GENES <- as.integer(option("--n-genes", "12000"))
 SALMON_PATTERNS <- c("salmon_two_group_n6", "isoform_switch_n6")
+QUANT_PATTERNS <- c("two_group_n3", "paired_n5", "batch_balanced_n6", "interaction_2x2_n4", "timecourse_2x4_n3", "timecourse_1x4_n3", "multi_group_3x4", "outlier_n5", "two_group_n60", "paired_3groups_n4")
 set.seed(SEED)
 dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
 
@@ -72,13 +90,14 @@ hallmark_genes <- unique(unlist(gene_sets))
 n_synthetic <- max(0, N_GENES - length(hallmark_genes))
 genes <- c(hallmark_genes, sprintf("GENE%05d", seq_len(n_synthetic)))
 genes <- genes[seq_len(min(N_GENES, length(genes)))]
+if (PATTERN == "mouse_two_group_n6") genes <- paste0(substr(genes, 1, 1), tolower(substring(genes, 2)))
 n_genes <- length(genes)
 
 # ── Design ────────────────────────────────────────────────────────────────────
 make_design <- function(pattern) {
   if (pattern == "two_group_n3") {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 3))
-  } else if (pattern %in% c("two_group_n6", SALMON_PATTERNS)) {
+  } else if (pattern %in% c("two_group_n6", "mouse_two_group_n6", SALMON_PATTERNS)) {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 6))
   } else if (pattern == "paired_n5") {
     meta <- data.frame(subject = rep(sprintf("S%02d", 1:5), times = 2), condition = rep(c("control", "treated"), each = 5))
@@ -102,6 +121,9 @@ make_design <- function(pattern) {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 60))
   } else if (pattern == "covariates_n6") {
     meta <- data.frame(condition = rep(c("control", "treated"), each = 6), sex = rep(c("F", "M"), times = 6), age = round(runif(12, 25, 75)))
+  } else if (pattern == "timecourse_1x4_n3") {
+    meta <- expand.grid(replicate = 1:3, time = c("t0", "t1", "t2", "t3"), stringsAsFactors = FALSE)[, "time", drop = FALSE]
+    meta$time_hours <- as.integer(factor(meta$time)) - 1L
   } else if (pattern == "timecourse_2x2_n3") {
     meta <- expand.grid(replicate = 1:3, time = c("t0", "t1"), condition = c("control", "treated"), stringsAsFactors = FALSE)[, c("condition", "time")]
     meta$time_hours <- as.integer(factor(meta$time)) - 1L
@@ -184,7 +206,7 @@ plant_regulons <- function(condition_column, test_level) {
   }
 }
 
-if (PATTERN %in% c("two_group_n3", "two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6", "survival_n60", "regulons_n6", "coexpression_n60", SALMON_PATTERNS)) {
+if (PATTERN %in% c("two_group_n3", "two_group_n6", "mouse_two_group_n6", "batch_balanced_n6", "confounded_batch_n6", "no_replicates_1v1", "paired_n5", "outlier_n5", "two_group_n60", "covariates_n6", "survival_n60", "regulons_n6", "coexpression_n60", SALMON_PATTERNS)) {
   de_index <- sample_expressed(0.10)
   lfc <- effect_size(length(de_index))
   treated <- meta$condition == "treated"
@@ -292,6 +314,18 @@ if (PATTERN == "timecourse_2x4_n3") {
   truth$planted_set[interaction_index] <- "condition_by_time"
 }
 
+if (PATTERN == "timecourse_1x4_n3") {
+  # One group over time: the truth is the set of genes with a slope over time.
+  # A 3 df test at 3 samples per time point finds a slope near 0.4 log2 per
+  # unit of time, thus the planted slope starts there.
+  time_index <- sample_expressed(0.15)
+  slope <- sign(rnorm(length(time_index))) * (0.4 + abs(rnorm(length(time_index), sd = 0.3)))
+  for (i in seq_len(n_samples)) log_mu[time_index, i] <- log_mu[time_index, i] + slope * meta$time_hours[i]
+  truth$de[time_index] <- 1L
+  truth$lfc[time_index] <- slope * 3
+  truth$planted_set[time_index] <- "time"
+}
+
 # ── Co-expression modules (three latent sample factors, independent of the condition) ──
 if (PATTERN == "coexpression_n60") {
   for (k in 1:3) {
@@ -395,14 +429,17 @@ if (PATTERN %in% SALMON_PATTERNS) {
 
 # ── Survival outcome (drawn after the counts, thus the counts stay) ──────────
 if (PATTERN == "survival_n60") {
-  # A 20-gene signature drives the hazard: a higher score, a shorter time.
-  sig <- sample(expressed, 20)
+  # A 10-gene signature drives the hazard: a higher score, a shorter time. Ten
+  # genes at this strength give a per-gene effect that a penalized Cox model
+  # recovers at about 70 events; a 20-gene signature at strength 1.2 spread
+  # the effect so thin that the lasso kept no gene at any lambda.
+  sig <- sample(expressed, 10)
   # The score is depth-free: the counts are divided by the size factors before the log.
   corrected <- sweep(counts[sig, , drop = FALSE], 2, size_factors, "/")
   score <- colMeans(log2(corrected + 1))
   score <- (score - mean(score)) / sd(score)
-  hazard <- exp(1.2 * score)
-  time <- round(rexp(n_samples, rate = hazard / 24), 1)
+  hazard <- exp(2.0 * score)
+  time <- pmax(round(rexp(n_samples, rate = hazard / 24), 1), 0.1)
   censor <- round(runif(n_samples, 6, 36), 1)
   meta$time <- pmin(time, censor)
   meta$event <- as.integer(time <= censor)
@@ -441,6 +478,33 @@ if (PATTERN %in% SALMON_PATTERNS) {
     file.path(OUT, "transcripts.csv"), row.names = FALSE
   )
 }
+# ── Quantifications from the gene counts (drawn after every other output) ─────
+if (PATTERN %in% QUANT_PATTERNS) {
+  n_tx <- sample(1:4, n_genes, replace = TRUE)
+  tx_gene <- rep(seq_len(n_genes), n_tx)
+  n_transcripts <- length(tx_gene)
+  tx_name <- paste0(genes[tx_gene], "-T", sequence(n_tx))
+  tx_length <- pmax(400L, as.integer(round(gene_lengths[tx_gene] * exp(rnorm(n_transcripts, sd = 0.5)))))
+  tx_effective <- pmax(tx_length - 200L + 1L, 1L)
+  base <- rgamma(n_transcripts, shape = 2)
+  base_p <- base / rowsum(base, tx_gene)[tx_gene]
+  for (i in seq_len(n_samples)) {
+    usage <- rgamma(n_transcripts, shape = 50 * base_p)
+    p <- usage / rowsum(usage, tx_gene)[tx_gene]
+    num_reads <- counts[tx_gene, i] * p * runif(n_transcripts, 0.9, 1.1)
+    reads_per_base <- num_reads / tx_effective
+    tx_tpm <- reads_per_base / sum(reads_per_base) * 1e6
+    quant_dir <- file.path(OUT, "quant", meta$sample[i])
+    dir.create(quant_dir, showWarnings = FALSE, recursive = TRUE)
+    quant <- data.frame(
+      Name = tx_name, Length = tx_length, EffectiveLength = sprintf("%.3f", tx_effective),
+      TPM = sprintf("%.6f", tx_tpm), NumReads = sprintf("%.3f", num_reads)
+    )
+    write.table(quant, file.path(quant_dir, "quant.sf"), sep = "\t", quote = FALSE, row.names = FALSE)
+  }
+  write.csv(data.frame(transcript = tx_name, gene = genes[tx_gene]), file.path(OUT, "tx2gene.csv"), row.names = FALSE)
+}
+
 record <- list(
   pattern = PATTERN, seed = SEED, n_genes = n_genes, n_samples = n_samples,
   n_de = sum(truth$de), planted_sets = unique(truth$planted_set[truth$planted_set != ""]),

@@ -165,8 +165,11 @@ CLI runtime on the same campaign database.
 
 ## Tests and gates
 
-The evaluation data holds seventeen simulated patterns under `eval/data/`,
-each with counts, TPM, log-expression, lengths, metadata, and the truth. The
+The evaluation data holds nineteen simulated patterns under `eval/data/`,
+each with counts, TPM, log-expression, lengths, metadata, and the truth. Ten
+of the patterns also carry per-sample quantifications with a
+transcript-to-gene map, drawn from the gene counts after every other output,
+for the templates that import quantifications. The
 task set in `eval/tasks/tasks.yaml` names a pattern and the facts of the
 profile. A task can set the organism, the data state, an extra input (a
 results table or a signature gene list), hidden columns, a user constraint,

@@ -1,0 +1,69 @@
+id: R-0170
+title: "One group and no time course: a differential expression question has no comparison, stop and ask for the factor of interest"
+assertion: >-
+  If the sample table holds one level of the condition of interest and no
+  time course, no differential expression test can run: a test compares the
+  expression between at least two levels of a factor, and a design with one
+  level has no coefficient to test. Stop, and ask for the factor that the
+  question compares, or restate the question as a sample structure QC, a
+  clustering, a co-expression analysis, or a signature scoring of the
+  samples. Do not split the samples into groups from the expression itself
+  and then test the split, because the test then finds the split that made
+  it.
+modality: bulk_rna_seq
+conditions:
+  - field: question
+    op: in
+    value: [differential_expression, full_plan]
+  - field: n_groups
+    op: eq
+    value: 1
+  - field: n_timepoints
+    op: is_null
+action:
+  step_type: differential_expression
+  outcome: stop_no_comparison_group
+severity: flag
+strength: consensus
+evidence_quality: high
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      A design matrix encodes the groups of the samples, and a contrast
+      compares the coefficients of the groups. A comparison of interest is a
+      difference between the levels of an explanatory variable, thus the
+      variable needs at least two levels among the samples.
+    anchor: "Introduction; Design matrices, Means model; Contrasts"
+    retrieved: "2026-09-11"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The results function reports a contrast between two levels of a
+      factor, or a named coefficient of the design. The design formula
+      names the variables that explain the counts, and the last variable
+      is the condition of interest with a reference level.
+    anchor: "Quick start; Building the results table; Contrasts"
+    retrieved: "2026-09-11"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0146
+    paraphrase: >-
+      A class label that comes from the expression data and a test of the
+      same data against that label gives a biased result, because the
+      selection step already used the information that the test measures.
+    anchor: "Abstract; Results"
+    retrieved: "2026-09-11"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-11"
+tags: [design, flag, one-group]

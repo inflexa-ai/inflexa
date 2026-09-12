@@ -18,7 +18,7 @@ import { join } from "node:path";
 
 import { EVAL_ROOT } from "./tasks.js";
 
-const PATTERNS = ["two_group_n3", "two_group_n6", "paired_n5", "batch_balanced_n6", "interaction_2x2_n4", "timecourse_2x4_n3", "confounded_batch_n6", "no_replicates_1v1", "multi_group_3x4", "outlier_n5", "two_group_n60", "covariates_n6", "timecourse_2x2_n3", "paired_3groups_n4", "survival_n60", "regulons_n6", "coexpression_n60", "salmon_two_group_n6", "isoform_switch_n6"];
+const PATTERNS = ["two_group_n3", "two_group_n6", "paired_n5", "batch_balanced_n6", "interaction_2x2_n4", "timecourse_2x4_n3", "confounded_batch_n6", "no_replicates_1v1", "multi_group_3x4", "outlier_n5", "two_group_n60", "covariates_n6", "timecourse_2x2_n3", "paired_3groups_n4", "survival_n60", "regulons_n6", "coexpression_n60", "salmon_two_group_n6", "isoform_switch_n6", "timecourse_1x4_n3", "mouse_two_group_n6"];
 
 function argument(name: string): string | undefined {
     const index = process.argv.indexOf(name);

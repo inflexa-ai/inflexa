@@ -24,6 +24,9 @@ action:
   step_type: deconvolution
   method: M-0043
   parameters:
+    - name: method
+      value: epic
+      default_source: "doi:10.7554/eLife.26476"
     - name: input_scale
       value: tpm_linear
       default_source: "doi:10.7554/eLife.26476"

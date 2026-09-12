@@ -1,0 +1,201 @@
+id: tpl-glmnet-cox
+version: 1.0.0
+label: "Penalized Cox regression with glmnet: a gene expression signature for the time to event with a cross-validated lambda"
+language: R
+method: M-0054
+step_types: [survival]
+edam_operations: [EDAM:operation_3659]
+citations: [S-0114, S-0115, S-0116, S-0146]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates, two_group_paired, two_group_with_blocking_factor]
+  honors: []
+  min_replicates: 10
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample
+    that holds a positive follow-up time and a 0/1 event. The script takes
+    the library sizes and the scaling factors from the genes that pass
+    filterByExpr, computes log-CPM, and takes every expressed gene as a
+    candidate unless n_top_genes limits them to the most variable ones, a
+    filter that reads no outcome. An elastic net or lasso
+    penalty on the Cox partial likelihood over the candidates, a
+    cross-validation on the deviance that selects the lambda by the stated
+    rule, and the genes with a nonzero coefficient at that lambda as the
+    signature. A clinical covariate enters the model without a penalty. The
+    linear predictor is the risk score. The concordance and the Kaplan-Meier
+    split of that score on the same samples are internal and optimistic; the
+    summary states that an external cohort must validate the signature.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample, with the time and the event columns."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: time_column
+    type: string
+    description: "The column of the sample table that holds the positive follow-up time of each sample."
+    adaptable: true
+    default: time
+  - name: event_column
+    type: string
+    description: "The column of the sample table that holds the event indicator: 1 for an event, 0 for a censored sample."
+    adaptable: true
+    default: event
+  - name: covariates
+    type: string_list
+    description: "Clinical columns of the sample table that enter the model without a penalty, for example [age, stage]. Absent, the model holds the genes only."
+    adaptable: true
+    required: false
+  - name: min_count
+    type: integer
+    description: "The min.count of filterByExpr for the expressed genes."
+    adaptable: true
+    default: 10
+    default_source: "guide:edgeR/2026-04-25#filtering"
+    minimum: 0
+  - name: min_total_count
+    type: integer
+    description: "The min.total.count of filterByExpr for the expressed genes."
+    adaptable: true
+    default: 15
+    default_source: "guide:edgeR/2026-04-25#filtering"
+    minimum: 0
+  - name: normalization_method
+    type: string
+    description: "The method of calcNormFactors for the library size scaling of the log-CPM."
+    adaptable: true
+    default: TMM
+    default_source: "guide:edgeR/2026-04-25#normalization"
+    enum: [TMM, TMMwsp, RLE, upperquartile, none]
+  - name: n_top_genes
+    type: integer
+    description: "The number of most variable genes, by the variance of the log-CPM over every sample, that enter the penalized model as candidates. Absent, every expressed gene enters: a variance filter drops a gene with a strong effect and a small spread, and the penalty does the selection."
+    adaptable: true
+    required: false
+    minimum: 50
+  - name: elastic_net_alpha
+    type: number
+    description: "The elastic net mixing parameter of glmnet: 1 is the lasso, 0 the ridge, a value between is the elastic net."
+    adaptable: true
+    default: 1
+    default_source: "doi:10.18637/jss.v039.i05"
+    minimum: 0
+    maximum: 1
+  - name: lambda_rule
+    type: string
+    description: "The cross-validation rule that selects the lambda: lambda.min is the minimum of the cross-validated deviance, lambda.1se the most regularized model within one standard error of it. At a few dozen events lambda.1se tends to keep no gene, thus lambda.min is the default and lambda.1se the stricter choice."
+    adaptable: true
+    default: lambda.min
+    default_source: "doi:10.18637/jss.v033.i01"
+    enum: [lambda.min, lambda.1se]
+  - name: n_folds
+    type: integer
+    description: "The number of cross-validation folds of cv.glmnet."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.18637/jss.v039.i05"
+    minimum: 3
+  - name: seed
+    type: integer
+    description: "The random seed of the fold assignment, for the record."
+    adaptable: true
+    default: 1
+    minimum: 0
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example signature or cox_lasso."
+    adaptable: true
+    default: signature
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV, with the time and the event columns."
+outputs:
+  - name: coefficients
+    path: "output/{prefix}_coefficients.csv"
+    format: EDAM:format_3752
+    description: "One row per term of the model at the selected lambda: term, coefficient, penalized, nonzero, sorted with the signature genes first."
+  - name: risk_scores
+    path: "output/{prefix}_risk_scores.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, risk_score (the linear predictor), risk_group (the median split), time, event."
+  - name: cv_path
+    path: "output/{prefix}_cv_path.csv"
+    format: EDAM:format_3752
+    description: "The cross-validation path: lambda, cv_deviance, cv_deviance_sd, n_nonzero."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The penalty, the lambda rule and the lambdas, the fold count and the seed, the sample and event counts, the candidate filter, the signature genes with their coefficients, the internal concordance, the validation statement, the package versions."
+  - name: cv_curve
+    path: "figures/{prefix}_cv_curve.png"
+    description: "The cross-validated deviance against log(lambda) with lambda.min and lambda.1se marked (and PDF)."
+  - name: km
+    path: "figures/{prefix}_km.png"
+    description: "Kaplan-Meier curves by the median split of the internal risk score, labeled as optimistic (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: glmnet
+    version: "4.1-10"
+    track: cran
+  - name: survival
+    version: "3.8.6"
+    track: cran
+  - name: survminer
+    version: "0.5.2"
+    track: cran
+  - name: edgeR
+    version: "4.10.3"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: survival-n60-lasso
+    dataset: survival_n60/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      covariates: [condition]
+    expect:
+      - "exists output/signature_coefficients.csv"
+      - "exists output/signature_risk_scores.csv"
+      - "exists output/signature_cv_path.csv"
+      - "exists output/signature_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/signature_cv_curve.png"
+      - "exists figures/signature_cv_curve.pdf"
+      - "exists figures/signature_km.png"
+      - "csv_rows output/signature_risk_scores.csv >= 120"
+      - "json output/signature_summary.json n_samples == 120"
+      - "json output/signature_summary.json n_events >= 30"
+      - "json output/signature_summary.json n_nonzero >= 1"
+      - "json output/signature_summary.json concordance_internal >= 0.6"

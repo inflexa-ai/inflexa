@@ -1,0 +1,85 @@
+id: R-0171
+title: "One group over three or more time points: DESeq2 LRT of ~ time against ~ 1, then the fold change of each time point against the first"
+assertion: >-
+  If the study follows one group over three or more time points, test the
+  time effect with the DESeq2 likelihood ratio test of the full design
+  ~ time against the reduced design ~ 1. The test finds the genes whose
+  expression changes over time, whatever the shape of the change. Report
+  the log2 fold change of each later time point against the first time
+  point beside the one LRT p-value, and cluster the profiles of the
+  significant genes in the report. When the same subject gives the sample
+  at each time point, put the subject in both designs as a block. A Wald
+  test of one time point against the first answers a narrower question, and
+  it is the follow-up, not the test of the time effect.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_groups
+    op: eq
+    value: 1
+  - field: n_timepoints
+    op: gte
+    value: 3
+  - field: n_per_group_min
+    op: gte
+    value: 2
+action:
+  step_type: differential_expression
+  method: M-0002
+  parameters:
+    - name: full
+      value: "~ time"
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+    - name: reduced
+      value: "~ 1"
+      default_source: "vignette:DESeq2/1.52.0#likelihood-ratio-test"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+alternatives:
+  - method: M-0019
+    when: "The replicate count per time point is large, or the subject is repeated over time: limma-voom with a spline of time, or with duplicateCorrelation for the subject."
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      The likelihood ratio test compares a full model against a reduced
+      model that drops one or more terms, and it tests all the levels of a
+      factor at once. The reduced design ~ 1 tests whether a factor with
+      several levels explains the counts at all.
+    anchor: "Likelihood ratio test; Time course experiments"
+    retrieved: "2026-09-11"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0075
+    paraphrase: >-
+      The tools that model the time course as a factor with a likelihood
+      ratio test, or with a spline of time in a linear model, find the
+      time-dependent genes with a controlled false discovery rate, and they
+      hold with few replicates per time point.
+    anchor: "Results, Performance on simulated data; Discussion"
+    retrieved: "2026-09-11"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0042
+    paraphrase: >-
+      A factor with several levels enters the design as a set of
+      coefficients relative to the reference level, and a test of the whole
+      factor asks whether any level differs from the reference. A pairwise
+      contrast of one level against the reference is a different question.
+    anchor: "Design matrices, Single explanatory variable with several levels"
+    retrieved: "2026-09-11"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-11"
+tags: [design, time-course, one-group]

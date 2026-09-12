@@ -1,0 +1,197 @@
+id: tpl-limma-trend-interaction
+version: 1.0.0
+label: "limma-trend 2x2 factorial design with an interaction term on log-scale expression values"
+language: R
+method: M-0005
+step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
+edam_operations: [EDAM:operation_3223]
+citations: [S-0007, S-0008, S-0041, S-0042, S-0059, S-0067]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  design_patterns: [two_factor_interaction]
+  honors: []
+  min_replicates: 2
+  conditions:
+    - field: data_state
+      op: in
+      value: [tpm_or_fpkm, log_normalized]
+    - field: interaction
+      op: eq
+      value: true
+  notes: >-
+    An abundance matrix whose first column is the gene identifier and whose
+    header holds the sample identifiers, plus a sample table with one row per
+    sample and two factor columns with two levels each. The values are TPM,
+    FPKM, or RPKM on the linear scale, or values that are already on a log2
+    scale. A linear-scale value becomes log2(value + offset). No count model
+    applies to such values. The two factor columns are renamed to `factor_a`
+    and `factor_b` inside the script, and the design is pinned to
+    ~ factor_a * factor_b. The interaction test is the moderated t-test on
+    the interaction coefficient. The simple effect of factor_b inside each
+    level of factor_a comes beside it. The script honors no pairing, blocking
+    factor, covariate, or batch term.
+parameters:
+  - name: abundance_path
+    type: string
+    description: "Path of the abundance matrix CSV, first column gene id, header sample ids, TPM or FPKM or RPKM, or log2 values when values_are_log is true."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the abundance matrix header."
+    adaptable: true
+    default: sample
+  - name: factor_a_column
+    type: string
+    description: "The column of the sample table that holds the first factor with two levels, for example genotype."
+    adaptable: true
+  - name: factor_a_reference
+    type: string
+    description: "The reference level of the first factor, for example WT."
+    adaptable: true
+  - name: factor_b_column
+    type: string
+    description: "The column of the sample table that holds the second factor with two levels, for example treatment."
+    adaptable: true
+  - name: factor_b_reference
+    type: string
+    description: "The reference level of the second factor, for example vehicle."
+    adaptable: true
+  - name: values_are_log
+    type: boolean
+    description: "True when the matrix already holds log2 values, for example log-CPM or microarray intensities. False when it holds TPM, FPKM, or RPKM on the linear scale, which the script transforms with log2(value + log_offset)."
+    adaptable: true
+    default: false
+  - name: log_offset
+    type: number
+    description: "The offset added before the log2 transform of a linear-scale value, to keep a zero finite and to damp the variance of a low value. Unused when values_are_log is true."
+    adaptable: true
+    default: 1
+    default_source: "guide:limma/2026-05-19#limma-trend"
+    minimum: 0
+  - name: expression_floor
+    type: number
+    description: "A gene stays when its log2 expression is at least this floor in at least min_samples samples. 1 keeps a gene with TPM of at least 1 under the default offset."
+    adaptable: true
+    default: 1
+    default_source: "guide:limma/2026-05-19#filtering"
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the expression filter. Absent, the script uses the smallest cell size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: trend
+    type: boolean
+    description: "The trend argument of eBayes: the prior variance follows the mean log expression. The method is limma-trend, thus the value is pinned to true."
+    adaptable: false
+    default: true
+    default_source: "guide:limma/2026-05-19#limma-trend"
+  - name: robust
+    type: boolean
+    description: "The robust argument of eBayes: the hyperparameters are estimated with protection against a hypervariable gene."
+    adaptable: true
+    default: true
+    default_source: "doi:10.1214/16-AOAS920"
+  - name: alpha
+    type: number
+    description: "The adjusted p-value cutoff that counts a gene as significant in the summary and the figures."
+    adaptable: false
+    default: 0.05
+    default_source: "guide:limma/2026-05-19#multiple-testing-across-genes-and-contrasts"
+  - name: n_top_genes_mds
+    type: integer
+    description: "The number of most variable genes for the MDS plot."
+    adaptable: true
+    default: 500
+    default_source: "doi:10.12688/f1000research.9005.3"
+    minimum: 50
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example de or genotype_by_treatment."
+    adaptable: true
+    default: de
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: abundance
+    path: "{{abundance_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample abundance values, CSV: TPM, FPKM, RPKM, or log2 values."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV."
+outputs:
+  - name: interaction_results
+    path: "output/{prefix}_interaction_results.csv"
+    format: EDAM:format_3752
+    description: "One row per tested gene: gene, log_expression_mean, log2_fold_change of the interaction coefficient, t_stat, pvalue, adjusted_pvalue (BH)."
+  - name: simple_effect_results
+    path: "output/{prefix}_simple_effect_{level_a}.csv"
+    format: EDAM:format_3752
+    description: "One file per level of factor_a: the effect of factor_b inside that level, with the same columns."
+  - name: log_expression
+    path: "output/{prefix}_log_expression.csv"
+    format: EDAM:format_3752
+    description: "The log2 expression values after the filter, genes by samples, for downstream visualization."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The design, the factors, the cell sizes, the transform, the interaction and simple effect counts, the thresholds, the package versions."
+  - name: mds
+    path: "figures/{prefix}_mds.png"
+    description: "MDS plot of the samples on the top variable genes, colored by factor_a with factor_b as the shape (and PDF)."
+  - name: mean_variance
+    path: "figures/{prefix}_mean_variance.png"
+    description: "The limma-trend mean-variance relation with the fitted trend (and PDF)."
+  - name: volcano
+    path: "figures/{prefix}_volcano.png"
+    description: "Volcano plot of the interaction test (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: limma
+    version: "3.68.5"
+    track: bioconductor
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: interaction-2x2-n4-log
+    dataset: interaction_2x2_n4/seed-1
+    slots:
+      abundance_path: /work/data/log_expr.csv
+      metadata_path: /work/data/metadata.csv
+      factor_a_column: genotype
+      factor_a_reference: WT
+      factor_b_column: treatment
+      factor_b_reference: vehicle
+      values_are_log: true
+    expect:
+      - "exists output/de_interaction_results.csv"
+      - "exists output/de_simple_effect_WT.csv"
+      - "exists output/de_simple_effect_KO.csv"
+      - "exists output/de_summary.json"
+      - "exists output/de_log_expression.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/de_mds.png"
+      - "exists figures/de_mds.pdf"
+      - "exists figures/de_mean_variance.png"
+      - "exists figures/de_volcano.png"
+      - "exists figures/de_volcano.pdf"
+      - "csv_rows output/de_interaction_results.csv >= 5000"
+      - "csv_rows output/de_simple_effect_KO.csv >= 5000"
+      - "json output/de_summary.json interaction.n_significant > 0"
+      # The interaction coefficient at four samples per cell on log2(TPM + 1): recall 0.18 with the false discovery proportion below 0.1; the count model on the same design reaches 0.3.
+      - "truth_recall output/de_interaction_results.csv >= 0.15"
+      - "truth_fdr output/de_interaction_results.csv <= 0.15"

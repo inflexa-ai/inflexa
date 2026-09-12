@@ -26,3 +26,4 @@ packages:
     version_range: ">=2.0"
 templates:
   - tpl-progeny-pathway-activity
+  - tpl-decoupler-py-pathway-activity

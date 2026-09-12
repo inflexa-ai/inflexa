@@ -41,6 +41,9 @@ severity: info
 strength: common_practice
 evidence_quality: moderate
 recommendation_strength: conditional
+alternatives:
+  - method: M-0050
+    when: "A downstream use needs adjusted log values, for example a clustering or a heatmap across the batches: ComBat on the log values with the condition in the covariate model, and never as the input of the test."
 evidence:
   - direction: supports
     eco: ECO:0000033

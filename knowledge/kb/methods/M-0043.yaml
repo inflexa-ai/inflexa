@@ -12,3 +12,5 @@ packages:
   - name: EPIC
     track: cran
     version_range: ">=1.1"
+templates:
+  - tpl-immunedeconv

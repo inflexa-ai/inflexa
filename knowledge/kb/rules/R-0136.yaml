@@ -1,15 +1,17 @@
 id: R-0136
-title: "Mouse deconvolution: no human reference profiles on mouse data, mMCP-counter is the tool of record and is absent here"
+title: "Mouse deconvolution: mMCP-counter with the mouse marker genes, and no human reference profile on mouse data"
 assertion: >-
-  Do not run a human deconvolution method on mouse data. The marker sets and
-  the reference profiles of MCP-counter, xCell, EPIC, and quanTIseq come
-  from human samples, and a mouse symbol that maps to a human marker does not
-  carry the same specificity in mouse tissue. The mouse tool of record is
-  mMCP-counter, the mouse version of MCP-counter with markers from mouse
-  data, and it is absent from this pool. Stop the deconvolution and ask for
-  mMCP-counter or for a mouse reference, or give a descriptive signature
-  score from mouse marker sets with the caution that it is not a
-  deconvolution.
+  On mouse samples, score the immune and stromal populations with
+  mMCP-counter, the murine version of MCP-counter with markers selected on
+  mouse samples, through immunedeconv deconvolute_mouse on the log2 CPM or
+  log2 TPM with the mouse gene symbols as they are. Do not run a human
+  deconvolution method on mouse data: the marker sets and the reference
+  profiles of MCP-counter, xCell, EPIC, and quanTIseq come from human
+  samples, an upper-cased mouse symbol is not an ortholog map, and a mouse
+  symbol that maps to a human marker does not carry the same specificity in
+  mouse tissue. A score is comparable across samples within one population
+  and never across populations, and the report states the share of the
+  marker genes present.
 modality: bulk_rna_seq
 conditions:
   - field: organism
@@ -17,13 +19,38 @@ conditions:
     value: mouse
 action:
   step_type: deconvolution
-  outcome: mouse_reference_required_or_descriptive_markers
+  method: M-0061
+  parameters:
+    - name: method
+      value: mmcp_counter
+      default_source: "doi:10.1186/s13073-020-00783-w"
+    - name: species
+      value: mouse
+      default_source: "doi:10.1186/s13073-020-00783-w"
+    - name: input_scale
+      value: log2_normalized_expression
+      default_source: "doi:10.1186/s13073-020-00783-w"
+    - name: score_comparison
+      value: across_samples_within_population
+      default_source: "doi:10.1186/s13059-016-1070-5"
   forbids: [M-0041, M-0042, M-0043, M-0044]
-severity: flag
+severity: warn
 strength: common_practice
 evidence_quality: moderate
 recommendation_strength: strong
 evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0147
+    paraphrase: >-
+      mMCP-counter selects population-specific transcriptomic markers from
+      mouse samples of purified cell populations and scores sixteen immune
+      and stromal populations from the log2 expression of the markers. The
+      scores hold across mouse tissues, and a human-derived method applied
+      to mouse data loses the marker specificity.
+    anchor: "Abstract; Results, Identification of murine markers; Methods"
+    retrieved: "2026-09-11"
   - direction: supports
     eco: ECO:0000033
     cito: cito:supports
@@ -49,5 +76,5 @@ license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true
 drafting_model: "claude-fable-5-1"
-curated: "2026-09-06"
-tags: [deconvolution, mouse, flag, absent-tool, needs-source]
+curated: "2026-09-11"
+tags: [deconvolution, mouse]

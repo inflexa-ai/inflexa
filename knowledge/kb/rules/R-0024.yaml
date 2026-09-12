@@ -27,6 +27,9 @@ severity: info
 strength: common_practice
 evidence_quality: moderate
 recommendation_strength: conditional
+alternatives:
+  - method: M-0018
+    when: "A downstream use needs adjusted counts, for example a clustering or a network across the batches: ComBat-seq with the condition in the covariate model, and never as the input of the test."
 evidence:
   - direction: disputes
     eco: ECO:0000033

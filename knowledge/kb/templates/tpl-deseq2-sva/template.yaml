@@ -1,11 +1,11 @@
 id: tpl-deseq2-sva
-version: 1.0.0
+version: 1.1.0
 label: "DESeq2 two-group differential expression with sva surrogate variables in the design"
 language: R
 method: M-0025
 step_types: [filter_low_counts, normalize, model_design, differential_expression, multiple_testing]
 edam_operations: [EDAM:operation_3223]
-citations: [S-0001, S-0002, S-0015, S-0020, S-0040, S-0061]
+citations: [S-0001, S-0002, S-0009, S-0010, S-0015, S-0020, S-0040, S-0061]
 license: Apache-2.0
 applicability:
   modality: bulk_rna_seq
@@ -24,11 +24,12 @@ applicability:
       op: is_null
     - field: n_timepoints
       op: is_null
-    - field: import_state
-      op: not_in
-      value: [quantifications, estimated_counts_with_lengths]
   notes: >-
-    A count matrix whose first column is the gene identifier and whose header
+    The input follows the import state, as in tpl-deseq2-two-group: per-sample
+    quantifications with a transcript-to-gene map (tximport, the average
+    transcript length per gene and sample as the offset), count estimates with
+    a length table (the same offset), corrected counts or integer counts (no
+    offset); an unknown state stops and names the missing input. A count matrix whose first column is the gene identifier and whose header
     holds the sample identifiers, plus a sample table with one row per sample.
     The situation is a suspected batch with no recorded batch variable. The
     script reads only the sample identifier column and the condition column
@@ -43,10 +44,45 @@ applicability:
     group must hold four or more replicates, because the residual degrees of
     freedom pay for each surrogate variable.
 parameters:
+  - name: import_state
+    type: string
+    description: "The import state of the input: quantifications (per-sample quant.sf plus a transcript-to-gene map), estimated_counts_with_lengths (a fractional gene count table plus an average transcript length table), corrected_counts (lengthScaledTPM or scaledTPM counts), integer_counts (aligner counts with no length data), or unknown (the script stops and names the missing input)."
+    adaptable: true
+    required: true
+    enum: [quantifications, estimated_counts_with_lengths, corrected_counts, integer_counts, unknown]
   - name: counts_path
     type: string
-    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    description: "Path of the count matrix CSV, first column gene id, header sample ids. Integer counts for integer_counts, counts from abundance for corrected_counts, fractional estimates for estimated_counts_with_lengths. Absent for quantifications."
     adaptable: true
+    required: false
+  - name: quant_dir
+    type: string
+    description: "Path of the quantification directory for quantifications: one file <quant_dir>/<sample id>/quant.sf per sample of the sample table."
+    adaptable: true
+    required: false
+  - name: tx2gene_path
+    type: string
+    description: "Path of the transcript-to-gene map CSV for quantifications, with the columns transcript and gene, in the identifier space of the quant.sf Name column."
+    adaptable: true
+    required: false
+  - name: lengths_path
+    type: string
+    description: "Path of the average transcript length CSV for estimated_counts_with_lengths: first column gene id, header sample ids, one length per gene and sample."
+    adaptable: true
+    required: false
+  - name: counts_from_abundance
+    type: string
+    description: "The countsFromAbundance mode: of the tximport call for quantifications, or of the delivered table for corrected_counts. no keeps the estimated counts and gives the model the length offset. lengthScaledTPM or scaledTPM puts the length correction inside the counts, and the model takes no offset."
+    adaptable: true
+    default: "no"
+    default_source: "vignette:tximport/2026-04-28#downstream-dge-in-bioconductor"
+    enum: ["no", lengthScaledTPM, scaledTPM]
+  - name: length_offset
+    type: boolean
+    description: "True gives the model the average transcript length per gene and sample as an offset, when the import state carries lengths. False fits the model on the counts alone and loses the correction for a change in isoform use."
+    adaptable: true
+    default: true
+    default_source: "doi:10.12688/f1000research.7563.2"
   - name: metadata_path
     type: string
     description: "Path of the sample table CSV with one row per sample."
@@ -125,7 +161,18 @@ inputs:
   - name: counts
     path: "{{counts_path}}"
     format: EDAM:format_3752
-    description: "Gene by sample raw integer counts, CSV."
+    description: "Gene by sample counts, CSV: integer counts, counts from abundance, or fractional estimates, by the import state. Absent for quantifications."
+  - name: quantifications
+    path: "{{quant_dir}}/<sample>/quant.sf"
+    description: "Per-sample Salmon quantification files with the columns Name, Length, EffectiveLength, TPM, NumReads, for quantifications."
+  - name: tx2gene
+    path: "{{tx2gene_path}}"
+    format: EDAM:format_3752
+    description: "Transcript-to-gene map with the columns transcript and gene, CSV, for quantifications."
+  - name: gene_lengths
+    path: "{{lengths_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample average transcript lengths, CSV, for estimated_counts_with_lengths."
   - name: metadata
     path: "{{metadata_path}}"
     format: EDAM:format_3752
@@ -143,6 +190,14 @@ outputs:
     path: "output/{prefix}_normalized_counts.csv"
     format: EDAM:format_3752
     description: "Median-of-ratios normalized counts, genes by samples. The counts are not adjusted for the surrogate variables."
+  - name: import_counts
+    path: "output/{prefix}_import_counts.csv"
+    format: EDAM:format_3752
+    description: "Gene by sample count estimates as imported, before the rounding and the filter."
+  - name: import_lengths
+    path: "output/{prefix}_import_lengths.csv"
+    format: EDAM:format_3752
+    description: "Gene by sample average transcript lengths as imported. Absent when the import state carries no lengths."
   - name: summary
     path: "output/{prefix}_summary.json"
     format: EDAM:format_3464
@@ -166,6 +221,9 @@ environment:
   - name: DESeq2
     version: "1.52.0"
     track: bioconductor
+  - name: tximport
+    version: "1.40.0"
+    track: bioconductor
   - name: apeglm
     version: "1.34.0"
     track: bioconductor
@@ -187,6 +245,7 @@ tests:
   - name: suspected-batch-n6
     dataset: batch_balanced_n6/seed-1
     slots:
+      import_state: integer_counts
       counts_path: /work/data/counts.csv
       metadata_path: /work/data/metadata.csv
       condition_column: condition
@@ -212,3 +271,37 @@ tests:
       - "json output/de_summary.json n_surrogate_variables >= 1"
       - "truth_recall output/de_results.csv >= 0.4"
       - "truth_fdr output/de_results.csv <= 0.1"
+  - name: quantifications
+    dataset: batch_balanced_n6/seed-1
+    slots:
+      import_state: quantifications
+      quant_dir: /work/data/quant
+      tx2gene_path: /work/data/tx2gene.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+      output_prefix: quant
+    expect:
+      - "exists output/quant_import_counts.csv"
+      - "exists output/quant_import_lengths.csv"
+      - "json output/quant_summary.json import.mode == tximport_avg_tx_length_offset"
+      - "exists output/quant_results.csv"
+      - "exists output/surrogate_variables.csv"
+      - "exists output/quant_summary.json"
+      - "exists output/quant_normalized_counts.csv"
+      - "exists output/session_info.txt"
+      - "exists figures/quant_pca.png"
+      - "exists figures/quant_pca.pdf"
+      - "exists figures/quant_surrogate_variables.png"
+      - "exists figures/quant_surrogate_variables.pdf"
+      - "exists figures/quant_ma.png"
+      - "exists figures/quant_ma.pdf"
+      - "exists figures/quant_volcano.png"
+      - "exists figures/quant_volcano.pdf"
+      - "csv_rows output/quant_results.csv >= 5000"
+      - "csv_rows output/surrogate_variables.csv == 12"
+      - "json output/quant_summary.json n_samples == 12"
+      - "json output/quant_summary.json n_surrogate_variables >= 1"
+      - "truth_recall output/quant_results.csv >= 0.4"
+      - "truth_fdr output/quant_results.csv <= 0.1"

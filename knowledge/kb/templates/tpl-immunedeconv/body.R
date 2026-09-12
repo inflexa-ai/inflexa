@@ -5,13 +5,17 @@
 # planner may adapt is marked `# [adaptable: <slot>]`. Every other constant is
 # pinned by the template and carries its source in the decision record.
 #
-# Method: one of four immunedeconv methods on a linear-scale expression matrix.
+# Method: one of five immunedeconv methods on a linear-scale expression matrix.
 # MCP-counter (Becht et al. 2016) and xCell (Aran et al. 2017) give a score per
 # cell type that is comparable between samples for one cell type and not between
 # cell types. EPIC (Racle et al. 2017) and quanTIseq (Finotello et al. 2019) give
 # an absolute fraction per cell type with an uncharacterized remainder, comparable
-# between samples and between cell types (Sturm et al. 2019). A Wilcoxon rank-sum
-# test per cell type compares the two condition levels, with a BH correction.
+# between samples and between cell types (Sturm et al. 2019). These four carry
+# human markers and human reference profiles, thus they take human samples only.
+# mMCP-counter (Petitprez et al. 2020) scores a mouse sample with markers
+# selected on mouse data, with the mouse symbols as they are. A Wilcoxon
+# rank-sum test per cell type compares the two condition levels, with a BH
+# correction.
 
 suppressPackageStartupMessages({
   library(immunedeconv)
@@ -28,8 +32,8 @@ CONDITION_COLUMN <- {{condition_column}}  # [adaptable: condition_column]
 REFERENCE_LEVEL  <- {{reference_level}}  # [adaptable: reference_level]
 TEST_LEVEL       <- {{test_level}}  # [adaptable: test_level]
 INPUT_SCALE      <- {{input_scale}}  # [adaptable: input_scale] tpm: linear TPM; counts: raw counts, scaled to CPM below
-METHOD           <- {{method}}  # [adaptable: method] mcp_counter, xcell, epic, or quantiseq
-SPECIES          <- {{species}}  # [adaptable: species] human symbols as they are; mouse symbols mapped to human orthologs
+METHOD           <- {{method}}  # [adaptable: method] mcp_counter, xcell, epic, or quantiseq for human; mmcp_counter for mouse
+SPECIES          <- {{species}}  # [adaptable: species] human or mouse; the symbols are used as they are
 TUMOR            <- {{tumor}}  # [adaptable: tumor] EPIC: TRef instead of BRef; quanTIseq: is_tumordata
 ALPHA            <- {{alpha}}  # [adaptable: alpha]
 OUTPUT_PREFIX    <- {{output_prefix}}  # [adaptable: output_prefix]
@@ -85,11 +89,24 @@ METHOD_INFO <- list(
     reference = "quanTIseq TIL10 signature matrix of ten immune cell types with mRNA content scaling (Finotello et al. 2019)",
     reference_doi = "10.1186/s13073-019-0638-6",
     input_transform = "constrained least squares on the linear matrix"
+  ),
+  mmcp_counter = list(
+    tool = "mMCPcounter", label = "mMCP-counter",
+    value_type = "scores",
+    comparison_scope = "between samples within one cell type; not between cell types",
+    reference = "mMCP-counter transcriptomic marker genes of sixteen murine immune and stromal populations (Petitprez et al. 2020)",
+    reference_doi = "10.1186/s13073-020-00783-w",
+    input_transform = "log2(x + 1) of the linear matrix, done by immunedeconv"
   )
 )
+MOUSE_METHODS <- c("mmcp_counter")
 if (!METHOD %in% names(METHOD_INFO)) stop("The method must be one of ", paste(names(METHOD_INFO), collapse = ", "), ", not ", METHOD)
 if (!INPUT_SCALE %in% c("tpm", "counts")) stop("The input scale must be tpm or counts, not ", INPUT_SCALE)
 if (!SPECIES %in% c("human", "mouse")) stop("The species must be human or mouse, not ", SPECIES)
+if (SPECIES == "mouse" && !METHOD %in% MOUSE_METHODS) {
+  stop("The method ", METHOD, " carries human markers or human reference profiles, and the samples are mouse. A mouse symbol that matches a human symbol by case is not an ortholog, and an ortholog map loses the marker specificity. Use mmcp_counter.")
+}
+if (SPECIES == "human" && METHOD %in% MOUSE_METHODS) stop("The method ", METHOD, " carries mouse markers, and the samples are human. Use mcp_counter, xcell, epic, or quantiseq.")
 info <- METHOD_INFO[[METHOD]]
 
 dir.create("output", showWarnings = FALSE, recursive = TRUE)
@@ -157,20 +174,10 @@ if (INPUT_SCALE == "counts") {
 }
 
 # ── Species ───────────────────────────────────────────────────────────────────
-ortholog_note <- NULL
-if (SPECIES == "mouse") {
-  message("Mouse symbols: mapping to the human orthologs with babelgene, one-to-one pairs only")
-  pairs <- babelgene::orthologs(genes = rownames(expression), species = "mouse", human = FALSE)
-  pairs <- pairs[, c("human_symbol", "symbol")]
-  pairs <- pairs[!(pairs$symbol %in% pairs$symbol[duplicated(pairs$symbol)]), , drop = FALSE]
-  pairs <- pairs[!(pairs$human_symbol %in% pairs$human_symbol[duplicated(pairs$human_symbol)]), , drop = FALSE]
-  pairs <- pairs[pairs$symbol %in% rownames(expression), , drop = FALSE]
-  if (nrow(pairs) < 500) stop("Only ", nrow(pairs), " mouse symbols map to a human ortholog. Give MGI gene symbols in the first column.")
-  expression <- expression[pairs$symbol, , drop = FALSE]
-  rownames(expression) <- pairs$human_symbol
-  ortholog_note <- list(mapping = "babelgene one-to-one mouse to human orthologs", n_genes_mapped = nrow(pairs), share_mapped = round(nrow(pairs) / n_genes_input, 4))
-  message("Orthologs: ", nrow(pairs), " of ", n_genes_input, " genes kept")
-}
+# The symbols are used as they are: HGNC symbols with a human method, MGI
+# symbols with mMCP-counter. No ortholog map runs here, because a human
+# reference on mapped mouse symbols loses the marker specificity.
+if (SPECIES == "mouse") message("Mouse symbols as they are, with the mouse marker table of mMCP-counter")
 n_genes_used <- nrow(expression)
 
 # ── Deconvolution ─────────────────────────────────────────────────────────────
@@ -194,8 +201,12 @@ if (METHOD == "mcp_counter") {
   result <- deconvolute(expression, "xcell", arrays = FALSE)
 } else if (METHOD == "epic") {
   result <- deconvolute(expression, "epic", tumor = TUMOR, scale_mrna = TRUE)
-} else {
+} else if (METHOD == "quantiseq") {
   result <- deconvolute(expression, "quantiseq", tumor = TUMOR, arrays = FALSE, scale_mrna = TRUE)
+} else {
+  # immunedeconv takes the log2(x + 1) of the linear matrix before mMCP-counter.
+  result <- suppressWarnings(deconvolute_mouse(expression, "mmcp_counter"))
+  if (nrow(result) == 0) stop("mMCP-counter found no marker gene. The first column must hold MGI gene symbols.")
 }
 fractions <- as.data.frame(result, check.names = FALSE, stringsAsFactors = FALSE)
 fractions <- fractions[, c("cell_type", colnames(expression)), drop = FALSE]
@@ -305,7 +316,7 @@ save_figure(comparison_plot, "comparison", width = 9, height = 7)
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 summary_record <- list(
-  template = "tpl-immunedeconv@1.0.0",
+  template = "tpl-immunedeconv@1.1.0",
   method = paste0("immunedeconv ", METHOD, " (", info$label, ")"),
   tool = info$tool,
   value_type = info$value_type,
@@ -317,7 +328,6 @@ summary_record <- list(
   input_transform = info$input_transform,
   rescaled_to_million = rescaled,
   species = SPECIES,
-  orthologs = ortholog_note,
   tumor = TUMOR,
   contrast = list(factor = "condition", test = TEST_LEVEL, reference = REFERENCE_LEVEL),
   comparison_test = "Wilcoxon rank-sum per cell type, Benjamini-Hochberg adjustment",
@@ -333,8 +343,7 @@ summary_record <- list(
   versions = list(
     R = R.version.string,
     immunedeconv = as.character(packageVersion("immunedeconv")),
-    tool = as.character(packageVersion(info$tool)),
-    babelgene = if (SPECIES == "mouse") as.character(packageVersion("babelgene")) else NULL
+    tool = as.character(packageVersion(info$tool))
   )
 )
 write_json(summary_record, out("summary.json"), auto_unbox = TRUE, pretty = TRUE, digits = NA, null = "null")

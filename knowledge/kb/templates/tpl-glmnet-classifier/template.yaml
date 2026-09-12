@@ -1,0 +1,190 @@
+id: tpl-glmnet-classifier
+version: 1.0.0
+label: "Penalized logistic classifier of a sample class with glmnet, nested cross-validation, and a pROC curve"
+language: R
+method: M-0055
+step_types: [signature_scoring]
+edam_operations: [EDAM:operation_2990]
+citations: [S-0115, S-0117, S-0146]
+license: Apache-2.0
+applicability:
+  modality: bulk_rna_seq
+  count_sources: [salmon, kallisto, star_featurecounts, rsem, unknown]
+  design_patterns: [two_group_unpaired, two_group_with_balanced_batch, two_group_with_covariates]
+  honors: []
+  min_replicates: 10
+  conditions:
+    - field: data_state
+      op: eq
+      value: counts
+    - field: classifier
+      op: eq
+      value: true
+  notes: >-
+    A count matrix whose first column is the gene identifier and whose header
+    holds the sample identifiers, plus a sample table with one row per sample
+    and a condition column with the two classes. The transform is log2(CPM +
+    1) with the own library size of each sample, thus it reads no other
+    sample. An outer cross-validation, stratified by class, holds out each
+    sample once. The variance filter and the scaling are fitted inside each
+    training fold, and an inner cross-validation selects the lambda of the
+    penalized logistic regression there. The out-of-fold predictions give the
+    ROC curve, the area under it with a DeLong confidence interval, the
+    balanced accuracy, and the Brier score. A final model on every sample
+    gives the signature with the selection frequency of each gene across the
+    folds. The estimate is internal; the summary states that an external
+    cohort must validate the classifier. A pairing, a blocking factor, a
+    covariate, or a batch term does not enter the model.
+parameters:
+  - name: counts_path
+    type: string
+    description: "Path of the count matrix CSV, first column gene id, header sample ids, integer counts."
+    adaptable: true
+  - name: metadata_path
+    type: string
+    description: "Path of the sample table CSV with one row per sample."
+    adaptable: true
+  - name: sample_id_column
+    type: string
+    description: "The column of the sample table that holds the sample identifiers that match the count matrix header."
+    adaptable: true
+    default: sample
+  - name: condition_column
+    type: string
+    description: "The column of the sample table that holds the class of each sample."
+    adaptable: true
+  - name: reference_level
+    type: string
+    description: "The class coded 0, for example control."
+    adaptable: true
+  - name: test_level
+    type: string
+    description: "The class coded 1, whose probability the model predicts, for example case."
+    adaptable: true
+  - name: min_count
+    type: integer
+    description: "A gene stays when it has at least this many counts in at least min_samples samples: a count floor that reads no class."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.12688/f1000research.7035.1"
+    minimum: 0
+  - name: min_samples
+    type: integer
+    description: "The minimum number of samples for the count floor. Absent, the script uses the smallest class size."
+    adaptable: true
+    required: false
+    minimum: 1
+  - name: n_top_genes
+    type: integer
+    description: "The number of most variable genes, by the variance of the log-CPM inside the training fold, that enter the penalized model of that fold."
+    adaptable: true
+    default: 2000
+    minimum: 50
+  - name: elastic_net_alpha
+    type: number
+    description: "The elastic net mixing parameter of glmnet: 1 is the lasso, 0 the ridge, a value between is the elastic net."
+    adaptable: true
+    default: 1
+    default_source: "doi:10.18637/jss.v033.i01"
+    minimum: 0
+    maximum: 1
+  - name: lambda_rule
+    type: string
+    description: "The inner cross-validation rule that selects the lambda: lambda.1se is the most regularized model within one standard error of the minimum deviance, lambda.min the minimum."
+    adaptable: true
+    default: lambda.1se
+    default_source: "doi:10.18637/jss.v033.i01"
+    enum: [lambda.1se, lambda.min]
+  - name: n_outer_folds
+    type: integer
+    description: "The number of outer folds, stratified by class. Each sample is held out once."
+    adaptable: true
+    default: 5
+    minimum: 3
+  - name: n_inner_folds
+    type: integer
+    description: "The number of inner folds of cv.glmnet inside each training fold."
+    adaptable: true
+    default: 10
+    default_source: "doi:10.18637/jss.v033.i01"
+    minimum: 3
+  - name: seed
+    type: integer
+    description: "The random seed of the fold assignment, for the record."
+    adaptable: true
+    default: 1
+    minimum: 0
+  - name: output_prefix
+    type: string
+    description: "The prefix of the output files, for example classifier or case_vs_control."
+    adaptable: true
+    default: classifier
+    pattern: "^[A-Za-z0-9_.-]+$"
+inputs:
+  - name: counts
+    path: "{{counts_path}}"
+    format: EDAM:format_3752
+    description: "Gene by sample raw integer counts, CSV."
+  - name: metadata
+    path: "{{metadata_path}}"
+    format: EDAM:format_3752
+    description: "Sample table, CSV, with the class column."
+outputs:
+  - name: predictions
+    path: "output/{prefix}_predictions.csv"
+    format: EDAM:format_3752
+    description: "One row per sample: sample, class, outer_fold, probability of the test level from the model that did not see the sample, predicted."
+  - name: coefficients
+    path: "output/{prefix}_coefficients.csv"
+    format: EDAM:format_3752
+    description: "The genes of the final model and of any fold: gene, coefficient in the final model, selection_frequency across the outer folds."
+  - name: summary
+    path: "output/{prefix}_summary.json"
+    format: EDAM:format_3464
+    description: "The classes, the preprocessing scope, the penalty and the lambda rule, the folds, the out-of-fold AUC with its confidence interval, the balanced accuracy, the Brier score, the final model, the validation statement, the package versions."
+  - name: roc
+    path: "figures/{prefix}_roc.png"
+    description: "The out-of-fold ROC curve with the area under it and its confidence interval (and PDF)."
+  - name: coefficient_figure
+    path: "figures/{prefix}_coefficients.png"
+    description: "The coefficients of the final model colored by the selection frequency across the folds (and PDF)."
+  - name: session
+    path: "output/session_info.txt"
+    description: "R session information for the record."
+environment:
+  - name: glmnet
+    version: "4.1-10"
+    track: cran
+  - name: pROC
+    version: "1.19.0.1"
+    track: cran
+  - name: ggplot2
+    version: "4.0.3"
+    track: cran
+  - name: jsonlite
+    version: "2.0.0"
+    track: cran
+bioconductor: "3.23"
+body_file: body.R
+tests:
+  - name: two-group-n60-classifier
+    dataset: two_group_n60/seed-1
+    slots:
+      counts_path: /work/data/counts.csv
+      metadata_path: /work/data/metadata.csv
+      condition_column: condition
+      reference_level: control
+      test_level: treated
+    expect:
+      - "exists output/classifier_predictions.csv"
+      - "exists output/classifier_coefficients.csv"
+      - "exists output/classifier_summary.json"
+      - "exists output/session_info.txt"
+      - "exists figures/classifier_roc.png"
+      - "exists figures/classifier_roc.pdf"
+      - "exists figures/classifier_coefficients.png"
+      - "csv_rows output/classifier_predictions.csv >= 120"
+      - "json output/classifier_summary.json n_samples == 120"
+      - "json output/classifier_summary.json n_outer_folds == 5"
+      - "json output/classifier_summary.json auc >= 0.8"
+      - "json output/classifier_summary.json auc_ci_low >= 0.6"

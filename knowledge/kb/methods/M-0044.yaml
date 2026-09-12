@@ -12,3 +12,5 @@ packages:
     track: bioconductor
     version_range: ">=1.10"
     bioconductor: "3.23"
+templates:
+  - tpl-immunedeconv

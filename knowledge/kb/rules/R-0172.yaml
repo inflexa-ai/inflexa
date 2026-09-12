@@ -1,0 +1,75 @@
+id: R-0172
+title: "Time course LRT: no apeglm on the LRT, shrink the per-time-point Wald contrasts with ashr"
+assertion: >-
+  After a likelihood ratio test of a time course, the p-value belongs to
+  the whole set of time terms and no single coefficient carries the effect.
+  apeglm shrinks one coefficient, thus it does not apply to the LRT result.
+  Report the fold change of each time point as a Wald contrast between the
+  time point and the first time point, within each condition, and shrink
+  each contrast with ashr, which takes a contrast vector. Rank the profiles
+  on the shrunken values and keep the LRT adjusted p-value as the test.
+modality: bulk_rna_seq
+conditions:
+  - field: data_state
+    op: eq
+    value: counts
+  - field: n_timepoints
+    op: gte
+    value: 3
+  - field: inferential_method
+    op: in
+    value: [M-0002]
+action:
+  step_type: shrink_lfc
+  method: M-0014
+  parameters:
+    - name: lfc_shrink
+      value: ashr
+      default_source: "doi:10.1093/biostatistics/kxw041"
+    - name: shrink_contrast
+      value: each_time_point_against_the_first_within_condition
+      default_source: "vignette:DESeq2/1.52.0#extended-section-on-shrinkage-estimators"
+severity: info
+strength: common_practice
+evidence_quality: moderate
+recommendation_strength: strong
+evidence:
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:usesMethodIn
+    source: S-0002
+    paraphrase: >-
+      apeglm shrinks a single coefficient and takes no contrast. ashr and
+      normal accept a numeric contrast. After a likelihood ratio test the
+      per-coefficient fold changes are still the maximum likelihood
+      estimates of the full model, and a shrunken fold change comes from a
+      Wald contrast on that model.
+    anchor: "Extended section on shrinkage estimators; Likelihood ratio test"
+    retrieved: "2026-09-11"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0021
+    paraphrase: >-
+      The adaptive shrinkage takes an estimate and its standard error for
+      each unit and fits a unimodal prior, thus it applies to any effect
+      with a standard error, and it gives a posterior estimate and a local
+      false sign rate.
+    anchor: "Abstract; Methods"
+    retrieved: "2026-09-11"
+  - direction: supports
+    eco: ECO:0000033
+    cito: cito:supports
+    source: S-0020
+    paraphrase: >-
+      The apeglm estimator models one coefficient of the generalized linear
+      model with a heavy-tailed prior, and its shrinkage is per coefficient.
+    anchor: "Abstract; Methods"
+    retrieved: "2026-09-11"
+status: active
+license: CC-BY-4.0
+curator: "radu@geneguard.bio"
+llm_drafted: true
+drafting_model: "claude-fable-5-1"
+curated: "2026-09-11"
+tags: [shrinkage, time-course]

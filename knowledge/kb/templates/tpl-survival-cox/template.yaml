@@ -171,7 +171,7 @@ tests:
     slots:
       counts_path: /work/data/counts.csv
       metadata_path: /work/data/metadata.csv
-      signature_genes: [PMAIP1, ATAD2, APLP1, FZD5, NDUFS4, GENE00073, GENE01819, GENE02579, GENE02592, GENE02715, GENE02743, GENE02844, GENE03702, GENE03869, GENE04390, GENE04461, GENE05140, GENE05318, GENE05522, GENE07471]
+      signature_genes: [GENE00073, ATAD2, GENE02579, PMAIP1, GENE05140, GENE04461, GENE03702, GENE02844, APLP1, GENE04390]
       covariates: [condition]
     expect:
       - "exists output/survival_cox.csv"
@@ -186,6 +186,6 @@ tests:
       - "csv_rows output/survival_cox.csv >= 2"
       - "json output/survival_summary.json n_samples == 120"
       - "json output/survival_summary.json n_events >= 30"
-      - "json output/survival_summary.json n_signature_genes_found == 20"
+      - "json output/survival_summary.json n_signature_genes_found == 10"
       - "json output/survival_summary.json signature_pvalue <= 0.05"
       - "json output/survival_summary.json signature_hazard_ratio > 1"

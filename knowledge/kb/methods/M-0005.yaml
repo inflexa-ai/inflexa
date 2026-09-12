@@ -13,3 +13,6 @@ packages:
     bioconductor: "3.23"
 templates:
   - tpl-limma-trend-logvalues
+  - tpl-limma-trend-multigroup
+  - tpl-limma-trend-timecourse
+  - tpl-limma-trend-interaction

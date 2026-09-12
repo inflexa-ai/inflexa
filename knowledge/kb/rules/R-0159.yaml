@@ -1,16 +1,18 @@
 id: R-0159
-title: "Exon-level counts from featureCounts: differential exon usage with limma diffSplice"
+title: "featureCounts at the feature level with the exon annotation: differential exon usage with limma diffSplice, and a gene-level table cannot answer"
 assertion: >-
-  When the STAR and featureCounts pipeline delivers a feature-level count
-  table, with one row per exon and the gene of each exon, test differential
-  exon usage with limma diffSplice on the voom-transformed exon counts. The
-  test compares the log fold change of each exon with the log fold change of
-  its gene, thus it finds a change in usage and not a change in the gene
-  level. Report the exon-level t-test and the gene-level F-test or Simes
-  test with the adjusted p-values, and plot the exons of each reported gene.
-  This needs a featureCounts run at the feature level with the exon
-  annotation; a gene-level count matrix has no exon rows, and the plan asks
-  for the exon-level run when it is absent.
+  This rule applies only when the STAR and featureCounts pipeline ran at the
+  feature level with the exon annotation, thus the count table has one row
+  per exon with the gene of each exon. The Situation cannot state that fact,
+  thus the plan makes sure of it from the row identifiers before it drafts
+  this step. A gene-level count matrix has no exon rows, and then the stop
+  of R-0158 holds: ask for the exon-level run or for the transcript
+  quantifications. With exon-level counts, test differential exon usage
+  with limma diffSplice on the voom-transformed exon counts. The test
+  compares the log fold change of each exon with the log fold change of its
+  gene, thus it finds a change in usage and not a change in the gene level.
+  Report the exon-level t-test and the gene-level F-test or Simes test with
+  the adjusted p-values, and plot the exons of each reported gene.
 modality: bulk_rna_seq
 conditions:
   - field: data_state
@@ -71,5 +73,5 @@ license: CC-BY-4.0
 curator: "radu@geneguard.bio"
 llm_drafted: true
 drafting_model: "claude-fable-5-1"
-curated: "2026-09-06"
+curated: "2026-09-11"
 tags: [transcript-level, exon-usage, limma]
