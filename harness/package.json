@@ -47,11 +47,12 @@
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
-        "@ai-sdk/anthropic": "^4.0.38",
-        "@ai-sdk/openai": "^4.0.39",
-        "@ai-sdk/openai-compatible": "^3.0.30",
-        "@ai-sdk/provider": "^4.0.7",
-        "@ai-sdk/provider-utils": "5.0.27",
+        "@ai-sdk/anthropic": "^4.0.53",
+        "@ai-sdk/openai": "^4.0.66",
+        "@ai-sdk/openai-compatible": "^3.0.48",
+        "@ai-sdk/otel": "^1.0.99",
+        "@ai-sdk/provider": "^4.0.14",
+        "@ai-sdk/provider-utils": "5.0.40",
         "@anthropic-ai/sdk": "^0.116.0",
         "@dbos-inc/dbos-sdk": "^4.23.6",
         "@fontsource-variable/space-grotesk": "5.1.1",
@@ -68,7 +69,7 @@
         "@opentelemetry/sdk-trace-node": "^2.9.0",
         "@opentelemetry/semantic-conventions": "^1.43.0",
         "ag-grid-community": "36.1.0",
-        "ai": "^7.0.61",
+        "ai": "^7.0.99",
         "cheerio": "^1.2.0",
         "dockerode": "^4.0.12",
         "echarts": "6.1.0",
@@ -94,7 +95,7 @@
         "uuid": "^11.1.1"
     },
     "devDependencies": {
-        "@ai-sdk/amazon-bedrock": "^5.0.74",
+        "@ai-sdk/amazon-bedrock": "^5.0.82",
         "@eslint/js": "^10.0.1",
         "@types/bun": "latest",
         "@types/dockerode": "^3.3.47",

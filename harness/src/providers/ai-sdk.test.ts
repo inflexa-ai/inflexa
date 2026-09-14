@@ -1304,7 +1304,7 @@ describe("stream error parts", () => {
         }
     });
 
-    it("classifies a named condition by the status it stands for, thus overload stays retryable", async () => {
+    it("fails the call with the message of an overload in the stream, and the failure stays retryable", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(async () => okResult("unused"), erroringStream({ type: "overloaded_error", message: "Overloaded" })),
             resolveBilling: async () => ({}),
@@ -1319,7 +1319,6 @@ describe("stream error parts", () => {
             // The bare payload reaches the message as its own text, never as
             // `[object Object]`.
             expect(result.error.message).toContain("Overloaded");
-            expect(result.error.message).toContain("529");
         }
     });
 });

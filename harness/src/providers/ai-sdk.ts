@@ -11,6 +11,7 @@ import {
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { OpenTelemetry } from "@ai-sdk/otel";
 import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -18,7 +19,6 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import { createNoopLogger } from "../lib/console-logger.js";
-import { chatTarget, startChatSpan } from "../lib/genai-spans.js";
 import type { Logger } from "../lib/logger.js";
 import { classifyProviderError, type ProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
@@ -96,13 +96,6 @@ export interface AiSdkProviderDeps {
      * hands the SDK no bound.
      */
     readonly requestTimeoutMs?: number;
-    /**
-     * The URL that the model sends its requests to. The chat span of each call
-     * reports its host and port as `server.address` and `server.port`. The value
-     * is for telemetry only: the model keeps its own URL. When the field is
-     * absent, the span carries no server attributes.
-     */
-    readonly endpoint?: string;
 }
 
 /**
@@ -393,13 +386,8 @@ function unwrapForClassification(e: unknown): unknown {
  * aborts with a `TimeoutError` reason, which the taxonomy marks as a retryable
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
- *
- * `onRetry` hears each retry the envelope takes: the 1-based number of the
- * attempt that failed, the delay before the next attempt, and the failure. The
- * primitive asks for the delay only when it retries, thus an exhausted or
- * non-retried failure reaches no hook.
  */
-function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, onRetry: (attempt: number, delayMs: number, error: unknown) => void) {
+function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number) {
     let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries,
@@ -411,7 +399,6 @@ function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries
             const delayMs = computeRetryDelayMs(error, exponentialBackoffDelay);
             retryCount += 1;
             logger.debug("retrying provider call", { attempt: retryCount, delayMs, ...logger.errorFields(error) });
-            onRetry(retryCount, delayMs, error);
             return delayMs;
         },
         createRetryError: ({ message, errors }) => new Error(message, { cause: errors[errors.length - 1] }),
@@ -664,7 +651,11 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
-    const spanTarget = chatTarget(deps.model, requestedModelId, deps.endpoint);
+    // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
+    // prompt or completion text on them. The integration rides on each call
+    // instead of the global registry, so the harness never traces the embedder's
+    // own AI SDK calls.
+    const telemetry = { integrations: new OpenTelemetry(), recordInputs: false, recordOutputs: false };
     routeSdkWarningsTo(logger);
 
     /**
@@ -686,8 +677,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
-            const span = startChatSpan(spanTarget);
-            const retry = span.bind(createRetry(signal, logger, maxRetries, span.retry));
+            const retry = createRetry(signal, logger, maxRetries);
             const capture = captureServedModelId(deps.model);
             try {
                 const collected = await retry(async () => {
@@ -721,6 +711,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         maxRetries: 0,
                         headers,
                         abortSignal: signal,
+                        telemetry,
                         // `firstChunkMs` bounds the wait for the first content chunk,
                         // and `chunkMs` bounds each later gap. Thus each silent interval
                         // carries the one configured bound, and a turn that writes
@@ -752,32 +743,27 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         usage: await result.usage,
                     };
                 });
-                const response = responseFromMessages({
-                    ...collected,
-                    requestedModelId,
-                    // Read after the drain: the metadata chunk that carries the
-                    // served id reaches the capture only as the stream is consumed.
-                    servedModelId: capture.servedModelId(),
-                });
-                span.succeed(response);
-                return ok(response);
+                return ok(
+                    responseFromMessages({
+                        ...collected,
+                        requestedModelId,
+                        // Read after the drain: the metadata chunk that carries the
+                        // served id reaches the capture only as the stream is consumed.
+                        servedModelId: capture.servedModelId(),
+                    }),
+                );
             } catch (e) {
                 if (isAbortError(e) || signal?.aborted) throw e;
                 const failure = toProviderError(unwrapForClassification(e), workloadOf(session));
-                span.fail(failure);
                 logFailure(session, failure, e);
                 return err(failure);
-            } finally {
-                // A caller abort leaves the span open until here.
-                span.close();
             }
         };
         return new ResultAsync(run());
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const span = startChatSpan(spanTarget);
-        const retry = span.bind(createRetry(signal, logger, maxRetries, span.retry));
+        const retry = createRetry(signal, logger, maxRetries);
         const capture = captureServedModelId(deps.model);
         try {
             // Retry covers only stream establishment: streamText defers wire errors
@@ -801,6 +787,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     maxRetries: 0,
                     headers,
                     abortSignal: signal,
+                    telemetry,
                     // The fetch guard bounds the wait until the headers. Past the
                     // headers the SDK owns two bounds: `firstChunkMs` covers the wait
                     // for the first content chunk, and `chunkMs` covers each later
@@ -851,7 +838,6 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     requestedModelId,
                     servedModelId: capture.servedModelId(),
                 });
-                span.succeed(response);
                 yield { type: "done", response };
                 return;
             }
@@ -881,17 +867,12 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 // reaches the capture only as the stream is consumed.
                 servedModelId: capture.servedModelId(),
             });
-            span.succeed(response);
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted) throw e;
             const failure = toProviderError(unwrapForClassification(e), workloadOf(session));
-            span.fail(failure);
             logFailure(session, failure, e);
             throw failure;
-        } finally {
-            // A caller abort, or a consumer that stops reading, leaves the span open until here.
-            span.close();
         }
     }
 
@@ -1015,8 +996,6 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         return createAiSdkProvider({
             model: provider.chat(config.model),
             resolveBilling: deps.resolveBilling,
-            // The default endpoint of the SDK when the config names none.
-            endpoint: config.baseURL ?? "https://api.anthropic.com",
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
@@ -1045,8 +1024,6 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             // but nothing in the package holds it there.
             model: withStoreDirective(provider.responses(config.model), config.store ?? false),
             resolveBilling: deps.resolveBilling,
-            // The default endpoint of the SDK when the config names none.
-            endpoint: config.baseURL ?? "https://api.openai.com",
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
             // The package puts this number on the wire as it is, and it clamps
@@ -1071,7 +1048,6 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // the seam needs no middleware to carry the depth into its namespace.
         model: provider.chatModel(config.model),
         resolveBilling: deps.resolveBilling,
-        endpoint: config.baseURL,
         capabilities: config.capabilities,
         logger: deps.logger,
         ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
