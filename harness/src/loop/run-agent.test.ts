@@ -1,7 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { context, propagation, SpanStatusCode, trace } from "@opentelemetry/api";
-import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
@@ -427,45 +424,6 @@ describe("runAgent — tool-error boundary", () => {
         const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "abort", {})], "tool_use")]);
 
         await expect(runAgent(agentDef([tool]), GO, makeSession(), opts(provider))).rejects.toBe(aborted);
-    });
-});
-
-// ── The span of a failed tool call ──────────────────────────────────
-
-describe("runAgent — the span of a failed tool call", () => {
-    const exporter = new InMemorySpanExporter();
-    const tracerProvider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
-
-    beforeAll(() => tracerProvider.register());
-
-    afterAll(async () => {
-        await tracerProvider.shutdown();
-        trace.disable();
-        context.disable();
-        propagation.disable();
-    });
-
-    it("records rejected input as a validation error, and no argument reaches the span", async () => {
-        const strict = defineTool({
-            id: "strict",
-            description: "Needs a number, and takes no other field.",
-            inputSchema: z.object({ n: z.number() }).strict(),
-            describeCall: "none",
-            execute: async () => ok({}),
-        });
-        // The Zod message of the unknown key quotes the key.
-        const provider = scriptedProvider([
-            makeMessage([toolUseBlock("tu-1", "strict", { n: "SECRET-VALUE", "SECRET-KEY": true })], "tool_use"),
-            makeMessage([textBlock("ok")], "end_turn"),
-        ]);
-
-        await runAgent(agentDef([strict]), GO, makeSession(), opts(provider));
-
-        const span = exporter.getFinishedSpans().find((finished) => finished.name === "execute_tool strict");
-        expect(span).toBeDefined();
-        expect(span!.status.code).toBe(SpanStatusCode.ERROR);
-        expect(span!.attributes["error.type"]).toBe("validation");
-        expect(JSON.stringify([span!.attributes, span!.events, span!.status])).not.toContain("SECRET");
     });
 });
 

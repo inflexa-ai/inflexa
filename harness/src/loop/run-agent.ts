@@ -20,6 +20,7 @@ import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_TOOL_USE_ID, stableSpan } from "../lib/otel-spans.js";
+import { ResultError } from "../lib/result.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
@@ -29,8 +30,8 @@ import { DEFAULT_REASONING } from "../providers/reasoning.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
-import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolFailure, type ToolResultImage } from "../tools/define-tool.js";
-import { traceAgentRun, traceToolCall, type ToolCallEnd } from "./genai-spans.js";
+import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolError, type ToolResultImage } from "../tools/define-tool.js";
+import { labelToolFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
@@ -759,10 +760,12 @@ async function dispatchTools(
     toolStepName: (toolName: string, toolUseId: string) => string,
     encoding: ResultEncoding,
 ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> {
-    const dispatch = async (tu: ToolCallPart): Promise<DispatchedCall> => {
-        const traced = await traceToolCall(tu, () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding), toolCallEnd);
-        return traced.call;
-    };
+    const dispatch = (tu: ToolCallPart): Promise<DispatchedCall> =>
+        traceToolCall(
+            tu,
+            () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding),
+            (dispatched) => outcomeOf(dispatched.result),
+        );
     const results = new Array<ToolResultPart>(toolUses.length);
     // The array starts with holes, which read as `undefined`. The element type
     // says so, thus it agrees with what `settleRound` accepts. Every index is in
@@ -850,32 +853,17 @@ function readDispatchedStep(settled: DispatchedCall | ToolResultPart): Dispatche
     return "result" in settled ? settled : { result: settled };
 }
 
-/**
- * One dispatched call, and the failure that its span records. The failure stops
- * at the span: a step-mode call caches the `DispatchedCall` alone, thus the
- * cached value keeps its shape and never holds stderr.
- */
-interface TracedCall {
-    readonly call: DispatchedCall;
-    readonly failure?: ToolFailure;
-}
-
-function toolCallEnd({ call, failure }: TracedCall): ToolCallEnd {
-    const outcome = outcomeOf(call.result);
-    return failure === undefined ? { outcome } : { outcome, failure };
-}
-
 async function dispatchTool(
     tu: ToolCallPart,
     toolsById: Map<string, Tool>,
     ctx: ToolContext,
     isFatalLoopError: (err: unknown) => boolean,
     encoding: ResultEncoding,
-): Promise<TracedCall> {
+): Promise<DispatchedCall> {
     const tool = toolsById.get(tu.toolName);
     if (tool === undefined) {
-        const message = `unknown tool: ${tu.toolName}`;
-        return { call: { result: errorResult(tu, message) }, failure: { type: "unknown-tool", message } };
+        labelToolFailure("unknown_tool");
+        return { result: errorResult(tu, `unknown tool: ${tu.toolName}`) };
     }
 
     const parsed = tool.inputSchema.safeParse(tu.input);
@@ -889,10 +877,9 @@ async function dispatchTool(
     const repaired = repairedInput === undefined ? undefined : tool.inputSchema.safeParse(repairedInput);
     if (repaired?.success === true) return execute(tu, tool, repaired.data, ctx, isFatalLoopError, encoding);
 
-    return {
-        call: { result: errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`) },
-        failure: validationFailure(parsed.error),
-    };
+    // The Zod text can quote the input, thus the span gets no message.
+    labelToolFailure("validation");
+    return { result: errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`) };
 }
 
 async function execute(
@@ -902,22 +889,48 @@ async function execute(
     ctx: ToolContext,
     isFatalLoopError: (err: unknown) => boolean,
     encoding: ResultEncoding,
-): Promise<TracedCall> {
+): Promise<DispatchedCall> {
     try {
         const output = await tool.execute(input, ctx);
-        if (output.isErr()) return { call: { result: errorResult(tu, toolErrorContent(output.error)) }, failure: errFailure(output.error) };
-        // The one place the result hooks run: the ok value in hand, the input
-        // already validated, and the guard inside each compute.
+        if (output.isErr()) {
+            markToolFailure(tu, tool, output.error, encoding.log);
+            return { result: errorResult(tu, toolErrorContent(output.error)) };
+        }
+        // The one place a result description runs: the ok value in hand, the
+        // input already validated, and the guard inside the compute.
         const detail = computeResultDetail(tool, input, output.value, encoding.log);
-        const failure = returnedFailure(tool, output.value, encoding.log);
         const result = successResult(tu, output.value, encoding);
-        const call: DispatchedCall = detail === undefined ? { result } : { result, detail };
-        return failure === undefined ? { call } : { call, failure };
+        return detail === undefined ? { result } : { result, detail };
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
-        if (isAskRejected(err)) return { call: { result: deniedResult(tu, err.feedback) } };
-        return { call: { result: errorResult(tu, toolErrorContent(err)) }, failure: thrownFailure(err) };
+        if (isAskRejected(err)) return { result: deniedResult(tu, err.feedback) };
+        markToolFailure(tu, tool, err, encoding.log);
+        return { result: errorResult(tu, toolErrorContent(err)) };
     }
+}
+
+/**
+ * Label the span of a tool call that our tool code failed. A `ToolError` is a
+ * failure that the tool modeled, thus its own text is the account, with no
+ * exception and no log. Any other `Error` is a fault that the tool did not
+ * model: the span records the exception, and the log gets one warn.
+ */
+function markToolFailure(tu: ToolCallPart, tool: Tool, failure: unknown, log: Logger): void {
+    const toolError = modeledToolError(failure);
+    if (toolError !== undefined) {
+        labelToolFailure("tool_error", toolError.error);
+    } else if (failure instanceof Error) {
+        recordToolException(failure);
+        log.warn("tool call threw", { tool: tool.id, toolCallId: tu.toolCallId, ...log.errorFields(failure) });
+    } else {
+        labelToolFailure("_OTHER");
+    }
+}
+
+/** The `ToolError` of a failure: the value itself, or the value that `unwrapOrThrow` wrapped in a `ResultError`. */
+function modeledToolError(failure: unknown): ToolError | undefined {
+    if (isToolError(failure)) return failure;
+    return failure instanceof ResultError && isToolError(failure.value) ? failure.value : undefined;
 }
 
 /**
@@ -1001,53 +1014,6 @@ function errorResult(toolCall: ToolCallPart, content: string): ToolResultPart {
         // A thrown tool error routinely quotes stderr verbatim — as exposed to NUL as a success payload.
         output: { type: "error-text", value: stripNulCharacters(content) },
     };
-}
-
-/**
- * The failure that an ok value reports through the tool's own `failureOf` hook.
- * A hook that throws records no failure, and the call keeps its result.
- */
-function returnedFailure(tool: Tool, value: unknown, log: Logger): ToolFailure | undefined {
-    const failureOf = tool.failureOf;
-    if (typeof failureOf !== "function") return undefined;
-    try {
-        return failureOf(value);
-    } catch (err) {
-        log.debug("failureOf failed", { tool: tool.id, ...log.errorFields(err) });
-        return undefined;
-    }
-}
-
-/**
- * The span account of rejected input: the path and the code of each issue. A
- * Zod message can quote the input (an unrecognized key, for one), thus no
- * message of an issue rides.
- */
-function validationFailure(error: z.ZodError): ToolFailure {
-    const issues = error.issues.map((issue) => `${issue.path.length > 0 ? issue.path.map(String).join(".") : "(root)"}: ${issue.code}`);
-    return { type: "validation", message: `input validation failed: ${issues.join("; ")}` };
-}
-
-/** The span account of an `err` value. A value that is not a `ToolError` reads as a throw. */
-function errFailure(value: unknown): ToolFailure {
-    if (!isToolError(value)) return thrownFailure(value);
-    return { type: (value.cause === undefined ? undefined : errorTypeOf(value.cause)) ?? "tool-error", message: value.error };
-}
-
-function thrownFailure(err: unknown): ToolFailure {
-    return { type: errorTypeOf(err) ?? "_OTHER", message: err instanceof Error ? err.message : String(err) };
-}
-
-/**
- * The low-cardinality name of an error: its code when it carries one, else its
- * name. OpenTelemetry names the type of a recorded exception by the same rule.
- */
-function errorTypeOf(err: unknown): string | undefined {
-    if (typeof err !== "object" || err === null) return undefined;
-    const { code, name } = err as { code?: unknown; name?: unknown };
-    if ((typeof code === "string" && code !== "") || typeof code === "number") return String(code);
-    if (typeof name === "string" && name !== "") return name;
-    return undefined;
 }
 
 function isAskRejected(err: unknown): err is AskRejectedError {

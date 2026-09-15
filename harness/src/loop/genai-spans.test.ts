@@ -1,18 +1,15 @@
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { context, propagation, SpanStatusCode, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createAiSdkProvider } from "../providers/ai-sdk.js";
-import type { SandboxClient } from "../sandbox/client.js";
-import type { ExecResult, SandboxRef } from "../sandbox/types.js";
-import { defineTool } from "../tools/define-tool.js";
-import { createExecuteCommandTool } from "../tools/workspace/execute-command.js";
+import { defineTool, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
@@ -21,6 +18,8 @@ const exporter = new InMemorySpanExporter();
 const tracerProvider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
 
 beforeAll(() => tracerProvider.register());
+
+beforeEach(() => exporter.reset());
 
 afterAll(async () => {
     await tracerProvider.shutdown();
@@ -77,69 +76,69 @@ it("exports the loop and model-call spans as one trace, with no prompt or comple
     expect(JSON.stringify(spans.map((span) => [span.attributes, span.events, span.status]))).not.toContain("SECRET");
 });
 
-const sandbox: SandboxRef = { sandboxId: "sb-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "secret" };
-
-/** A sandbox client whose every exec settles to `result`. */
-function settlingClient(result: Omit<ExecResult, "execId">): SandboxClient {
-    return {
-        toolchainSource: "store",
-        createSandbox: async () => sandbox,
-        submitExec: async () => {},
-        awaitExec: async (_ref, execId) => ({ ...result, execId }),
-        isAlive: async () => ({ alive: true, oomKilled: false }),
-        isAliveById: async () => ({ alive: true, oomKilled: false }),
-        teardown: async () => {},
-        teardownById: async () => {},
-        listManagedSandboxes: async () => [],
-    };
-}
-
-/** Run one `execute_command` call whose exec settles to `result`, and give the span of that call. */
-async function execSpan(toolCallId: string, result: Omit<ExecResult, "execId">): Promise<ReadableSpan> {
-    const executeCommand = createExecuteCommandTool({
-        sandboxClient: settlingClient(result),
-        sandbox,
-        workflowId: "wf",
-        stepId: "step",
-        nextFunctionId: () => toolCallId,
-        deadlineMs: () => Date.now() + 60_000,
-        defaultCwd: "/analysis/runs/run/step",
-    });
-    const provider = scriptedProvider([
-        makeMessage([toolUseBlock(toolCallId, "execute_command", { command: ["python", "run.py"] })], "tool_use"),
-        makeMessage([textBlock("done")], "end_turn"),
-    ]);
-
+/** Run one scripted call of `tool`, and give back its `execute_tool` span. */
+async function executeToolSpan(tool: Tool, toolCallId: string, input: unknown): Promise<ReadableSpan> {
+    const provider = scriptedProvider([makeMessage([toolUseBlock(toolCallId, tool.id, input)], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
     await runAgent(
-        { id: "test-agent", systemPrompt: "system", model: "mock-model-id", tools: [executeCommand], maxIterations: 4 },
+        { id: "test-agent", systemPrompt: "You are a test agent.", model: "claude-test", tools: [tool], maxIterations: 4 },
         [{ role: "user", content: "go" }],
         makeSession(),
         { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep },
     );
-
     const span = exporter.getFinishedSpans().find((finished) => finished.attributes["gen_ai.tool.call.id"] === toolCallId);
-    expect(span).toBeDefined();
-    return span!;
+    if (span === undefined) throw new Error(`no execute_tool span for ${toolCallId}`);
+    return span;
 }
 
-it("records a returned non-zero exec as an error, with its exit code and a capped stderr tail, and no stdout", async () => {
-    const stderr = `${Array.from({ length: 200 }, (_, line) => `E${line}`).join("\n")}\n`;
-    const span = await execSpan("tc-nonzero", { exitCode: 1, stdout: "STDOUT-TEXT", stderr, durationMs: 5, timedOut: false });
+it("records an exception that a tool throws on its execute_tool span", async () => {
+    const boom = defineTool({
+        id: "boom",
+        description: "Always throws.",
+        inputSchema: z.object({}),
+        describeCall: "none",
+        execute: async () => {
+            throw new TypeError("kaboom");
+        },
+    });
+
+    const span = await executeToolSpan(boom, "tc-throw", {});
 
     expect(span.status.code).toBe(SpanStatusCode.ERROR);
-    expect(span.attributes["error.type"]).toBe("nonzero");
-    expect(span.attributes["inflexa.sandbox.exit_code"]).toBe(1);
-    const tail = String(span.attributes["inflexa.sandbox.stderr_tail"]);
-    expect(Buffer.byteLength(tail, "utf8")).toBeLessThanOrEqual(2_048);
-    expect(tail.trimEnd().split("\n").length).toBeLessThanOrEqual(80);
-    expect(tail.trimEnd().endsWith("E199")).toBe(true);
-    expect(JSON.stringify([span.attributes, span.events, span.status])).not.toContain("STDOUT-TEXT");
+    expect(span.attributes["error.type"]).toBe("TypeError");
+    expect(span.events.find((event) => event.name === "exception")?.attributes?.["exception.message"]).toBe("kaboom");
 });
 
-it("flags a stderr past the 32 KiB cap as head-only, and keeps its tail within the cap", async () => {
-    const line = `${"x".repeat(99)}\n`;
-    const span = await execSpan("tc-head-only", { exitCode: 1, stdout: "", stderr: line.repeat(410), durationMs: 5, timedOut: false });
+it("labels rejected input on the span with no text of the input", async () => {
+    const strict = defineTool({
+        id: "strict",
+        description: "Takes one number.",
+        inputSchema: z.strictObject({ n: z.number() }),
+        describeCall: "none",
+        execute: async () => ok({}),
+    });
 
-    expect(span.attributes["inflexa.sandbox.stderr_head_only"]).toBe(true);
-    expect(Buffer.byteLength(String(span.attributes["inflexa.sandbox.stderr_tail"]), "utf8")).toBeLessThanOrEqual(2_048);
+    // Zod quotes an unrecognized key in its message.
+    const span = await executeToolSpan(strict, "tc-invalid", { n: 1, SECRET: "x" });
+
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes["error.type"]).toBe("validation");
+    expect(span.attributes["inflexa.tool.error"]).toBeUndefined();
+    expect(JSON.stringify([span.attributes, span.events, span.status])).not.toContain("SECRET");
+});
+
+it("labels an err(ToolError) with its text and records no exception", async () => {
+    const down = defineTool({
+        id: "down",
+        description: "Returns an err Result.",
+        inputSchema: z.object({}),
+        describeCall: "none",
+        execute: async () => err({ error: "upstream down", retryable: true } as const),
+    });
+
+    const span = await executeToolSpan(down, "tc-err", {});
+
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes["error.type"]).toBe("tool_error");
+    expect(span.attributes["inflexa.tool.error"]).toBe("upstream down");
+    expect(span.events.some((event) => event.name === "exception")).toBe(false);
 });

@@ -252,8 +252,6 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
         // The derived path is the one durable product of the call, thus the derived arm names it. Each other
         // arm is a condition that refused, and the kind of the arm is what a watcher must read.
         describeResult: (_input, result): string => (result.outcome === "derived" ? result.path : result.outcome),
-        // The exec arm is the one fault. Each other arm refuses the call, before the exec or after a clean one.
-        failureOf: (result) => (result.outcome === "exec-failed" ? { type: result.outcome, message: result.detail } : undefined),
         execute: async (input, ctx): Promise<Result<DeriveTableResult, ToolError>> => {
             // The check runs before every read, thus one clear signal replaces a failure for each attempt.
             // It also narrows the two rails below, thus the exec needs no assertion.

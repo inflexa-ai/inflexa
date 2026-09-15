@@ -88,7 +88,6 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }) {
             limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
         }),
         describeCall: "none",
-        failureOf: (result: SearchGithubReposOutput) => (result.success ? undefined : { type: "unavailable", message: result.error }),
         execute: async ({ query, language, limit }): Promise<Result<SearchGithubReposOutput, ToolError>> => {
             const q = language ? `${query} language:${language}` : query;
             const params = new URLSearchParams({
