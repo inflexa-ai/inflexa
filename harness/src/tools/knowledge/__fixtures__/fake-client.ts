@@ -21,8 +21,8 @@ import type {
 
 export const SNAPSHOT = { date: "2026-09-04", digest: "sha256:71ac0000000000000000000000000000000000000000000000000000000000ab" };
 
-const DE_METHOD = { id: "M-0001", label: "DESeq2 Wald test with apeglm log fold change shrinkage" };
-const QC_STEP = { step: "qc_sample_structure", method: { id: "M-0006", label: "Sample structure QC" }, template: "tpl-qc-eda@1.0.0", rules: ["R-0033@1a2b"] };
+const DE_METHOD = { id: "M-0001", label: "Count-model Wald test with effect shrinkage" };
+const QC_STEP = { step: "qc_sample_structure", method: { id: "M-0006", label: "Sample structure check" }, template: "tpl-qc-eda@1.0.0", rules: ["R-0033@1a2b"] };
 
 function claim(id: string, statement: string): RecommendResponse["claims"][number] {
     return {
@@ -47,11 +47,11 @@ export function recommendAnswer(): RecommendResponse {
                 template: "tpl-deseq2-two-group@1.0.0",
                 rules: ["R-0001@e7d0"],
                 parameters: [{ name: "alpha", value: 0.05, default_source: "doi:10.1186/s13059-014-0550-8" }],
-                alternatives: [{ method: "M-0003", label: "edgeR quasi-likelihood F-test", when: "robustness", rules: ["R-0001@e7d0"] }],
+                alternatives: [{ method: "M-0003", label: "Alternative count-model F-test", when: "robustness", rules: ["R-0001@e7d0"] }],
             },
             {
                 step: "multiple_testing",
-                method: { id: "M-0012", label: "Benjamini-Hochberg false discovery rate" },
+                method: { id: "M-0012", label: "Step-up adjustment of the p-values" },
                 rules: ["R-0010@2b3c", "R-0166@4d5e"],
                 conflicts: [
                     {
@@ -65,7 +65,7 @@ export function recommendAnswer(): RecommendResponse {
             },
             {
                 step: "enrichment",
-                method: { id: "M-0010", label: "fgsea preranked GSEA on the Wald statistic with MSigDB Hallmark" },
+                method: { id: "M-0010", label: "Preranked set test on the test statistic" },
                 package: { name: "fgsea", track: "bioconductor" },
                 template: "tpl-fgsea-preranked@1.0.0",
                 rules: ["R-0107@0a1b"],
@@ -95,12 +95,12 @@ export function substitutionAnswer(): RecommendResponse {
             { ...QC_STEP, template: "tpl-qc-python@1.0.0" },
             {
                 step: "enrichment",
-                method: { id: "M-0059", label: "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores" },
+                method: { id: "M-0059", label: "Per-sample activity scores with a two-sample test" },
                 package: { name: "decoupler", track: "python" },
                 template: "tpl-decoupler-scores@1.0.0",
                 rules: ["R-0102@9c0d"],
                 parameters: [{ name: "gene_set_collection", value: "msigdb_hallmark_human" }],
-                substitution: { for: "M-0034", label: "GSVA per-sample pathway scores with limma on the scores", template: "tpl-decoupler-scores@1.0.0" },
+                substitution: { for: "M-0034", label: "Per-sample set scores with a linear model", template: "tpl-decoupler-scores@1.0.0" },
             },
         ],
         uncovered: ["report"],
@@ -162,7 +162,7 @@ export function renderAnswer(): RenderResponse {
     return {
         ok: true,
         snapshot: SNAPSHOT,
-        template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "DESeq2 two-group", method: DE_METHOD, language: "R" },
+        template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "Two-group count model", method: DE_METHOD, language: "R" },
         script: 'COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n',
         slots: [{ name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] }],
         environment: { match: "exact" },
@@ -170,7 +170,7 @@ export function renderAnswer(): RenderResponse {
         outputs: [{ name: "results", path: "output/de_results.csv" }],
         decision_record: {
             schema: "inflexa.decision_record/0.1",
-            template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "DESeq2 two-group", method: DE_METHOD },
+            template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "Two-group count model", method: DE_METHOD },
             snapshot: SNAPSHOT,
             slots: [],
             unvetted_edits: [],
@@ -180,8 +180,8 @@ export function renderAnswer(): RenderResponse {
 
 /** A render of a declared substitute: the template object names the substitute as its method and the method of record beside it. */
 export function substituteRenderAnswer(): RenderResponse {
-    const method = { id: "M-0059", label: "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores" };
-    const substitute_for = { id: "M-0034", label: "GSVA per-sample pathway scores with limma on the scores" };
+    const method = { id: "M-0059", label: "Per-sample activity scores with a two-sample test" };
+    const substitute_for = { id: "M-0034", label: "Per-sample set scores with a linear model" };
     return {
         ...renderAnswer(),
         template: { id: "tpl-decoupler-scores", version: "1.0.0", label: "decoupler pathway scores", method, substitute_for, language: "python" },
@@ -207,17 +207,17 @@ export function contractAnswer(): TemplateContract {
     return {
         id: "tpl-deseq2-two-group",
         version: "1.0.0",
-        label: "DESeq2 two-group",
+        label: "Two-group count model",
         method: DE_METHOD.id,
         language: "R",
         parameters: [
-            { name: "counts_path", type: "string", description: "Path of the count matrix CSV, first column gene id, header sample ids.", adaptable: true },
-            { name: "metadata_path", type: "string", description: "Path of the sample table CSV with one row per sample.", adaptable: true },
-            { name: "condition_column", type: "string", description: "The column of the sample table that holds the condition of interest.", adaptable: true },
+            { name: "counts_path", type: "string", description: "The count table file.", adaptable: true },
+            { name: "metadata_path", type: "string", description: "The sample table file.", adaptable: true },
+            { name: "condition_column", type: "string", description: "The sample table column with the contrast.", adaptable: true },
             {
                 name: "design",
                 type: "formula",
-                description: "The design formula. It must end with condition.",
+                description: "The model formula of the test.",
                 adaptable: true,
                 default: "~ condition",
                 default_source: "doi:10.1186/s13059-014-0550-8",
@@ -226,7 +226,7 @@ export function contractAnswer(): TemplateContract {
             {
                 name: "min_count",
                 type: "integer",
-                description: "A gene stays when it has at least this many counts in at least min_samples samples.",
+                description: "The count floor of the gene filter.",
                 adaptable: true,
                 default: 10,
                 default_source: "doi:10.12688/f1000research.7035.1",
@@ -235,7 +235,7 @@ export function contractAnswer(): TemplateContract {
             {
                 name: "min_samples",
                 type: "integer",
-                description: "The minimum number of samples for the count filter. Absent, the script uses the smallest group size.",
+                description: "The sample floor of the gene filter. Absent, the script picks a value.",
                 adaptable: true,
                 required: false,
                 minimum: 1,
@@ -243,15 +243,15 @@ export function contractAnswer(): TemplateContract {
             {
                 name: "alpha",
                 type: "number",
-                description: "The adjusted p-value cutoff, passed to results() so the independent filter is optimized for it.",
+                description: "The significance cutoff of the test.",
                 adaptable: false,
                 default: 0.05,
-                default_source: "vignette:DESeq2/1.52.0#independent-filtering-and-multiple-testing",
+                default_source: "vignette:example-package/1.0.0#the-cutoff",
             },
             {
                 name: "lfc_shrink",
                 type: "string",
-                description: "The shrinkage estimator of the reported log2 fold change.",
+                description: "The shrinkage method of the effect size.",
                 adaptable: true,
                 default: "apeglm",
                 default_source: "doi:10.1093/bioinformatics/bty895",
