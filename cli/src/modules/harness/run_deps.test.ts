@@ -13,6 +13,7 @@ import {
     type ArtifactRegistrationInput,
     type ChatProvider,
     type ExecuteAnalysisDeps,
+    type KnowledgeClient,
     type ProvenanceCollector,
     type RunAuthorizer,
     type RunSession,
@@ -328,5 +329,32 @@ describe("buildSandboxStepDeps", () => {
         for (const id of Object.keys(SANDBOX_AGENT_META)) {
             expect(thrown?.message).toContain(id);
         }
+    });
+});
+
+// The parent bundle carries the knowledge client of the composition, so the seed composition can read
+// a template contract at dispatch. Absent from the composition, the field is absent from the bundle —
+// the harness reads absence as "no contract retrieved", never as an error.
+describe("run-engine knowledge wiring", () => {
+    const unavailable = { match: "unavailable" as const, reason: "test double" };
+    const knowledge: KnowledgeClient = {
+        recommend: async () => unavailable,
+        check: async () => unavailable,
+        render: async () => unavailable,
+        contract: async () => unavailable,
+    };
+    const callable: ExecuteAnalysisDeps["sandboxStepCallable"] = async () => {
+        throw new Error("not dispatched in this test");
+    };
+    const authorizer = {} as unknown as RunAuthorizer;
+
+    test("buildExecuteAnalysisDeps passes the knowledge client when the composition holds one", () => {
+        const deps = buildExecuteAnalysisDeps({ ...testComposition(), knowledge }, callable, authorizer);
+        expect(deps.knowledge).toBe(knowledge);
+    });
+
+    test("buildExecuteAnalysisDeps carries no knowledge field when the composition holds none", () => {
+        const deps = buildExecuteAnalysisDeps(testComposition(), callable, authorizer);
+        expect("knowledge" in deps).toBe(false);
     });
 });

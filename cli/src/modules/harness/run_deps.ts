@@ -10,6 +10,7 @@ import {
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
     type ExtendAnalysisFarm,
+    type KnowledgeClient,
     type Logger,
     type Pool,
     type ResolveWorkspaceRoot,
@@ -124,6 +125,12 @@ export type RunEngineComposition = {
     readonly extendAnalysisFarm: ExtendAnalysisFarm;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
+    /**
+     * The knowledge plane client, when the `knowledge` config block names an endpoint and the
+     * environment holds the key. Absent, no sandbox agent gets `knowledge_template` and the
+     * planner gets no knowledge tool: the default state of the open-source CLI.
+     */
+    readonly knowledge?: KnowledgeClient;
 };
 
 /**
@@ -156,6 +163,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         imagePackagesFile: comp.imagePackagesFile,
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
+        ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
         blockerHolder: ctx.blockerHolder,
         step: {
             sandbox: ctx.sandbox,
@@ -167,6 +175,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
             allowedWritePrefix: ctx.stepWritePrefix,
             nextFunctionId: ctx.nextFunctionId,
             deadlineMs: ctx.deadlineMs,
+            ...(ctx.input.templateBinding ? { templateBinding: ctx.input.templateBinding } : {}),
         },
     };
 
@@ -243,6 +252,10 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): CoreWorkflowDe
  * workflow observes the swap without re-registration. The body reads that member alone;
  * the other two ride along because the seam is one type. With no installed seam the field
  * is absent, which the harness reads as absence and never as an error.
+ *
+ * `knowledge` is the same client the step agents and the planner draw: the parent reads
+ * the template contract of a grounded step through it at dispatch and binds the plan
+ * settings to the render. Absent, the seed says the contract was not retrieved.
  */
 export function buildExecuteAnalysisDeps(
     comp: RunEngineComposition,
@@ -259,6 +272,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
+        ...(comp.knowledge ? { knowledge: comp.knowledge } : {}),
         provenance: provenanceSeam(),
         // The run-observation seam, injected beside the provenance one and sharing nothing with it.
         // Unlike the run emit this is NOT a swappable delegating handle: it binds no model and no

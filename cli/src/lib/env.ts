@@ -71,6 +71,19 @@ const ciVar = "CI";
  */
 export const EMBEDDING_API_KEY_VAR = "INFLEXA_EMBEDDING_API_KEY";
 
+/**
+ * The knowledge service secret's variable NAME. The key is the license of the knowledge plane: the
+ * config names the endpoint (`knowledge.baseUrl`), and the key comes from the environment only, never
+ * from config, telemetry, logs, or provenance. Exported for the same reason as {@link EMBEDDING_API_KEY_VAR}:
+ * the boot names the variable in its message when the endpoint is configured without a key.
+ */
+export const KNOWLEDGE_API_KEY_VAR = "INFLEXA_KNOWLEDGE_API_KEY";
+
+/** Read the knowledge service key from the environment at call time (env.ts is the sole `process.env` reader). */
+export function resolveKnowledgeApiKey(): string | undefined {
+    return process.env[KNOWLEDGE_API_KEY_VAR];
+}
+
 function dataDir(): string {
     const base = process.env[dataVar];
     if (base) return base;
@@ -609,6 +622,19 @@ export const modelConnectionEnvDoc: readonly { readonly name: string; readonly d
  * because it is a different channel: the EMBEDDING endpoint's credential, never the chat connection's.
  * Rendered alongside `envDoc`'s var rows by src/cli/index.ts.
  */
+/**
+ * `--help` documentation for the knowledge service secret. Its own list for the same reason as
+ * {@link embeddingEnvDoc}: the variable is resolved on demand ({@link resolveKnowledgeApiKey}), and it is
+ * a different channel from the chat connection and from the embedding endpoint.
+ */
+export const knowledgeEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
+    {
+        name: KNOWLEDGE_API_KEY_VAR,
+        description:
+            "the key of the Inflexa knowledge service, the license that attaches the knowledge tools when config `knowledge.baseUrl` names the endpoint; read from the environment only, never persisted",
+    },
+]);
+
 export const embeddingEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
     {
         name: EMBEDDING_API_KEY_VAR,

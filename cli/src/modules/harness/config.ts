@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { type Result } from "neverthrow";
 import { modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
-import { env } from "../../lib/env.ts";
+import { env, resolveKnowledgeApiKey } from "../../lib/env.ts";
 import { SANDBOX_IMAGE } from "../libs/images.ts";
 
 /**
@@ -345,4 +345,23 @@ export function resolveModelConnection(): ResolvedModelConnection {
         ...(connection.auth !== undefined && { auth: connection.auth }),
         ...requestBounds,
     };
+}
+
+/**
+ * The knowledge plane resolved to the values the boot consumes: the endpoint from the
+ * `knowledge` config block and the key from the environment. `null` when no endpoint is
+ * configured, which is the default state of the open-source CLI: the harness then attaches
+ * no knowledge tool, and a plan validates as it does today. An endpoint without a key
+ * resolves to `missing_key`, thus the boot names the variable instead of a silent
+ * unauthenticated client.
+ */
+export type ResolvedKnowledgeConfig =
+    { readonly kind: "configured"; readonly baseUrl: string; readonly apiKey: string } | { readonly kind: "missing_key"; readonly baseUrl: string } | null;
+
+export function resolveKnowledgeConfig(): ResolvedKnowledgeConfig {
+    const baseUrl = readConfig().knowledge?.baseUrl?.trim();
+    if (!baseUrl) return null;
+    const apiKey = resolveKnowledgeApiKey();
+    if (!apiKey) return { kind: "missing_key", baseUrl };
+    return { kind: "configured", baseUrl, apiKey };
 }
