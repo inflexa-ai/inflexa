@@ -56,8 +56,8 @@ function findCollection(term: string, entries: readonly ReferenceInventoryEntry[
 
 export async function joinEnvironment(answer: RecommendResponse, paths: EnvironmentPaths): Promise<RecommendWithEnvironment> {
     if (answer.match !== "applicable" && answer.match !== "flag") return answer;
-    const lock = paths.farmLockFile ? readFarmLockFile(paths.farmLockFile) : undefined;
-    const farm = lock && lock.isOk() ? new Map(lock.value.packages.map((pkg) => [pkg.name.toLowerCase(), pkg.version])) : undefined;
+    const lock = paths.farmLockFile ? readFarmLockFile(paths.farmLockFile).unwrapOr(undefined) : undefined;
+    const farm = lock ? new Map(lock.packages.map((pkg) => [pkg.name.toLowerCase(), pkg.version])) : undefined;
     const inventory = paths.refStorePath ? await readReferenceInventory(paths.refStorePath).catch(() => undefined) : undefined;
     const entries = inventory?.available ? inventory.entries : undefined;
 
