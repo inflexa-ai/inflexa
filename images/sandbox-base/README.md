@@ -20,6 +20,8 @@ analysis mounts at `/mnt/libs/farm`, and its optional read-write cache at
 tools and the Node packages) through the baked record at
 `/opt/inflexa/image-packages.json`. The record carries the identity of the
 image, the runtime versions, and the version of each tool and each package.
+It also names the base R packages and the Python standard-library modules of
+the two runtimes.
 The catalog build copies the same file into the store root. Thus
 `list_available_packages` reads it at `/mnt/libs/image-packages.json`, and it
 merges the record with the `inflexa.lock` of the mounted farm.

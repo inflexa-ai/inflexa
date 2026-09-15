@@ -35,8 +35,30 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { FARM_LOCK_FILE, formatQuery, identityAddress, identityKey, identityOf, parseIdentityKey, readFarmLock, resolveQuery } from "@inflexa-ai/harness";
-import type { FarmLock, FarmResolution, PackageIdentity, PackageQuery, PackageRequestOutcome, PoolIndex } from "@inflexa-ai/harness";
+import {
+    FARM_LOCK_FILE,
+    formatQuery,
+    IMAGE_PACKAGES_FILE,
+    identityAddress,
+    identityKey,
+    identityOf,
+    imagePoolIndex,
+    joinPoolIndexes,
+    parseIdentityKey,
+    readFarmLock,
+    readImagePackagesFile,
+    resolveQuery,
+} from "@inflexa-ai/harness";
+import type {
+    FarmLock,
+    FarmResolution,
+    ImagePackages,
+    PackageIdentity,
+    PackageQuery,
+    PackageRequestOutcome,
+    PoolIndex,
+    QueryResolution,
+} from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -614,7 +636,16 @@ function pickVersion(graph: DepsGraph, query: PackageQuery, identity: PackageIde
  * Thus a query with no version takes the head of that list.
  */
 export function resolvePackageRequest(graph: DepsGraph, query: PackageQuery): Result<ResolvedRequest, RequestResolutionError> {
-    const resolution = resolveQuery(query, poolIndexOf(graph));
+    return answerResolution(graph, query, resolveQuery(query, poolIndexOf(graph)));
+}
+
+/**
+ * The graph answer of one ladder resolution: the version pick of a `resolved`
+ * identity, and the error shape of the two other answers. `store link`, `store
+ * add`, and the seam route share it, thus a version and a refusal read alike
+ * whichever index the ladder ran over.
+ */
+function answerResolution(graph: DepsGraph, query: PackageQuery, resolution: QueryResolution): Result<ResolvedRequest, RequestResolutionError> {
     switch (resolution.kind) {
         case "resolved":
             return pickVersion(graph, query, resolution.identity);
@@ -1625,12 +1656,51 @@ function absentOutcome(query: PackageQuery, failure: RequestResolutionError): Pa
     }
 }
 
+/** The answer of the seam route for one query: a store directory of the pool, or a package of the image. */
+type LinkResolution =
+    | { readonly kind: "pool"; readonly answer: ResolvedRequest }
+    | { readonly kind: "image"; readonly version: string }
+    | { readonly kind: "refused"; readonly failure: RequestResolutionError };
+
+/**
+ * The valid image record at the root of the store, or `undefined`. A store
+ * from before the record, and a record that does not parse, both give nothing:
+ * the base sets are an enrichment, and the graph still answers without them.
+ */
+function readStoreImageRecord(storeRoot: string): ImagePackages | undefined {
+    return readImagePackagesFile(join(storeRoot, IMAGE_PACKAGES_FILE)).unwrapOr(undefined);
+}
+
+/**
+ * Resolve one query of the seam route over the graph AND the base sets of the
+ * image.
+ *
+ * The ladder runs one time over the joined index, which is the index that the
+ * planner validates a plan against. Thus `submit_plan` and this link give one
+ * answer for each entry. A `resolved` identity that the graph does not hold is
+ * a package of the image: the runtime of the image loads it, and no farm link
+ * exists for it. Its version is the runtime version of its track.
+ */
+function resolveLinkRequest(graph: DepsGraph, record: ImagePackages | undefined, query: PackageQuery): LinkResolution {
+    const pool = poolIndexOf(graph);
+    const resolution = resolveQuery(query, record === undefined ? pool : joinPoolIndexes(pool, imagePoolIndex(record)));
+    if (record !== undefined && resolution.kind === "resolved" && !pool.has(resolution.identity)) {
+        return { kind: "image", version: record.runtimes[resolution.identity.track] };
+    }
+    return answerResolution(graph, query, resolution).match(
+        (answer): LinkResolution => ({ kind: "pool", answer }),
+        (failure): LinkResolution => ({ kind: "refused", failure }),
+    );
+}
+
 /**
  * The farm-extension seam realization (`link_packages`): the queries of one
  * sandbox step in, one outcome for each query out, in the order of the queries.
  *
  * The seam runs in THIS process, beside the tool that calls it. It reads the
- * graph, it resolves each query against the pool, and it links what resolved.
+ * graph, it resolves each query against the pool and the base sets of the
+ * image, and it links what resolved to the pool. A package of the image is
+ * `present`, because its runtime loads it and no farm link exists for it.
  * Thus it starts no container, it opens no network connection, and it starts no
  * `inflexa` child: an acquisition is a host action, behind its own approval, and
  * it is never a step of a run.
@@ -1652,18 +1722,10 @@ export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string
         return queries.map((query) => ({ kind: "unavailable", spelling: query.spelling, reason }));
     }
     const graph = read.value;
+    const record = readStoreImageRecord(storeRoot);
 
-    const resolutions = queries.map((query) => ({ query, resolved: resolvePackageRequest(graph, query) }));
-    const roots = [
-        ...new Set(
-            resolutions.flatMap(({ resolved }) =>
-                resolved.match(
-                    (answer) => [answer.storeDir],
-                    () => [],
-                ),
-            ),
-        ),
-    ];
+    const resolutions = queries.map((query) => ({ query, resolved: resolveLinkRequest(graph, record, query) }));
+    const roots = [...new Set(resolutions.flatMap(({ resolved }) => (resolved.kind === "pool" ? [resolved.answer.storeDir] : [])))];
 
     // The closure of the farm BEFORE the extension, which is what tells `present`
     // from `linked`. A batch that resolved nothing extends nothing, thus it reads
@@ -1671,9 +1733,16 @@ export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string
     const linkedAlready = roots.length === 0 ? new Set<string>() : readFarmClosure(analysisFarmPath(storeRoot, analysisId));
     const extended = roots.length === 0 ? null : await extendFarm({ storeRoot, analysisId, roots });
 
-    return resolutions.map(({ query, resolved }) =>
-        resolved.match(
-            (answer): PackageRequestOutcome => {
+    return resolutions.map(({ query, resolved }): PackageRequestOutcome => {
+        switch (resolved.kind) {
+            case "image":
+                // The image holds the package, thus nothing links, and the
+                // extension of the batch cannot refuse it.
+                return { kind: "present", spelling: query.spelling, version: resolved.version };
+            case "refused":
+                return absentOutcome(query, resolved.failure);
+            case "pool": {
+                const answer = resolved.answer;
                 if (extended === null || extended.isOk()) {
                     // The asked spelling rides back — the caller reads its own vocabulary.
                     return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", spelling: query.spelling, version: answer.version };
@@ -1694,8 +1763,11 @@ export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string
                           detail: describeFarmCompositionError(error),
                       }
                     : { kind: "unavailable", spelling: query.spelling, reason: describeFarmCompositionError(error) };
-            },
-            (failure) => absentOutcome(query, failure),
-        ),
-    );
+            }
+            default: {
+                const unreachable: never = resolved;
+                throw new Error(`unhandled link resolution: ${JSON.stringify(unreachable)}`);
+            }
+        }
+    });
 }

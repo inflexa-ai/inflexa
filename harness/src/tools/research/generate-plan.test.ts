@@ -235,6 +235,85 @@ describe("generatePlan loop-driving tool", () => {
         expect(transcript(provider)).toContain("regulon");
     });
 
+    describe("package resolution at the submit", () => {
+        /** A pool reader whose census holds `igraph` in both tracks and `scikit-learn`. */
+        const readPoolInventory = async () =>
+            ({
+                kind: "sections",
+                sections: [
+                    { title: "Python (pip)", track: "python", packages: [{ name: "igraph" }, { name: "scikit-learn" }, { name: "pydeseq2" }] },
+                    { title: "R", track: "r", packages: [{ name: "igraph" }] },
+                ],
+            }) as const;
+
+        /** A store root whose image record names the base sets of the two runtimes. */
+        async function imageRecordFile(): Promise<string> {
+            const dir = await mkdtemp(join(tmpdir(), "plan-image-"));
+            const file = join(dir, "image-packages.json");
+            await writeFile(
+                file,
+                JSON.stringify({
+                    schema: 1,
+                    image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "local", arch: "amd64" },
+                    runtimes: { python: "3.12.3", r: "4.6.0", node: "24.8.0" },
+                    system_tools: [],
+                    node: [],
+                    r_base: ["stats"],
+                    python_stdlib: ["json"],
+                }),
+            );
+            return file;
+        }
+
+        /** The text of each tool result that the planner read back, in order. */
+        function toolResults(provider: ScriptedProvider): string {
+            return JSON.stringify(provider.calls.at(-1)?.messages ?? []);
+        }
+
+        it("refuses a bare both-track name and a name outside the pool, then accepts the prefixed form and the base packages", async () => {
+            await seedAnalysis(pool, "an-pkg-resolve", { dpStatus: null });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate({ packages: ["igraph", "sklearn"] }) })], "tool_use"),
+                makeMessage([toolUseBlock("t2", "submit_plan", { plan: validCandidate({ packages: ["python:igraph", "r:stats", "json"] }) })], "tool_use"),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+            const tool = createGeneratePlanTool({
+                conversation: { provider, model: "claude-test" },
+                pool,
+                bioKeys: TEST_BIO_KEYS,
+                readPoolInventory,
+                imagePackagesFile: await imageRecordFile(),
+            });
+
+            const result = (await tool.execute(INPUT, toolContext("an-pkg-resolve")))._unsafeUnwrap() as PlanResult;
+
+            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+            const results = toolResults(provider);
+            expect(results).toContain("python:igraph");
+            expect(results).toContain("r:igraph");
+            expect(results).toContain("sklearn");
+            expect(results).toContain("the pool does not hold");
+        });
+
+        it("resolves nothing when the pool read is unavailable", async () => {
+            await seedAnalysis(pool, "an-pkg-unavailable", { dpStatus: null });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "submit_plan", { plan: validCandidate({ packages: ["sklearn"] }) })], "tool_use"),
+                makeMessage([textBlock("Submitted.")], "end_turn"),
+            ]);
+            const tool = createGeneratePlanTool({
+                conversation: { provider, model: "claude-test" },
+                pool,
+                bioKeys: TEST_BIO_KEYS,
+                readPoolInventory: async () => ({ kind: "unavailable", reason: "the dependency graph is absent" }) as const,
+            });
+
+            const result = (await tool.execute(INPUT, toolContext("an-pkg-unavailable")))._unsafeUnwrap() as PlanResult;
+
+            expect(result.planId).toMatch(/^pln-[a-f0-9]{8}$/);
+        });
+    });
+
     it("reports no reference store to the planner when none is configured", async () => {
         const provider = refsProbe();
         await toolFor(provider).execute(INPUT, toolContext());

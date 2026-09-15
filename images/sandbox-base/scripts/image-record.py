@@ -6,6 +6,10 @@ the two builder fragments with the identity of the image and the versions of
 the three runtimes. The store build copies the file verbatim, thus one writer
 owns the shape.
 
+The record also carries the base sets of the two runtimes: the R packages at
+the priority `base`, and the Python standard-library modules. The image holds
+them, and the package store does not, thus only the image can name them.
+
 The script runs in the runtime stage. That stage has the system python3 and
 no third-party module, thus the script uses the standard library only.
 """
@@ -49,6 +53,36 @@ def runtime_version(command, prefix):
     return line.split()[0]
 
 
+def r_base_packages():
+    """Return the names of the R packages at the priority `base`, sorted."""
+    command = [
+        "Rscript",
+        "-e",
+        'cat(rownames(installed.packages(priority = "base")), sep = "\\n")',
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"`{' '.join(command)}` gave {result.returncode}: {result.stderr.strip()}"
+        )
+    names = sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+    if not names:
+        raise ValueError("the R runtime reports no package at the priority `base`")
+    return names
+
+
+def python_stdlib_modules():
+    """Return the names of the standard-library modules of this interpreter, sorted.
+
+    The script runs under the system python3 of the runtime stage, which is the
+    interpreter that a sandbox runs. Thus the set is the set of the image.
+    """
+    names = sorted(sys.stdlib_module_names)
+    if not names:
+        raise ValueError("the Python runtime reports no standard-library module")
+    return names
+
+
 def fragment(path):
     """Return the entry list of a builder fragment."""
     with open(path) as f:
@@ -78,6 +112,8 @@ def main():
             },
             "system_tools": fragment(args.system_tools),
             "node": fragment(args.node),
+            "r_base": r_base_packages(),
+            "python_stdlib": python_stdlib_modules(),
         }
     except (OSError, RuntimeError, ValueError) as error:
         print(f"ERROR: the record assembly failed: {error}", file=sys.stderr)

@@ -1040,6 +1040,55 @@ describe("linkPackagesIntoFarm", () => {
     });
 });
 
+describe("linkPackagesIntoFarm — the base sets of the image", () => {
+    /** Write an image record at the root of a store, with the base sets of the two runtimes. */
+    function writeImageRecord(root: string): void {
+        writeFileSync(
+            join(root, "image-packages.json"),
+            JSON.stringify({
+                schema: 1,
+                image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "local", arch: "amd64" },
+                runtimes: { python: "3.12.3", r: "4.6.0", node: "24.8.0" },
+                system_tools: [],
+                node: [],
+                r_base: ["grid", "stats"],
+                python_stdlib: ["json", "pickle"],
+            }),
+        );
+    }
+
+    test("a base R package is present at the runtime version, and the farm links nothing", async () => {
+        const root = tempStore();
+        writeImageRecord(root);
+        const analysisId = randomUUIDv7();
+
+        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ spelling: "stats", track: "r" }]);
+
+        expect(outcomes).toEqual([{ kind: "present", spelling: "stats", version: "4.6.0" }]);
+        expect(existsSync(join(root, "farms", analysisId))).toBe(false);
+    });
+
+    test("a standard-library module is present, beside a pool package that links", async () => {
+        const root = tempStore();
+        writeImageRecord(root);
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "json" }, { spelling: "beta" }]);
+
+        expect(outcomes).toEqual([
+            { kind: "present", spelling: "json", version: "3.12.3" },
+            { kind: "linked", spelling: "beta", version: "0.4.1" },
+        ]);
+    });
+
+    test("a store with no image record keeps the answer of the graph", async () => {
+        const root = tempStore();
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "stats", track: "r" }]);
+
+        expect(outcomes).toEqual([{ kind: "absent", spelling: "stats", acquisitionPossible: true }]);
+    });
+});
+
 // --- The durable first resolution ------------------------------------------------
 
 describe("the durable first resolution", () => {

@@ -4,7 +4,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ImagePackagesSchema, readImagePackagesFile } from "./image-packages.js";
+import { ImagePackagesSchema, imagePoolIndex, readImagePackagesFile } from "./image-packages.js";
+import { resolveQuery, pythonIdentity, rIdentity } from "./package-identity.js";
 
 const RECORD = {
     schema: 1,
@@ -47,6 +48,24 @@ describe("ImagePackagesSchema", () => {
 
         expect(parsed.data as Record<string, unknown>).toHaveProperty("built_at", "2026-09-01T00:00:00Z");
         expect(parsed.data.system_tools[0] as Record<string, unknown>).toHaveProperty("channel", "bioconda");
+    });
+
+    it("parses the base sets of the two runtimes", () => {
+        const parsed = ImagePackagesSchema.safeParse({ ...RECORD, r_base: ["grid", "stats"], python_stdlib: ["json", "pickle"] });
+        if (!parsed.success) throw new Error(`expected a valid record: ${parsed.error.message}`);
+
+        expect(parsed.data.r_base).toEqual(["grid", "stats"]);
+        expect(parsed.data.python_stdlib).toEqual(["json", "pickle"]);
+    });
+
+    // A store packed before the two fields carries a record without them, and
+    // that record must keep its tools and its node packages.
+    it("parses a record without the base sets", () => {
+        const parsed = ImagePackagesSchema.safeParse(RECORD);
+        if (!parsed.success) throw new Error(`expected a valid record: ${parsed.error.message}`);
+
+        expect(parsed.data.r_base).toBeUndefined();
+        expect(parsed.data.python_stdlib).toBeUndefined();
     });
 
     it("refuses a missing track and an entry with no version", () => {
@@ -92,5 +111,25 @@ describe("readImagePackagesFile", () => {
         await writeFile(recordPath, JSON.stringify({ ...RECORD, schema: 2 }));
 
         expect(readImagePackagesFile(recordPath)._unsafeUnwrapErr().type).toBe("record_invalid");
+    });
+});
+
+describe("imagePoolIndex", () => {
+    const record = ImagePackagesSchema.parse({ ...RECORD, r_base: ["grDevices", "stats"], python_stdlib: ["json", "pickle"] });
+
+    it("resolves a base R package under its track", () => {
+        expect(resolveQuery({ spelling: "stats", track: "r" }, imagePoolIndex(record))).toEqual({ kind: "resolved", identity: rIdentity("stats") });
+    });
+
+    it("resolves a standard-library module", () => {
+        expect(resolveQuery({ spelling: "json" }, imagePoolIndex(record))).toEqual({ kind: "resolved", identity: pythonIdentity("json") });
+    });
+
+    it("suggests the spelling of a base R package, because an R name is case-sensitive", () => {
+        expect(resolveQuery({ spelling: "grdevices" }, imagePoolIndex(record))).toEqual({ kind: "unknown", suggestion: rIdentity("grDevices") });
+    });
+
+    it("holds nothing for a record from before the base sets", () => {
+        expect(resolveQuery({ spelling: "stats" }, imagePoolIndex(ImagePackagesSchema.parse(RECORD)))).toEqual({ kind: "unknown" });
     });
 });

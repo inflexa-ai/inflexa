@@ -25,6 +25,8 @@ import { readFileSync } from "node:fs";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { identityAddress, identityKey, pythonIdentity, rIdentity, type PackageIdentity, type PoolIndex } from "./package-identity.js";
+
 /**
  * The file name of the record, at the root of the package store. Exported,
  * as `FARM_LOCK_FILE` is, thus an embedder that joins the path onto its own
@@ -75,6 +77,11 @@ export const ImageNodePackageSchema = z
  * `image-packages.json` at schema version 1. The keys `system_tools` and
  * `node` are the keys of the image manifest, thus one name means one track
  * across the build and the reader.
+ *
+ * `r_base` and `python_stdlib` name the base sets of the two runtimes: the R
+ * packages at the priority `base`, and the Python standard-library modules.
+ * The image holds them and the store does not. Both fields are optional,
+ * because a record from before them is still a valid record at schema 1.
  */
 export const ImagePackagesSchema = z
     .object({
@@ -83,6 +90,8 @@ export const ImagePackagesSchema = z
         runtimes: ImageRuntimesSchema,
         system_tools: z.array(ImageSystemToolSchema),
         node: z.array(ImageNodePackageSchema),
+        r_base: z.array(z.string()).optional(),
+        python_stdlib: z.array(z.string()).optional(),
     })
     .passthrough();
 export type ImagePackages = z.infer<typeof ImagePackagesSchema>;
@@ -116,4 +125,27 @@ export function readImagePackagesFile(recordPath: string): Result<ImagePackages,
         return err({ type: "record_invalid", recordPath, cause: record.error });
     }
     return ok(record.data);
+}
+
+/**
+ * The pool index of the base sets of the image: the R identity of each
+ * `r_base` name, and the Python identity of each `python_stdlib` name.
+ *
+ * A reader joins this index to its pool index with `joinPoolIndexes`, thus
+ * `resolveQuery` counts a base package as present by the one ladder. The
+ * planner census and the link pass of an embedder both join it, and the two
+ * give one answer for `r:stats`. A record with neither field gives an index
+ * that holds nothing.
+ */
+export function imagePoolIndex(record: ImagePackages): PoolIndex {
+    // Keyed by the identity key, thus a name that the record lists two times
+    // is one identity, and the ladder does not read it as two candidates.
+    const byKey = new Map<string, PackageIdentity>();
+    for (const name of record.r_base ?? []) byKey.set(identityKey(rIdentity(name)), rIdentity(name));
+    for (const name of record.python_stdlib ?? []) byKey.set(identityKey(pythonIdentity(name)), pythonIdentity(name));
+    const rIdentities = [...byKey.values()].filter((identity) => identity.track === "r");
+    return {
+        has: (identity) => byKey.has(identityKey(identity)),
+        rIdentitiesFoldingTo: (fold) => rIdentities.filter((identity) => identityAddress(identity) === fold),
+    };
 }

@@ -268,6 +268,34 @@ export type PoolIndex = {
 };
 
 /**
+ * One index over the identities of two indexes.
+ *
+ * `has` answers true when one of the two holds the identity. The R identities
+ * of the two indexes merge by their key, thus an identity that both indexes
+ * hold is one candidate of a suggestion, and not a coin flip between two.
+ *
+ * `resolveQuery` then runs one time over the joined index. A reader that asks
+ * the second index before or after the ladder gives a different answer for a
+ * spelling that the two indexes hold in two tracks, and the census and the
+ * link then disagree.
+ *
+ * @param first One index, for example the pool of a store.
+ * @param second The other index, for example the base sets of the image.
+ */
+export function joinPoolIndexes(first: PoolIndex, second: PoolIndex): PoolIndex {
+    return {
+        has: (identity) => first.has(identity) || second.has(identity),
+        rIdentitiesFoldingTo: (spellingFold) => {
+            const byKey = new Map<string, PackageIdentity>();
+            for (const identity of [...first.rIdentitiesFoldingTo(spellingFold), ...second.rIdentitiesFoldingTo(spellingFold)]) {
+                byKey.set(identityKey(identity), identity);
+            }
+            return [...byKey.values()];
+        },
+    };
+}
+
+/**
  * What a query resolves to.
  *
  * - `resolved` — one identity, thus the caller reads the pool under it.
