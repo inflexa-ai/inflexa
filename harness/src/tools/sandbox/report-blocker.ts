@@ -20,11 +20,12 @@
  */
 
 import type { ModelMessage } from "ai";
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { repairToolInput } from "../../lib/zod-issues.js";
 import { toolOutcomeForOutputType } from "../../loop/tool-outcome.js";
+import { degenerateTerminalText } from "../terminal-text.js";
 import { defineTool, type Tool } from "../define-tool.js";
 
 export const REPORT_BLOCKER_TOOL_ID = "report_blocker";
@@ -79,6 +80,8 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
         inputSchema: ReportBlockerInputSchema,
         describeCall: "none",
         execute: async (input) => {
+            const degenerate = degenerateTerminalText(input.reason);
+            if (degenerate) return err({ error: `${degenerate} Give the real reason, or continue the work.`, retryable: true });
             deps.record({ kind: "blocker", reason: input.reason });
             return ok({
                 recorded: true as const,
