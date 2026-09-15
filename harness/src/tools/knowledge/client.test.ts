@@ -101,7 +101,7 @@ describe("createHttpKnowledgeClient", () => {
         const enrichment = substituted.procedure.find((step) => step.step === "enrichment")!;
         expect(enrichment.substitution).toEqual({
             for: "M-0034",
-            label: "GSVA per-sample pathway scores with limma on the scores",
+            label: "Per-sample set scores with a linear model",
             template: "tpl-decoupler-scores@1.0.0",
         });
         const limited = RecommendResponseSchema.parse(limitAnswer());
@@ -120,8 +120,8 @@ describe("createHttpKnowledgeClient", () => {
         const answer = await client().render("tpl-decoupler-scores@1.0.0", {});
         expect("ok" in answer && answer.ok).toBe(true);
         if (!("ok" in answer)) return;
-        expect(answer.template.method).toEqual({ id: "M-0059", label: "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores" });
-        expect(answer.template.substitute_for).toEqual({ id: "M-0034", label: "GSVA per-sample pathway scores with limma on the scores" });
+        expect(answer.template.method).toEqual({ id: "M-0059", label: "Per-sample activity scores with a two-sample test" });
+        expect(answer.template.substitute_for).toEqual({ id: "M-0034", label: "Per-sample set scores with a linear model" });
         expect(answer.template.language).toBe("python");
     });
 
