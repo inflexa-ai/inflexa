@@ -3,6 +3,10 @@
  * `runAgent`, and `execute_tool` around each tool call that it dispatches. The AI
  * SDK traces the model calls (`providers/ai-sdk.ts`). It never sees the loop or
  * the tools, because the harness runs both itself.
+ *
+ * An `execute_tool` span is ERROR when our code fails the call. A failure that a
+ * tool returns as data, for example a sandbox command that exits non-zero, is
+ * normal iteration of the agent, and its span stays OK.
  */
 
 import { SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetry/api";
@@ -35,6 +39,37 @@ export function traceToolCall<T>(call: Pick<ToolCallPart, "toolName" | "toolCall
         if (outcome === "error") span.setStatus({ code: SpanStatusCode.ERROR });
         return value;
     });
+}
+
+/** The cap of `inflexa.tool.error`, in characters. */
+const TOOL_ERROR_MAX_CHARS = 1_000;
+
+/**
+ * Record an exception that a tool threw on the active `execute_tool` span.
+ * `error.type` is the code of the error when it has one, else its name.
+ */
+export function recordToolException(err: Error): void {
+    const span = trace.getActiveSpan();
+    if (span === undefined) return;
+    span.recordException(err);
+    span.setAttribute("error.type", errorTypeOf(err));
+}
+
+/**
+ * Label a tool failure that is not an exception on the active `execute_tool`
+ * span. `message` is text that our tool wrote, never text from the model.
+ */
+export function labelToolFailure(type: string, message?: string): void {
+    const span = trace.getActiveSpan();
+    if (span === undefined) return;
+    span.setAttribute("error.type", type);
+    if (message !== undefined) span.setAttribute("inflexa.tool.error", message.slice(0, TOOL_ERROR_MAX_CHARS));
+}
+
+function errorTypeOf(err: Error): string {
+    const code = "code" in err ? err.code : undefined;
+    if ((typeof code === "string" && code !== "") || typeof code === "number") return String(code);
+    return err.name === "" ? "_OTHER" : err.name;
 }
 
 function withSpan<T>(name: string, attributes: Attributes, run: (span: Span) => Promise<T>): Promise<T> {
