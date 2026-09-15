@@ -39,9 +39,14 @@ describe("createSandboxAgents", () => {
             expect(toolIds.has("edit_file"), `${id} edit_file`).toBe(true);
 
             // The fixture deps wire no blockerHolder / embedding / skillsDir, so the
-            // resolved surface is exactly the always-on tools + meta.tools.
+            // resolved surface is exactly the always-on tools + meta.tools. The
+            // knowledge template is the one allowlist member that resolves to
+            // nothing without a knowledge client, thus it does not count here.
             const alwaysOnCount = ALWAYS_ON_READ.length + ALWAYS_ON_PROFILE.length + 2;
-            const expected = alwaysOnCount + new Set(meta.tools).size;
+            const declared = new Set(meta.tools);
+            declared.delete("knowledgeTemplate");
+            const expected = alwaysOnCount + declared.size;
+            expect(toolIds.has("knowledge_template"), `${id} knowledge_template without a client`).toBe(false);
             expect(def.tools.length, `${id} tool count`).toBe(expected);
         }
     });

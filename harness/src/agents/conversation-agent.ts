@@ -60,6 +60,7 @@ import {
     targetSafetyTool,
 } from "../tools/bio/index.js";
 import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
+import type { KnowledgeClient } from "../tools/knowledge/index.js";
 
 // Dependency-bearing tool factories.
 import {
@@ -164,6 +165,12 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
     readonly runLauncher: RunLauncher;
     /** API keys for the external bio/chem data sources. */
     readonly bioKeys: BioToolKeys;
+    /**
+     * The knowledge service client, for the planner that `generate_plan` drives.
+     * Absent, the planner attaches no knowledge tool. The conversation agent
+     * itself gets `knowledge_recommend` through `hostTools`, from the embedder.
+     */
+    readonly knowledge?: KnowledgeClient;
     /** Skills root. No tool of the roster reads it. */
     readonly skillsDir: string;
     /** Headless-Chrome config for report snapshot/preview rendering. */
@@ -309,6 +316,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             usageRecorder,
             ...(toolOutputStore ? { toolOutputStore } : {}),
             bioKeys,
+            ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
             ...(refStorePath ? { refStorePath } : {}),
             ...(farmLockFile ? { farmLockFile } : {}),
             ...(imagePackagesFile ? { imagePackagesFile } : {}),

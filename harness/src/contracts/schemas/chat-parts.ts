@@ -15,6 +15,25 @@ export const PlanStepSchema = z.object({
     question: z.string(),
     depends_on: z.array(z.string()),
     resources: z.object({ cpu: z.number(), memoryGb: z.number() }).optional(),
+    grounding: z
+        .object({
+            status: z.string(),
+            snapshot: z.string(),
+            claims: z.array(z.string()),
+            template: z.string().optional(),
+            settings: z
+                .array(
+                    z.object({
+                        step: z.string(),
+                        name: z.string(),
+                        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+                        source: z.string().optional(),
+                    }),
+                )
+                .optional(),
+            reason: z.string(),
+        })
+        .optional(),
     maxSteps: z.number(),
 });
 

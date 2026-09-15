@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["pathway enrichment", "gene set enrichment", "GO analysis", "functional annotation"],
     suitableFor: ["gene-lists", "ranked-lists", "score-matrices", "general-omics"],
     skills: ["enrichment", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "lookupAnnotation", "searchInteractions", "knowledgeTemplate"],
 };
 
 export function createEnrichmentAgent(deps: SandboxAgentDeps): AgentDefinition {
