@@ -1,0 +1,103 @@
+{
+    "targetId": "51",
+    "name": "RAMP1",
+    "systematicName": "",
+    "abbreviation": "",
+    "synonyms": [
+        "receptor activity modifying protein 1",
+        "receptor activity-modifying protein 1",
+        "9130218E19Rik",
+        "receptor (calcitonin) activity modifying protein 1",
+        "receptor (G protein-coupled) activity modifying protein 1"
+    ],
+    "type": "",
+    "familyIds": [],
+    "familyNames": [],
+    "subunitIds": [],
+    "subunitNames": [],
+    "complexIds": [
+        44,
+        48
+    ],
+    "HGNC ID": [
+        "9843"
+    ],
+    "HGNC Symbol": [
+        "RAMP1"
+    ],
+    "HGNC Name": [
+        "receptor activity modifying protein 1"
+    ],
+    "RGD ID": [
+        "61870"
+    ],
+    "RGD Symbol": [
+        "Ramp1"
+    ],
+    "RGD Name": [
+        "receptor activity modifying protein 1"
+    ],
+    "Human Ensembl Gene ID": [
+        "ENSG00000132329"
+    ],
+    "Human Entrez Gene ID": [
+        "10267"
+    ],
+    "Human Gene Location": [
+        "2q36-q37.1"
+    ],
+    "Human Nucleotide RefSeq": [
+        "NM_005855"
+    ],
+    "Human Protein RefSeq": [
+        "NP_005846"
+    ],
+    "Human Uniprot ID": [
+        "O60894"
+    ],
+    "MGI ID": [
+        "MGI:1858418"
+    ],
+    "MGI Name": [
+        "receptor (calcitonin) activity modifying protein 1"
+    ],
+    "MGI Symbol": [
+        "Ramp1"
+    ],
+    "Mouse Ensembl Gene ID": [
+        "ENSMUSG00000034353"
+    ],
+    "Mouse Entrez Gene ID": [
+        "51801"
+    ],
+    "Mouse Gene Location": [
+        "1 D"
+    ],
+    "Mouse Nucleotide RefSeq": [
+        "NM_016894"
+    ],
+    "Mouse Protein RefSeq": [
+        "NP_058590"
+    ],
+    "Mouse Uniprot ID": [
+        "Q9WTJ5"
+    ],
+    "Rat Ensembl Gene ID": [
+        "ENSRNOG00000089232"
+    ],
+    "Rat Entrez Gene ID": [
+        "58965"
+    ],
+    "Rat Gene Location": [
+        "9q36"
+    ],
+    "Rat Nucleotide RefSeq": [
+        "NM_031645"
+    ],
+    "Rat Protein RefSeq": [
+        "NP_113833"
+    ],
+    "Rat Uniprot ID": [
+        "Q9JJ74"
+    ]
+}

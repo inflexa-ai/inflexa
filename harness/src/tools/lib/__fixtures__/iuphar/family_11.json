@@ -1,0 +1,18 @@
+{
+    "familyId": 11,
+    "name": "Calcitonin receptors",
+    "targetIds": [
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50
+    ],
+    "parentFamilyIds": [
+        694
+    ],
+    "subFamilyIds": []
+}

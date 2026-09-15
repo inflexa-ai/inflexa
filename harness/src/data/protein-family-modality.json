@@ -1,0 +1,101 @@
+{
+  "_comment": "Protein-family → preferred modality mapping for §2.2 Tractability fallback. Used when Open Targets has no tractability assessment for the target. Based on industry conventional wisdom for what modality has the highest precedent in each family. Hand-curated; refresh ad-hoc when a family's modality landscape shifts.",
+  "schema_version": 1,
+  "data_version": "2026.1",
+  "families": [
+    {
+      "family": "kinase",
+      "patterns": ["kinase", "tyrosine-protein kinase", "serine/threonine-protein kinase", "MAP kinase", "MAPK"],
+      "preferred_modality": "small molecule",
+      "rationale": "Active site is well-characterized and ATP-competitive small molecules are the dominant successful modality (e.g., imatinib, gefitinib, ibrutinib)."
+    },
+    {
+      "family": "GPCR",
+      "patterns": ["G protein-coupled receptor", "GPCR", "7tm receptor", "rhodopsin-like receptor", "secretin-like receptor"],
+      "preferred_modality": "small molecule",
+      "rationale": "Largest drugged target class; small-molecule agonists/antagonists/PAMs/NAMs dominate."
+    },
+    {
+      "family": "ion channel",
+      "patterns": ["ion channel", "voltage-gated", "ligand-gated", "sodium channel", "potassium channel", "calcium channel", "TRP channel"],
+      "preferred_modality": "small molecule",
+      "rationale": "Channel pore and allosteric sites are amenable to small-molecule modulators."
+    },
+    {
+      "family": "protease",
+      "patterns": ["protease", "peptidase", "metallopeptidase", "matrix metalloproteinase", "MMP", "caspase", "serine protease"],
+      "preferred_modality": "small molecule",
+      "rationale": "Active-site inhibitors are well-precedented; some emerging covalent and PROTAC strategies."
+    },
+    {
+      "family": "nuclear receptor",
+      "patterns": ["nuclear receptor", "steroid receptor", "estrogen receptor", "androgen receptor", "PPAR"],
+      "preferred_modality": "small molecule",
+      "rationale": "Ligand-binding domain is small-molecule-tractable; SARMs and SERDs are emerging modalities."
+    },
+    {
+      "family": "phosphatase",
+      "patterns": ["phosphatase", "phosphoprotein phosphatase", "PTP"],
+      "preferred_modality": "small molecule",
+      "rationale": "Historically considered undruggable but allosteric small molecules and covalent strategies are advancing."
+    },
+    {
+      "family": "transcription factor",
+      "patterns": ["transcription factor", "DNA-binding protein", "homeobox", "leucine zipper"],
+      "preferred_modality": "PROTAC",
+      "rationale": "Most TFs lack a druggable pocket; degraders bypass the need for a binding-site small-molecule inhibitor."
+    },
+    {
+      "family": "scaffold protein",
+      "patterns": ["scaffold protein", "adaptor protein", "anchor protein"],
+      "preferred_modality": "PROTAC",
+      "rationale": "Lack catalytic activity; degradation is the primary tractability strategy."
+    },
+    {
+      "family": "secreted protein",
+      "patterns": ["secreted", "growth factor", "cytokine", "chemokine", "hormone"],
+      "preferred_modality": "antibody",
+      "rationale": "Extracellular target — antibodies are the precedent (e.g., adalimumab, denosumab, omalizumab)."
+    },
+    {
+      "family": "cell surface receptor",
+      "patterns": ["surface receptor", "transmembrane receptor", "type I receptor", "type II receptor"],
+      "preferred_modality": "antibody",
+      "rationale": "Extracellular epitopes are antibody-accessible; many approved mAbs (e.g., trastuzumab, cetuximab)."
+    },
+    {
+      "family": "transporter",
+      "patterns": ["transporter", "solute carrier", "SLC", "ATP-binding cassette", "ABC transporter"],
+      "preferred_modality": "small molecule",
+      "rationale": "Substrate-binding sites are small-molecule-tractable; well-precedented for SSRIs, GLP-1RAs, etc."
+    },
+    {
+      "family": "ubiquitin ligase",
+      "patterns": ["E3 ubiquitin ligase", "E3 ligase", "RING finger", "HECT domain"],
+      "preferred_modality": "small molecule",
+      "rationale": "Used as PROTAC handles or directly inhibited (e.g., MDM2 inhibitors); molecular glue strategies emerging."
+    },
+    {
+      "family": "epigenetic enzyme",
+      "patterns": ["histone deacetylase", "HDAC", "histone methyltransferase", "bromodomain", "BET", "DNA methyltransferase"],
+      "preferred_modality": "small molecule",
+      "rationale": "Active sites and reader pockets are small-molecule-tractable (e.g., vorinostat, JQ1-derived BET inhibitors)."
+    },
+    {
+      "family": "GTPase",
+      "patterns": ["GTPase", "small GTPase", "Ras", "Rho", "Rab"],
+      "preferred_modality": "small molecule",
+      "rationale": "Historically intractable; recent KRAS G12C covalent inhibitors and cycle modulators have established precedent."
+    },
+    {
+      "family": "structural protein",
+      "patterns": ["structural protein", "actin", "tubulin", "myosin", "cytoskeletal"],
+      "preferred_modality": "small molecule",
+      "rationale": "Polymerization sites are small-molecule-tractable (e.g., taxanes, vinca alkaloids)."
+    }
+  ],
+  "default": {
+    "preferred_modality": "small molecule",
+    "rationale": "Industry default when family is unclassified — small molecules remain the highest-precedent modality across most target classes."
+  }
+}

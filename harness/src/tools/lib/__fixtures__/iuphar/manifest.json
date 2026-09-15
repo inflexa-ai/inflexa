@@ -1,0 +1,41 @@
+{
+    "family_11.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets/families/11",
+        "capturedAt": "2026-08-28"
+    },
+    "family_unknown.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets/families/999999",
+        "capturedAt": "2026-08-28"
+    },
+    "target_43_complexes.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets/43/complexes",
+        "capturedAt": "2026-08-28",
+        "replay": false
+    },
+    "target_43_databaseLinks.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets/43/databaseLinks",
+        "capturedAt": "2026-08-28"
+    },
+    "target_44_AMY1_subunits.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets/44/subunits",
+        "capturedAt": "2026-08-28"
+    },
+    "target_single_51_RAMP1.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets/51",
+        "capturedAt": "2026-08-28"
+    },
+    "targets_geneSymbol_CALCR.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets",
+        "params": {
+            "geneSymbol": "CALCR"
+        },
+        "capturedAt": "2026-08-28"
+    },
+    "targets_geneSymbol_EGFR.json": {
+        "url": "https://www.guidetopharmacology.org/services/targets",
+        "params": {
+            "geneSymbol": "EGFR"
+        },
+        "capturedAt": "2026-08-28"
+    }
+}

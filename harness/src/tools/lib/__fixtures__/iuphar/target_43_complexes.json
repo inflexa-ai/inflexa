@@ -1,0 +1,23 @@
+[
+    {
+        "targetId": 44,
+        "name": "AMY<sub>1</sub> receptor",
+        "abbreviation": null,
+        "systematicName": null,
+        "type": "gpcr",
+        "familyIds": [
+            11
+        ],
+        "familyNames": [
+            "Calcitonin receptors"
+        ],
+        "subunitIds": [
+            43,
+            51
+        ],
+        "subunitNames": [
+            "AMY<sub>1</sub> receptor",
+            "AMY<sub>1</sub> receptor"
+        ]
+    }
+]

@@ -1,0 +1,38 @@
+[
+    {
+        "targetId": 51,
+        "name": "RAMP1",
+        "systematicName": "",
+        "abbreviation": "",
+        "synonyms": null,
+        "type": "AccessoryProtein",
+        "familyIds": [],
+        "familyNames": null,
+        "subunitIds": [],
+        "subunitNames": null,
+        "complexIds": [
+            "44",
+            48
+        ],
+        "subunitType": "Accessory protein"
+    },
+    {
+        "targetId": 43,
+        "name": "CT receptor",
+        "systematicName": "",
+        "abbreviation": "",
+        "synonyms": null,
+        "type": "GPCR",
+        "familyIds": [
+            11
+        ],
+        "familyNames": null,
+        "subunitIds": [],
+        "subunitNames": null,
+        "complexIds": [
+            44,
+            45,
+            46
+        ]
+    }
+]

@@ -4,6 +4,10 @@
         "capturedAt": "2026-08-28",
         "ignorePaths": ["Table.Row"]
     },
+    "client-property-cid-2244.json": {
+        "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/property/MolecularWeight,InChIKey,ConnectivitySMILES,HBondDonorCount,HBondAcceptorCount/JSON",
+        "capturedAt": "2026-08-28"
+    },
     "property-cid-nonexistent.json": {
         "url": "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/999999999/property/MolecularFormula,MolecularWeight,ConnectivitySMILES,InChI,InChIKey,IUPACName,XLogP,TPSA,HBondDonorCount,HBondAcceptorCount,RotatableBondCount,Complexity/JSON",
         "capturedAt": "2026-08-28"

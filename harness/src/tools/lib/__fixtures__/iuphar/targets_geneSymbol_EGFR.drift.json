@@ -1,0 +1,15 @@
+[
+    {
+        "targetId": 1797,
+        "name": "epidermal growth factor receptor",
+        "abbreviation": "EGFR",
+        "systematicName": "",
+        "type": "catalytic_receptor",
+        "familyIds": "320",
+        "familyNames": [
+            "Type I RTKs: ErbB (epidermal growth factor) receptor family"
+        ],
+        "subunitIds": [],
+        "subunitNames": []
+    }
+]
