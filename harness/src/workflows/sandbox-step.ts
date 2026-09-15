@@ -68,6 +68,7 @@ import type { ResourceSpec } from "../config/resource-limits.js";
 import type { CreateSandboxMeta, SandboxRef } from "../sandbox/types.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { createBlockerHolder, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
+import type { TemplateBinding } from "../tools/knowledge/template.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
 
@@ -92,6 +93,17 @@ export interface SandboxStepInput {
      * rather than admitting unstable ones.
      */
     readonly dependsOn?: readonly string[];
+    /**
+     * The plan settings bound to the template of this step, composed by the
+     * parent at dispatch beside the seed. The agent factory hands it to
+     * `knowledge_template`, which merges the bound slots under the model
+     * values and refuses a silent change of one.
+     *
+     * Optional for the same reason as `dependsOn`: a durable input that
+     * predates the field recovers without it, and a step without a grounded
+     * template has nothing to bind. Absence means the model values ride alone.
+     */
+    readonly templateBinding?: TemplateBinding;
     /** Topological level — persisted on `cortex_step_executions.wave`. */
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */

@@ -24,7 +24,7 @@
  * terminal-tool surface above.
  */
 
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
@@ -41,8 +41,10 @@ import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
+import { degenerateTerminalText } from "../terminal-text.js";
 import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
 import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
+import { createKnowledgeTools, type KnowledgeClient, type KnowledgeRecommendAnswer, type SkeletonStep } from "../knowledge/index.js";
 import { queryDocsTool, resolveLibraryIdTool } from "./context7-docs.js";
 import { searchArxivTool } from "./search-arxiv.js";
 import { createSearchGithubReposTool } from "./search-github-repos.js";
@@ -50,6 +52,7 @@ import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
 import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
+import { guardRepeatedCalls } from "../../loop/call-guard.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
@@ -57,7 +60,7 @@ import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { hintForZodIssue } from "../../lib/zod-issues.js";
+import { decodeObjectString, hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 
 // ── Tool-level config ──────────────────────────────────────────────
@@ -80,6 +83,15 @@ const PLANNER_MAX_ITERATIONS = 200;
 
 /** Wall-clock guard for a single plan-generation invocation. */
 const PLAN_TIMEOUT_MS = 600_000;
+
+/**
+ * The refusals of the call guard that end the search phase of one plan. A
+ * planner that the guard refused this many times is not searching, it is
+ * looping, and the wrap-up plus the salvage turn give it the plan it has. Six
+ * is above any count a frontier planner reached in the Phase 0 campaign
+ * (zero) and far below the hundred-plus refused calls of a looping run.
+ */
+const PLANNER_REFUSAL_LIMIT = 6;
 
 // ── Diagnostic bounds ───────────────────────────────────────────────
 //
@@ -438,13 +450,149 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
 }
 
 /**
+ * The last `knowledge_recommend` answer of one invocation: the skeleton steps
+ * by step id, and every claim id the answer returned, from the steps, their
+ * alternatives, their disputed rules, the claim views, and the flags.
+ */
+interface RecommendMemory {
+    readonly steps: Map<string, SkeletonStep>;
+    readonly claims: Set<string>;
+}
+
+function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
+    memory.steps.clear();
+    memory.claims.clear();
+    for (const step of answer.plan_skeleton) {
+        memory.steps.set(step.id, step);
+        for (const claim of step.grounding.claims) memory.claims.add(claim);
+        for (const alternative of step.alternatives) for (const rule of alternative.rules) memory.claims.add(rule);
+        if (step.disputed !== undefined) memory.claims.add(step.disputed.rule);
+    }
+    for (const claim of answer.claims) memory.claims.add(claim.id);
+    for (const flag of answer.flags) memory.claims.add(flag.rule);
+}
+
+/** The rule of a claim id: `R-0001` of `R-0001@e7d0`. */
+function ruleOf(claim: string): string {
+    return claim.split("@")[0] ?? claim;
+}
+
+/** One claim id per rule of the answer. A rule with two ids in one answer cannot be repaired, and it is absent. */
+function claimsByRule(claims: ReadonlySet<string>): ReadonlyMap<string, string> {
+    const byRule = new Map<string, string>();
+    const ambiguous = new Set<string>();
+    for (const claim of claims) {
+        const rule = ruleOf(claim);
+        if (byRule.has(rule)) ambiguous.add(rule);
+        else byRule.set(rule, claim);
+    }
+    for (const rule of ambiguous) byRule.delete(rule);
+    return byRule;
+}
+
+/** A claim id the model repaired on one step: the id it wrote and the id of the answer. */
+interface RepairedClaim {
+    readonly step: string;
+    readonly from: string;
+    readonly to: string;
+}
+
+/**
+ * Restore the grounding fields the host owns on each candidate step, from the
+ * last answer. A model copies the skeleton into the plan, and it drops the
+ * template field at times, or it miscopies the 64-character digest or the
+ * hash of a claim id, while it keeps the claims and the settings.
+ *
+ * On a step that copies a skeleton step, by step id, the host stamps the
+ * snapshot digest of the answer and restores a dropped template: the digest
+ * is what pins the step to the snapshot, and the template is what the host
+ * binds the contract to. A step whose snapshot is `none` states that it does
+ * not use the answer, and it stays as it is.
+ *
+ * On every step, a claim id the answer did not return is repaired when the
+ * answer holds one claim of the same rule: one snapshot holds one version of
+ * a rule, thus the rule names the claim. A claim of a rule the answer does
+ * not hold is an issue that rejects the plan, so the model cites a claim of
+ * the answer or removes it. Returns the stamped steps, the restored steps,
+ * the repaired claims, and the issues beside the new candidate. A candidate
+ * that is not a plan-shaped object, or a plan with no answer, comes back as
+ * it is.
+ */
+function restoreSkeletonGrounding(
+    candidate: unknown,
+    memory: RecommendMemory,
+): {
+    readonly candidate: unknown;
+    readonly stamped: readonly string[];
+    readonly restored: readonly string[];
+    readonly repaired: readonly RepairedClaim[];
+    readonly unknown: readonly ValidationIssue[];
+} {
+    const decoded = decodeObjectString(candidate);
+    if (memory.steps.size === 0 || typeof decoded !== "object" || decoded === null || !Array.isArray((decoded as { steps?: unknown }).steps)) {
+        return { candidate: decoded, stamped: [], restored: [], repaired: [], unknown: [] };
+    }
+    const byRule = claimsByRule(memory.claims);
+    const stamped: string[] = [];
+    const restored: string[] = [];
+    const repaired: RepairedClaim[] = [];
+    const unknown: ValidationIssue[] = [];
+    const steps = (decoded as { steps: unknown[] }).steps.map((step, index) => {
+        if (typeof step !== "object" || step === null) return step;
+        const { id, grounding } = step as { id?: unknown; grounding?: unknown };
+        if (typeof grounding !== "object" || grounding === null) return step;
+        const current = grounding as { template?: unknown; snapshot?: unknown; claims?: unknown };
+        const label = typeof id === "string" ? id : String(index);
+        let next = current;
+        const source = typeof id === "string" ? memory.steps.get(id) : undefined;
+        if (source !== undefined && current.snapshot !== "none") {
+            if (next.snapshot !== source.grounding.snapshot) {
+                stamped.push(label);
+                next = { ...next, snapshot: source.grounding.snapshot };
+            }
+            if (next.template === undefined && source.grounding.template !== undefined) {
+                restored.push(label);
+                next = { ...next, template: source.grounding.template };
+            }
+        }
+        if (Array.isArray(current.claims)) {
+            let changed = false;
+            const claims = current.claims.map((claim, position) => {
+                if (typeof claim !== "string" || memory.claims.has(claim)) return claim;
+                const match = byRule.get(ruleOf(claim));
+                if (match !== undefined) {
+                    repaired.push({ step: label, from: claim, to: match });
+                    changed = true;
+                    return match;
+                }
+                unknown.push({
+                    path: `plan.steps.${index}.grounding.claims.${position}`,
+                    code: "semantic",
+                    message: `Claim ${claim} is not a claim of the knowledge_recommend answer of this run. Cite a claim id the answer returned, or remove it.`,
+                });
+                return claim;
+            });
+            if (changed) next = { ...next, claims };
+        }
+        return next === current ? step : { ...step, grounding: next };
+    });
+    return { candidate: { ...decoded, steps }, stamped, restored, repaired, unknown };
+}
+
+/**
  * Full validation: Zod schema + semantic checks. The plan is valid only if
  * BOTH pass.
  */
 function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
-    const parsed = PlannerPlanSchema.safeParse(candidate);
+    // The permissive arg schema of the planner tools accepts a string, thus the
+    // loop-boundary repair never sees a plan that a model sent as a JSON-encoded
+    // string. A small model does this on a large nested schema. Decode it here,
+    // the same as run-synthesis does, so the schema issues describe the plan
+    // inside the string and not the string.
+    const decoded = decodeObjectString(candidate);
+    const parsed = PlannerPlanSchema.safeParse(decoded);
     if (!parsed.success) {
-        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
+        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, decoded) };
     }
 
     // Semantic checks operate on the AnalysisPlan shape — PlannerPlan omits
@@ -502,6 +650,7 @@ function buildInnerTools(
     pool: Pool,
     resourcePolicy: ResourcePolicy | undefined,
     logger: Logger,
+    memory: RecommendMemory,
 ): InnerTools {
     const submitPlanTool = defineTool({
         id: "submit_plan",
@@ -542,17 +691,24 @@ function buildInnerTools(
             }
 
             const attempt = ++trace.submitAttempts;
-            const result = fullyValidate(input.plan, resourcePolicy);
-            if (!result.valid) {
+            const { candidate, stamped, restored, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
+            if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of skeleton steps", { steps: stamped });
+            if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
+            if (repaired.length > 0) logger.info("submit_plan repaired the claim ids of plan steps", { claims: repaired });
+            const result = fullyValidate(candidate, resourcePolicy);
+            // An unknown claim rejects a plan that the schema accepts, beside the
+            // schema issues when the schema rejects it, thus one attempt shows both.
+            if (!result.valid || unknown.length > 0) {
+                const issues = [...(result.valid ? [] : result.issues), ...unknown];
                 trace.rejectedAttempts++;
-                const rejection = toRejectionRecord(attempt, result.issues);
+                const rejection = toRejectionRecord(attempt, issues);
                 if (trace.rejections.length < MAX_LOGGED_REJECTIONS) trace.rejections.push(rejection);
                 // `warn`, not `debug`: a rejection is non-terminal by design, so the model
                 // reads the issues and the invocation carries on — nothing else reports that
                 // an attempt was spent. A run that exhausts its budget on rejections ends
                 // looking identical to one that never tried, and this is the difference.
                 logger.warn("submit_plan rejected a plan", { ...rejection });
-                return ok({ accepted: false as const, issues: result.issues });
+                return ok({ accepted: false as const, issues });
             }
 
             const persisted = await persistPlan(result.plan, persistCtx, pool, logger);
@@ -600,6 +756,11 @@ function buildInnerTools(
         }),
         describeCall: "none",
         execute: async (input) => {
+            const degenerate = degenerateTerminalText(input.question);
+            if (degenerate) {
+                logger.warn("request_clarification refused a placeholder question", { question: input.question.slice(0, 80) });
+                return err({ error: `${degenerate} Ask the real question, or continue: submit the plan you have.`, retryable: true });
+            }
             if (holder.outcome !== null) {
                 trace.duplicateTerminalCalls++;
                 logger.warn("request_clarification called after a terminal outcome was recorded", {
@@ -888,6 +1049,13 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
     readonly usageRecorder?: UsageRecorder;
     /** API keys for the search tools the planner uses to ground a plan. */
     readonly bioKeys: BioToolKeys;
+    /**
+     * The knowledge service client. Bound, the planner gains `knowledge_recommend`
+     * and `knowledge_check`. Absent, no knowledge tool attaches and no
+     * description of one enters the context, which is the default state of
+     * the open-source host.
+     */
+    readonly knowledge?: KnowledgeClient;
 }
 
 /**
@@ -902,7 +1070,7 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
  * A tool here never writes and never computes. Thus the worst outcome of a
  * needless call is latency, and the prompt is what bounds that.
  */
-function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
+export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonly onRecommend?: (answer: KnowledgeRecommendAnswer) => void } = {}): Tool[] {
     const bioKeys = deps.bioKeys;
     const ncbi = createNcbiTools(bioKeys);
     return [
@@ -931,6 +1099,14 @@ function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
             ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
             ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
             ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+        }),
+        // The knowledge plane: one cited procedure per situation, and one check
+        // of the draft. Both attach only when the embedder binds a client.
+        ...createKnowledgeTools({
+            ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
+            ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
+            ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
+            ...(hooks.onRecommend === undefined ? {} : { onRecommend: hooks.onRecommend }),
         }),
     ];
 }
@@ -1130,12 +1306,31 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger);
+            // The last recommend answer of this invocation, thus `submit_plan`
+            // stamps the snapshot digest, restores a template the model dropped,
+            // and repairs or refuses a claim id the answer did not return.
+            const memory: RecommendMemory = { steps: new Map(), claims: new Set() };
+            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger, memory);
             // Built here rather than at construction: a `describeCall` hook reads no
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix
             // that the cache keys on does not move.
-            const searchTools = buildPlannerSearchTools(deps);
+            // The guard bounds the repeated calls of one plan: the third call with
+            // an input the plan already sent, or the call past the budget of one
+            // tool, answers a refusal that says to continue. The terminal tools
+            // stay outside it, because a refused submit would strand the plan.
+            let refusals = 0;
+            const searchTools = guardRepeatedCalls(
+                buildPlannerSearchTools(deps, {
+                    onRecommend: (answer) => rememberAnswer(memory, answer),
+                }),
+                {
+                    onRefusal: (refusal) => {
+                        refusals += 1;
+                        logger.warn("planner call refused by the guard", { ...refusal, refusals });
+                    },
+                },
+            );
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
@@ -1164,6 +1359,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         emit: ctx.emit,
                         runStep: passthroughStep,
                         resolved: () => holder.outcome !== null,
+                        // A planner the guard refused too many times is looping:
+                        // the early cap ends the search, and the salvage turn
+                        // submits the plan it has.
+                        stopWhen: () => refusals >= PLANNER_REFUSAL_LIMIT,
                         // Planner prose is unusable: every meaningful outcome is
                         // a tool call, and the terminal predicate stops the loop
                         // as soon as one is recorded.
