@@ -178,7 +178,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.depends_on).toEqual(["T1S1"]);
         expect(analysis.environment).toEqual({ package: { name: "DESeq2", present: true, version: "1.52.0" } });
         expect(analysis.constraints).toEqual(["differential_expression: alpha = 0.05 (doi:10.1186/s13059-014-0550-8)"]);
-        expect(analysis.alternatives).toEqual([{ method: "M-0003", label: "edgeR quasi-likelihood F-test", when: "robustness", rules: ["R-0001@e7d0"] }]);
+        expect(analysis.alternatives).toEqual([{ method: "M-0003", label: "Alternative count-model F-test", when: "robustness", rules: ["R-0001@e7d0"] }]);
         expect(analysis.forbids).toEqual([]);
         expect(analysis.disputed).toBeUndefined();
         expect(analysis.grounding).toEqual({
@@ -187,7 +187,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             claims: ["R-0001@e7d0", "R-0010@2b3c", "R-0166@4d5e"],
             template: "tpl-deseq2-two-group@1.0.0",
             settings: [{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" }],
-            reason: "DESeq2 Wald test with apeglm log fold change shrinkage per R-0001@e7d0",
+            reason: "Count-model Wald test with effect shrinkage per R-0001@e7d0",
         });
         const gsea = skeleton[2]!;
         expect(gsea.agent).toBe("enrichment-agent");
@@ -254,11 +254,11 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         )._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
         const enrichment = out.plan_skeleton.find((step) => step.id === "T2S1")!;
-        expect(enrichment.name).toBe("decoupler ulm per-sample pathway scores with a two-sample t-test on the scores");
+        expect(enrichment.name).toBe("Per-sample activity scores with a two-sample test");
         expect(enrichment.packages).toEqual(["decoupler"]);
         expect(enrichment.grounding.template).toBe("tpl-decoupler-scores@1.0.0");
         expect(enrichment.caveats).toEqual([
-            "decoupler ulm per-sample pathway scores with a two-sample t-test on the scores stands in for GSVA per-sample pathway scores with limma on the scores",
+            "Per-sample activity scores with a two-sample test stands in for Per-sample set scores with a linear model",
         ]);
         expect(enrichment.constraints).toEqual(["enrichment: gene_set_collection = msigdb_hallmark_human"]);
         expect(enrichment.grounding.settings).toEqual([{ step: "enrichment", name: "gene_set_collection", value: "msigdb_hallmark_human" }]);
@@ -274,7 +274,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.grounding.template).toBe("tpl-deseq2-blocked@1.0.0");
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.caveats).toEqual([
-            "the requested language has no template that realizes DESeq2 Wald test with apeglm log fold change shrinkage for this design; the R template is named",
+            "the requested language has no template that realizes Count-model Wald test with effect shrinkage for this design; the R template is named",
         ]);
         expect(analysis.constraints).toEqual([]);
         expect(analysis.grounding.settings).toEqual([]);
@@ -303,11 +303,11 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         };
         // The report step of the service carries the reporting rules and no
         // method: the rules cover it, thus the step is grounded by them.
-        const covered = { ...base, procedure: [...base.procedure, { step: "report", rules: ["R-0041@059a", "R-0086@becf"] }], uncovered: [] };
+        const covered = { ...base, procedure: [...base.procedure, { step: "report", rules: ["R-0041@ab41", "R-0086@ab86"] }], uncovered: [] };
         const report = await skeletonStepOf(covered, "T1S3");
         expect(report.grounding.status).toBe("grounded");
-        expect(report.grounding.claims).toEqual(["R-0041@059a", "R-0086@becf"]);
-        expect(report.grounding.reason).toBe("Report per R-0041@059a");
+        expect(report.grounding.claims).toEqual(["R-0041@ab41", "R-0086@ab86"]);
+        expect(report.grounding.reason).toBe("Report per R-0041@ab41");
         expect(report.grounding.template).toBeUndefined();
         // A step with no rule and no method is the one case with no cover.
         const bare = { ...base, procedure: [...base.procedure, { step: "report", rules: [] }], uncovered: [] };
@@ -455,8 +455,8 @@ describe("knowledge_template", () => {
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",
             version: "1.0.0",
-            label: "DESeq2 two-group",
-            method: { id: "M-0001", label: "DESeq2 Wald test with apeglm log fold change shrinkage" },
+            label: "Two-group count model",
+            method: { id: "M-0001", label: "Count-model Wald test with effect shrinkage" },
         });
         expect(record.script_path).toBe(out.script_path);
     });
