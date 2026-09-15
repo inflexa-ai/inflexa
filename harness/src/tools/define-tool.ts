@@ -20,6 +20,7 @@ import type { Result } from "neverthrow";
 import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
+import type { SandboxExecOutcome } from "../lib/metrics.js";
 import type { AgentRunUsage } from "../loop/metrics.js";
 import type { EmitFn, RunStep } from "../loop/types.js";
 import type { AskApproval, AskRequest } from "./approval/contract.js";
@@ -41,6 +42,34 @@ export interface ToolError {
 }
 
 export type ToolExecutionMode = "step" | "workflow" | "inline";
+
+/**
+ * How one tool call failed, as its `execute_tool` span records it. `type` is a
+ * low-cardinality name for the kind of failure (the span's `error.type`), and
+ * `message` is the error as the tool states it; the span caps it. Never put
+ * stdout or model text in either, and never build either from the input.
+ */
+export interface ToolFailure {
+    readonly type: string;
+    readonly message?: string;
+    /** The sandbox exec that failed, when the call ran one. */
+    readonly exec?: ToolExecFailure;
+}
+
+/**
+ * The account of one failed sandbox exec. `stderr` is the retained head of the
+ * stream, and the span keeps only its tail. `stderrHeadOnly` says that the
+ * stream passed the retention cap, thus the real end of stderr is gone.
+ */
+export interface ToolExecFailure {
+    readonly outcome: SandboxExecOutcome;
+    readonly exitCode: number | null;
+    readonly timedOut: boolean;
+    readonly syntheticReason?: string;
+    readonly stderr: string;
+    readonly stderrBytes: number;
+    readonly stderrHeadOnly: boolean;
+}
 
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
 export function isToolError(value: unknown): value is ToolError {
@@ -159,6 +188,8 @@ export interface Tool<Input = unknown, Output = unknown> {
     describeCall?(input: Input): string;
     /** See {@link ToolDefinition.describeResult}. Absent when the tool declares none. */
     describeResult?(input: Input, result: Output): string;
+    /** See {@link ToolDefinition.failureOf}. Absent when the tool declares none. */
+    failureOf?(result: Output): ToolFailure | undefined;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -230,6 +261,19 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
      * The hook never reaches the model.
      */
     readonly describeResult?: (input: z.infer<Schema>, result: Output) => string;
+    /**
+     * The failure that an ok value reports, for a tool that returns a failure to
+     * the agent as data instead of an `err`: a command that exited non-zero, a
+     * service that could not be reached. The agent still reads the value as it
+     * is, and the call keeps its `ok` outcome. Only its span records the failure.
+     * `undefined` means that the call did not fail.
+     *
+     * The hook is optional, synchronous and pure, like `describeResult`. It runs
+     * on an ok outcome only, and the loop guards it: a hook that throws records
+     * no failure and never fails the call. It reads the result alone, never the
+     * input.
+     */
+    readonly failureOf?: (result: Output) => ToolFailure | undefined;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -271,6 +315,7 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         // declares no result hook carries no key, thus "has a hook" is one
         // property check on either side.
         ...(typeof def.describeResult === "function" ? { describeResult: def.describeResult } : {}),
+        ...(typeof def.failureOf === "function" ? { failureOf: def.failureOf } : {}),
         execute: def.execute,
     };
 }

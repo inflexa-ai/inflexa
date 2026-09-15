@@ -25,12 +25,13 @@ import { posix as posixPath } from "node:path";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool } from "../define-tool.js";
+import { defineTool, type ToolFailure } from "../define-tool.js";
 import type { SandboxClient } from "../../sandbox/client.js";
+import { sandboxExecOutcomeOf } from "../../sandbox/exec-outcome.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame } from "../../provenance/exec-frame.js";
-import { boundExecResult } from "./result-bounds.js";
+import { boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
@@ -61,6 +62,35 @@ const SCRIPT_EXTENSIONS = /\.(py|R|r|sh|js|ts|ipynb)$/;
 /** The first script-like token in an argv, or `undefined` when none looks like one. */
 function scriptToken(command: readonly string[]): string | undefined {
     return command.find((arg) => SCRIPT_EXTENSIONS.test(arg));
+}
+
+/**
+ * The failure that a settled exec reports, or `undefined` for exit code 0. The
+ * message names no stream text, because the span takes the tail of stderr from
+ * the exec account on its own.
+ */
+function execFailureOf(result: BoundedExecResult): ToolFailure | undefined {
+    const outcome = sandboxExecOutcomeOf(result);
+    if (outcome === "ok") return undefined;
+    const message =
+        outcome === "nonzero"
+            ? `the command exited with code ${String(result.exitCode)}`
+            : outcome === "timeout"
+              ? "the command reached its timeout"
+              : `the sandbox failed under the command: ${result.syntheticFailure?.reason ?? outcome}`;
+    return {
+        type: outcome,
+        message,
+        exec: {
+            outcome,
+            exitCode: result.exitCode,
+            timedOut: result.timedOut,
+            ...(result.syntheticFailure ? { syntheticReason: result.syntheticFailure.reason } : {}),
+            stderr: result.stderr,
+            stderrBytes: result.stderrTotalLength,
+            stderrHeadOnly: result.stderrTruncated,
+        },
+    };
 }
 
 export interface ExecuteCommandDeps {
@@ -138,6 +168,7 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
         // but display-only does not mean transient. A secret typed into an argv
         // outlives the turn that ran it.
         describeCall: ({ command }) => scriptToken(command) ?? command.join(" "),
+        failureOf: execFailureOf,
         execute: async ({ command, cwd, env, timeoutSeconds }, ctx) => {
             const execId = `${workflowId}:${stepId}:${nextFunctionId()}`;
 
