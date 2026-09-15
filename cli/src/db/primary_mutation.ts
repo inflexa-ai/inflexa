@@ -228,7 +228,7 @@ export type LlmUsageEntry = {
     agentId: string;
     /** The record's provenance path, already joined into one string by the caller. */
     callPath: string;
-    /** The harness `Scope` discriminant, stored so both variants stay representable (`"analysis"` | `"target-assessment"`). */
+    /** The harness `Scope` discriminant (`"analysis"`). */
     scopeKind: string;
     /** The scoped workload id. Not a foreign key: it may name a workload this database never held. */
     scopeId: string;

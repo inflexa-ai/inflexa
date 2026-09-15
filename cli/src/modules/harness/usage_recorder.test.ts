@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok, type Result } from "neverthrow";
-import type { LlmUsageRecord, LogFields, Logger, Scope } from "@inflexa-ai/harness";
+import type { LlmUsageRecord, LogFields, Logger } from "@inflexa-ai/harness";
 
 import type { DbError } from "../../db/errors.ts";
 import type { LlmUsageEntry } from "../../db/primary_mutation.ts";
@@ -124,21 +124,6 @@ describe("createUsageRecorder — scope maps totally", () => {
 
         expect(entries[0]).toMatchObject({ scopeKind: "analysis", scopeId: "ana-7" });
         expect(Object.hasOwn(entries[0] ?? {}, "threadId")).toBe(false);
-    });
-
-    test("the target-assessment variant maps to its own id and carries no thread", () => {
-        const { logger, records } = capturingLogger();
-        const { upsert, entries } = capturingUpsert();
-        // The cli launches no target assessment today. That is exactly why this case is pinned: a
-        // variant the host does not currently produce is the one a mapping quietly drops.
-        const scope: Scope = { kind: "target-assessment", targetAssessmentId: "ta-3", billingContextId: "bc-4" };
-
-        createUsageRecorder({ logger, upsert }).record(record({ scope }));
-
-        expect(entries).toHaveLength(1);
-        expect(entries[0]).toMatchObject({ scopeKind: "target-assessment", scopeId: "ta-3" });
-        expect(Object.hasOwn(entries[0] ?? {}, "threadId")).toBe(false);
-        expect(records).toEqual([]);
     });
 });
 

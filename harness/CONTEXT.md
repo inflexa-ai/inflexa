@@ -173,10 +173,6 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
     `notebooks`) MUST NOT be step ids. Plan validation rejects them, thus a step
     directory never collides with a subdir convention. Refer to
     [harness-workspace-tools](openspec/specs/harness-workspace-tools/spec.md).
-- **Target assessment** — A separate top-level entity. It is NOT a kind of
-  analysis. It is a snapshot-style target dossier. `cortex_target_assessments`
-  holds it, and it runs the `executeTargetAssessment` workflow. Its schema is in
-  `src/contracts/target-dossier.ts`.
 - **Skills** — Runtime knowledge packs (`skills/<name>/SKILL.md` plus
   `references/`). Each agent declares them with `AgentMeta.skills`, and the
   `skill_search` and `skill_read` tools surface them to a sandbox agent. The
@@ -270,11 +266,9 @@ never branches on which realization is bound, and a unit test passes a fake.
   `src/auth/types.ts`.
 - **`Identity`** — `{ user }`, always complete. It is the one part of the caller
   identity that the harness itself reads.
-- **`Scope`** — A discriminated union that describes what the session acts on:
-  `{ kind: "analysis"; analysisId; threadId? }` or
-  `{ kind: "target-assessment"; targetAssessmentId; billingContextId }`. The
-  harness reads it for the routing and the storage, and the seams key their
-  behavior off it.
+- **`Scope`** — The value that describes what the session acts on:
+  `{ kind: "analysis"; analysisId; threadId? }`. The harness reads it for the
+  routing and the storage, and the seams key their behavior off it.
 - **`Provenance`** — `{ agentId; callPath }`, read-only. Code MUST NOT branch on
   `callPath`. It is for the `source` stamp of an event and for sub-agent lineage
   only.
@@ -356,8 +350,8 @@ its process bootstrap, and any adapter that is not local.
   middle of a turn, the caller sends the message again. There are no DBOS workflow
   rows for chat. Refer to
   [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
-- **A DBOS workflow** is reserved for a *durable operation*: `executeAnalysis`,
-  `executeTargetAssessment`, and the background `runDataProfile`. **Each run that
+- **A DBOS workflow** is reserved for a *durable operation*: `executeAnalysis`
+  and the background `runDataProfile`. **Each run that
   a sandbox backs is a DBOS workflow.** A report session is the exception: it
   renders in-process, and it is not a DBOS workflow. There is no in-process sandbox consumer,
   and no in-memory exec transport. A sandbox exec callback routes only through
@@ -396,8 +390,6 @@ its process bootstrap, and any adapter that is not local.
   dispatched in parallel with `DBOS.startChildWorkflow`. Each child body is the
   sandbox-agent loop, with one DBOS step for each LLM call and each tool call
   inside it.
-- `executeTargetAssessment` obeys the same pattern. Its `.foreach` sub-workflows
-  are DBOS child workflows.
 
 ### Post-step pipeline
 

@@ -109,23 +109,3 @@ export {
     CortexPlanRowSchema,
 } from "./schema.js";
 export type { AnalysisStateRow, ArtifactRow, CortexRunRow, StepExecutionRow, CortexPlanRow } from "./schema.js";
-
-export {
-    insertAssessment,
-    updateProgress,
-    setDossier,
-    markFailed,
-    getAssessment,
-    listAssessmentsByOrg,
-    softDeleteAssessment,
-    TargetAssessmentStatusSchema,
-    TargetAssessmentErrorSchema,
-    TargetAssessmentRowSchema,
-} from "./target-assessments.js";
-export type {
-    TargetAssessmentStatus,
-    TargetAssessmentRow,
-    TargetAssessmentError,
-    InsertAssessmentInput,
-    ListAssessmentsOptions,
-} from "./target-assessments.js";

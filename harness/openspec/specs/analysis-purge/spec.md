@@ -198,7 +198,7 @@ The validated shape SHALL serve two purposes, and the requirement SHALL state bo
 
 ### Requirement: Purge names what it does not reach
 
-`purgeAnalysis` SHALL NOT remove state that is not attributable to an analysis, and its contract SHALL state those exclusions so absent coverage is never mistaken for delivered coverage. Specifically it SHALL NOT touch: scheduled operational workflows (liveness watchdog, reaper, notification sweep), which belong to no analysis and accumulate independently of any purge; target assessments and their annotations, which are a separate top-level entity; `messages` rows whose thread row is already gone, which carry no analysis attribution and are unreachable by construction; the shared regulatory corpus; and workspace files on disk, whose disposal the embedder owns.
+`purgeAnalysis` SHALL NOT remove state that is not attributable to an analysis, and its contract SHALL state those exclusions so absent coverage is never mistaken for delivered coverage. Specifically it SHALL NOT touch: scheduled operational workflows (liveness watchdog, reaper, notification sweep), which belong to no analysis and accumulate independently of any purge; `messages` rows whose thread row is already gone, which carry no analysis attribution and are unreachable by construction; the shared regulatory corpus; and workspace files on disk, whose disposal the embedder owns.
 
 #### Scenario: Scheduled workflows survive a purge
 
@@ -208,9 +208,9 @@ The validated shape SHALL serve two purposes, and the requirement SHALL state bo
 
 #### Scenario: Another entity's state survives a purge
 
-- **GIVEN** a target assessment and a second analysis
+- **GIVEN** a second analysis
 - **WHEN** one analysis is purged
-- **THEN** the target assessment and the second analysis retain every row
+- **THEN** the second analysis retains every row
 
 #### Scenario: Workspace files are untouched
 

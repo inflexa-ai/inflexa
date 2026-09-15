@@ -3,7 +3,7 @@
  * source of truth for the JSON envelope returned to the conversation
  * agent. Both Cortex and the frontend import from this module.
  *
- * Coverage discipline mirrors `target-dossier.ts`: every analogy carries a
+ * Coverage discipline: every analogy carries a
  * `coverage` discriminator. Only the extraction phase is allowed to throw;
  * search-phase failures surface via `coverage: "search_failed" |
  * "queried_no_data" | "not_loaded"`.

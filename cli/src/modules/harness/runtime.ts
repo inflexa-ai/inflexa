@@ -78,7 +78,7 @@ import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createLaunchDirTool } from "./launch_dir_tool.ts";
 import { createManageInputsTool } from "./inputs_tool.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
-import { buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
+import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
 import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch } from "./agent_switch.ts";
 
@@ -1085,16 +1085,12 @@ async function bootHarnessRuntimeOnce(
         // the registered callables. Child-before-parent ordering is the harness's
         // invariant now: `buildExecuteAnalysis` receives the registered sandbox-step
         // callable, an ordering its builder API makes a type error to violate — the
-        // cli no longer hand-maintains a mirror of it. `executeTargetAssessment` is
-        // registered DELIBERATELY UNTRIGGERABLE: no cli surface launches it, so it is
-        // never recovered — harmless wiring the one-cohort discipline requires, not
-        // dead code. Everything lands before `launch`, the invariant that
-        // matters: recovery resolves in-flight workflows by registered name, so
-        // nothing the cli can trigger may register after.
+        // cli no longer hand-maintains a mirror of it. Everything lands before `launch`,
+        // the invariant that matters: recovery resolves in-flight workflows by
+        // registered name, so nothing the cli can trigger may register after.
         const workflows: CoreWorkflowDeps = {
             sandboxStep: buildSandboxStepDeps(composition),
             buildExecuteAnalysis: (sandboxStep) => buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer),
-            executeTargetAssessment: buildExecuteTargetAssessmentDeps(composition, runAuthorizer),
             // The data-profile deps stay an inline bundle: every field is a shared
             // backend plus the shared authorizer, so there is no reusable builder to
             // extract (unlike the two run-engine bundles). Data profiling is a SANDBOX-agent

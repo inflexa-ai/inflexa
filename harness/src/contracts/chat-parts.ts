@@ -245,9 +245,8 @@ export interface StepSummaryPart {
  * absent or zeroed figure. Per-call granularity is the usage-record ledger's
  * job, never this part's.
  *
- * Scoped to analysis runs. Workflows without step parts (target assessment,
- * ephemeral runs, data profiling) reach the ledger through the recorder seam and
- * carry no usage part.
+ * Scoped to analysis runs. Workflows without step parts (ephemeral runs, data
+ * profiling) reach the ledger through the recorder seam and carry no usage part.
  */
 export interface StepUsagePart {
     type: "data-step-usage";

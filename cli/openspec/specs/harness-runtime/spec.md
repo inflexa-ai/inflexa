@@ -9,7 +9,7 @@ The system SHALL provide a composition module that boots the embedded harness
 runtime on first use and reuses it for the remainder of the process. Boot SHALL
 sequence: ensure Postgres readiness; in callback mode only, start the callback
 listener; register the durable workflows with fully realized deps — sandbox-step
-before execute-analysis, plus data-profile, target-assessment, and
+before execute-analysis, plus data-profile and
 sandbox-hygiene scheduled workflows; run pre-launch migration/hooks; then launch
 DBOS. No ephemeral execution workflow SHALL be registered. Poll transport
 remains the default. Passive flows SHALL NOT boot the runtime. A second boot

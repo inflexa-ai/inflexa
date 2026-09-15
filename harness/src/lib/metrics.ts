@@ -40,7 +40,7 @@ import type { StepExecutionStatus } from "../state/schema.js";
 export type RunOutcome = "completed" | "partial" | "failed" | "canceled";
 
 /** The workflow family a run belongs to. */
-export type RunWorkflow = "analysis" | "target_assessment" | "data_profile";
+export type RunWorkflow = "analysis" | "data_profile";
 
 /** Terminal status of an executed step. A blocker is a failure to deliver, so `blocked` maps here to `failed`. */
 export type StepOutcome = "completed" | "failed" | "canceled";

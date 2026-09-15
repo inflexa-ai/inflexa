@@ -129,16 +129,6 @@ describe("upsertLlmUsage", () => {
         expect(upsertLlmUsage(entry({ recordKey: "rec-probe", scopeId: "embedding-boot-probe" })).isOk()).toBe(true);
         expect(getAnalysisUsageTotals("embedding-boot-probe")._unsafeUnwrap().calls).toBe(1);
     });
-
-    test("the other scope variant is stored without being mistaken for an analysis", () => {
-        // threadId is dropped: it rides the analysis variant only, and the fixture must not imply a
-        // field the target-assessment scope has no place to carry.
-        upsertLlmUsage(entry({ recordKey: "rec-ta", scopeKind: "target-assessment", scopeId: "ta-1", threadId: undefined }))._unsafeUnwrap();
-
-        expect(rowCount()).toBe(1);
-        // Same id space, different variant: the discriminant is what keeps the two apart.
-        expect(getAnalysisUsageTotals("ta-1")._unsafeUnwrap()).toEqual({ calls: 0 });
-    });
 });
 
 describe("reading the ledger", () => {

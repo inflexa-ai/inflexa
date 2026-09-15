@@ -203,65 +203,6 @@ CREATE TABLE IF NOT EXISTS cortex_report_session_state (
 CREATE INDEX IF NOT EXISTS idx_cortex_report_session_state_analysis
   ON cortex_report_session_state(analysis_id);
 
--- Target assessments — organization-scoped, snapshot-style target dossiers.
--- Independent of analyses, projects, runs, and chat threads. The full
--- dossier is persisted as JSONB on the row, no separate artifacts table.
-CREATE TABLE IF NOT EXISTS cortex_target_assessments (
-  id                 UUID PRIMARY KEY,
-  organization_id    TEXT NOT NULL,
-  target_id          TEXT NOT NULL,
-  target_label       TEXT NOT NULL,
-  goal               TEXT,
-  status             TEXT NOT NULL,
-  progress           TEXT,
-  dossier            JSONB,
-  billing_context_id TEXT NOT NULL,
-  error              JSONB,
-  requested_by       TEXT NOT NULL,
-  workflow_run_id    TEXT,
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_at       TIMESTAMPTZ
-);
-
-ALTER TABLE cortex_target_assessments
-  ADD COLUMN IF NOT EXISTS workflow_run_id TEXT;
-
--- DBOS workflow id for the executeTargetAssessment workflow. For DBOS-shaped
--- rows, workflow_id = assessmentId (the workflowID passed to DBOS.startWorkflow).
--- Nullable so older rows tolerate NULL -- new rows always write
--- workflow_id alongside the row insert.
-ALTER TABLE cortex_target_assessments
-  ADD COLUMN IF NOT EXISTS workflow_id TEXT;
-
-CREATE INDEX IF NOT EXISTS idx_cortex_target_assessments_workflow_id
-  ON cortex_target_assessments(workflow_id);
-
-CREATE INDEX IF NOT EXISTS idx_cortex_target_assessments_org_created
-  ON cortex_target_assessments(organization_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_cortex_target_assessments_org_target_created
-  ON cortex_target_assessments(organization_id, target_id, created_at DESC);
-
--- Per-row clinical-consequence annotations for off-target hits, produced by
--- a focused LLM annotator. Cached by (primary_target_gene, off_target_key)
--- so repeat assessments of the same target reuse prior work and avoid
--- per-run LLM cost.
---
--- off_target_key is the ChEMBL ID when present, else the (trimmed,
--- lowercased) off-target name. Composite primary key prevents duplicate
--- annotations.
-CREATE TABLE IF NOT EXISTS cortex_off_target_annotations (
-  primary_target_gene  TEXT NOT NULL,
-  off_target_key       TEXT NOT NULL,
-  off_target_name      TEXT NOT NULL,
-  clinical_consequence TEXT NOT NULL,
-  provenance           TEXT,
-  model                TEXT NOT NULL,
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (primary_target_gene, off_target_key)
-);
-
 -- Regulatory guidance corpus — pre-indexed FDA CDER, FDA CBER, and ICH
 -- guidance documents. Written/refreshed via tasks/refresh-regulatory-corpus.ts
 -- and searched (top-K cosine) via lib/regulatory-corpus.ts. No synthesis tool
@@ -703,7 +644,7 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
 
             // No boot-time orphan sweep on cortex_runs / cortex_step_executions.
             // Every running row is backed by a DBOS workflow (executeAnalysis,
-            // executeTargetAssessment, resume entry); DBOS recovery is the
+            // resume entry); DBOS recovery is the
             // substitute — each pod has a stable executorID (StatefulSet pod name)
             // and runs `recoverPendingWorkflows` for its own ID at launch (ADR
             // 0012). The workflow body owns the terminal transition on cortex_runs;

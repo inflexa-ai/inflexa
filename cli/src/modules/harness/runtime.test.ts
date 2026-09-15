@@ -154,8 +154,6 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
             expect(workflows.dataProfile.embedding.embed).toBeInstanceOf(Function);
-            // The target-assessment bundle carries the shared sandbox backend.
-            expect(workflows.executeTargetAssessment.chatProvider).toBeDefined();
             expect(conversation.utilityProvider).toBeDefined();
             expect(conversation.utilityModel).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
@@ -197,7 +195,6 @@ function recordingSeams(calls: string[]): BootSeams {
                             canceledSteps: [],
                         }),
                         sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
-                        executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
                         dataProfile: async () => {},
                         extractValues: async () => ({}),
                         deriveTableExec: async () => ({
@@ -859,7 +856,7 @@ describe("bootHarnessRuntime", () => {
 
 // The usage-recorder seam. `assembleCoreRuntime` takes the recorder on `core` and stamps it onto the
 // conversation agent AND each workflow deps bag itself — which is why `ConversationAssemblyDeps`,
-// `sandboxStep`, `buildExecuteAnalysis`, `executeTargetAssessment`, and `dataProfile` all `Omit` the
+// `sandboxStep`, `buildExecuteAnalysis`, and `dataProfile` all `Omit` the
 // field. A bag carrying its own would be the half-wired ledger the harness's `Omit` exists to make
 // unrepresentable.
 //
@@ -887,17 +884,11 @@ describe("bootHarnessRuntime — the usage-recorder seam", () => {
 
         const core = lastCore;
         expect(core?.usageRecorder?.record).toBeInstanceOf(Function);
-        // Each bag the cohort registers — the conversation agent's, both run-engine workflows', the
-        // target-assessment workflow's, and the data profile's — arrives WITHOUT a recorder of its own,
-        // so the one on `core` is the only thing any of them can be stamped with.
+        // Each bag the cohort registers — the conversation agent's, both run-engine workflows', and the
+        // data profile's — arrives WITHOUT a recorder of its own, so the one on `core` is the only thing
+        // any of them can be stamped with.
         const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
-        const bags = [
-            core?.conversation,
-            core?.workflows.sandboxStep,
-            core?.workflows.buildExecuteAnalysis(child),
-            core?.workflows.executeTargetAssessment,
-            core?.workflows.dataProfile,
-        ];
+        const bags = [core?.conversation, core?.workflows.sandboxStep, core?.workflows.buildExecuteAnalysis(child), core?.workflows.dataProfile];
         for (const bag of bags) {
             expect(bag).toBeDefined();
             expect(Object.hasOwn(bag ?? {}, "usageRecorder")).toBe(false);

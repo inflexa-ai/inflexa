@@ -16,9 +16,6 @@ Semantic validation is a different concern. Whether the prose follows from the v
 is model-dependent, thus it stays in a later verification pass and never in this
 contract.
 
-This capability is distinct from `target-synthesis-grounding`, which supplies FDA
-approval precedents as prompt context for a target dossier.
-
 ## Requirements
 
 ### Requirement: A reference is one canonical shape

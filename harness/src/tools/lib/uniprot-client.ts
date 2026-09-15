@@ -2,13 +2,6 @@
  * Pure async client functions for the UniProt REST API
  * (https://rest.uniprot.org/uniprotkb/).
  *
- * Used by target-assessment as the source of truth for:
- *   - ChEMBL cross-references — every ChEMBL target id linked to a UniProt
- *     accession (replaces the hand-curated ALTERNATE_CHEMBL_IDS map).
- *   - Protein family text — used together with IUPHAR family-target
- *     resolution to identify sibling receptors in the same pharmacological
- *     family (replaces the hand-curated RELATED_FAMILY_UNIPROTS map).
- *
  * Absence policy: the OpenAPI document of UniProt marks no field as required,
  * and the API omits the key of an absent value. Thus a maybe-absent field
  * carries `.optional()`, not `.nullable()`.
@@ -136,8 +129,8 @@ export interface UniProtProtein {
 
 /**
  * The field list of the search. It is separate from `FIELDS` on purpose:
- * `FIELDS` feeds `getUniProtRecord` and the target-assessment dossier, thus a
- * widening of it would change what that workflow reads.
+ * `FIELDS` feeds `getUniProtRecord`, thus a widening of it would change what
+ * that function reads.
  */
 const SEARCH_FIELDS = ["accession", "id", "protein_name", "gene_names", "length", "cc_function", "cc_subcellular_location"].join(",");
 

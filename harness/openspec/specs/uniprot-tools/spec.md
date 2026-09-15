@@ -21,8 +21,8 @@ timeout, retry exhaustion, or a schema mismatch. The agent loop then wraps it
 as a `tool_result { is_error: true }`.
 
 Three decisions bind the tool. First, the search takes its own field list.
-`FIELDS` feeds `getUniProtRecord` and the target-assessment dossier, thus a
-widening of it would change what that workflow reads.
+`FIELDS` feeds `getUniProtRecord`, thus a widening of it would change what
+that function reads.
 
 Second, the two identifier spaces overlap, thus the query searches both. A
 gene symbol such as `P2RY12` or `B3GAT1` matches the accession form exactly. A

@@ -199,16 +199,6 @@ describe("the refused arm", () => {
         expect(result.detail.length).toBeGreaterThan(0);
         expect(await reportThreadCount()).toBe(0);
     });
-
-    it("refuses a scope of a different kind, and writes no row", async () => {
-        const { ctx } = makeToolContext();
-        const scope: Scope = { kind: "target-assessment", targetAssessmentId: "ta-1", billingContextId: "b-1" };
-
-        const result = await run(INPUT, { ...ctx, session: { ...ctx.session, scope } });
-
-        expect(result.outcome).toBe("refused");
-        expect(await reportThreadCount()).toBe(0);
-    });
 });
 
 describe("the eyes gate", () => {

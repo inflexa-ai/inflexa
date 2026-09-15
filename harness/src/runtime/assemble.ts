@@ -30,12 +30,6 @@ import type { DomainError } from "../lib/result.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
-import {
-    registerExecuteTargetAssessment,
-    type ExecuteTargetAssessmentDeps,
-    type ExecuteTargetAssessmentInput,
-    type ExecuteTargetAssessmentResult,
-} from "../workflows/execute-target-assessment.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
 import {
     bindExtractionTrigger,
@@ -76,7 +70,6 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
 export interface CoreWorkflowDeps {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver">;
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver">;
-    readonly executeTargetAssessment: Omit<ExecuteTargetAssessmentDeps, "usageRecorder">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder">;
 }
 
@@ -84,7 +77,6 @@ export interface CoreWorkflowDeps {
 export interface RegisteredWorkflows {
     readonly executeAnalysis: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     readonly sandboxStep: SandboxStepCallable;
-    readonly executeTargetAssessment: (input: ExecuteTargetAssessmentInput) => Promise<ExecuteTargetAssessmentResult>;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
     readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<ExtractValuesResult>;
     readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<ExecResult>;
@@ -316,7 +308,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
 
     const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder });
     const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder });
-    const executeTargetAssessment = registerExecuteTargetAssessment({ ...wf.executeTargetAssessment, usageRecorder });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
     // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
     // three seams from the profile deps. The report resolver factory binds the extraction arm over this
@@ -437,7 +428,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         workflows: {
             executeAnalysis,
             sandboxStep,
-            executeTargetAssessment,
             dataProfile,
             extractValues,
             deriveTableExec,

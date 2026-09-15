@@ -38,17 +38,12 @@ type ScopeColumns = Pick<LlmUsageEntry, "scopeKind" | "scopeId" | "threadId">;
 /**
  * Flatten a harness {@link Scope} to the ledger's `(scope_kind, scope_id)` pair plus the thread.
  *
- * Total over both variants by construction. The cli launches only analysis-scoped work today, but
- * dropping the target-assessment variant — or collapsing both into a bare `analysis_id` — would make
- * the ledger silently lie about a record it did receive. Storing the discriminant is what keeps a
- * per-analysis read (`scope_kind = 'analysis'`) honest.
+ * Total by construction. Storing the discriminant, rather than collapsing the scope into a bare
+ * `analysis_id`, is what keeps a per-analysis read (`scope_kind = 'analysis'`) honest.
  *
- * `billingContextId` is deliberately not stored: it is a managed-billing coordinate with no meaning to
- * a local ledger, and the row's identity question is "which workload spent this".
- *
- * Returns `null` only for a variant this code does not know — unreachable while the union has two
- * members (the `satisfies never` makes a third a compile error here), and reported by the caller
- * rather than dropped quietly if it ever happens at runtime against a newer harness.
+ * Returns `null` only for a variant this code does not know — unreachable while the harness has one
+ * (the `satisfies never` makes a second a compile error here), and reported by the caller rather
+ * than dropped quietly if it ever happens at runtime against a newer harness.
  */
 function scopeColumns(scope: Scope): ScopeColumns | null {
     switch (scope.kind) {
@@ -58,12 +53,10 @@ function scopeColumns(scope: Scope): ScopeColumns | null {
                 scopeId: scope.analysisId,
                 ...(scope.threadId === undefined ? {} : { threadId: scope.threadId }),
             };
-        case "target-assessment":
-            return { scopeKind: scope.kind, scopeId: scope.targetAssessmentId };
         default:
             // A NEW `Scope` variant fails to compile at this line rather than silently reaching the
             // runtime report below — a forgotten mapping is a build error, not a lost record.
-            scope satisfies never;
+            scope.kind satisfies never;
             return null;
     }
 }

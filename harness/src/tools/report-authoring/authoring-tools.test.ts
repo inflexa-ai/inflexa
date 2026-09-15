@@ -120,13 +120,6 @@ function ctxForThread(threadId: string): ToolContext {
     return { ...ctx, session: { ...ctx.session, scope } };
 }
 
-/** A tool context whose scope names a resource of a different kind, thus it carries no thread id. */
-function ctxOtherKind(): ToolContext {
-    const { ctx } = makeToolContext();
-    const scope: Scope = { kind: "target-assessment", targetAssessmentId: "ta-001", billingContextId: "bc-001" };
-    return { ...ctx, session: { ...ctx.session, scope } };
-}
-
 describe("add_block", () => {
     it("lands a section on an empty draft, reports the root container, and the gateway holds it", async () => {
         const gateway = makeFakeGateway();
@@ -283,18 +276,6 @@ describe("the tool-layer refusal", () => {
         const { ctx } = makeToolContext();
 
         const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctx);
-
-        const value = result._unsafeUnwrap();
-        expect(value.applied).toBe(false);
-        if (!value.applied) {
-            expect(value.refusal.reason).toBe("no-thread-scope");
-        }
-    });
-
-    it("refuses a call whose scope names a resource of a different kind", async () => {
-        const tools = createReportAuthoringTools(makeFakeGateway());
-
-        const result = await tools.add_block.execute({ block: { kind: "section", id: "s1", title: "Intro", blocks: [] } }, ctxOtherKind());
 
         const value = result._unsafeUnwrap();
         expect(value.applied).toBe(false);

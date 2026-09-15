@@ -7,8 +7,8 @@ tables, DBOS workflow state, and pgvector embeddings for workspace search. There
 is no LibSQL, SQLite, or separate vector database.
 
 The application tables are **thin ledgers**, not document stores — `cortex_runs`,
-`cortex_step_executions`, `cortex_artifacts`, `cortex_target_assessments`,
-`messages`, `cortex_working_memory`, and the plan/state tables hold identifiers,
+`cortex_step_executions`, `cortex_artifacts`, `messages`,
+`cortex_working_memory`, and the plan/state tables hold identifiers,
 status, and lineage. The rich payloads (step summaries, run synthesis, file
 descriptions) live in the session filesystem and the pgvector index, keeping
 rows small and the schema stable.
