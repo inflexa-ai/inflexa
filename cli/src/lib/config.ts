@@ -98,6 +98,18 @@ const configSchema = z.object({
     // a credential plainly intends the matching mode, and demanding a second field to
     // activate the first is a trap. An EXPLICIT `mode: "off"` still wins: it is a
     // deliberate switch-off, not an omission.
+    // The knowledge plane — the remote service that grounds a plan in cited
+    // rules and tested templates. The block names the endpoint only; the key
+    // (the license) comes from `INFLEXA_KNOWLEDGE_API_KEY` in the environment and
+    // is never persisted. Absent, the harness attaches no knowledge tool, which is
+    // the default state of the open-source CLI. Per-field `.catch(undefined)`, as
+    // the embedding block: a malformed field degrades to unset alone.
+    knowledge: z
+        .object({
+            baseUrl: z.string().optional().catch(undefined),
+        })
+        .optional()
+        .catch(undefined),
     embedding: z
         .object({
             mode: z.enum(["local", "api-key", "off"]).optional().catch(undefined),
