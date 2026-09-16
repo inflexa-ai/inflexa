@@ -351,7 +351,9 @@ function rejectedOf(error: ApiError, notFoundField?: string): KnowledgeRejected 
 }
 
 export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): KnowledgeClient {
-    const base = config.baseUrl.replace(/\/+$/, "");
+    // Trim the trailing slashes with a loop, not a regex: CodeQL flags `/\/+$/` on library input as polynomial.
+    let base = config.baseUrl;
+    while (base.endsWith("/")) base = base.slice(0, -1);
     const authorization = `Bearer ${config.apiKey}`;
     const policy = { timeoutMs: config.timeoutMs ?? 30_000, maxRetries: config.maxRetries ?? 2, retryDelayMs: 500 };
 
