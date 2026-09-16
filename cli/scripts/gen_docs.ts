@@ -53,7 +53,7 @@ const { cli } = await import("../src/cli/index.ts");
 // Every exported env-var doc list is imported, not just `envDoc`: a variable that is a feature's only
 // secret channel (INFLEXA_MODEL_API_KEY, INFLEXA_EMBEDDING_API_KEY) must not be visible in `--help` and
 // absent from the published reference. src/cli/gen_docs.test.ts fails when a list reaches no page here.
-const { embeddingEnvDoc, env, envDoc, modelConnectionEnvDoc, updateEnvDoc } = await import("../src/lib/env.ts");
+const { embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } = await import("../src/lib/env.ts");
 type EnvDocEntry = import("../src/lib/env.ts").EnvDocEntry;
 
 const OUT_DIR = join(import.meta.dir, "..", "dist-docs");
@@ -221,13 +221,13 @@ function renderEnvironmentPage(): string {
             varRows.push([codeSpan(doc.name), escapeProse(doc.description)]);
         }
     }
-    // Same treatment renderEnvHelp gives them: the direct-connection and embedding secret vars are not
+    // Same treatment renderEnvHelp gives them: the direct-connection, embedding, and knowledge secret vars are not
     // `env`-field-backed (their resolvers read them on demand), so they live in their own doc lists and
     // render among the other var rows. Deliberately rows in the one Variables table rather than sections
     // of their own — `--help` prints a single Environment block, and the page is the same data for the
     // same reader, so a row-for-row match is worth more than a heading per doc list. Order mirrors
     // renderEnvHelp's too: env-backed vars, then the secret channels, then the base-dir overrides.
-    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...updateEnvDoc]) {
+    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...knowledgeEnvDoc, ...updateEnvDoc]) {
         varRows.push([codeSpan(doc.name), escapeProse(doc.description)]);
     }
     for (const [name, labels] of baseVarLabels) {
