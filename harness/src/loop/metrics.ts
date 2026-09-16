@@ -1,5 +1,5 @@
 /**
- * Agent-loop OTel metrics → Middleware.io.
+ * Agent-loop OTel metrics, exported through the global MeterProvider.
  *
  * Every `runAgent` completion records, keyed by `agent_id`:
  *   - cortex.harness.agent.iterations — histogram of LLM iterations per run.

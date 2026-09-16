@@ -1,5 +1,5 @@
 /**
- * Step-summary OTel metrics — Middleware.io routing follows the global
+ * Step-summary OTel metrics — export follows the global
  * meter provider (see `harness/lib/otel.ts`).
  *
  * cortex.summary.null_count — counter, incremented when a step-summary
