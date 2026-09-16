@@ -2,10 +2,9 @@
  * Identifier resolver — combines HGNC, UniProt, Ensembl, and ChEMBL gene-name
  * fields into a single canonical entity payload with synonyms.
  *
- * Used by Phase 0 of the target-assessment workflow to resolve a user-
- * supplied target string (gene symbol, alias, UniProt accession, Ensembl
- * id, ChEMBL target id) to a canonical entity that downstream collectors
- * can key off.
+ * Resolves a user-supplied target string (gene symbol, alias, UniProt
+ * accession, Ensembl id, ChEMBL target id) to a canonical entity that a
+ * caller can key off.
  *
  * Resolution order:
  *   1. If the input matches a known id pattern (ENSG, UniProt 6-char,
@@ -338,9 +337,8 @@ export interface AutocompleteCandidate {
 /**
  * Resolve a single gene-symbol query for the autocomplete UI by fanning
  * out HGNC + UniProt + Ensembl in parallel and merging into one canonical
- * candidate. Per `target-assessment/spec.md` "Autocomplete returns
- * canonical identifiers" — three identifiers populated on one row, not
- * three separate rows.
+ * candidate: three identifiers populated on one row, not three separate
+ * rows.
  *
  * Returns `null` when none of the upstream sources find a match. Throws
  * never — failures of individual sources degrade to `null` for that field.

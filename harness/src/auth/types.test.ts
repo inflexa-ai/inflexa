@@ -13,19 +13,6 @@ describe("scope coordinate derivation", () => {
         expect(scopeWorkloadId(scope)).toBe("analysis-xyz");
     });
 
-    it("target-assessment scope resolves via the billing-context discriminator", () => {
-        const scope: Scope = {
-            kind: "target-assessment",
-            targetAssessmentId: "ta-1",
-            billingContextId: "bc-9",
-        };
-        expect(scopeResource(scope)).toEqual({
-            resourceType: "billing_context",
-            resourceId: "bc-9",
-        });
-        expect(scopeWorkloadId(scope)).toBe("ta-1");
-    });
-
     it("threadId lives only on the analysis variant", () => {
         const scope: Scope = {
             kind: "analysis",
@@ -59,9 +46,9 @@ describe("forSubAgent", () => {
         const parent = makeSession({
             user: "user-xyz",
             scope: {
-                kind: "target-assessment",
-                targetAssessmentId: "ta-9",
-                billingContextId: "bc-9",
+                kind: "analysis",
+                analysisId: "analysis-9",
+                threadId: "thread-9",
             },
         });
 

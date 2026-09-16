@@ -97,7 +97,7 @@ A call site that converts an error into an empty result MUST report an unexpecte
 
 #### Scenario: A schema rejection is reported before the degrade
 
-- **WHEN** a lookup inside the target-assessment collectors receives `invalid_response`, and the site degrades to an empty list
+- **WHEN** a lookup receives `invalid_response`, and the site degrades to an empty list
 - **THEN** the site writes one `Logger` error record with the cause before it returns the empty list
 
 #### Scenario: An expected miss stays silent

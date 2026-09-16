@@ -325,22 +325,6 @@ describe("createSessionWorkspaceMutator (chat context)", () => {
         }
     });
 
-    test("a non-analysis scope is out_of_scope before any I/O", async () => {
-        const { mutator, events } = buildSessionMutator();
-        const assessment = makeSession({ scope: { kind: "target-assessment", targetAssessmentId: "ta-1", billingContextId: "bc-1" } });
-
-        const result = await mutator.writeFile({
-            path: "x.csv",
-            content: "x",
-            toolName: "write_file",
-            invocationId: "inv-1",
-            runStep: passthrough,
-            session: assessment,
-        });
-        expect(result.status).toBe("out_of_scope");
-        expect(events).toHaveLength(0);
-    });
-
     test("an unbound provenance seam records nothing and the write proceeds unchanged", async () => {
         const mutator = createSessionWorkspaceMutator({ resolveWorkspaceRoot: (id) => join(basePath, id) });
         const result = await mutator.writeFile({

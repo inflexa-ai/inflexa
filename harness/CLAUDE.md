@@ -354,37 +354,6 @@ message and trigger a workflow. It can be archived, and it can resume later. The
 `runId` is minted at the workflow start, at the same point where the
 `RunAuthorizer` seam issues the `RunSession`.
 
-### Target Assessment
-
-A separate top-level entity. It is NOT a kind of analysis. It gives snapshot-style
-target dossiers. `cortex_target_assessments` and the `executeTargetAssessment`
-workflow (`workflows/target-assessment/`) back it. The dossier schema is in
-`src/contracts/target-dossier.ts`, and it is the contract with a consumer. It is a
-single unversioned shape. There is no version ladder and no migration path, thus a
-change to it is a change to what each consumer reads. A host chooses how to show
-the progress to its clients.
-
-Two hard schema invariants bind the dossier:
-
-1. **Coverage discipline.** Each section that depends on enrichment carries
-   `coverage: "available" | "queried_no_data" | "not_loaded" | "filtered"`, and it
-   takes that from the shared envelope builder rather than declaring one of its
-   own. `filtered` means that our own threshold emptied the section, and it carries
-   the filter and the count that it dropped. A partially filtered `available`
-   section carries `dropped_count`, thus it does not overstate its own
-   completeness. A per-row marker uses the narrowed `RowCoverage`, which excludes
-   `filtered`, because a filter that removes a row removes the row.
-
-2. **Evidence discipline.** A claim is either scored, and then it carries at least
-   one evidence item that resolves to a locator (a pmid, a doi, an accession, or a
-   regulatory reference), or it is explicitly `unknown` with a reason. A scored
-   claim with no evidence is unrepresentable. `unknown` is a complete outcome, not
-   a degraded one.
-
-An organ name comes from one canonical vocabulary
-(`src/contracts/organ-system.ts`). A producer resolves an external or a
-model-supplied name onto it at its own boundary.
-
 ### Memory
 
 The thread history, the working memory, and the absence of semantic recall are in
@@ -496,8 +465,8 @@ wiped when the profiling completes. Its durable products are the vector index an
 
 The harness uses Postgres, with `pg` directly and pgvector. The DBOS system DB
 carries the workflow state, the step cache, and the durable streams. The app tables
-(`cortex_runs`, `cortex_step_executions`, `cortex_artifacts`,
-`cortex_target_assessments`, `messages`, `cortex_working_memory`) are thin ledgers.
+(`cortex_runs`, `cortex_step_executions`, `cortex_artifacts`, `messages`,
+`cortex_working_memory`) are thin ledgers.
 The rich data (the summaries, the findings, the file descriptions) is in files and
 in the vector index, not in DB columns. The connection parameters come from
 `DB_PG_HOST`, `DB_PG_PORT`, `DB_PG_NAME`, `DB_PG_USER`, `DB_PG_PASSWORD`, and

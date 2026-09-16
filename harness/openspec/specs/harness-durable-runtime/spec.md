@@ -11,8 +11,8 @@ The shaping decision is that **chat is not a workflow**. Chat turns are
 short-lived and bounded by user attention; if a host process dies mid-turn the
 user re-sends the message, so paying the DBOS write tax (a workflow row plus a
 step row per LLM/tool call) for every turn buys little. Only the operations the
-user has explicitly asked to be durable — analyses, target assessments,
-data-profile, and ephemeral exploration — run as DBOS workflows, started from
+user has explicitly asked to be durable — analyses, data-profile, and
+ephemeral exploration — run as DBOS workflows, started from
 tools and independent of the chat turn that triggered them. The single
 `runAgent` primitive runs in both contexts: in-process behind a no-op
 `passthroughStep` for chat, and behind a `durableStep` that wraps each call as a
@@ -40,8 +40,8 @@ core.
 ### Requirement: Chat runs in-process; durable operations run as DBOS workflows
 
 Chat turns SHALL run in-process, single-replica per turn, with no workflow or
-step rows. User-named long operations (`executeAnalysis`,
-`executeTargetAssessment`, and the data-profile task) SHALL run as DBOS
+step rows. User-named long operations (`executeAnalysis` and the
+data-profile task) SHALL run as DBOS
 workflows started from tools and SHALL be independent of the chat turn that
 triggered them. Planned and ad hoc analysis modes SHALL both launch
 `executeAnalysis`; there SHALL be no separate turn-scoped computation workflow.

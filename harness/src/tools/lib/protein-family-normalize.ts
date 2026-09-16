@@ -1,13 +1,11 @@
 /**
  * Map free-text protein-family descriptors (UniProt keywords, HGNC names,
- * GraphQL labels) to a single canonical lowercase form so the modality lookup
- * in `protein-family-modality.json` has one pattern set to match against.
+ * GraphQL labels) to a single canonical lowercase form, so a consumer has one
+ * form to match against.
  *
- * Why this exists: UniProt keyword text and the modality-JSON patterns
- * disagreed on hyphenation ("G-protein coupled receptor" vs
- * "G protein-coupled receptor"), causing every GPCR target whose UniProt
- * keyword used the hyphenated variant to fall through to the dataset default
- * modality. See review of dossier 9ad29ba5 (GLP1R) — 2026-05-13.
+ * Why this exists: UniProt keyword text varies in hyphenation
+ * ("G-protein coupled receptor" vs "G protein-coupled receptor"), thus an
+ * exact match on the raw text misses one of the two spellings.
  */
 
 interface CanonicalFamily {

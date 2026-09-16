@@ -266,26 +266,3 @@ export function buildExecuteAnalysisDeps(
         observeRun: emitRunObservation,
     };
 }
-
-/**
- * Assemble the target-assessment workflow's construction deps. Registered
- * deliberately untriggerable in the cli (no surface launches it), so
- * these deps exist only to satisfy `assembleCoreRuntime`'s one-cohort
- * registration — never exercised at runtime. `chatProvider` takes the SANDBOX
- * agent's provider (`ChatProvider extends AgentChat`); `decisionModel`/`synthesisModel`
- * follow the sandbox agent (target assessment is an internal agent aliasing `sandbox`),
- * and `ncbiApiKey` threads the optional NCBI key for the
- * Phase-1 collectors. The return type is sourced from
- * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal
- * `ExecuteTargetAssessmentDeps`, which is not part of the embedder surface.
- */
-export function buildExecuteTargetAssessmentDeps(comp: RunEngineComposition, runAuthorizer: RunAuthorizer): CoreWorkflowDeps["executeTargetAssessment"] {
-    return {
-        pool: comp.pool,
-        runAuthorizer,
-        ncbiApiKey: comp.bioKeys.ncbi,
-        chatProvider: comp.sandbox.provider,
-        decisionModel: comp.sandbox.model,
-        synthesisModel: comp.sandbox.model,
-    };
-}

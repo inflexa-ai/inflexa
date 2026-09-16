@@ -1,7 +1,7 @@
 /**
  * Pure async client functions for the Open Targets Platform GraphQL API.
  *
- * Used directly by target-assessment workflow steps and by tool wrappers.
+ * Used by tool wrappers.
  *
  * Absence policy: the nullability of the GraphQL SDL encodes an absent value.
  * Open Targets answers each requested field with a key and an explicit `null`,

@@ -38,7 +38,7 @@ export interface LlmUsageRecord {
     readonly agentId: string;
     /** Provenance path from the root agent down to `agentId`. */
     readonly callPath: readonly string[];
-    /** Scope ids as attribution: `analysisId` or `targetAssessmentId`. */
+    /** Scope ids as attribution: `analysisId`. */
     readonly scope: Scope;
     /** Present only for calls made inside a run (the session carries a `RunFrame`). */
     readonly runId?: string;

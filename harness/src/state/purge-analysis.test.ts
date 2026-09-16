@@ -335,27 +335,10 @@ describe("createAnalysisPurge", () => {
         expect(rows.map((row) => row.table_name).sort()).toEqual(WORKFLOW_CASCADE_TABLES.map((table) => `dbos.${table}`).sort());
     });
 
-    it("leaves a second analysis, a target assessment, an orphaned message, the shared corpus, and scheduled workflows untouched", async () => {
+    it("leaves a second analysis, an orphaned message, the shared corpus, and scheduled workflows untouched", async () => {
         const doomed = await seedAnalysis(`purge-neighbour-${run}`);
         const bystander = await seedAnalysis(`purge-survivor-${run}`);
 
-        const assessmentId = randomUUID();
-        await rig.pool.query({
-            text: `INSERT INTO cortex_target_assessments
-                     (id, organization_id, target_id, target_label, status, billing_context_id, requested_by, workflow_id)
-                   VALUES ($1, 'org-1', 'EGFR', 'EGFR', 'completed', 'bc-1', 'someone', $2)`,
-            // The id column is `uuid` and `workflow_id` is `text`, so the same value has
-            // to arrive as two parameters rather than one bound twice.
-            values: [assessmentId, assessmentId],
-        });
-        // A target assessment's annotations are named separately from the assessment
-        // itself, and are keyed by gene rather than by any entity id at all.
-        await rig.pool.query({
-            text: `INSERT INTO cortex_off_target_annotations
-                     (primary_target_gene, off_target_key, off_target_name, clinical_consequence, model)
-                   VALUES ($1, 'CHEMBL203', 'EGFR', 'rash', 'test-model')`,
-            values: [`EGFR-${run}`],
-        });
         // The regulatory corpus is shared: no analysis owns a chunk of it.
         await rig.pool.query({
             text: `INSERT INTO cortex_regulatory_chunks (source, doc_id, doc_title, doc_url, chunk_index, chunk_text)
@@ -374,10 +357,6 @@ describe("createAnalysisPurge", () => {
         // one, and no purge can or should reach it.
         const scheduled = rig.nextWorkflowId("purge-scheduled-");
         await ledger.seedWorkflow(scheduled);
-        // A target assessment's workflow id is the assessment id — it is in neither
-        // `cortex_runs` nor the `dataprofile:{analysisId}:` namespace, which is the
-        // whole reason the purge cannot reach it.
-        await ledger.seedWorkflow(assessmentId);
 
         (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
 
@@ -387,19 +366,15 @@ describe("createAnalysisPurge", () => {
         expect(await ledger.countStatusRows(bystander.workflowIds)).toBe(4);
         expect(await ledger.countCascadeRows(bystander.workflowIds)).toEqual(ledger.cascadeRows(4));
 
-        const { rows: survivors } = await rig.pool.query<{ assessments: number; annotations: number; chunks: number; orphans: number }>({
-            text: `SELECT (SELECT COUNT(*)::int FROM cortex_target_assessments WHERE id = $1) AS assessments,
-                          (SELECT COUNT(*)::int FROM cortex_off_target_annotations WHERE primary_target_gene = $2) AS annotations,
-                          (SELECT COUNT(*)::int FROM cortex_regulatory_chunks WHERE doc_id = $3) AS chunks,
-                          (SELECT COUNT(*)::int FROM messages WHERE thread_id = $4) AS orphans`,
-            values: [assessmentId, `EGFR-${run}`, `doc-${run}`, orphanThreadId],
+        const { rows: survivors } = await rig.pool.query<{ chunks: number; orphans: number }>({
+            text: `SELECT (SELECT COUNT(*)::int FROM cortex_regulatory_chunks WHERE doc_id = $1) AS chunks,
+                          (SELECT COUNT(*)::int FROM messages WHERE thread_id = $2) AS orphans`,
+            values: [`doc-${run}`, orphanThreadId],
         });
-        expect(survivors[0]).toEqual({ assessments: 1, annotations: 1, chunks: 1, orphans: 1 });
+        expect(survivors[0]).toEqual({ chunks: 1, orphans: 1 });
 
-        for (const untouched of [scheduled, assessmentId]) {
-            expect(await ledger.countStatusRows([untouched])).toBe(1);
-            expect(await ledger.countCascadeRows([untouched])).toEqual(ledger.cascadeRows(1));
-        }
+        expect(await ledger.countStatusRows([scheduled])).toBe(1);
+        expect(await ledger.countCascadeRows([scheduled])).toEqual(ledger.cascadeRows(1));
     });
 
     it("reclaims a data-profile workflow from its id namespace", async () => {

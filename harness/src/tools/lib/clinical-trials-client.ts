@@ -1,9 +1,6 @@
 /**
  * Pure async client functions for the ClinicalTrials.gov v2 API.
  *
- * Used by target-assessment workflow steps for §2.5 (clinical record),
- * §2.6.3 (trial AEs), §2.5 (failed trials), and §6.5 (discovery trials).
- *
  * Absence policy: the API omits the key of an absent value, and its OpenAPI
  * document marks nothing as nullable. Thus a maybe-absent field carries
  * `.optional()`, not `.nullable()`.

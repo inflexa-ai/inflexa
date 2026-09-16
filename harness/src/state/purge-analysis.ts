@@ -28,8 +28,7 @@
  *
  * What it does not reach, so that absent coverage is never read as delivered:
  * scheduled operational workflows (they belong to no analysis and accumulate
- * independently of any purge), target assessments and their annotations (a
- * separate top-level entity), the shared regulatory corpus, `messages` rows whose
+ * independently of any purge), the shared regulatory corpus, `messages` rows whose
  * thread row is already gone (nothing attributes them to an analysis), and
  * workspace files on disk (the embedder owns their disposal).
  */

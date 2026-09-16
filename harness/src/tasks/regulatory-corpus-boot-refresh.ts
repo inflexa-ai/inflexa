@@ -120,7 +120,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     }
 
     // Corpus is stale — resolve the maintenance embedder. System-scoped
-    // maintenance work has no analysis/target-assessment to bill against, so
+    // maintenance work has no analysis to bill against, so
     // we route directly to api.openai.com on a dedicated key. Never the
     // billing-gateway-routed workspace embedder, which would emit unattributed calls
     // and flood the boot log via `billing-fetch-patch`.

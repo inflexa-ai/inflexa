@@ -12,9 +12,7 @@
  *
  * No source caps its own output: Bgee returns every annotated tissue per
  * species, IMPC every significant phenotype term, and Monarch every curated
- * HPO annotation, so each half is trimmed here rather than in the clients — the
- * target-assessment collectors read the same clients and legitimately want full
- * fidelity for the dossier.
+ * HPO annotation, so each half is trimmed here rather than in the clients.
  */
 
 import { ok } from "neverthrow";

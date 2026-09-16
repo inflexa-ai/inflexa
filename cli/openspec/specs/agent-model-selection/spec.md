@@ -14,8 +14,8 @@ The `models` config block SHALL carry an `agents` map with three model roles —
 catalog step agents, data profiling, and analysis-internal consumers), and
 `utility` (the ad hoc specialist/resource router) — each an optional model id
 served by the ONE configured connection (`model-connection`). Agent entries
-SHALL NOT name their own provider or endpoint. Run synthesis, post-step
-metadata/summary, and target assessment SHALL continue to follow `sandbox`.
+SHALL NOT name their own provider or endpoint. Run synthesis and post-step
+metadata/summary SHALL continue to follow `sandbox`.
 
 Each role's model resolves in order:
 `models.agents.<role>` → `harness.model` (legacy all-roles fallback) → the

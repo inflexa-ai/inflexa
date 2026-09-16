@@ -26,21 +26,15 @@ export interface Identity {
 }
 
 /**
- * What the request operates on — a discriminated union owning its resource
- * coordinates (`scopeResource`) and the workload id (`scopeWorkloadId`) used
- * for attribution. `threadId` lives on the analysis variant only.
+ * What the request operates on. It owns its resource coordinates
+ * (`scopeResource`) and the workload id (`scopeWorkloadId`) used for
+ * attribution.
  */
-export type Scope =
-    | {
-          readonly kind: "analysis";
-          readonly analysisId: string;
-          readonly threadId?: string;
-      }
-    | {
-          readonly kind: "target-assessment";
-          readonly targetAssessmentId: string;
-          readonly billingContextId: string;
-      };
+export type Scope = {
+    readonly kind: "analysis";
+    readonly analysisId: string;
+    readonly threadId?: string;
+};
 
 declare const CRED_BRAND: unique symbol;
 
@@ -75,25 +69,18 @@ export interface RunFrame {
 
 /** Canonical resource coordinates a `Scope` resolves to. */
 export interface ResourceCoordinates {
-    readonly resourceType: "analysis" | "billing_context";
+    readonly resourceType: "analysis";
     readonly resourceId: string;
 }
 
-/**
- * Derive the `{ resourceType, resourceId }` a scope resolves through.
- * Analysis → `{ "analysis", analysisId }`; target-assessment →
- * `{ "billing_context", billingContextId }` (TA resolves billing via the
- * billing-context discriminator until it is a first-class resource).
- */
+/** Derive the `{ resourceType, resourceId }` a scope resolves through: `{ "analysis", analysisId }`. */
 export function scopeResource(scope: Scope): ResourceCoordinates {
-    return scope.kind === "analysis"
-        ? { resourceType: "analysis", resourceId: scope.analysisId }
-        : { resourceType: "billing_context", resourceId: scope.billingContextId };
+    return { resourceType: "analysis", resourceId: scope.analysisId };
 }
 
 /** The value stamped into the workload tag — the workload id for this scope. */
 export function scopeWorkloadId(scope: Scope): string {
-    return scope.kind === "analysis" ? scope.analysisId : scope.targetAssessmentId;
+    return scope.analysisId;
 }
 
 // ── Opaque inward auth capability ───────────────────────────────────

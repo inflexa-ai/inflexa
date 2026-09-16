@@ -1,7 +1,7 @@
 /**
  * Pure async client functions for the ChEMBL REST API.
  *
- * Used directly by target-assessment workflow steps and by tool wrappers.
+ * Used by tool wrappers.
  *
  * Absence policy: ChEMBL sends an explicit `null` for an absent value, and it
  * never omits the key. Thus a maybe-absent field carries `.nullable()`, not
@@ -797,9 +797,6 @@ export async function getMoleculeInChIKey(moleculeChemblId: string): Promise<str
  * Resolve a drug's mechanism-of-action targets to UniProt accessions.
  * Returns deduplicated accessions across all mechanism rows.
  * Empty array on no mechanism, missing target, or non-protein target.
- *
- * Used by target-identity-filter to detect off-target trials (e.g., a
- * trial of a CALCRL drug being surfaced under a CALCR assessment).
  */
 export async function getDrugPrimaryTargetUniprots(moleculeChemblId: string): Promise<string[]> {
     const mechRes = await apiFetchValidated(

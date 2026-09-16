@@ -36,15 +36,10 @@ sub-objects, never as optional fields sprinkled on a flat struct.
 - **WHEN** a `Scope` of kind `analysis` is constructed with an `analysisId`
 - **THEN** `scopeResource(scope)` returns `{ resourceType: "analysis", resourceId: analysisId }`
 
-#### Scenario: A target-assessment scope carries both ids and resolves through billing context
-
-- **WHEN** a `Scope` of kind `target-assessment` is constructed with both a `targetAssessmentId` and a `billingContextId`
-- **THEN** `scopeResource(scope)` returns `{ resourceType: "billing_context", resourceId: billingContextId }`, while `scopeWorkloadId(scope)` returns the `targetAssessmentId`
-
 #### Scenario: threadId lives only on the analysis scope
 
-- **WHEN** the `Scope` union is inspected
-- **THEN** `threadId` is a field of the `analysis` variant only, and `billingContextId` is a required field of the `target-assessment` variant only
+- **WHEN** the `Scope` type is inspected
+- **THEN** `threadId` is an optional field of the `analysis` scope
 
 ### Requirement: Credential and AuthContext are opaque to core
 
@@ -110,7 +105,7 @@ rides in workflow input and DBOS replay reconstructs it from input.
 
 #### Scenario: Workflow bodies do not mint
 
-- **WHEN** `executeAnalysis`, `executeTargetAssessment`, or `sandboxStep` executes
+- **WHEN** `executeAnalysis` or `sandboxStep` executes
 - **THEN** no run authorization call is made inside the workflow body
 
 ### Requirement: Sub-agent derivation changes provenance; step derivation changes runFrame

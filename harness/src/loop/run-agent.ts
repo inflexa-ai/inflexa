@@ -113,7 +113,7 @@ export interface RunAgentOptions {
      *
      * The policy lives here, on the run, rather than on the provider, precisely
      * so it applies to loops and *not* to the one-shot LLM calls made elsewhere
-     * (report generation, target-assessment steps): those would pay the
+     * (report generation): those would pay the
      * cache-write premium for a cache nothing ever reads back.
      */
     readonly promptCache?: PromptCachePolicy;

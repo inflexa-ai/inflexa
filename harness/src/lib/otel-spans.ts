@@ -86,8 +86,6 @@ export const ATTR_INFLEXA_TOOL_USE_ID = "inflexa.tool_use_id";
 export const ATTR_INFLEXA_EXEC_ID = "inflexa.exec_id";
 /** The 1-based attempt counter of a sandbox poll, pull, or liveness-probe step. */
 export const ATTR_INFLEXA_ATTEMPT = "inflexa.attempt";
-/** The per-item key (a ChEMBL or NCT id) of a target-assessment fan-out step. */
-export const ATTR_INFLEXA_FANOUT_KEY = "inflexa.fanout_key";
 
 /**
  * Rename the DBOS span of the step that is running to `name` and put its id

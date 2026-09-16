@@ -649,37 +649,6 @@ export type {
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
 export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
 
-// Target assessment — the bounds its claim-investigation phase runs under. An
-// embedder wiring `executeTargetAssessment` sets these at its composition root;
-// the dossier reports whichever values were in force.
-export { DEFAULT_CLAIM_INVESTIGATION_CONFIG } from "./workflows/target-assessment/investigation/index.js";
-export type { ClaimInvestigationConfig } from "./workflows/target-assessment/investigation/index.js";
-// The row surface of `cortex_target_assessments`: the intake write an embedder's
-// trigger route makes, the two reads its detail and list routes make, and the
-// progress write. The row types ride with them — `getAssessment` and
-// `listAssessmentsByOrg` hand back values an embedder cannot hold without naming,
-// and `TargetAssessmentStatus` is what a host switches on to render one. The
-// terminal writers (`setDossier`, `markFailed`, `markAssessmentSuspended`,
-// `markAssessmentRunning`, `softDeleteAssessment`) stay off the front door: the
-// workflow's own terminal path owns them, and an embedder calling one races the
-// state the workflow is about to write.
-export { insertAssessment, getAssessment, updateProgress, listAssessmentsByOrg } from "./state/target-assessments.js";
-export type { InsertAssessmentInput, ListAssessmentsOptions } from "./state/target-assessments.js";
-export type { TargetAssessmentRow, TargetAssessmentListRow, TargetAssessmentStatus, TargetAssessmentError } from "./state/target-assessments.js";
-// The read side of a target assessment's progress stream. `emitProgress` writes
-// one part per phase and the workflow owns that write; this is the only way to
-// read it back without reaching for the durability engine, which is exactly what
-// an embedder rendering a progress bar would otherwise have to do. One stream per
-// assessment (`workflowID === assessmentId`), so it needs no pool — unlike the
-// run-event seam below, which fans in a parent and its children.
-export { createTargetAssessmentProgressStream } from "./workflows/target-assessment/progress-stream.js";
-export type {
-    TargetAssessmentProgressStream,
-    TargetAssessmentProgressStreamDeps,
-    TargetAssessmentProgressHandler,
-    TargetAssessmentProgressSubscribeOptions,
-} from "./workflows/target-assessment/progress-stream.js";
-
 // Run-event read seam — the fine-grained durable channel beside `observeRun`.
 // The two are a deliberate pair, not a duplication: `observeRun` is the coarse,
 // in-process run/step snapshot a workflow hands its host synchronously, and it

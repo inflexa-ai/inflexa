@@ -5,9 +5,7 @@
  * Used to discover, for any HGNC target or UniProt accession, the obligate
  * heterodimer complexes that share the same primary protein (e.g., AMY1/
  * AMY2/AMY3 amylin receptors share the CT receptor protein with the
- * calcitonin receptor and differ only by their RAMP accessory). Powers
- * data-driven heterodimer filtering in target-assessment so off-target
- * panels never list a sibling receptor-complex as a developable hit.
+ * calcitonin receptor and differ only by their RAMP accessory).
  */
 
 import { z } from "zod";

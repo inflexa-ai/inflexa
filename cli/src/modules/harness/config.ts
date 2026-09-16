@@ -192,7 +192,7 @@ export type ModelWireProtocol = "anthropic" | "openai-compatible";
 /**
  * The three model roles: `conversation` (chat and its sub-agents), `sandbox`
  * (durable analysis workers), and `utility` (bounded routing/classification).
- * Internal agents — run synthesis, post-step metadata/summary, target assessment — follow `sandbox`.
+ * Internal agents — run synthesis, post-step metadata/summary — follow `sandbox`.
  * Derived from the `models.agents` schema keys so the domain type can never drift from the config
  * surface it names.
  */

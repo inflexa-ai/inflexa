@@ -82,7 +82,7 @@ export function getBenchmarks(therapeuticArea: string | null): BenchmarkResult {
     };
 }
 
-/** Return the dataset's metadata for transparency in the dossier. */
+/** Return the dataset's metadata for transparency. */
 export function getDatasetAttribution(): {
     data_version: string;
     data_window: string;
