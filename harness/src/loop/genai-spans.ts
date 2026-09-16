@@ -66,6 +66,16 @@ export function labelToolFailure(type: string, message?: string): void {
     if (message !== undefined) span.setAttribute("inflexa.tool.error", message.slice(0, TOOL_ERROR_MAX_CHARS));
 }
 
+/**
+ * Label a tool call whose input failed validation on the active `execute_tool`
+ * span. `issues` is the shape of the failure, with no value of the input.
+ */
+export function labelToolValidationFailure(issues: readonly string[]): void {
+    const span = trace.getActiveSpan();
+    if (span === undefined) return;
+    span.setAttributes({ "error.type": "validation", "inflexa.tool.validation.issues": [...issues] });
+}
+
 function errorTypeOf(err: Error): string {
     const code = "code" in err ? err.code : undefined;
     if ((typeof code === "string" && code !== "") || typeof code === "number") return String(code);

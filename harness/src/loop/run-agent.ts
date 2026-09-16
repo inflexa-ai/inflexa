@@ -21,6 +21,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_TOOL_USE_ID, stableSpan } from "../lib/otel-spans.js";
 import { ResultError } from "../lib/result.js";
+import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
@@ -31,7 +32,7 @@ import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolError, type ToolResultImage } from "../tools/define-tool.js";
-import { labelToolFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
+import { labelToolFailure, labelToolValidationFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
 import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
@@ -877,8 +878,10 @@ async function dispatchTool(
     const repaired = repairedInput === undefined ? undefined : tool.inputSchema.safeParse(repairedInput);
     if (repaired?.success === true) return execute(tu, tool, repaired.data, ctx, isFatalLoopError, encoding);
 
-    // The Zod text can quote the input, thus the span gets no message.
-    labelToolFailure("validation");
+    // The Zod text can quote the input, thus the span and the log get only the shape of the failure.
+    const issues = describeZodIssueShapes(parsed.error, tool.inputSchema);
+    labelToolValidationFailure(issues);
+    encoding.log.warn("tool call rejected", { tool: tool.id, toolCallId: tu.toolCallId, issues });
     return { result: errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`) };
 }
 

@@ -7,6 +7,8 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import type { Logger } from "../lib/logger.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createAiSdkProvider } from "../providers/ai-sdk.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
@@ -77,13 +79,13 @@ it("exports the loop and model-call spans as one trace, with no prompt or comple
 });
 
 /** Run one scripted call of `tool`, and give back its `execute_tool` span. */
-async function executeToolSpan(tool: Tool, toolCallId: string, input: unknown): Promise<ReadableSpan> {
+async function executeToolSpan(tool: Tool, toolCallId: string, input: unknown, logger?: Logger): Promise<ReadableSpan> {
     const provider = scriptedProvider([makeMessage([toolUseBlock(toolCallId, tool.id, input)], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
     await runAgent(
         { id: "test-agent", systemPrompt: "You are a test agent.", model: "claude-test", tools: [tool], maxIterations: 4 },
         [{ role: "user", content: "go" }],
         makeSession(),
-        { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep },
+        { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, logger },
     );
     const span = exporter.getFinishedSpans().find((finished) => finished.attributes["gen_ai.tool.call.id"] === toolCallId);
     if (span === undefined) throw new Error(`no execute_tool span for ${toolCallId}`);
@@ -124,6 +126,29 @@ it("labels rejected input on the span with no text of the input", async () => {
     expect(span.attributes["error.type"]).toBe("validation");
     expect(span.attributes["inflexa.tool.error"]).toBeUndefined();
     expect(JSON.stringify([span.attributes, span.events, span.status])).not.toContain("SECRET");
+});
+
+it("records the shape of rejected input on the span and in one warn, with no value of the input", async () => {
+    const typed = defineTool({
+        id: "typed",
+        description: "Takes a run id, a count, and environment variables.",
+        inputSchema: z.object({ runId: z.string(), count: z.number(), env: z.record(z.string(), z.string()) }),
+        describeCall: "none",
+        execute: async () => ok({}),
+    });
+    const logger = createCapturingLogger();
+
+    // `runId` is missing, `count` has the wrong type, and a record key is chosen by the model.
+    const span = await executeToolSpan(typed, "tc-shape", { count: "SECRET-VALUE", env: { SECRET_KEY: 1 } }, logger);
+
+    const issues = ["runId: invalid_type (expected string)", "count: invalid_type (expected number)", "env.*: invalid_type (expected string)"];
+    expect(span.attributes["error.type"]).toBe("validation");
+    expect(span.attributes["inflexa.tool.validation.issues"]).toEqual(issues);
+    const warns = logger.records.filter((record) => record.level === "warn");
+    expect(warns).toEqual([
+        { level: "warn", msg: "[loop] tool call rejected", fields: expect.objectContaining({ tool: "typed", toolCallId: "tc-shape", issues }) },
+    ]);
+    expect(JSON.stringify([span.attributes, span.events, span.status, logger.records])).not.toContain("SECRET");
 });
 
 it("labels an err(ToolError) with its text and records no exception", async () => {
