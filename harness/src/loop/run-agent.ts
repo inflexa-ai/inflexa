@@ -998,8 +998,9 @@ function successResult(toolCall: ToolCallPart, value: unknown, encoding: ResultE
 // is the six-character escape \u0000 — legitimate JSON text, and no longer
 // distinguishable from an error that happens to quote that escape.
 function toolErrorContent(value: unknown): string {
-    if (isToolError(value)) {
-        return JSON.stringify({ error: stripNulCharacters(value.error), retryable: value.retryable });
+    const toolError = modeledToolError(value);
+    if (toolError !== undefined) {
+        return JSON.stringify({ error: stripNulCharacters(toolError.error), retryable: toolError.retryable });
     }
     const { retryable } = classifyProviderError(value);
     const error = stripNulCharacters(value instanceof Error ? value.message : String(value));

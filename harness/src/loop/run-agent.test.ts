@@ -4,6 +4,7 @@ import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import { unwrapOrThrow } from "../lib/result.js";
 import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../providers/types.js";
@@ -356,6 +357,30 @@ describe("runAgent — tool-error boundary", () => {
         expect(JSON.parse(String(outputValue(result)))).toEqual({
             error: "upstream down",
             retryable: true,
+        });
+    });
+
+    it("maps a ToolError bridged through unwrapOrThrow to the same is_error tool_result as a returned err", async () => {
+        const bridging = defineTool({
+            id: "bridging_tool",
+            description: "Bridges a ToolError through unwrapOrThrow.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => ok(unwrapOrThrow(err({ error: "sandbox refused the exec", retryable: false } as const))),
+        });
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "bridging_tool", {})], "tool_use"),
+            makeMessage([textBlock("recovered")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([bridging]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(true);
+        expect(String(outputValue(result))).not.toContain("[object Object]");
+        expect(JSON.parse(String(outputValue(result)))).toEqual({
+            error: "sandbox refused the exec",
+            retryable: false,
         });
     });
 
