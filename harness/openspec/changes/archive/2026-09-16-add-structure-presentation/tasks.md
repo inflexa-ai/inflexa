@@ -26,11 +26,11 @@
 
 - [x] 5.1 Run `bun run format:file` on each changed file under `src/`. Run `tsc -p tsconfig.json` and `bun test`.
 - [x] 5.2 Update `CONTEXT.md` and `README.md` where they list the presentation kinds or the display tools.
-- [ ] 5.3 Bump the package version (a minor bump, because the contract only adds). Publish. Record the version in the Lumen change and in the Cortex change, with the rollout order: Lumen first, then Cortex.
+- [ ] 5.3 Bump the package version (a patch bump, 0.36.2). Publish. Record the version in the Lumen change and in the Cortex change, with the rollout order: Lumen first, then Cortex.
 - [ ] 5.4 Note for `cli/`: `readPresentation` in `cli/src/modules/harness/artifact_open.ts` gets a `structure` case (an inline note with the AlphaFold entry link) in a separate change.
 
 ## Status notes
 
 - 5.2: `CONTEXT.md` and `README.md` list no presentation kind and no display tool, thus no edit was necessary.
-- 5.3: the version is 0.37.0 in `package.json`. The publish to npm is not done. The consumer pins wait for the publish.
+- 5.3: the version is 0.36.2 in `package.json`. The publish to npm is not done. The consumer pins wait for the publish.
 - 5.4: the `cli/` reader still shows the kind as an inline note. The row with the entry link is a separate change.
