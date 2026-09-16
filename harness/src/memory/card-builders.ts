@@ -22,6 +22,7 @@ import type { Pool } from "pg";
 import { tryQuery, type DbError } from "../lib/db-result.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
 import { loadPlan } from "../state/index.js";
+import { parseStructureUrl } from "../contracts/structure-source.js";
 import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 
@@ -136,17 +137,29 @@ export function buildRunCardData(pool: Pool, opts: { planId: string; analysisId:
  *  `show_user.execute` alone would leave the reconstruct-on-read path (which sees only the persisted
  *  raw `tool_use` input) rendering the un-normalized chart, breaking the byte-identical live/replay
  *  card this module exists to guarantee. The `id` stays keyed to the raw input, which both paths
- *  hold identically, so normalization cannot move a card's identity. */
+ *  hold identically, so normalization cannot move a card's identity.
+ *
+ *  A `structure` is normalized here for the same reason: the URL the model named is parsed by the one
+ *  grammar (`parseStructureUrl`) and the content is built from the parse alone — never by spreading the
+ *  flat tool input, so a stray field cannot ride along. A URL the grammar refuses yields `null` on BOTH
+ *  paths; the transcript persists the raw `tool_use` input, and this is what keeps a refused URL from
+ *  being resurrected into a card on reload. */
 export function buildPresentationCardData(input: Record<string, unknown>): PresentationCardData | null {
     const { kind, title, ...rest } = input;
     if (typeof kind !== "string") return null;
     const cardTitle = typeof title === "string" ? title : undefined;
-    const content =
-        kind === "echart" && isRecord(rest.spec)
-            ? { kind, ...rest, spec: normalizeEchartSpec(rest.spec, { title: cardTitle }) }
-            : // Every other kind (and an echart the model called without a `spec`) is carried through
-              // untouched — there is no layout to normalize, and no spec to invent.
-              { kind, ...rest };
+    let content: Record<string, unknown>;
+    if (kind === "structure") {
+        const source = typeof rest.url === "string" ? parseStructureUrl(rest.url) : null;
+        if (source === null) return null;
+        content = { kind, format: source.format, url: source.url, provider: source.provider, accession: source.accession, version: source.version };
+    } else if (kind === "echart" && isRecord(rest.spec)) {
+        content = { kind, ...rest, spec: normalizeEchartSpec(rest.spec, { title: cardTitle }) };
+    } else {
+        // Every other kind (and an echart the model called without a `spec`) is carried through
+        // untouched — there is no layout to normalize, and no spec to invent.
+        content = { kind, ...rest };
+    }
     return {
         id: presentationId(input),
         ...(cardTitle !== undefined ? { title: cardTitle } : {}),

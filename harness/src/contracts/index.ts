@@ -99,3 +99,6 @@ export { AnalogyCoverageSchema, AnalogyReportSchema, AnalogyReportErrorSchema, A
 export type { AnalogyCoverage, AnalogyReport, AnalogyReportError, AnalogicalReasonerOutput } from "./analogy-report.js";
 
 export { buildReportSessionUrl, reportSessionResourceId } from "./content-url.js";
+
+export { parseStructureUrl, alphafoldEntryUrl, alphafoldPredictionUrl } from "./structure-source.js";
+export type { StructureSource, StructureFormat } from "./structure-source.js";

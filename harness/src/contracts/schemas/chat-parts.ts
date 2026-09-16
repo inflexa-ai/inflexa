@@ -45,6 +45,14 @@ export const PresentationContentSchema = z.discriminatedUnion("kind", [
         rows: z.array(z.array(z.string())),
         caption: z.string().optional(),
     }),
+    z.object({
+        kind: z.literal("structure"),
+        format: z.enum(["pdb", "mmcif"]),
+        url: z.url(),
+        provider: z.literal("alphafold"),
+        accession: z.string().min(1),
+        version: z.number().int().positive(),
+    }),
 ]);
 
 export const PresentationPartSchema = z.object({

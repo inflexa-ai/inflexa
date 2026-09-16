@@ -131,6 +131,11 @@ describe("createConversationAgent", () => {
         expect(conversationPrompt).toContain("start_report_session");
     });
 
+    test("the prompt names the structure card and keeps an artifact structure on show_file", () => {
+        expect(conversationPrompt).toContain('show_user(kind: "structure")');
+        expect(conversationPrompt).toMatch(/\.pdb[^\n]*show_file|show_file[^\n]*\.pdb/);
+    });
+
     test("places citation verification beside literature discovery", () => {
         const ids = buildAgent().tools.map((tool) => tool.id);
         expect(ids.indexOf("resolve_citation")).toBe(ids.indexOf("pubmed") + 1);

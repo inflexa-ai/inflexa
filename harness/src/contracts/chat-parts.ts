@@ -33,7 +33,12 @@ export type PresentationContent =
     | { kind: "markdown"; body: string }
     | { kind: "code"; code: string; language: string }
     | { kind: "svg"; markup: string }
-    | { kind: "table"; headers: string[]; rows: string[][]; caption?: string };
+    | { kind: "table"; headers: string[]; rows: string[][]; caption?: string }
+    /** A versioned AlphaFold DB model file, normalized by the harness from the URL the agent named
+     *  (`contracts/structure-source.ts`). `version` is the model version that was shown — a host that
+     *  substitutes a newer file after AlphaFold purges this one labels the substitution and never
+     *  rewrites the card. The host fetches `url` directly; the coordinates never ride the wire. */
+    | { kind: "structure"; format: "pdb" | "mmcif"; url: string; provider: "alphafold"; accession: string; version: number };
 
 export interface PresentationPart {
     type: "data-presentation";

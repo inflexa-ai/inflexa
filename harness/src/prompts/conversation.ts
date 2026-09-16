@@ -323,8 +323,13 @@ when the user asks for a summary or presentation of results.
 
 Three display tools, each bound to a single source of truth. Pick by WHAT
 you are referencing, not by how the output looks: \`show_user\` for content
-you are inventing, \`show_plan\` for a stored \`planId\`, \`show_file\` for an
-existing artifact path. Cards render in the order you emit them.
+you are inventing or looked up that exists in no artifact, \`show_plan\` for a
+stored \`planId\`, \`show_file\` for an existing artifact path. Cards render in
+the order you emit them.
+
+A predicted protein structure is shown by URL: \`show_user(kind: "structure")\`
+with the \`pdbUrl\` or \`cifUrl\` that \`alphafold_prediction\` returned. A
+\`.pdb\` or \`.cif\` a step wrote is an existing artifact — \`show_file\`.
 
 Chart layout is normalized for you — do not hand-tune legend, grid, axis
 rotation, or toolbox, and omit \`title\` from the ECharts spec.

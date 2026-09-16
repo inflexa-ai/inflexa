@@ -2,7 +2,10 @@
  * showUser tool — emits agent-synthesized content as a UI stream event.
  *
  * For content the agent is INVENTING — charts, markdown, code snippets,
- * SVG diagrams, tables. Content is serialized inline (bytes on the wire).
+ * SVG diagrams, tables — or LOOKED UP and holds as a reference that exists in
+ * no artifact: a `structure` names an AlphaFold DB model file by URL, and the
+ * host fetches the coordinates at render time. Content is serialized inline
+ * (bytes on the wire); a structure card carries only the normalized reference.
  *
  * The presentation `id` is derived deterministically from the content, so
  * an identical re-emission carries the same id — duplicate suppression is a
@@ -24,14 +27,14 @@ import { buildPresentationCardData } from "../../memory/card-builders.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 import { validatePath } from "../lib/path-validation.js";
 
-type ShowUserOutput = { shown: false; reason: "invalid_path" } | { id: string };
+type ShowUserOutput = { shown: false; reason: "invalid_path" | "invalid_source" } | { id: string };
 
 // Flat object schema — Anthropic requires top-level "type": "object" in tool
 // input_schema. A z.discriminatedUnion produces a top-level "oneOf" without
 // "type", which the API rejects. Variant-specific fields are optional; the
 // LLM picks the right ones based on `kind`.
 const ShowUserInputSchema = z.object({
-    kind: z.enum(["echart", "markdown", "code", "svg", "table"]).describe("The type of agent-synthesized content to display"),
+    kind: z.enum(["echart", "markdown", "code", "svg", "table", "structure"]).describe("The type of content to display"),
     title: z
         .string()
         .optional()
@@ -55,13 +58,20 @@ const ShowUserInputSchema = z.object({
     headers: z.array(z.string()).optional().describe("Column headers (kind=table)"),
     rows: z.array(z.array(z.string())).optional().describe("Row data as array of string arrays (kind=table)"),
     caption: z.string().optional().describe("Caption (kind=table)"),
+    url: z
+        .string()
+        .optional()
+        .describe(
+            "kind=structure only: the `pdbUrl` or `cifUrl` that `alphafold_prediction` returned, verbatim. Only an AlphaFold DB model-file URL is accepted; any other URL is refused as `invalid_source`. The chat fetches the coordinates when the user views the card and renders an interactive 3-D view colored by pLDDT — never read, download, or paste the file to show it.",
+        ),
 });
 
 export const showUserTool = defineTool({
     id: "show_user",
     description:
-        "Display content you are INVENTING — a chart you composed, a code snippet you are proposing, a markdown " +
-        "synthesis, an SVG diagram, a table you built. The content is inlined on the wire. " +
+        "Display content you are INVENTING or LOOKED UP that exists in no artifact — a chart you composed, a code snippet you are " +
+        "proposing, a markdown synthesis, an SVG diagram, a table you built, or a 3-D protein structure from AlphaFold DB " +
+        "(kind=structure, by the URL `alphafold_prediction` returned). The content is inlined on the wire. " +
         "Pick this tool by what you are referencing, not by how the output looks: " +
         "NOT for an existing analysis file — never read an artifact and paste its bytes here, reference it with `show_file` " +
         "(images, CSVs, PDFs, notebooks). NOT for a stored plan — use `show_plan`. " +
@@ -81,8 +91,13 @@ export const showUserTool = defineTool({
             return ok({ shown: false as const, reason: "invalid_path" as const });
         }
 
-        // Non-null: the input passed Zod validation, so `kind` is present.
-        const card = buildPresentationCardData(input)!;
+        // The input passed Zod validation, so `kind` is present and the builder refuses exactly one thing:
+        // a structure whose `url` the source grammar does not admit — an expected outcome the model can
+        // self-correct with the URL the lookup tool actually returned.
+        const card = buildPresentationCardData(input);
+        if (card === null) {
+            return ok({ shown: false as const, reason: "invalid_source" as const });
+        }
 
         await ctx.emit({
             type: "data-presentation",

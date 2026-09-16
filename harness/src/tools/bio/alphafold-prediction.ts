@@ -29,6 +29,8 @@ export const alphafoldPredictionTool = defineTool({
         "matrix, `amAnnotationsUrl` — AlphaMissense pathogenicity annotations, present for a HUMAN canonical accession only, thus absent on a " +
         "non-human protein and on an isoform): fetch one from the sandbox to inspect the coordinates, the per-residue confidence, or the annotation " +
         "table, do not expect the file contents here.\n" +
+        'To SHOW the predicted structure to the user, call `show_user(kind: "structure", url: <pdbUrl or cifUrl>)` with the URL ' +
+        "verbatim — the chat renders an interactive 3-D view colored by pLDDT. Do not download the file to show it.\n" +
         "found: false means AlphaFold holds no model for the accession (not every UniProt entry has one) — report it and continue, do not retry.",
     inputSchema: z.object({
         uniprotAccession: z.string().min(1).describe("A UniProt accession, for example 'P38398' (BRCA1) or 'P69905' (hemoglobin subunit alpha)."),

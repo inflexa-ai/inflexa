@@ -174,3 +174,26 @@ describe("createShowPlanTool (dependency-bearing factory)", () => {
         expect(emitted).toHaveLength(0);
     });
 });
+
+describe("showUser — structure", () => {
+    const url = "https://alphafold.ebi.ac.uk/files/AF-P69905-F1-model_v6.pdb";
+
+    it("emits one data-presentation carrying the normalized structure and returns its id", async () => {
+        const { ctx, emitted } = makeToolContext();
+        const result = (await showUserTool.execute({ kind: "structure", title: "Hemoglobin α", url }, ctx))._unsafeUnwrap();
+
+        expect(emitted).toHaveLength(1);
+        const event = emitted[0] as { type: string; data: { id: string; content: Record<string, unknown> } };
+        expect(event.type).toBe("data-presentation");
+        expect(event.data.id).toBe(shownId(result));
+        expect(event.data.content).toEqual({ kind: "structure", format: "pdb", url, provider: "alphafold", accession: "P69905", version: 6 });
+    });
+
+    it("reports a URL outside the grammar as invalid_source and emits nothing", async () => {
+        const { ctx, emitted } = makeToolContext();
+        const result = (await showUserTool.execute({ kind: "structure", url: "https://files.rcsb.org/download/1YCR.cif" }, ctx))._unsafeUnwrap();
+
+        expect(result).toEqual({ shown: false, reason: "invalid_source" });
+        expect(emitted).toHaveLength(0);
+    });
+});

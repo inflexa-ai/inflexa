@@ -44,3 +44,31 @@ describe("buildPresentationCardData", () => {
         expect(card!.content).toEqual({ kind: "echart", dataPath: "runs/run-a/step-1/output/de.csv" });
     });
 });
+
+describe("buildPresentationCardData — structure", () => {
+    const url = "https://alphafold.ebi.ac.uk/files/AF-P38398-F1-model_v6.cif";
+
+    it("normalizes an admitted AlphaFold URL into the derived source fields", () => {
+        const card = buildPresentationCardData({ kind: "structure", title: "BRCA1", url });
+        expect(card!.title).toBe("BRCA1");
+        expect(card!.content).toEqual({ kind: "structure", format: "mmcif", url, provider: "alphafold", accession: "P38398", version: 6 });
+    });
+
+    it("refuses a URL the grammar does not admit — no card on the live path or on replay", () => {
+        expect(buildPresentationCardData({ kind: "structure", url: "https://example.org/model.pdb" })).toBeNull();
+        expect(buildPresentationCardData({ kind: "structure" })).toBeNull();
+    });
+
+    it("does not let a stray field of the flat tool input ride along", () => {
+        const card = buildPresentationCardData({ kind: "structure", url, body: "## stray", spec: { series: [] } });
+        expect(Object.keys(card!.content).sort()).toEqual(["accession", "format", "kind", "provider", "url", "version"]);
+    });
+
+    it("keys the id off the raw input and rebuilds identically from a clone", () => {
+        const input = { kind: "structure", title: "BRCA1", url };
+        const a = buildPresentationCardData(input);
+        const b = buildPresentationCardData(structuredClone(input));
+        expect(a).toEqual(b);
+        expect(a!.id).toMatch(/^pres-[0-9a-f]{16}$/);
+    });
+});

@@ -120,3 +120,13 @@ describe("alphafoldPrediction — describeCall", () => {
         expect(alphafoldPredictionTool.describeCall!({ uniprotAccession: "P38398" })).toBe("P38398");
     });
 });
+
+describe("alphafold_prediction — the display path", () => {
+    // The description is the whole of what the agent knows about the tool. Without the pointer it
+    // reaches for a sandbox download to show a structure, which lands a binary the chat cannot render.
+    it("names show_user(kind: structure) as the way to show the model, and keeps files out of the conversation", () => {
+        expect(alphafoldPredictionTool.description).toContain("show_user");
+        expect(alphafoldPredictionTool.description).toContain('kind: "structure"');
+        expect(alphafoldPredictionTool.description).toContain("do not expect the file contents here");
+    });
+});
