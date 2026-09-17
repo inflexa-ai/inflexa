@@ -10,7 +10,7 @@ import { stepWritePrefix } from "../../workspace/paths.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createWorkspaceMutator } from "../workspace/mutator.js";
 import { fakeKnowledgeClient, renderAnswer, substituteRenderAnswer } from "./__fixtures__/fake-client.js";
-import { DECISION_RECORD_PATH, createKnowledgeTemplateTool, type TemplateBinding } from "./template.js";
+import { createKnowledgeTemplateTool, decisionRecordPath, type TemplateBinding } from "./template.js";
 
 const ANALYSIS = "analysis-001";
 const TEMPLATE = "tpl-deseq2-two-group@1.0.0";
@@ -45,7 +45,7 @@ describe("knowledge_template with a binding", () => {
     }
 
     async function recordOf(workingDir: string): Promise<Record<string, unknown>> {
-        return JSON.parse(await readFile(join(workingDir, DECISION_RECORD_PATH), "utf8"));
+        return JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
     }
 
     it("rides the bound slots into the render request when the model sends no value for them", async () => {
@@ -90,7 +90,7 @@ describe("knowledge_template with a binding", () => {
         expect(issue.permitted).toEqual(['"apeglm"']);
         expect(calls.render).toHaveLength(0);
         expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
-        expect(await Bun.file(join(workingDir, DECISION_RECORD_PATH)).exists()).toBe(false);
+        expect(await Bun.file(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R"))).exists()).toBe(false);
         expect(tool.describeResult?.({ template: TEMPLATE, slots: {} }, out)).toBe("rejected");
     });
 

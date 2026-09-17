@@ -20,7 +20,7 @@ import {
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "./check.js";
 import { createKnowledgeTools } from "./index.js";
 import { createKnowledgeRecommendTool } from "./recommend.js";
-import { DECISION_RECORD_PATH, createKnowledgeTemplateTool } from "./template.js";
+import { createKnowledgeTemplateTool, decisionRecordPath } from "./template.js";
 
 const SITUATION = {
     question: "differential_expression" as const,
@@ -446,12 +446,12 @@ describe("knowledge_template", () => {
         expect(out.status).toBe("ok");
         if (out.status !== "ok") return;
         expect(out.script_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/scripts/tpl-deseq2-two-group.R`);
-        expect(out.decision_record_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/${DECISION_RECORD_PATH}`);
+        expect(out.decision_record_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/output/decision_record_tpl-deseq2-two-group.json`);
         expect(out.run_with).toBe("Rscript scripts/tpl-deseq2-two-group.R");
         expect(out.environment_match).toBe("exact");
         const script = await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8");
         expect(script).toBe(renderAnswer().script);
-        const record = JSON.parse(await readFile(join(workingDir, DECISION_RECORD_PATH), "utf8"));
+        const record = JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",
             version: "1.0.0",
