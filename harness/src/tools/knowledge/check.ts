@@ -26,6 +26,7 @@ export const CHECK_CALL_LIMIT = 3;
 const DraftedStepSchema = z.object({
     step_type: z
         .enum([
+            "cohort_assembly",
             "qc_sample_structure",
             "filter_low_counts",
             "normalize",
