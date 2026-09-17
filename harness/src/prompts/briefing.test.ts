@@ -412,6 +412,20 @@ describe("composeStepBriefing", () => {
         const seed = composeStepBriefing({ step: ungrounded, workspace: WORKSPACE, profile: null, upstream: [] });
         expect(seed).not.toContain("Template contract");
     });
+
+    it("renders the settings as vetted values, not as constraints, when the seed carries no template contract", () => {
+        const step = fullyPopulatedStep();
+        const seed = composeStepBriefing({ step: { ...step, constraints: undefined }, workspace: WORKSPACE, profile: null, upstream: [] });
+        expect(seed).toContain("- Settings (the vetted values of the procedure; another value is permitted when your summary states the reason):");
+        expect(seed).toContain("  - differential_expression: lfc_shrink = apeglm (doi:10.1093/bioinformatics/bty895)");
+        expect(seed).not.toContain("Constraints");
+    });
+
+    it("leaves the settings to the template contract when the seed carries one", () => {
+        const seed = composeStepBriefing({ step: fullyPopulatedStep(), workspace: WORKSPACE, profile: null, upstream: [], template: brief() });
+        expect(seed).not.toContain("- Settings (");
+        expect(seed).toContain("## Template contract");
+    });
 });
 
 // ── AnalysisStep field-coverage guard ────────────────────────────────
