@@ -61,9 +61,10 @@ export interface DbosConfig {
      *
      * The harness TracerProvider shapes what the SDK emits (`lib/otel-spans.ts`):
      * a workflow declared with `untracedWorkflow` is not recorded, a replayed
-     * `cached=true` span is dropped before export, and a step body that calls
+     * `cached=true` span is dropped before export, a step body that calls
      * `stableSpan` is exported under a stable name with its id in an
-     * `inflexa.*` attribute. The step name DBOS records is unchanged.
+     * `inflexa.*` attribute, and the step of an agent-loop model call or tool
+     * call writes no span. The step name DBOS records is unchanged.
      *
      * Known SDK behavior a host must plan for: a recovered workflow starts a
      * new root trace, with no link to the trace of the original execution.

@@ -2,22 +2,27 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { context, propagation, SpanStatusCode, trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import type { Logger } from "../lib/logger.js";
+import { createHarnessSampler, DbosSpanProcessor, HarnessTracerProvider } from "../lib/otel-spans.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createAiSdkProvider } from "../providers/ai-sdk.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
+import type { RunStep } from "./types.js";
 
 const exporter = new InMemorySpanExporter();
-const tracerProvider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+// The provider as `initOtel` composes it, thus each span obeys the span policy of the harness.
+const tracerProvider = new HarnessTracerProvider({
+    sampler: createHarnessSampler(),
+    spanProcessors: [new DbosSpanProcessor(new SimpleSpanProcessor(exporter))],
+});
 
 beforeAll(() => tracerProvider.register());
 
@@ -76,6 +81,58 @@ it("exports the loop and model-call spans as one trace, with no prompt or comple
     expect(spans.map((span) => span.name)).toEqual(expect.arrayContaining(["invoke_agent test-agent", "chat mock-model-id", "execute_tool lookup"]));
     expect(new Set(spans.map((span) => span.spanContext().traceId)).size).toBe(1);
     expect(JSON.stringify(spans.map((span) => [span.attributes, span.events, span.status]))).not.toContain("SECRET");
+});
+
+/**
+ * The step span of DBOS 4.23.6 (`DBOSExecutor.callStepFunction`). DBOS takes the
+ * `dbos-tracer` tracer from the global provider, starts the span in the active
+ * context, and runs the body under it.
+ */
+const dbosStep: RunStep = async (name, fn) => {
+    const span = trace.getTracer("dbos-tracer").startSpan(name, { attributes: { "dbos.operation.type": "step", "dbos.operation.name": name } });
+    try {
+        return await context.with(trace.setSpan(context.active(), span), fn);
+    } finally {
+        span.setAttributes({ "dbos.application.version": "test" });
+        span.end();
+    }
+};
+
+it("writes only chat and execute_tool under invoke_agent for a durable model call and tool call", async () => {
+    const model = new MockLanguageModelV4({
+        doStream: [
+            reply(
+                { type: "tool-call", toolCallId: "tc-1", toolName: "lookup", input: JSON.stringify({ query: "q" }) },
+                { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage },
+            ),
+        ],
+    });
+
+    await runAgent(
+        { id: "test-agent", systemPrompt: "You are a test agent.", model: "mock-model-id", tools: [lookup], maxIterations: 4 },
+        [{ role: "user", content: "go" }],
+        makeSession(),
+        {
+            provider: createAiSdkProvider({ model, resolveBilling: async () => ({}) }),
+            signal: new AbortController().signal,
+            emit: () => {},
+            runStep: dbosStep,
+            // The step names of `sandbox-step.ts`.
+            formatStepName: { llm: (i) => `llm:${i}`, tool: (name, id) => `tool:${name}:${id}` },
+            // Stop after the first tool round: one model call and one tool call.
+            resolved: () => true,
+        },
+    );
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.map((span) => span.name).sort()).toEqual(["chat mock-model-id", "execute_tool lookup", "invoke_agent test-agent"]);
+    const named = (name: string): ReadableSpan => spans.find((span) => span.name === name)!;
+    const agent = named("invoke_agent test-agent");
+    expect(agent.parentSpanContext).toBeUndefined();
+    for (const child of [named("chat mock-model-id"), named("execute_tool lookup")]) {
+        expect(child.spanContext().traceId).toBe(agent.spanContext().traceId);
+        expect(child.parentSpanContext?.spanId).toBe(agent.spanContext().spanId);
+    }
 });
 
 /** Run one scripted call of `tool`, and give back its `execute_tool` span. */

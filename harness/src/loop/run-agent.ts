@@ -19,7 +19,7 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { ATTR_INFLEXA_TOOL_USE_ID, stableSpan } from "../lib/otel-spans.js";
+import { ATTR_INFLEXA_TOOL_USE_ID, passThroughSpan, stableSpan } from "../lib/otel-spans.js";
 import { ResultError } from "../lib/result.js";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
@@ -172,6 +172,10 @@ export function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[]
 
 async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
     const { provider, signal, emit, runStep } = opts;
+    // The step of a model call or a tool call writes no span. The `chat` span and
+    // the `execute_tool` span under it describe the call already, and they attach
+    // to the `invoke_agent` span of this run.
+    const callStep: RunStep = (name, fn) => passThroughSpan(name, () => runStep(name, fn));
     const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
     const configuredFatalLoopError = opts.isFatalLoopError ?? (() => false);
     // AbortError is control flow, not a tool failure. Always compose it with the
@@ -418,7 +422,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             reasoning,
         };
         const llmStepName = formatStepName.llm(i);
-        const reply = await resultStep(runStep)(llmStepName, () => provider.chat(request, session, signal));
+        const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal));
         accountForCall(reply, llmStepName);
 
         if (reply.finishReason === "aborted") {
@@ -461,7 +465,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
                 toolsById,
                 toolCtx,
                 isFatalLoopError,
-                runStep,
+                callStep,
                 formatStepName.tool,
                 encoding,
             );
@@ -520,7 +524,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             toolsById,
             toolCtx,
             isFatalLoopError,
-            runStep,
+            callStep,
             formatStepName.tool,
             encoding,
         );
@@ -539,7 +543,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     // because it is the one call whose write is pure waste, and the
     // cache_write_tokens counter is what makes that waste visible.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
-    const wrapUp = await resultStep(runStep)(wrapUpStepName, () =>
+    const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
         provider.chat(
             { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: {}, toolChoice: "none", reasoning },
             session,
@@ -790,11 +794,7 @@ async function dispatchTools(
     await Promise.all(
         stepTools.map(({ tu, idx }) => {
             const startedAt = performance.now();
-            const stepName = toolStepName(tu.toolName, tu.toolCallId);
-            return runStep(stepName, () => {
-                stableSpan(stepName, `tool:${tu.toolName}`, { [ATTR_INFLEXA_TOOL_USE_ID]: tu.toolCallId });
-                return dispatch(tu);
-            }).then((settled: DispatchedCall | ToolResultPart) => {
+            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatch(tu)).then((settled: DispatchedCall | ToolResultPart) => {
                 durations[idx] = elapsedMs(startedAt);
                 const dispatched = readDispatchedStep(settled);
                 results[idx] = dispatched.result;

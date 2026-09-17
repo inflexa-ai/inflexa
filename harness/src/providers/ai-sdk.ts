@@ -14,12 +14,14 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { APICallError, type LanguageModelV4, type LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
+import { trace } from "@opentelemetry/api";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { passThroughTracer } from "../lib/otel-spans.js";
 import { classifyProviderError, type ProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
 
@@ -633,6 +635,11 @@ function abortedStreamFailure(signal: AbortSignal | undefined, reason: string | 
     return new Error(reason ?? "The provider aborted the stream.");
 }
 
+/** The `gen_ai.operation.name` of the operation span and of the step span that the AI SDK opens around each `chat` span. */
+function isSdkWrapperSpan(operation: unknown): boolean {
+    return operation === "invoke_agent" || operation === "agent_step";
+}
+
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = {
         toolCalling: deps.capabilities?.toolCalling ?? true,
@@ -654,8 +661,12 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
     // prompt or completion text on them. The integration rides on each call
     // instead of the global registry, so the harness never traces the embedder's
-    // own AI SDK calls.
-    const telemetry = { integrations: new OpenTelemetry(), recordInputs: false, recordOutputs: false };
+    // own AI SDK calls. Of the SDK spans only `chat` is written. The operation
+    // span and the step span around it repeat what `chat` and the span of the
+    // caller (the loop's `invoke_agent`) say already. Thus they pass through, and
+    // `chat` attaches to the span of the caller.
+    const tracer = passThroughTracer(trace.getTracer("gen_ai"), (_name, options) => isSdkWrapperSpan(options.attributes?.["gen_ai.operation.name"]));
+    const telemetry = { integrations: new OpenTelemetry({ tracer }), recordInputs: false, recordOutputs: false };
     routeSdkWarningsTo(logger);
 
     /**

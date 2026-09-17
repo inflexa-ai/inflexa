@@ -9,7 +9,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { context, propagation, ROOT_CONTEXT, trace, TraceFlags, type Span as ApiSpan } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 
 import { submitExec } from "../sandbox/submit-exec.js";
 import type { SandboxRef } from "../sandbox/types.js";
@@ -19,17 +18,18 @@ import {
     ATTR_INFLEXA_TOOL_USE_ID,
     createHarnessSampler,
     DbosSpanProcessor,
+    HarnessTracerProvider,
     stableSpan,
     untracedWorkflow,
 } from "./otel-spans.js";
 
 let exporter: InMemorySpanExporter;
-let provider: NodeTracerProvider;
+let provider: HarnessTracerProvider;
 let untracedCounter = 0;
 
 beforeEach(() => {
     exporter = new InMemorySpanExporter();
-    provider = new NodeTracerProvider({
+    provider = new HarnessTracerProvider({
         sampler: createHarnessSampler(),
         spanProcessors: [new DbosSpanProcessor(new SimpleSpanProcessor(exporter))],
     });

@@ -5,7 +5,7 @@
  * DBOS names a workflow span after the registered workflow and a step span
  * after the step function, and it runs each body under its span, so every
  * child (a step, a patched fetch, a pg query) sits under the workflow span.
- * Three shapes of that output are noise in a trace store, and each is stopped
+ * Four shapes of that output are noise in a trace store, and each is stopped
  * in the process, before export, rather than in a collector downstream. The
  * decisions live where the workflows and steps are written; this module holds
  * the mechanism only:
@@ -23,9 +23,30 @@
  *   name itself is untouched: DBOS compares it against the recorded name on
  *   replay and throws `DBOSUnexpectedStepError` on a mismatch, so a rename
  *   would break every workflow in flight across a deploy.
+ * - A step whose span only repeats the spans under it runs inside
+ *   `passThroughSpan(name, ...)`. `HarnessTracerProvider` gives that span as
+ *   a pass-through: it records nothing, and each child attaches to the span
+ *   that was active when the step started. `passThroughTracer` applies the
+ *   same mechanism to a tracer that a library takes as an option.
+ *
+ * A pass-through is the only way to omit a span in the middle of a tree. The
+ * SDK fixes the parent of a child when the child starts, so a processor that
+ * drops the span at `onEnd` leaves its children with a parent that was never
+ * exported. A sampler is no better: `ParentBased` sampling gives the children
+ * the same decision, and they are not recorded either.
  */
 
-import { trace, type Attributes, type Context } from "@opentelemetry/api";
+import {
+    context,
+    createContextKey,
+    trace,
+    type Attributes,
+    type Context,
+    type Span as ApiSpan,
+    type SpanOptions,
+    type Tracer,
+    type TracerOptions,
+} from "@opentelemetry/api";
 import {
     ParentBasedSampler,
     SamplingDecision,
@@ -35,6 +56,7 @@ import {
     type Span,
     type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 
 /**
  * Names of the DBOS workflows whose traces are not recorded. A registering
@@ -105,6 +127,90 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
     if ((span as Partial<ReadableSpan>).name !== dbosName) return;
     span.updateName(name);
     span.setAttributes(attributes);
+}
+
+/**
+ * Decides whether the span that `startSpan` is about to start passes through.
+ * `context` is the parent context of that span.
+ */
+export type PassThroughRule = (name: string, options: SpanOptions, context: Context) => boolean;
+
+/**
+ * Wrap `tracer` so that a span that `passesThrough` selects is not written.
+ * In its place the tracer gives `trace.wrapSpanContext` of the parent span
+ * context. That span records nothing, and a span started under it becomes a
+ * child of the parent. A span with no valid parent, or a span that asks to be
+ * a root, starts as usual, because a pass-through there would make each child
+ * a root of its own trace.
+ */
+export function passThroughTracer(tracer: Tracer, passesThrough: PassThroughRule): Tracer {
+    return new PassThroughTracer(tracer, passesThrough);
+}
+
+class PassThroughTracer implements Tracer {
+    constructor(
+        private readonly inner: Tracer,
+        private readonly passesThrough: PassThroughRule,
+    ) {}
+
+    startSpan(name: string, options: SpanOptions = {}, parentContext: Context = context.active()): ApiSpan {
+        const parent = options.root === true ? undefined : trace.getSpanContext(parentContext);
+        if (parent !== undefined && trace.isSpanContextValid(parent) && this.passesThrough(name, options, parentContext)) {
+            return trace.wrapSpanContext(parent);
+        }
+        return this.inner.startSpan(name, options, parentContext);
+    }
+
+    startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, fn: F): ReturnType<F>;
+    startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, options: SpanOptions, fn: F): ReturnType<F>;
+    startActiveSpan<F extends (span: ApiSpan) => unknown>(name: string, options: SpanOptions, parentContext: Context, fn: F): ReturnType<F>;
+    // The inner tracer cannot take this call: its own `startActiveSpan` calls its own `startSpan`, past the rule.
+    startActiveSpan<F extends (span: ApiSpan) => unknown>(
+        name: string,
+        ...rest: [F] | [SpanOptions, F] | [SpanOptions, Context | undefined, F]
+    ): ReturnType<F> {
+        const fn = rest[rest.length - 1] as F;
+        const options = rest.length > 1 ? (rest[0] as SpanOptions) : {};
+        const parentContext = (rest.length > 2 ? (rest[1] as Context | undefined) : undefined) ?? context.active();
+        const span = this.startSpan(name, options, parentContext);
+        return context.with(trace.setSpan(parentContext, span), () => fn(span)) as ReturnType<F>;
+    }
+}
+
+/** The name of the span that the enclosing `passThroughSpan` declared. */
+const PASS_THROUGH_SPAN_NAME = createContextKey("inflexa.pass_through_span_name");
+
+/**
+ * Run `fn` so that a span named `name` that starts inside it is a
+ * pass-through: `HarnessTracerProvider` writes no span for it, and the
+ * children of that span attach to the span that is active now. Wrap the call
+ * that starts the span, for example a `DBOS.runStep` with the step name
+ * `name`. A span with a different name starts as usual.
+ */
+export function passThroughSpan<T>(name: string, fn: () => T): T {
+    return context.with(context.active().setValue(PASS_THROUGH_SPAN_NAME, name), fn);
+}
+
+const declaredPassThrough: PassThroughRule = (name, _options, parentContext) => parentContext.getValue(PASS_THROUGH_SPAN_NAME) === name;
+
+/**
+ * The TracerProvider of the harness. Each tracer that it gives obeys
+ * `passThroughSpan`. The API keeps the first provider that is registered, and
+ * DBOS asks the API for its tracer at each span, so the rule applies to the
+ * DBOS step spans only because this provider is the registered one.
+ */
+export class HarnessTracerProvider extends NodeTracerProvider {
+    private readonly passThroughTracers = new WeakMap<Tracer, Tracer>();
+
+    override getTracer(name: string, version?: string, options?: TracerOptions): Tracer {
+        const tracer = super.getTracer(name, version, options);
+        let wrapped = this.passThroughTracers.get(tracer);
+        if (wrapped === undefined) {
+            wrapped = passThroughTracer(tracer, declaredPassThrough);
+            this.passThroughTracers.set(tracer, wrapped);
+        }
+        return wrapped;
+    }
 }
 
 /**
