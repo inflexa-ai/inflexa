@@ -416,6 +416,51 @@ describe("generatePlan loop-driving tool", () => {
             expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
         });
 
+        it("stamps the digest of a step that departs from the answer, and restores no template", async () => {
+            const analysisId = "an-departed-step";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const situation = {
+                question: "differential_expression",
+                modality: "bulk_rna_seq",
+                data_state: "counts",
+                organism: "human",
+                n_groups: 2,
+                n_per_group_min: 6,
+                n_per_group_max: 6,
+                paired: false,
+                batch: "none",
+            };
+            // The model keeps the T1S2 step of the skeleton, and it plans another
+            // method with the reason. The host stamps the digest, because the step
+            // consulted the answer, and it restores no template, because the
+            // template realizes the method the step left.
+            const departed = validCandidate({
+                id: "T1S2",
+                grounding: {
+                    status: "ungrounded",
+                    snapshot: SNAPSHOT.digest.slice(0, 40),
+                    claims: [],
+                    reason: "limma-voom: the design carries a continuous covariate that the vetted template does not model",
+                },
+            });
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "knowledge_recommend", situation)], "tool_use"),
+                makeMessage([toolUseBlock("t2", "submit_plan", { plan: departed })], "tool_use"),
+            ]);
+            const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            expect(result.event).toBe("plan_complete");
+            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as {
+                steps: { grounding?: { status?: string; snapshot?: string; template?: string } }[];
+            };
+            expect(stored.steps[0]?.grounding?.status).toBe("ungrounded");
+            expect(stored.steps[0]?.grounding?.snapshot).toBe(SNAPSHOT.digest);
+            expect(stored.steps[0]?.grounding?.template).toBeUndefined();
+        });
+
         it("repairs a claim id whose hash the model miscopied", async () => {
             const analysisId = "an-repaired-claim";
             await seedAnalysis(pool, analysisId, { dpStatus: null });

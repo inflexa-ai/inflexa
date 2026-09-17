@@ -153,6 +153,12 @@ export function renderTask(step: AnalysisStep, contract: Pick<StepBriefing, "tem
  * A grounding that names a template promises a Template contract section.
  * When the seed carries none, one line says so with the reason, thus the
  * agent knows the contract was not fetched rather than guessing at slots.
+ *
+ * The settings of the procedure ride here as vetted values, not as
+ * constraints: the agent uses each one unless the data gives a reason for
+ * another value, and then it states the reason. They render only when the
+ * seed carries no template contract, because the bound and the unbound
+ * lists of the contract hold every setting already.
  */
 function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, contract: Pick<StepBriefing, "template" | "templateNotRetrieved">): string {
     const lines = [`- Status: ${grounding.status}`];
@@ -163,6 +169,14 @@ function renderGrounding(grounding: NonNullable<AnalysisStep["grounding"]>, cont
     lines.push(`- Snapshot: ${grounding.snapshot}`);
     lines.push(`- Claims: ${grounding.claims.length > 0 ? grounding.claims.join(", ") : "none"}`);
     lines.push(`- Reason: ${grounding.reason}`);
+    const settings = grounding.settings ?? [];
+    if (settings.length > 0 && !contract.template) {
+        lines.push("- Settings (the vetted values of the procedure; another value is permitted when your summary states the reason):");
+        for (const setting of settings) {
+            const value = Array.isArray(setting.value) ? setting.value.join(", ") : String(setting.value);
+            lines.push(`  - ${setting.step}: ${setting.name} = ${value}${setting.source ? ` (${setting.source})` : ""}`);
+        }
+    }
     return lines.join("\n");
 }
 
