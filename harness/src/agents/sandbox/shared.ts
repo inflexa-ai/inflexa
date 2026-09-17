@@ -84,11 +84,25 @@ import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 
 /**
  * Tools every sandbox agent receives — sandbox-environment introspection,
- * library docs, and run inspection. Spread into each agent's
- * `meta.tools` so planner-facing metadata and the resolved tool record
+ * library docs, run inspection, and the knowledge template. Spread into each
+ * agent's `meta.tools` so planner-facing metadata and the resolved tool record
  * stay in sync. Keep minimal — only tools every agent genuinely needs.
+ *
+ * The knowledge template is here, not on a specialist, because the template
+ * follows the step: the planner binds a template to a step from the
+ * recommendation and routes that step to whichever specialist owns its data
+ * object. The tool acts only on the template the step grounding names, thus
+ * a step without a template costs nothing, and it attaches only when the
+ * embedder binds a knowledge client (see the registry below).
  */
-export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = ["listAvailablePackages", "listAvailableRefs", "resolveLibraryId", "queryDocs", "inspectRun"];
+export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = [
+    "listAvailablePackages",
+    "listAvailableRefs",
+    "resolveLibraryId",
+    "queryDocs",
+    "inspectRun",
+    "knowledgeTemplate",
+];
 
 /** Per-step coordinates the composition root threads through every mutate tool. */
 export interface SandboxStepCoords {
@@ -240,9 +254,10 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         if (seen.has(name)) continue;
         seen.add(name);
         const tool = registry[name];
-        // The knowledge template is the one optional member of the allowlist: an
-        // agent declares it, and it attaches only when the embedder binds a client
-        // and the agent can write. Absence is a normal state, not a wiring fault.
+        // The knowledge template is the one optional member of the allowlist: every
+        // agent lists it through BASE_SANDBOX_TOOLS, and it attaches only when the
+        // embedder binds a client and the agent can write. Absence is a normal
+        // state, not a wiring fault.
         if (name === "knowledgeTemplate" && !tool) continue;
         if (!tool) {
             throw new Error(`createSandboxAgent: unknown SandboxToolName "${name}" — ` + `agent meta references a tool with no harness implementation.`);

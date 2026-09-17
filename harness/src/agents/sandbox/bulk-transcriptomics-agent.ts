@@ -19,7 +19,7 @@ export const meta: AgentMeta = {
     ],
     suitableFor: ["bulk-rna-seq", "microarray"],
     skills: ["bulk-transcriptomics", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGeoDatasets", "knowledgeTemplate"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGeoDatasets"],
 };
 
 export function createBulkTranscriptomicsAgent(deps: SandboxAgentDeps): AgentDefinition {
