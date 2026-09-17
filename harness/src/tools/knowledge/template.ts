@@ -48,8 +48,16 @@ export interface KnowledgeTemplateDeps {
     readonly binding?: TemplateBinding;
 }
 
-/** The path of the decision record inside the step. The existing write-file provenance hashes it. */
-export const DECISION_RECORD_PATH = "output/decision_record.json";
+/**
+ * The path of the decision record of one rendered script inside the step:
+ * `output/decision_record_<script stem>.json`. One record per render, thus a
+ * step that renders two scripts (an adjusted and an unadjusted fit) keeps
+ * both records. The existing write-file provenance hashes each record.
+ */
+export function decisionRecordPath(scriptFile: string): string {
+    const stem = scriptFile.replace(/\.[A-Za-z0-9]+$/, "");
+    return `output/decision_record_${stem}.json`;
+}
 
 /** One bound slot as the decision record keeps it. */
 export interface BoundSlotRecord {
@@ -161,7 +169,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             "The briefing lists the slots of the template and the values the plan binds. " +
             "Send the template id and the slot values only: the file paths of your inputs (absolute `/<analysisId>/...` paths), the column names, the levels of the contrast, and the design. " +
             "A bound value rides into the script as it is; send it unchanged, or omit it. To change a bound value, send the new value and add an `overrides` entry with the slot and the reason. A changed value without an override is refused before the service call. " +
-            "Do not write the script yourself. The tool writes `scripts/<template>.R` or `scripts/<template>.py` and `output/decision_record.json` (the template, the snapshot, each slot with its source, the bound slots, the overrides, the environment match, and the citations), then you run the script with `execute_command` using the command in `run_with`. " +
+            "Do not write the script yourself. The tool writes `scripts/<template>.R` or `scripts/<template>.py` and `output/decision_record_<script>.json`, one record per rendered script (the template, the snapshot, each slot with its source, the bound slots, the overrides, the environment match, and the citations), then you run the script with `execute_command` using the command in `run_with`. " +
             "A slot value the template refuses comes back as `match: rejected` with the slot and the permitted values; correct it and call again. " +
             "A change the slots do not cover: use `edit_file` on a line marked `# [adaptable: ...]` in the rendered script, and keep the edit small. " +
             "`match: unavailable` means the service did not answer; then write the script yourself as you would without this tool.",
@@ -206,7 +214,8 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             // A rendered answer carries `ok: true`; the two refusals carry `match` and no `ok`.
             if (!("ok" in answer)) return ok(answer);
 
-            const scriptPath = `scripts/${script_name ?? `${answer.template.id}.${answer.template.language === "R" ? "R" : "py"}`}`;
+            const scriptFile = script_name ?? `${answer.template.id}.${answer.template.language === "R" ? "R" : "py"}`;
+            const scriptPath = `scripts/${scriptFile}`;
             const write = (path: string, content: string) =>
                 deps.mutator.writeFile({
                     path,
@@ -232,7 +241,7 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
                 return [{ slot, plan_value: value, new_value: sent, reason }];
             });
             const record = { ...answer.decision_record, script_path: scriptWrite.path, bound_slots: boundSlots, settings_overrides: settingsOverrides };
-            const recordWrite = await write(DECISION_RECORD_PATH, `${JSON.stringify(record, null, 2)}\n`);
+            const recordWrite = await write(decisionRecordPath(scriptFile), `${JSON.stringify(record, null, 2)}\n`);
             if (recordWrite.status !== "ok") return ok({ status: "write_refused", path: recordWrite.path, reason: recordWrite.status });
 
             return ok({
