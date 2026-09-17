@@ -14,13 +14,14 @@
  * identifier that does not parse as a UniProt accession or an AlphaFold DB id
  * gives 400 with an `Invalid identifier format` body. A well-formed accession
  * that AlphaFold holds no model for gives 404 with an empty object. Both are
- * the same outcome for a caller, and `isUnexpectedApiError` classifies each
- * `http_status` in the 4xx range as expected, thus one branch answers both.
+ * the same outcome for a caller, thus one branch answers both. Only these two
+ * codes mean absence. A different 4xx, such as a 403 refusal, throws, because
+ * `found: false` tells the agent to report the absence and not to retry.
  */
 
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
+import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
 
 const ALPHAFOLD_BASE = "https://alphafold.ebi.ac.uk/api/prediction";
 
@@ -57,7 +58,8 @@ export type AlphaFoldPrediction = z.infer<typeof AlphaFoldPredictionSchema>;
  * Fetch the AlphaFold structure prediction for one UniProt accession.
  *
  * Gives `null` when AlphaFold holds no model for the accession, and `null` for
- * an identifier it cannot parse. When the array holds more than one entry —
+ * an identifier it cannot parse. Throws on each other failure. When the array
+ * holds more than one entry —
  * the isoforms of one canonical accession — the entry whose own
  * `uniprotAccession` matches the queried accession wins. A query that names no
  * exact isoform falls back to the first entry, which AlphaFold orders
@@ -68,8 +70,8 @@ export async function fetchAlphaFoldPrediction(uniprotAccession: string): Promis
     const res = await apiFetchValidated(`${ALPHAFOLD_BASE}/${encodeURIComponent(accession)}`, z.array(AlphaFoldPredictionSchema));
 
     if (res.isErr()) {
-        if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
-        return null;
+        if (isAbsence(res.error)) return null;
+        throw new Error(describeApiError(res.error));
     }
 
     const entries = res.value;
@@ -77,4 +79,8 @@ export async function fetchAlphaFoldPrediction(uniprotAccession: string): Promis
 
     const exact = entries.find((entry) => entry.uniprotAccession.toUpperCase() === accession.toUpperCase());
     return exact ?? entries[0]!;
+}
+
+function isAbsence(e: ApiError): boolean {
+    return e.type === "http_status" && (e.status === 400 || e.status === 404);
 }

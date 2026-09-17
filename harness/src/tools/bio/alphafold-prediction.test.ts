@@ -113,6 +113,13 @@ describe("alphafoldPrediction — an upstream failure", () => {
         const { ctx } = makeToolContext();
         await expect(alphafoldPredictionTool.execute({ uniprotAccession: "P38398" }, ctx)).rejects.toThrow();
     });
+
+    it("throws on a 403, because a refusal is not an absence", async () => {
+        stubResponse(403, "<!doctype html><title>403</title>403 Forbidden");
+
+        const { ctx } = makeToolContext();
+        await expect(alphafoldPredictionTool.execute({ uniprotAccession: "P38398" }, ctx)).rejects.toThrow("HTTP 403");
+    });
 });
 
 describe("alphafoldPrediction — describeCall", () => {

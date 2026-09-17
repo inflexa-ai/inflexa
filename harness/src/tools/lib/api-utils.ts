@@ -49,6 +49,10 @@ export type ApiError =
 // HTML body. That answer is transient, thus a retry gets the real payload.
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
+// AlphaFold DB answers 403 to the default User-Agent of the runtime (`node`,
+// `Bun/<version>`, or none), and a descriptive value passes.
+export const HARNESS_USER_AGENT = "inflexa-harness (+https://inflexa.ai)";
+
 /**
  * Fetch a URL with retry on 429/502/503/504, exponential backoff, and timeout.
  * `err` carries the structured failure; a non-ok HTTP status is reported as
@@ -62,6 +66,8 @@ const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
  *
  * Between two attempts the wait obeys `Retry-After` when the response carries it,
  * and every wait stays at or below `maxRetryDelayMs`.
+ *
+ * Each request sends `HARNESS_USER_AGENT`, unless `headers` sets a User-Agent.
  */
 export function apiFetch<T = unknown>(url: string, options: ApiFetchOptions = {}): ResultAsync<T, ApiError> {
     return new ResultAsync(runFetch<T>(url, options));
@@ -142,13 +148,16 @@ async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Resul
         parseAs = "json",
     } = options;
 
+    const requestHeaders = new Headers(headers);
+    if (!requestHeaders.has("user-agent")) requestHeaders.set("User-Agent", HARNESS_USER_AGENT);
+
     let lastError = "";
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             const res = await fetch(url, {
                 method,
-                headers,
+                headers: requestHeaders,
                 body,
                 signal: AbortSignal.timeout(timeoutMs),
             });

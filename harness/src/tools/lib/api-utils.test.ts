@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { z } from "zod";
 
-import { apiFetchValidated, describeApiError, isUnexpectedApiError, parseWireNumber, zWireNumber } from "./api-utils.js";
+import { HARNESS_USER_AGENT, apiFetch, apiFetchValidated, describeApiError, isUnexpectedApiError, parseWireNumber, zWireNumber } from "./api-utils.js";
 
 const realFetch = globalThis.fetch;
 
@@ -206,6 +206,36 @@ describe("apiFetchValidated", () => {
         // shortens the wait to nothing and the retry hammers a throttled upstream.
         expect(waits).toEqual([100]);
         expect(res.isOk()).toBe(true);
+    });
+});
+
+describe("apiFetch — the User-Agent", () => {
+    function recordHeaders(): Headers[] {
+        const seen: Headers[] = [];
+        globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+            seen.push(new Headers(init?.headers));
+            return json({});
+        }) as unknown as typeof fetch;
+        return seen;
+    }
+
+    it("names the harness when the caller sets no User-Agent", async () => {
+        const seen = recordHeaders();
+
+        const res = await apiFetch("https://example.test/x", { headers: { Accept: "application/json" } });
+
+        expect(res.isOk()).toBe(true);
+        expect(seen[0]?.get("user-agent")).toBe(HARNESS_USER_AGENT);
+        expect(seen[0]?.get("accept")).toBe("application/json");
+    });
+
+    it("keeps the User-Agent of the caller, in any letter case", async () => {
+        const seen = recordHeaders();
+
+        const res = await apiFetch("https://example.test/x", { headers: { "user-agent": "inflexa-test/1.0" } });
+
+        expect(res.isOk()).toBe(true);
+        expect(seen[0]?.get("user-agent")).toBe("inflexa-test/1.0");
     });
 });
 
