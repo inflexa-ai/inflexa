@@ -11,11 +11,13 @@
  * resources, and the step budget come from the data profile, and the planner
  * adds them.
  *
- * The fold is fixed: one QC step, one differential expression step that
- * holds the filter, the normalization, the design, the test, the shrinkage,
- * and the multiple testing (the templates cover the same span), one
- * enrichment step on its own track, and one report step. A group with no
- * step in the procedure is absent from the skeleton.
+ * The fold is fixed: one cohort assembly step when the procedure holds one
+ * (the sample exclusions and the sum of technical replicates, before any
+ * other step reads the counts), one QC step, one differential expression
+ * step that holds the filter, the normalization, the design, the test, the
+ * shrinkage, and the multiple testing (the templates cover the same span),
+ * one enrichment step on its own track, and one report step. A group with
+ * no step in the procedure is absent from the skeleton.
  *
  * The central step of a group names the method of the skeleton step, and it
  * gives the alternatives, the template, and the environment: an alternative
@@ -74,6 +76,7 @@ const GROUPS: readonly {
     readonly steps: readonly string[];
     readonly name: string;
 }[] = [
+    { id: "T0S1", track: "T1", step_type: "data_preparation", agent: "bulk-transcriptomics-agent", steps: ["cohort_assembly"], name: "Cohort assembly" },
     { id: "T1S1", track: "T1", step_type: "qc", agent: "bulk-transcriptomics-agent", steps: ["qc_sample_structure"], name: "Sample structure QC" },
     {
         id: "T1S2",
@@ -104,12 +107,14 @@ const GROUPS: readonly {
 ];
 
 /**
- * The dependencies of each group. A group depends on the QC, on the
- * differential expression when its input is a results table, and the report
- * depends on every group that is present.
+ * The dependencies of each group. The QC depends on the cohort assembly when
+ * one is present, a group depends on the QC, on the differential expression
+ * when its input is a results table, and the report depends on every group
+ * that is present.
  */
 const DEPENDS: Readonly<Record<string, readonly string[]>> = {
-    T1S1: [],
+    T0S1: [],
+    T1S1: ["T0S1"],
     T1S2: ["T1S1"],
     T2S1: ["T1S2"],
     T2S2: ["T1S2", "T1S1"],
@@ -181,16 +186,18 @@ function stepCaveats(step: ProcedureStep): string[] {
     if (step.unrealized) {
         // The knowledge covers the step and no vetted script does: the plan says so, and it invents no template.
         const why = step.unrealized.templates.map((entry) => `${entry.template}: ${entry.why}`).join("; ");
-        caveats.push(`no vetted template realizes ${step.method?.label ?? step.step} for this design (${why || "the method lists no template for the step"}); the step runs without a template of the service`);
+        caveats.push(
+            `no vetted template realizes ${step.method?.label ?? step.step} for this design (${why || "the method lists no template for the step"}); the step runs without a template of the service`,
+        );
     }
     return caveats;
 }
 
-/** The present dependencies of a group; a group whose own dependency is absent falls back to the QC. */
+/** The present dependencies of a group; a group whose own dependency is absent falls back to the QC, and the two first groups to nothing. */
 function dependsOn(id: string, kept: ReadonlySet<string>): string[] {
     const present = (DEPENDS[id] ?? []).filter((dependency) => kept.has(dependency));
     if (present.length > 0) return [...new Set(present)];
-    return id !== "T1S1" && kept.has("T1S1") ? ["T1S1"] : [];
+    return id !== "T0S1" && id !== "T1S1" && kept.has("T1S1") ? ["T1S1"] : [];
 }
 
 export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonStep[] {
