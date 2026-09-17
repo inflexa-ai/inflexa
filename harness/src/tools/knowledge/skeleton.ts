@@ -1,8 +1,8 @@
 /**
  * The plan skeleton: the procedure of the service folded into the steps of a
- * plan, with the agent, the packages, the dependencies, the constraints, the
- * caveats, the alternatives, the disputed sides, the forbidden methods, the
- * environment, and the grounding of each step filled from the answer. It is
+ * plan, with the agent, the packages, the dependencies, the caveats, the
+ * alternatives, the disputed sides, the forbidden methods, the environment,
+ * and the grounding of each step filled from the answer. It is
  * the one representation the planner receives: the procedure itself never
  * reaches the model, thus nothing the procedure holds may be lost here. A
  * small model edits a skeleton where it fails to compose a plan from a
@@ -23,8 +23,10 @@
  * gives the alternatives, the template, and the environment: an alternative
  * of a folded step (a normalization in the differential expression group)
  * is not a permitted replacement of the step method, and it stays out. The
- * settings, the constraints, the caveats, and the forbidden methods come
- * from every step of the group, each setting with the step it belongs to.
+ * settings, the caveats, and the forbidden methods come from every step of
+ * the group, each setting with the step it belongs to. A parameter is a
+ * setting of the grounding, never a constraint of the step: the value is the
+ * vetted default, and the agent can state another value with its reason.
  */
 
 import type { GroundingSetting } from "../../schemas/workflow-state.js";
@@ -45,7 +47,6 @@ export interface SkeletonStep {
     readonly agent: string;
     readonly packages: readonly string[];
     readonly depends_on: readonly string[];
-    readonly constraints: readonly string[];
     readonly caveats: readonly string[];
     /** The other permitted methods of the step, from the central procedure step. */
     readonly alternatives: readonly SkeletonAlternative[];
@@ -129,10 +130,6 @@ const DEPENDS: Readonly<Record<string, readonly string[]>> = {
     T1S3: ["T1S2", "T2S1", "T2S2", "T1S4", "T3S1", "T3S2", "T3S3", "T3S4", "T3S5", "T1S5", "T1S6"],
 };
 
-function renderValue(value: unknown): string {
-    return Array.isArray(value) ? value.map(String).join(", ") : String(value);
-}
-
 /** A parameter value as a setting: a scalar stays, a list becomes a list of strings, anything else its text. */
 function settingValue(value: unknown): GroundingSetting["value"] {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
@@ -167,8 +164,7 @@ function joinWithAnd(items: readonly string[]): string {
 /**
  * The caveats a step carries beside its warn flags. A parameter conflict, a
  * substitution, and a language limit each render as a caveat, never as a
- * constraint: a constraint is copied into the plan as a value, and none of
- * the three is a value.
+ * setting: a setting is a value, and none of the three is a value.
  */
 function stepCaveats(step: ProcedureStep): string[] {
     const caveats: string[] = [];
@@ -214,12 +210,6 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
         const packages = [
             ...new Set(steps.map((step) => (step as { package?: { name: string } }).package?.name).filter((name): name is string => name !== undefined)),
         ];
-        const constraints = steps.flatMap((step) =>
-            (step.parameters ?? []).map(
-                (parameter) =>
-                    `${step.step}: ${parameter.name} = ${renderValue(parameter.value)}${parameter.default_source ? ` (${parameter.default_source})` : ""}`,
-            ),
-        );
         const caveats = [...flags.filter((flag) => flag.severity === "warn").map((flag) => flag.message), ...steps.flatMap(stepCaveats)];
         const method = central?.method;
         // A rule covers the group when a step of the group carries one. A method
@@ -240,7 +230,6 @@ export function buildPlanSkeleton(answer: RecommendWithEnvironment): SkeletonSte
             agent: group.agent,
             packages,
             depends_on: dependsOn(group.id, keptIds),
-            constraints,
             caveats: hardFlag ? [hardFlag.message, ...caveats] : caveats,
             alternatives,
             ...(disputed ? { disputed: { rule: disputed.rule, sides: disputed.sides } } : {}),
