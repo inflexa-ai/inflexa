@@ -95,11 +95,13 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             "Fill the situation from the Data Context (the design, the replicate counts, the batch structure, the data state, the quality concerns); never send a sample name or a file path. " +
             `Example input: ${SITUATION_EXAMPLE}. ` +
             "The answer holds one representation: `plan_skeleton`, the plan steps with the id, the name, the track, the agent, the packages, the dependencies, " +
-            "the constraints, the caveats, the `alternatives`, the `forbids`, the `disputed` sides, the `environment`, and the `grounding` " +
+            "the caveats, the `alternatives`, the `forbids`, the `disputed` sides, the `environment`, and the `grounding` " +
             "(the status, the snapshot, the claim ids, the template, the `settings`, and the reason) filled. " +
             "`claims` holds one view per claim id the steps cite; cite a claim by its id, and never copy its text into the plan. " +
             "Read the answer this way. `match: applicable`: copy each skeleton step into `submit_plan` as it is, including `grounding.settings`, " +
             "then add the question, the acceptance criteria, the resources, and the step budget from the data profile. " +
+            "A skeleton step is the vetted default, not the only permitted method. When the design or the question does not fit its method, plan the step with your method: " +
+            "set `grounding.status: ungrounded`, keep the snapshot digest, cite no claim, and give the reason for the departure in `grounding.reason`. A departure the plan states is not a fault; a silent one is. " +
             "`match: flag`: a rule changes the outcome (for example no replication, or a batch confounded with the condition); " +
             "the skeleton step carries `status: flagged`, the rule id in its reason, and the flag message as its first caveat; obey the flag `outcome`. " +
             "`dropped` lists the steps the procedure removed because a flag removed inference; do not plan them. " +
@@ -109,7 +111,7 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
             "`match: unavailable`: the service did not answer; plan as usual and set `status: ungrounded`. " +
             "`match: rejected`: a field was invalid; the answer names the field and the permitted values, so correct the call once. " +
             "A step with `disputed` sides: choose one side and state the choice in the step. " +
-            "The `alternatives` of a step are also permitted methods; `forbids` names the method ids the rules forbid for the step. " +
+            "The `alternatives` of a step are also vetted methods; `forbids` names the method ids the rules forbid for the step, and a forbidden method stays forbidden. " +
             "A caveat is one of: a warn flag; a parameter conflict between two rules (the step omits that parameter, so state the value you choose and both rule ids); " +
             "a substitution (the template runs a substitute of the method of record, and the step method, package, and template are the substitute; the plan states it); " +
             "a language limit (the requested language has no template that realizes the method for this design; the step keeps the named template, and the plan states the limit). " +
