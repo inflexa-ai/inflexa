@@ -35,8 +35,22 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { FARM_LOCK_FILE, formatQuery, identityAddress, identityKey, identityOf, parseIdentityKey, readFarmLock, resolveQuery } from "@inflexa-ai/harness";
-import type { FarmLock, FarmResolution, PackageIdentity, PackageQuery, PackageRequestOutcome, PoolIndex } from "@inflexa-ai/harness";
+import {
+    EMPTY_IMAGE_BASE,
+    FARM_LOCK_FILE,
+    formatQuery,
+    IMAGE_PACKAGES_FILE,
+    identityAddress,
+    identityKey,
+    identityOf,
+    imageBaseOf,
+    parseIdentityKey,
+    readFarmLock,
+    readImagePackagesFile,
+    resolvePackage,
+    resolveQuery,
+} from "@inflexa-ai/harness";
+import type { FarmLock, FarmResolution, ImageBase, PackageIdentity, PackageQuery, PackageRequestOutcome, PackageSources, PoolIndex } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -541,7 +555,12 @@ export type RequestResolutionError =
           readonly type: "ambiguous_ecosystem";
           /** The identity key of each track that holds the spelling: Python first, then R. */
           readonly identities: readonly [string, string];
-          /** The head store directory of each track that holds the spelling: Python first, then R. */
+          /**
+           * What claims each track of the spelling, Python first, then R: the
+           * head store directory of the pool, or the runtime of the image for a
+           * base package that the pool does not hold. A caller renders these
+           * two, thus each side reads as the thing that holds the name.
+           */
           readonly candidates: readonly [string, string];
       };
 
@@ -1626,11 +1645,81 @@ function absentOutcome(query: PackageQuery, failure: RequestResolutionError): Pa
 }
 
 /**
+ * What claims one track of an ambiguous spelling: the head store directory of
+ * the pool, or the runtime of the image for a base package.
+ *
+ * The claim is total. An `ambiguous` answer states that the sources hold both
+ * identities, thus an identity that neither source holds is a broken rule of
+ * `resolvePackage`, and not a state that a refusal can report.
+ */
+function claimOf(graph: DepsGraph, image: ImageBase, identity: PackageIdentity): string {
+    const head = graph.byName[identity.track].get(identity.name)?.[0];
+    if (head !== undefined) return head;
+    if (image.index.has(identity)) return `the ${identity.track} runtime of the image (${image.runtimes[identity.track]})`;
+    throw new Error(`unreachable: an ambiguous answer names ${identityKey(identity)}, which neither the pool nor the image holds`);
+}
+
+/** The answer of the seam route for one query: a store directory of the pool, or a package of the image. */
+type LinkResolution =
+    | { readonly kind: "pool"; readonly answer: ResolvedRequest }
+    | { readonly kind: "image"; readonly version: string }
+    | { readonly kind: "refused"; readonly failure: RequestResolutionError };
+
+/**
+ * Resolve one query of the seam route over the graph and the base sets of the
+ * image.
+ *
+ * `resolvePackage` of the harness holds the rule, and the plan validation calls
+ * it too, thus `submit_plan` and this link give one answer for each entry. The
+ * host picks the version of a pool package. A package of the image links
+ * nothing, because its runtime loads it.
+ */
+function resolveLinkRequest(graph: DepsGraph, sources: PackageSources, query: PackageQuery): LinkResolution {
+    const resolution = resolvePackage(query, sources);
+    switch (resolution.kind) {
+        case "pool":
+            return pickVersion(graph, query, resolution.identity).match(
+                (answer): LinkResolution => ({ kind: "pool", answer }),
+                (failure): LinkResolution => ({ kind: "refused", failure }),
+            );
+        case "image":
+            return { kind: "image", version: resolution.version };
+        case "image_version":
+            // The image holds one version of a base package, thus a pin of a
+            // different version refuses, the same as a pin that the pool lacks.
+            return { kind: "refused", failure: { type: "unknown_version", version: query.version ?? resolution.held, available: [resolution.held] } };
+        case "ambiguous":
+            // The pair is Python first, because a caller renders the tracks in
+            // that order. A claim can be a runtime of the image, thus the claims
+            // come from both sources and not from the two graph shelves alone.
+            return {
+                kind: "refused",
+                failure: {
+                    type: "ambiguous_ecosystem",
+                    identities: [identityKey(resolution.python), identityKey(resolution.r)],
+                    candidates: [claimOf(graph, sources.image, resolution.python), claimOf(graph, sources.image, resolution.r)],
+                },
+            };
+        case "unknown":
+            return {
+                kind: "refused",
+                failure: { type: "unknown_distribution", ...(resolution.suggestion === undefined ? {} : { suggestion: identityKey(resolution.suggestion) }) },
+            };
+        default: {
+            const unreachable: never = resolution;
+            throw new Error(`unhandled package resolution: ${JSON.stringify(unreachable)}`);
+        }
+    }
+}
+
+/**
  * The farm-extension seam realization (`link_packages`): the queries of one
  * sandbox step in, one outcome for each query out, in the order of the queries.
  *
  * The seam runs in THIS process, beside the tool that calls it. It reads the
- * graph, it resolves each query against the pool, and it links what resolved.
+ * graph, it resolves each query against the pool and the base sets of the
+ * image, and it links what resolved to the pool. A package of the image is
+ * `present`, because its runtime loads it and no farm link exists for it.
  * Thus it starts no container, it opens no network connection, and it starts no
  * `inflexa` child: an acquisition is a host action, behind its own approval, and
  * it is never a step of a run.
@@ -1652,18 +1741,21 @@ export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string
         return queries.map((query) => ({ kind: "unavailable", spelling: query.spelling, reason }));
     }
     const graph = read.value;
+    // An absent record is a store from before the record, a normal state: the
+    // image base holds nothing, and the graph answers alone. A damaged record
+    // is a structural fault. It answers `unavailable` WITH its path, for the
+    // same reason as an unreadable graph: a false absence of `r:stats` sends
+    // the agent after an acquisition that no repository can give.
+    const record = readImagePackagesFile(join(storeRoot, IMAGE_PACKAGES_FILE));
+    if (record.isErr() && record.error.type === "record_invalid") {
+        const reason = `the image record ${record.error.recordPath} does not parse, thus the base packages of the image are unknown`;
+        return queries.map((query) => ({ kind: "unavailable", spelling: query.spelling, reason }));
+    }
+    // The two indexes are built one time for the batch, as the graph is read one time.
+    const sources: PackageSources = { pool: poolIndexOf(graph), image: record.isOk() ? imageBaseOf(record.value) : EMPTY_IMAGE_BASE };
 
-    const resolutions = queries.map((query) => ({ query, resolved: resolvePackageRequest(graph, query) }));
-    const roots = [
-        ...new Set(
-            resolutions.flatMap(({ resolved }) =>
-                resolved.match(
-                    (answer) => [answer.storeDir],
-                    () => [],
-                ),
-            ),
-        ),
-    ];
+    const resolutions = queries.map((query) => ({ query, resolved: resolveLinkRequest(graph, sources, query) }));
+    const roots = [...new Set(resolutions.flatMap(({ resolved }) => (resolved.kind === "pool" ? [resolved.answer.storeDir] : [])))];
 
     // The closure of the farm BEFORE the extension, which is what tells `present`
     // from `linked`. A batch that resolved nothing extends nothing, thus it reads
@@ -1671,9 +1763,16 @@ export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string
     const linkedAlready = roots.length === 0 ? new Set<string>() : readFarmClosure(analysisFarmPath(storeRoot, analysisId));
     const extended = roots.length === 0 ? null : await extendFarm({ storeRoot, analysisId, roots });
 
-    return resolutions.map(({ query, resolved }) =>
-        resolved.match(
-            (answer): PackageRequestOutcome => {
+    return resolutions.map(({ query, resolved }): PackageRequestOutcome => {
+        switch (resolved.kind) {
+            case "image":
+                // The image holds the package, thus nothing links, and the
+                // extension of the batch cannot refuse it.
+                return { kind: "present", spelling: query.spelling, version: resolved.version };
+            case "refused":
+                return absentOutcome(query, resolved.failure);
+            case "pool": {
+                const answer = resolved.answer;
                 if (extended === null || extended.isOk()) {
                     // The asked spelling rides back — the caller reads its own vocabulary.
                     return { kind: linkedAlready.has(answer.storeDir) ? "present" : "linked", spelling: query.spelling, version: answer.version };
@@ -1694,8 +1793,11 @@ export async function linkPackagesIntoFarm(storeRoot: string, analysisId: string
                           detail: describeFarmCompositionError(error),
                       }
                     : { kind: "unavailable", spelling: query.spelling, reason: describeFarmCompositionError(error) };
-            },
-            (failure) => absentOutcome(query, failure),
-        ),
-    );
+            }
+            default: {
+                const unreachable: never = resolved;
+                throw new Error(`unhandled link resolution: ${JSON.stringify(unreachable)}`);
+            }
+        }
+    });
 }

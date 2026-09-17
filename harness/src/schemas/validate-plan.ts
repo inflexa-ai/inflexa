@@ -15,7 +15,8 @@
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
-import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
+import { resolvePackage, type PackageResolution, type PackageSources } from "../sandbox/image-packages.js";
+import { formatQuery, identityKey, parseQuery, type PackageQuery, type ParseQueryError } from "../sandbox/package-identity.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 
@@ -46,6 +47,16 @@ export interface ValidatePlanOptions {
      * sandbox-creation clamp remains their backstop).
      */
     readonly perStepCeiling?: ResourceLimits;
+    /**
+     * The pool that the link pass reads, and the base sets of the image. When
+     * present, each package entry that parses resolves with `resolvePackage`,
+     * and a both-track name, a name that neither source holds, or a wrong pin
+     * of a base package is an error — the planner corrects it in its loop, and
+     * it does not meet the refusal at the launch. The planner passes the
+     * sources of its census. `execute_analysis` plan mode passes none, because
+     * its link pass resolves the stored plan itself.
+     */
+    readonly packages?: PackageSources;
 }
 
 /**
@@ -76,6 +87,40 @@ function describeParseError(stepId: string, entry: string, error: ParseQueryErro
             return (
                 `Step "${stepId}" pins "${entry}" with a specifier the link pass cannot honor — ` + `use a bare name, or name==version with one exact version`
             );
+    }
+}
+
+/**
+ * The issue for one parsed entry that does not resolve to one identity, or
+ * `null` for an entry that resolves. The words are the words of the link pass
+ * of the embedder, thus the planner reads at the submit what the launch would
+ * say.
+ *
+ * A pin of a pool package takes no part: the census holds the newest pin of
+ * each package only, thus the link pass stays the reader of that version. A
+ * pin of an image package compares, because the image holds one version.
+ */
+function describeResolution(stepId: string, entry: string, query: PackageQuery, resolution: PackageResolution): string | null {
+    switch (resolution.kind) {
+        case "pool":
+        case "image":
+            return null;
+        case "image_version":
+            return (
+                `Step "${stepId}" names "${entry}", but the image holds ${identityKey(resolution.identity)} at version ${resolution.held} only — ` +
+                `write the name with no version, or pin ==${resolution.held}`
+            );
+        case "ambiguous":
+            return (
+                `Step "${stepId}" names "${entry}", which the Python track and the R track both hold — ` +
+                `ask again for \`${formatQuery({ spelling: query.spelling, track: "python" })}\` ` +
+                `or \`${formatQuery({ spelling: query.spelling, track: "r" })}\``
+            );
+        case "unknown":
+            return resolution.suggestion === undefined
+                ? `Step "${stepId}" names "${entry}", which the pool does not hold — name the package as the census shows it, or leave it out`
+                : `Step "${stepId}" names "${entry}", which the pool does not hold — the pool holds "${resolution.suggestion.name}" ` +
+                      `(${identityKey(resolution.suggestion)}) — an R package name is case-sensitive, thus the two spellings are two names`;
     }
 }
 
@@ -176,11 +221,19 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
     // 6. Each package entry is a query of the one grammar. The validation IS
     //    the parse, thus no second reader of the grammar can disagree with the
     //    link pass. An absent array passes, because stored plans from before
-    //    the field carry none.
+    //    the field carry none. With the package sources, the query then
+    //    resolves by the rule that the link pass runs.
+    const sources = options?.packages;
     for (const step of plan.steps) {
         for (const entry of step.packages ?? []) {
             const parsed = parseQuery(entry);
-            if (parsed.isErr()) errors.push(describeParseError(step.id, entry, parsed.error));
+            if (parsed.isErr()) {
+                errors.push(describeParseError(step.id, entry, parsed.error));
+                continue;
+            }
+            if (!sources) continue;
+            const issue = describeResolution(step.id, entry, parsed.value, resolvePackage(parsed.value, sources));
+            if (issue !== null) errors.push(issue);
         }
     }
 

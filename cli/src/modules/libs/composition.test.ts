@@ -1040,6 +1040,109 @@ describe("linkPackagesIntoFarm", () => {
     });
 });
 
+describe("linkPackagesIntoFarm — the base sets of the image", () => {
+    /** Write an image record at the root of a store, with the base sets of the two runtimes. */
+    function writeImageRecord(root: string, rBase: string[] = ["grid", "stats"], pythonStdlib: string[] = ["json", "pickle"]): void {
+        writeFileSync(
+            join(root, "image-packages.json"),
+            JSON.stringify({
+                schema: 1,
+                image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "local", arch: "amd64" },
+                runtimes: { python: "3.12.3", r: "4.6.0", node: "24.8.0" },
+                system_tools: [],
+                node: [],
+                r_base: rBase,
+                python_stdlib: pythonStdlib,
+            }),
+        );
+    }
+
+    test("a base R package is present at the runtime version, and the farm links nothing", async () => {
+        const root = tempStore();
+        writeImageRecord(root);
+        const analysisId = randomUUIDv7();
+
+        const outcomes = await linkPackagesIntoFarm(root, analysisId, [{ spelling: "stats", track: "r" }]);
+
+        expect(outcomes).toEqual([{ kind: "present", spelling: "stats", version: "4.6.0" }]);
+        expect(existsSync(join(root, "farms", analysisId))).toBe(false);
+    });
+
+    test("a standard-library module is present, beside a pool package that links", async () => {
+        const root = tempStore();
+        writeImageRecord(root);
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "json" }, { spelling: "beta" }]);
+
+        expect(outcomes).toEqual([
+            { kind: "present", spelling: "json", version: "3.12.3" },
+            { kind: "linked", spelling: "beta", version: "0.4.1" },
+        ]);
+    });
+
+    test("a pin of a version that the runtime does not hold refuses, as a pool pin does", async () => {
+        const root = tempStore();
+        writeImageRecord(root);
+
+        const refused = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "stats", track: "r", version: "3.0.0" }]);
+        const pinned = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "stats", track: "r", version: "4.6.0" }]);
+
+        expect(refused).toEqual([{ kind: "absent", spelling: "stats", acquisitionPossible: true }]);
+        expect(pinned).toEqual([{ kind: "present", spelling: "stats", version: "4.6.0" }]);
+    });
+
+    // The R package `optparse` is in the pool, and Python lists `optparse` in
+    // its standard library. The pool ranks first, thus the image name of the
+    // other track does not make a spelling of the pool ambiguous.
+    test("a spelling that the pool resolves keeps that answer, although the image holds it in the other track", async () => {
+        const root = tempStore();
+        writeImageRecord(root, ["beta"]);
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "beta" }]);
+
+        expect(outcomes).toEqual([{ kind: "linked", spelling: "beta", version: "0.4.1" }]);
+    });
+
+    // The remedy of a two-track spelling is the prefix, and it holds when a
+    // claim is a runtime of the image. That track holds no store directory,
+    // thus a reader of the two graph shelves alone would lose that remedy.
+    test("a spelling that only the image holds in two tracks reports a collision whose claims name the runtimes", async () => {
+        const root = tempStore();
+        writeImageRecord(root, ["zeta"], ["zeta"]);
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "zeta" }]);
+
+        expect(outcomes).toHaveLength(1);
+        if (outcomes[0]?.kind !== "collision") throw new Error(`expected a collision, got ${JSON.stringify(outcomes[0])}`);
+        expect(outcomes[0].storeDirs).toEqual(["the python runtime of the image (3.12.3)", "the r runtime of the image (4.6.0)"]);
+        expect(outcomes[0].detail).toContain("python:zeta");
+        expect(outcomes[0].detail).toContain("r:zeta");
+    });
+
+    // A damaged record is a structural fault, and not a store from before the
+    // record. A false `absent` for `r:stats` sends the agent after an
+    // acquisition that no repository can give.
+    test("a damaged image record answers unavailable with its path, never a per-package absence", async () => {
+        const root = tempStore();
+        writeFileSync(join(root, "image-packages.json"), "{ not json");
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "stats", track: "r" }, { spelling: "beta" }]);
+
+        expect(outcomes.map((outcome) => outcome.kind)).toEqual(["unavailable", "unavailable"]);
+        for (const outcome of outcomes) {
+            if (outcome.kind === "unavailable") expect(outcome.reason).toContain("image-packages.json");
+        }
+    });
+
+    test("a store with no image record keeps the answer of the graph", async () => {
+        const root = tempStore();
+
+        const outcomes = await linkPackagesIntoFarm(root, randomUUIDv7(), [{ spelling: "stats", track: "r" }]);
+
+        expect(outcomes).toEqual([{ kind: "absent", spelling: "stats", acquisitionPossible: true }]);
+    });
+});
+
 // --- The durable first resolution ------------------------------------------------
 
 describe("the durable first resolution", () => {

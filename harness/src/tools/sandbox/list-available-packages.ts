@@ -25,20 +25,18 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "../../config/environment-stores.js";
-import {
-    identityAddress,
-    identityKey,
-    identityOf,
-    parseQuery,
-    resolveQuery,
-    type PackageIdentity,
-    type PoolIndex,
-    type Track,
-} from "../../sandbox/package-identity.js";
+import { identityKey, identityOf, parseQuery, poolIndexOver, resolveQuery, type PackageIdentity, type Track } from "../../sandbox/package-identity.js";
 import { capCodePoints, DETAIL_NEEDLE_MAX_LENGTH } from "../../loop/tool-detail.js";
 import { LIBS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import { readFarmLockFile, type FarmLock } from "../../sandbox/farm.js";
-import { IMAGE_PACKAGES_FILE, readImagePackagesFile, type ImagePackages } from "../../sandbox/image-packages.js";
+import {
+    EMPTY_IMAGE_BASE,
+    IMAGE_PACKAGES_FILE,
+    imageBaseOf,
+    readImagePackagesFile,
+    type ImagePackages,
+    type PackageSources,
+} from "../../sandbox/image-packages.js";
 
 /**
  * Where the lock lives when the host mounts the farm at the same path the
@@ -318,26 +316,14 @@ function renderListing(sections: readonly Section[], limit: number, bothTracks: 
 /** One row of a tracked section, with the identity that its track mints. */
 type Held = { readonly entry: SectionPackage; readonly section: string; readonly identity: PackageIdentity };
 
-/**
- * A {@link PoolIndex} over the rows of the tracked sections. The suggestion of
- * the ladder reads `rIdentitiesFoldingTo`, and the fold of an identity is its
- * store address — thus the census suggests exactly what the store holds.
- */
-function poolIndexOf(held: readonly Held[]): PoolIndex {
-    const keys = new Set(held.map((row) => identityKey(row.identity)));
-    // Keyed by the identity KEY, not by the address: two R sections can list
-    // one package, and a suggestion must count that package once. Two R
-    // identities of one address stay two entries, and the ladder then gives no
-    // suggestion, because a guess between them is a coin flip.
-    const rByKey = new Map<string, PackageIdentity>();
-    for (const row of held) {
-        if (row.identity.track !== "r") continue;
-        rByKey.set(identityKey(row.identity), row.identity);
+/** The identity of each row of a tracked section. An untracked row is not a package of a track, and it has none. */
+function trackedIdentities(sections: readonly Section[]): PackageIdentity[] {
+    const identities: PackageIdentity[] = [];
+    for (const { track, packages } of sections) {
+        if (track === undefined) continue;
+        for (const pkg of packages) identities.push(identityOf(track, pkg.name));
     }
-    return {
-        has: (identity) => keys.has(identityKey(identity)),
-        rIdentitiesFoldingTo: (fold) => [...rByKey.values()].filter((identity) => identityAddress(identity) === fold),
-    };
+    return identities;
 }
 
 /**
@@ -395,7 +381,7 @@ export function queryPackages(rawSections: readonly Section[], { names, query, l
                 held.push({ entry: pkg, section: section.title, identity: identityOf(section.track, pkg.name) });
             }
         }
-        const pool = poolIndexOf(held);
+        const pool = poolIndexOver(held.map((row) => row.identity));
         const bySection = new Map<string, Held>();
         for (const row of held) if (!bySection.has(identityKey(row.identity))) bySection.set(identityKey(row.identity), row);
 
@@ -481,7 +467,27 @@ export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "farmLockFil
  * distinguishable from an inventory that holds nothing, and a caller that
  * cannot tell them apart reports a present package as absent.
  */
-export type InventoryRead = { readonly kind: "sections"; readonly sections: readonly Section[] } | { readonly kind: "unavailable"; readonly reason?: string };
+export type InventoryRead =
+    | {
+          readonly kind: "sections";
+          readonly scope: InventoryScope;
+          readonly sections: readonly Section[];
+          /**
+           * The two sources that a package entry resolves against: the tracked
+           * rows of the sections, and the base sets of the image record that
+           * merged into them. The planner resolves its submit over these, thus
+           * no caller rebuilds an index and drops the image with no signal.
+           */
+          readonly sources: PackageSources;
+      }
+    | { readonly kind: "unavailable"; readonly scope: InventoryScope; readonly reason?: string };
+
+/**
+ * The vantage of one read. `pool` is the pool-scope reader of a conversation
+ * or planning surface: what the store holds. `farm` is the lock of one farm:
+ * what a step can import now.
+ */
+export type InventoryScope = "pool" | "farm";
 
 /**
  * Read the inventory of the bound source: the pool-scope reader when the
@@ -501,16 +507,22 @@ export async function readInventorySections(deps: ListAvailablePackagesDeps): Pr
     // There is no logger here, thus an invalid record cannot be reported — the
     // schema of the harness refuses it, and the report degrades to the tracks
     // that it could read.
-    const recordSections: Section[] = readImagePackagesFile(deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE)
-        .map(imageSections)
-        .unwrapOr([]);
+    const record = readImagePackagesFile(deps.imagePackagesFile ?? DEFAULT_IMAGE_PACKAGES_FILE).unwrapOr(undefined);
+    const recordSections: Section[] = record === undefined ? [] : imageSections(record);
+    const image = record === undefined ? EMPTY_IMAGE_BASE : imageBaseOf(record);
+    const read = (scope: InventoryScope, sections: readonly Section[]): InventoryRead => ({
+        kind: "sections",
+        scope,
+        sections: [...sections, ...recordSections],
+        sources: { pool: poolIndexOver(trackedIdentities(sections)), image },
+    });
     if (deps.readPoolInventory) {
         const pool = await deps.readPoolInventory().catch((cause): PoolInventoryRead => ({
             kind: "unavailable",
             reason: cause instanceof Error ? cause.message : String(cause),
         }));
-        if (pool.kind === "unavailable") return { kind: "unavailable", reason: pool.reason };
-        return { kind: "sections", sections: [...pool.sections, ...recordSections] };
+        if (pool.kind === "unavailable") return { kind: "unavailable", scope: "pool", reason: pool.reason };
+        return read("pool", pool.sections);
     }
     // Both farm container paths are tried when the host injects none, because
     // the path keys on the declared toolchain and this read carries none.
@@ -521,8 +533,30 @@ export async function readInventorySections(deps: ListAvailablePackagesDeps): Pr
     }
     // A lock that no candidate path holds is an absence with no reason to
     // report: the read never got far enough to learn one.
-    if (lock === null) return { kind: "unavailable" };
-    return { kind: "sections", sections: [...lockSections(lock), ...recordSections] };
+    if (lock === null) return { kind: "unavailable", scope: "farm" };
+    return read("farm", lockSections(lock));
+}
+
+/**
+ * Answer a packages query from one inventory read. An unreadable inventory is
+ * an expected environment state — an `available: false` data variant tells the
+ * caller the set is UNKNOWN, WITH the reason: without it, a structural fault
+ * (a damaged dependency graph) reads as a transient flake, and the caller
+ * retries for ever. The note obeys the vantage of the source, because a
+ * conversation surface has no runtime to probe.
+ *
+ * The tool answers through here, and so does the planner, which reads the
+ * inventory one time for its seed and for its submit index.
+ *
+ * @param read One inventory read, which carries its own scope.
+ * @param input The query of the call.
+ */
+export function answerPackagesQuery(read: InventoryRead, input: PackagesQuery): PackagesResult {
+    if (read.kind === "unavailable") {
+        const note = read.scope === "pool" ? POOL_UNAVAILABLE_NOTE : UNAVAILABLE_NOTE;
+        return { available: false, content: read.reason === undefined ? note : `${note} The reason: ${read.reason}.` };
+    }
+    return queryPackages(read.sections, input);
 }
 
 /**
@@ -596,19 +630,6 @@ export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps 
             if (language !== undefined) return `${language} packages`;
             return "full package list";
         },
-        execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
-            const read = await readInventorySections(deps);
-            // An unreadable inventory is an expected environment state — model it as an
-            // `available: false` data variant telling the caller the set is UNKNOWN,
-            // WITH the reason: without it, a structural fault (a damaged dependency
-            // graph) reads as a transient flake, and the caller retries for ever.
-            // The note follows the vantage of the bound source, because a
-            // conversation surface has no runtime to probe.
-            if (read.kind === "unavailable") {
-                const note = readPoolInventory ? POOL_UNAVAILABLE_NOTE : UNAVAILABLE_NOTE;
-                return ok({ available: false, content: read.reason === undefined ? note : `${note} The reason: ${read.reason}.` });
-            }
-            return ok(queryPackages(read.sections, input));
-        },
+        execute: async (input): Promise<Result<PackagesResult, ToolError>> => ok(answerPackagesQuery(await readInventorySections(deps), input)),
     });
 }
