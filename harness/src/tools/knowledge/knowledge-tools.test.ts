@@ -178,7 +178,8 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.packages).toEqual(["DESeq2"]);
         expect(analysis.depends_on).toEqual(["T1S1"]);
         expect(analysis.environment).toEqual({ package: { name: "DESeq2", present: true, version: "1.52.0" } });
-        expect(analysis.constraints).toEqual(["differential_expression: alpha = 0.05 (doi:10.1186/s13059-014-0550-8)"]);
+        // A parameter is a setting of the grounding, never a constraint of the step.
+        expect("constraints" in analysis).toBe(false);
         expect(analysis.alternatives).toEqual([{ method: "M-0003", label: "Alternative count-model F-test", when: "robustness", rules: ["R-0001@e7d0"] }]);
         expect(analysis.forbids).toEqual([]);
         expect(analysis.disputed).toBeUndefined();
@@ -228,10 +229,9 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
             { step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" },
             { step: "multiple_testing", name: "adjust_method", value: "BH" },
         ]);
-        expect(analysis.constraints).toEqual(["differential_expression: alpha = 0.05 (doi:10.1186/s13059-014-0550-8)", "multiple_testing: adjust_method = BH"]);
     });
 
-    it("renders a parameter conflict as a caveat that names both rules, never as a constraint", async () => {
+    it("renders a parameter conflict as a caveat that names both rules, never as a setting", async () => {
         const { client } = fakeKnowledgeClient();
         const tool = createKnowledgeRecommendTool({ client });
         const { ctx } = makeToolContext();
@@ -239,8 +239,8 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         if (out.match !== "applicable") throw new Error(out.match);
         const analysis = out.plan_skeleton.find((step) => step.id === "T1S2")!;
         expect(analysis.caveats).toEqual(["multiple_testing: independent_filtering conflicts between R-0010@2b3c and R-0166@4d5e"]);
-        expect(analysis.constraints.some((constraint) => constraint.includes("independent_filtering"))).toBe(false);
-        expect(analysis.constraints).toEqual(["differential_expression: alpha = 0.05 (doi:10.1186/s13059-014-0550-8)"]);
+        expect(analysis.grounding.settings.some((setting) => setting.name === "independent_filtering")).toBe(false);
+        expect(analysis.grounding.settings).toEqual([{ step: "differential_expression", name: "alpha", value: 0.05, source: "doi:10.1186/s13059-014-0550-8" }]);
     });
 
     it("names the substitute as the step method and renders the substitution as a caveat", async () => {
@@ -259,7 +259,6 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(enrichment.packages).toEqual(["decoupler"]);
         expect(enrichment.grounding.template).toBe("tpl-decoupler-scores@1.0.0");
         expect(enrichment.caveats).toEqual(["Per-sample activity scores with a two-sample test stands in for Per-sample set scores with a linear model"]);
-        expect(enrichment.constraints).toEqual(["enrichment: gene_set_collection = msigdb_hallmark_human"]);
         expect(enrichment.grounding.settings).toEqual([{ step: "enrichment", name: "gene_set_collection", value: "msigdb_hallmark_human" }]);
     });
 
@@ -275,7 +274,6 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(analysis.caveats).toEqual([
             "the requested language has no template that realizes Count-model Wald test with effect shrinkage for this design; the R template is named",
         ]);
-        expect(analysis.constraints).toEqual([]);
         expect(analysis.grounding.settings).toEqual([]);
     });
 
@@ -356,7 +354,9 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(assembly.agent).toBe("bulk-transcriptomics-agent");
         expect(assembly.depends_on).toEqual([]);
         expect(assembly.grounding.template).toBe("tpl-cohort-assembly@1.0.0");
-        expect(assembly.constraints).toEqual(["cohort_assembly: unit_count = counted_per_group_from_the_sample_table_after_the_step (rule:R-0194)"]);
+        expect(assembly.grounding.settings).toEqual([
+            { step: "cohort_assembly", name: "unit_count", value: "counted_per_group_from_the_sample_table_after_the_step", source: "rule:R-0194" },
+        ]);
         expect(skeleton[1]!.depends_on).toEqual(["T0S1"]);
         expect(skeleton[2]!.depends_on).toEqual(["T1S1"]);
         // Without the step the QC depends on nothing, as before.
