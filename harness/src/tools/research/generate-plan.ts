@@ -509,7 +509,10 @@ interface RepairedClaim {
  * snapshot digest of the answer and restores a dropped template: the digest
  * is what pins the step to the snapshot, and the template is what the host
  * binds the contract to. A step whose snapshot is `none` states that it does
- * not use the answer, and it stays as it is.
+ * not use the answer, and it stays as it is. A step whose status is
+ * `ungrounded` states a departure from the answer: the digest is stamped,
+ * and no template is restored, because the template realizes the method the
+ * step left.
  *
  * On every step, a claim id the answer did not return is repaired when the
  * answer holds one claim of the same rule: one snapshot holds one version of
@@ -543,7 +546,7 @@ function restoreSkeletonGrounding(
         if (typeof step !== "object" || step === null) return step;
         const { id, grounding } = step as { id?: unknown; grounding?: unknown };
         if (typeof grounding !== "object" || grounding === null) return step;
-        const current = grounding as { template?: unknown; snapshot?: unknown; claims?: unknown };
+        const current = grounding as { status?: unknown; template?: unknown; snapshot?: unknown; claims?: unknown };
         const label = typeof id === "string" ? id : String(index);
         let next = current;
         const source = typeof id === "string" ? memory.steps.get(id) : undefined;
@@ -552,7 +555,7 @@ function restoreSkeletonGrounding(
                 stamped.push(label);
                 next = { ...next, snapshot: source.grounding.snapshot };
             }
-            if (next.template === undefined && source.grounding.template !== undefined) {
+            if (next.template === undefined && source.grounding.template !== undefined && current.status !== "ungrounded") {
                 restored.push(label);
                 next = { ...next, template: source.grounding.template };
             }
