@@ -39,6 +39,7 @@
 import {
     context,
     createContextKey,
+    propagation,
     trace,
     type Attributes,
     type Context,
@@ -47,6 +48,7 @@ import {
     type Tracer,
     type TracerOptions,
 } from "@opentelemetry/api";
+import { suppressTracing } from "@opentelemetry/core";
 import {
     ParentBasedSampler,
     SamplingDecision,
@@ -127,6 +129,20 @@ export function stableSpan(dbosName: string, name: string, attributes: Attribute
     if ((span as Partial<ReadableSpan>).name !== dbosName) return;
     span.updateName(name);
     span.setAttributes(attributes);
+}
+
+/**
+ * Send a request to sandbox-server with the active trace context in its
+ * headers and with tracing suppressed, so the host's HTTP instrumentation
+ * writes no client span. Sandbox-server records no spans and echoes the exec
+ * request's `traceparent` on its callbacks to the host, so a client span would
+ * show the host calling itself; the step span around the call already covers it.
+ */
+export function untracedFetch(fetchImpl: typeof fetch, url: string, init: RequestInit & { headers: Record<string, string> }): Promise<Response> {
+    const active = context.active();
+    const headers = { ...init.headers };
+    propagation.inject(active, headers);
+    return context.with(suppressTracing(active), () => fetchImpl(url, { ...init, headers }));
 }
 
 /**

@@ -57,7 +57,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { ATTR_INFLEXA_ATTEMPT, ATTR_INFLEXA_EXEC_ID, stableSpan } from "../lib/otel-spans.js";
+import { ATTR_INFLEXA_ATTEMPT, ATTR_INFLEXA_EXEC_ID, stableSpan, untracedFetch } from "../lib/otel-spans.js";
 import { digestBody } from "./digest.js";
 import { signCallback, verifyCallback } from "./hmac.js";
 import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
@@ -137,7 +137,7 @@ async function pullExecResult(fetchImpl: typeof fetch, ref: SandboxRef, execId: 
         // cached result is replayed without re-executing the body.
         const reqTimestamp = Math.floor(Date.now() / 1000);
         const reqSignature = signCallback({ execId, body: "", timestamp: reqTimestamp, secret: ref.callbackSecret });
-        const res = await fetchImpl(`http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}`, {
+        const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}`, {
             method: "GET",
             headers: {
                 "x-sandbox-signature": reqSignature,
@@ -379,7 +379,7 @@ async function pollExecOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: st
         // replayed without re-executing the body.
         const reqTimestamp = Math.floor(Date.now() / 1000);
         const reqSignature = signCallback({ execId, body: "", timestamp: reqTimestamp, secret: ref.callbackSecret });
-        const res = await fetchImpl(`http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
+        const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
             method: "GET",
             headers: {
                 "x-sandbox-signature": reqSignature,

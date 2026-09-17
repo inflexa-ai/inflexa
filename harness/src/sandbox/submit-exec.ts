@@ -19,7 +19,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { ATTR_INFLEXA_EXEC_ID, stableSpan } from "../lib/otel-spans.js";
+import { ATTR_INFLEXA_EXEC_ID, stableSpan, untracedFetch } from "../lib/otel-spans.js";
 import { EXEC_STREAM_BYTE_CAP } from "../tools/workspace/result-bounds.js";
 import { signCallback } from "./hmac.js";
 import type { SandboxRef, SubmitExecBody } from "./types.js";
@@ -50,7 +50,7 @@ async function postExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitEx
         const raw = JSON.stringify(body);
         const timestamp = Math.floor(Date.now() / 1000);
         const signature = signCallback({ execId: body.execId, body: raw, timestamp, secret: ref.callbackSecret });
-        const res = await fetchImpl(`http://${ref.host}:${ref.port}/exec`, {
+        const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
             method: "POST",
             headers: {
                 "content-type": "application/json",
