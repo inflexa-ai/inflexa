@@ -174,6 +174,17 @@ describe("initOtel", () => {
         });
     });
 
+    it("carries the SDK identity under the host's values, and the environment still wins", () => {
+        process.env.OTEL_RESOURCE_ATTRIBUTES = "service.version=9.9.9";
+        initOtel({ serviceName: "cortex-test", serviceVersion: "1.2.3" });
+        expect(registeredResourceAttributes()).toMatchObject({
+            "telemetry.sdk.language": "nodejs",
+            "telemetry.sdk.name": "opentelemetry",
+            "service.name": "cortex-test",
+            "service.version": "9.9.9",
+        });
+    });
+
     it("defaults the service name to cortex", () => {
         initOtel();
         expect(registeredResourceAttributes()).toMatchObject({ "service.name": "cortex" });

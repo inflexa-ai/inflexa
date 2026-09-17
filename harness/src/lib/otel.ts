@@ -21,11 +21,13 @@
  *          to their record sites. Every instrument binds lazily to the
  *          provider registered here.
  *
- * Resource: the host's `serviceName` / `serviceVersion` merged with the SDK
- *           env detector (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`);
- *           the environment wins on a conflict, so a deployment can set
+ * Resource: the SDK's default resource (`telemetry.sdk.*`), under the host's
+ *           `serviceName` / `serviceVersion`, under the SDK env detector
+ *           (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`). A later layer
+ *           wins on a conflict, so a deployment can set
  *           `deployment.environment.name` or override the service name without
- *           a code change. Traces and metrics share the one resource.
+ *           a code change, and the default `unknown_service` name never
+ *           reaches an export. Traces and metrics share the one resource.
  *
  * Note: OTEL's instrumentation-http patches node:http but does not cover
  *        Hono's request handling or Node 22's undici-based globalThis.fetch,
@@ -44,7 +46,7 @@ import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { BatchSpanProcessor, type SpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-import { detectResources, envDetector, resourceFromAttributes, type Resource } from "@opentelemetry/resources";
+import { defaultResource, detectResources, envDetector, resourceFromAttributes, type Resource } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
 
 /** The SDK's own default when neither the host nor the environment says otherwise. */
@@ -89,9 +91,13 @@ function buildResource(options: InitOtelOptions): Resource {
         [ATTR_SERVICE_NAME]: options.serviceName ?? "cortex",
     };
     if (options.serviceVersion) manual[ATTR_SERVICE_VERSION] = options.serviceVersion;
-    // `merge` gives precedence to the argument: the environment overrides the
-    // host's values, which is the OTel SDK convention for env configuration.
-    return resourceFromAttributes(manual).merge(detectResources({ detectors: [envDetector] }));
+    // `merge` gives precedence to the argument. A provider that gets an explicit
+    // resource does not add the SDK default itself, so it is the bottom layer here.
+    // The environment overrides the host's values, which is the OTel SDK
+    // convention for env configuration.
+    return defaultResource()
+        .merge(resourceFromAttributes(manual))
+        .merge(detectResources({ detectors: [envDetector] }));
 }
 
 /**
