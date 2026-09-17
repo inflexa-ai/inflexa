@@ -86,7 +86,9 @@ export const SituationFieldsSchema = z.object({
         .int()
         .min(0)
         .optional()
-        .describe("For a survival question, the number of samples with an observed event (event indicator 1) in the outcome column. Omit when the question is not survival or the count is not in the profile."),
+        .describe(
+            "For a survival question, the number of samples with an observed event (event indicator 1) in the outcome column. Omit when the question is not survival or the count is not in the profile.",
+        ),
     paired: z.boolean().describe("True when each subject contributes a sample to more than one condition (paired or repeated measures)."),
     blocking_factor: z
         .string()
@@ -123,6 +125,12 @@ export const SituationFieldsSchema = z.object({
         .optional()
         .describe(
             "Set true when some columns of the count table are technical replicates of one biological sample, for example one library sequenced on two lanes or two runs. Omit when each column is one biological sample.",
+        ),
+    sample_exclusions: z
+        .boolean()
+        .optional()
+        .describe(
+            "Set true when the plan drops some delivered samples before the analysis, for example an on-treatment biopsy in a pre-treatment cohort or a failed library. The service then adds a cohort assembly step that counts the units per group after the drop, so the plan states no count before that step. Omit when every delivered sample enters the analysis.",
         ),
     feature_level: z
         .enum(["gene", "exon", "transcript"])
