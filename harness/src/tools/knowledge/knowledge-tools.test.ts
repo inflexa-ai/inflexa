@@ -20,6 +20,7 @@ import {
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "./check.js";
 import { createKnowledgeTools } from "./index.js";
 import { createKnowledgeRecommendTool } from "./recommend.js";
+import { buildPlanSkeleton } from "./skeleton.js";
 import { createKnowledgeTemplateTool, decisionRecordPath } from "./template.js";
 
 const SITUATION = {
@@ -257,9 +258,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         expect(enrichment.name).toBe("Per-sample activity scores with a two-sample test");
         expect(enrichment.packages).toEqual(["decoupler"]);
         expect(enrichment.grounding.template).toBe("tpl-decoupler-scores@1.0.0");
-        expect(enrichment.caveats).toEqual([
-            "Per-sample activity scores with a two-sample test stands in for Per-sample set scores with a linear model",
-        ]);
+        expect(enrichment.caveats).toEqual(["Per-sample activity scores with a two-sample test stands in for Per-sample set scores with a linear model"]);
         expect(enrichment.constraints).toEqual(["enrichment: gene_set_collection = msigdb_hallmark_human"]);
         expect(enrichment.grounding.settings).toEqual([{ step: "enrichment", name: "gene_set_collection", value: "msigdb_hallmark_human" }]);
     });
@@ -319,7 +318,10 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
 
     it("names the executable gap of a step whose method has no template, and lists the step in unrealized", async () => {
         const base = recommendAnswer();
-        const gap = { reason: "No template of DESeq2 Wald holds for the differential_expression step in this situation.", templates: [{ template: "tpl-deseq2-two-group@1.0.0", why: "the condition n_timepoints is_null does not hold" }] };
+        const gap = {
+            reason: "No template of DESeq2 Wald holds for the differential_expression step in this situation.",
+            templates: [{ template: "tpl-deseq2-two-group@1.0.0", why: "the condition n_timepoints is_null does not hold" }],
+        };
         const procedure = base.procedure.map((step) => (step.step === "differential_expression" ? { ...step, template: undefined, unrealized: gap } : step));
         const { client } = fakeKnowledgeClient({ recommend: { ...base, procedure, unrealized: ["differential_expression"] } });
         const tool = createKnowledgeRecommendTool({ client });
@@ -336,6 +338,29 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const { client: plain } = fakeKnowledgeClient({ recommend: base });
         const plainOut = (await createKnowledgeRecommendTool({ client: plain }).execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         expect("unrealized" in plainOut).toBe(false);
+    });
+
+    it("folds a cohort assembly step into one group before the QC, and the QC depends on it", () => {
+        const answer = recommendAnswer();
+        const cohort = {
+            step: "cohort_assembly",
+            method: { id: "M-0065", label: "Cohort assembly" },
+            template: "tpl-cohort-assembly@1.0.0",
+            rules: ["R-0194@aa11"],
+            parameters: [{ name: "unit_count", value: "counted_per_group_from_the_sample_table_after_the_step", default_source: "rule:R-0194" }],
+        };
+        const skeleton = buildPlanSkeleton({ ...answer, procedure: [cohort, ...answer.procedure] });
+        expect(skeleton.map((step) => step.id)).toEqual(["T0S1", "T1S1", "T1S2", "T2S1"]);
+        const assembly = skeleton[0]!;
+        expect(assembly.step_type).toBe("data_preparation");
+        expect(assembly.agent).toBe("bulk-transcriptomics-agent");
+        expect(assembly.depends_on).toEqual([]);
+        expect(assembly.grounding.template).toBe("tpl-cohort-assembly@1.0.0");
+        expect(assembly.constraints).toEqual(["cohort_assembly: unit_count = counted_per_group_from_the_sample_table_after_the_step (rule:R-0194)"]);
+        expect(skeleton[1]!.depends_on).toEqual(["T0S1"]);
+        expect(skeleton[2]!.depends_on).toEqual(["T1S1"]);
+        // Without the step the QC depends on nothing, as before.
+        expect(buildPlanSkeleton(answer)[0]!.depends_on).toEqual([]);
     });
 });
 

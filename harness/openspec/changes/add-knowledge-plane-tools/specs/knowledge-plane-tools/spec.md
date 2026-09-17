@@ -52,7 +52,7 @@ Each operation of the client MUST answer a typed value and MUST NOT throw on a s
 
 When the host binds a farm lock or a reference store, `knowledge_recommend` MUST join each step of the procedure with the environment. The environment says whether the farm holds the package of the step, and at which version. It says whether the reference store holds the collection the step names, and at which path. The tool MUST NOT fill a gap and MUST NOT name a path it did not read.
 
-The tool MUST give the planner one representation: `plan_skeleton` and `claims`. The model-facing answer MUST NOT carry the `procedure` of the service. `plan_skeleton` MUST be the procedure folded into plan steps. Each skeleton step MUST carry these fields, filled from the procedure:
+The tool MUST give the planner one representation: `plan_skeleton` and `claims`. The model-facing answer MUST NOT carry the `procedure` of the service. `plan_skeleton` MUST be the procedure folded into plan steps. When the procedure holds a `cohort_assembly` step, the fold MUST put it in one step before the QC step, and the QC step MUST depend on it. Each skeleton step MUST carry these fields, filled from the procedure:
 
 - the id, the name, the track, the agent, the packages, and the dependencies
 - the constraints and the caveats
