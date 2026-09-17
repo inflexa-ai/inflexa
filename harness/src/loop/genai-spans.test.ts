@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { context, propagation, SpanStatusCode, trace } from "@opentelemetry/api";
+import { suppressTracing } from "@opentelemetry/core";
 import { InMemorySpanExporter, SimpleSpanProcessor, type ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import type { AgentSession } from "../auth/types.js";
 import type { Logger } from "../lib/logger.js";
-import { createHarnessSampler, DbosSpanProcessor, HarnessTracerProvider } from "../lib/otel-spans.js";
+import { createHarnessSampler, DbosSpanProcessor, HarnessTracerProvider, untracedWorkflow } from "../lib/otel-spans.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createAiSdkProvider } from "../providers/ai-sdk.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
@@ -133,6 +135,97 @@ it("writes only chat and execute_tool under invoke_agent for a durable model cal
         expect(child.spanContext().traceId).toBe(agent.spanContext().traceId);
         expect(child.parentSpanContext?.spanId).toBe(agent.spanContext().spanId);
     }
+});
+
+/** Run one scripted turn that replies at once. */
+function runScriptedTurn(session: AgentSession = makeSession()): Promise<unknown> {
+    return runAgent(
+        { id: "test-agent", systemPrompt: "You are a test agent.", model: "claude-test", tools: [], maxIterations: 4 },
+        [{ role: "user", content: "go" }],
+        session,
+        {
+            provider: scriptedProvider([makeMessage([textBlock("done")], "end_turn")]),
+            signal: new AbortController().signal,
+            emit: () => {},
+            runStep: passthroughStep,
+        },
+    );
+}
+
+const spanNamed = (spans: readonly ReadableSpan[], name: string): ReadableSpan => spans.find((span) => span.name === name)!;
+
+it("starts a new trace for the root of a turn, and links it to the span that was active", async () => {
+    const session: AgentSession = {
+        ...makeSession({ scope: { kind: "analysis", analysisId: "analysis-001", threadId: "thread-7" } }),
+        runFrame: { runId: "run-7" },
+    };
+
+    const request = trace.getTracer("test").startSpan("cortex request");
+    await context.with(trace.setSpan(context.active(), request), () => runScriptedTurn(session));
+    request.end();
+
+    const turn = spanNamed(exporter.getFinishedSpans(), "invoke_agent test-agent");
+    expect(turn.parentSpanContext).toBeUndefined();
+    expect(turn.spanContext().traceId).not.toBe(request.spanContext().traceId);
+    expect(turn.links.map((link) => link.context.spanId)).toEqual([request.spanContext().spanId]);
+    expect(turn.attributes["inflexa.run_id"]).toBe("run-7");
+    expect(turn.attributes["gen_ai.conversation.id"]).toBe("thread-7");
+});
+
+it("keeps a sub-agent loop in the trace of its turn", async () => {
+    const delegate = defineTool({
+        id: "delegate",
+        description: "Runs a sub-agent.",
+        inputSchema: z.object({}),
+        describeCall: "none",
+        execute: async (_input, ctx) => {
+            await runAgent(
+                { id: "sub-agent", systemPrompt: "You are a sub-agent.", model: "claude-test", tools: [], maxIterations: 2 },
+                [{ role: "user", content: "go" }],
+                ctx.session,
+                {
+                    provider: scriptedProvider([makeMessage([textBlock("sub done")], "end_turn")]),
+                    signal: ctx.signal,
+                    emit: ctx.emit,
+                    runStep: passthroughStep,
+                    turnUsage: ctx.turnUsage,
+                },
+            );
+            return ok({});
+        },
+    });
+    const provider = scriptedProvider([makeMessage([toolUseBlock("tc-sub", "delegate", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+    await runAgent(
+        { id: "test-agent", systemPrompt: "You are a test agent.", model: "claude-test", tools: [delegate], maxIterations: 4 },
+        [{ role: "user", content: "go" }],
+        makeSession(),
+        { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep },
+    );
+
+    const spans = exporter.getFinishedSpans();
+    const turn = spanNamed(spans, "invoke_agent test-agent");
+    const tool = spanNamed(spans, "execute_tool delegate");
+    const sub = spanNamed(spans, "invoke_agent sub-agent");
+    expect(sub.spanContext().traceId).toBe(turn.spanContext().traceId);
+    expect(sub.parentSpanContext?.spanId).toBe(tool.spanContext().spanId);
+    expect(sub.links).toEqual([]);
+});
+
+it("writes no span for a turn inside an untraced workflow", async () => {
+    untracedWorkflow("hygiene-workflow");
+    const workflow = trace.getTracer("dbos-tracer").startSpan("hygiene-workflow");
+
+    await context.with(trace.setSpan(context.active(), workflow), () => runScriptedTurn());
+    workflow.end();
+
+    expect(exporter.getFinishedSpans()).toEqual([]);
+});
+
+it("writes no span for a turn under suppressed tracing", async () => {
+    await context.with(suppressTracing(context.active()), () => runScriptedTurn());
+
+    expect(exporter.getFinishedSpans()).toEqual([]);
 });
 
 /** Run one scripted call of `tool`, and give back its `execute_tool` span. */

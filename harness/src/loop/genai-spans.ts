@@ -4,12 +4,18 @@
  * SDK traces the model calls (`providers/ai-sdk.ts`). It never sees the loop or
  * the tools, because the harness runs both itself.
  *
+ * The root of a turn opens its own trace, and a link carries it back to the run.
+ * A run lasts hours and writes tens of thousands of spans, thus one trace of a
+ * whole run passes the size limit of the trace store and no reader can follow
+ * it. `inflexa.run_id` holds the turns of one run together.
+ *
  * An `execute_tool` span is ERROR when our code fails the call. A failure that a
  * tool returns as data, for example a sandbox command that exits non-zero, is
  * normal iteration of the agent, and its span stays OK.
  */
 
-import { SpanStatusCode, trace, type Attributes, type Span } from "@opentelemetry/api";
+import { context, SpanStatusCode, trace, TraceFlags, type Attributes, type Span, type SpanOptions } from "@opentelemetry/api";
+import { isTracingSuppressed } from "@opentelemetry/core";
 import type { ToolCallPart } from "ai";
 
 import type { AgentSession } from "../auth/types.js";
@@ -19,10 +25,18 @@ interface AgentRun {
     readonly finish: { readonly reason: string; readonly cappedOut: boolean };
 }
 
-/** Run one agent loop under an `invoke_agent` span. */
-export function traceAgentRun<T extends AgentRun>(agentName: string, session: AgentSession, run: () => Promise<T>): Promise<T> {
-    const attributes = { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": agentName, ...runFrameAttributes(session) };
-    return withSpan(`invoke_agent ${agentName}`, attributes, async (span) => {
+/**
+ * Run one agent loop under an `invoke_agent` span. A turn root starts a new
+ * trace; a loop under a turn stays in the trace of that turn.
+ */
+export function traceAgentRun<T extends AgentRun>(agentName: string, session: AgentSession, turnRoot: boolean, run: () => Promise<T>): Promise<T> {
+    const attributes = {
+        "gen_ai.operation.name": "invoke_agent",
+        "gen_ai.agent.name": agentName,
+        ...conversationAttributes(session),
+        ...runFrameAttributes(session),
+    };
+    return withSpan(`invoke_agent ${agentName}`, turnRoot ? turnRootOptions(attributes) : { attributes }, async (span) => {
         const result = await run();
         span.setAttributes({ "gen_ai.response.finish_reasons": [result.finish.reason], "inflexa.agent.capped_out": result.finish.cappedOut });
         return result;
@@ -32,7 +46,7 @@ export function traceAgentRun<T extends AgentRun>(agentName: string, session: Ag
 /** Run one tool call under an `execute_tool` span that records how the call ended. */
 export function traceToolCall<T>(call: Pick<ToolCallPart, "toolName" | "toolCallId">, run: () => Promise<T>, outcomeOf: (value: T) => ToolOutcome): Promise<T> {
     const attributes = { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": call.toolName, "gen_ai.tool.call.id": call.toolCallId };
-    return withSpan(`execute_tool ${call.toolName}`, attributes, async (span) => {
+    return withSpan(`execute_tool ${call.toolName}`, { attributes }, async (span) => {
         const value = await run();
         const outcome = outcomeOf(value);
         span.setAttribute("inflexa.tool.outcome", outcome);
@@ -82,8 +96,24 @@ function errorTypeOf(err: Error): string {
     return err.name === "" ? "_OTHER" : err.name;
 }
 
-function withSpan<T>(name: string, attributes: Attributes, run: (span: Span) => Promise<T>): Promise<T> {
-    return trace.getTracer("@inflexa-ai/harness").startActiveSpan(name, { attributes }, async (span) => {
+/**
+ * The options of a turn root. `root: true` drops the parent before the sampler
+ * runs, thus the sampler takes its root branch and a decision from above is
+ * lost. A turn under suppressed tracing, or under a trace that is not sampled
+ * (an untraced workflow), therefore keeps its parent and stays unrecorded.
+ */
+function turnRootOptions(attributes: Attributes): SpanOptions {
+    const active = context.active();
+    if (isTracingSuppressed(active)) return { attributes };
+    const ambient = trace.getSpanContext(active);
+    if (ambient === undefined || !trace.isSpanContextValid(ambient)) return { root: true, attributes };
+    if ((ambient.traceFlags & TraceFlags.SAMPLED) === 0) return { attributes };
+    // The span that started the turn: the workflow span of the run, or the request span.
+    return { root: true, links: [{ context: ambient, attributes: { "inflexa.link.kind": "caller" } }], attributes };
+}
+
+function withSpan<T>(name: string, options: SpanOptions, run: (span: Span) => Promise<T>): Promise<T> {
+    return trace.getTracer("@inflexa-ai/harness").startActiveSpan(name, options, async (span) => {
         try {
             return await run(span);
         } catch (err) {
@@ -103,4 +133,9 @@ function withSpan<T>(name: string, attributes: Attributes, run: (span: Span) => 
 function runFrameAttributes({ runFrame }: AgentSession): Attributes {
     if (runFrame === undefined) return {};
     return { "inflexa.run_id": runFrame.runId, ...(runFrame.stepId === undefined ? {} : { "inflexa.step_id": runFrame.stepId }) };
+}
+
+/** The thread is the conversation. The analysis is not: it holds many threads. */
+function conversationAttributes({ scope }: AgentSession): Attributes {
+    return scope.threadId === undefined ? {} : { "gen_ai.conversation.id": scope.threadId };
 }

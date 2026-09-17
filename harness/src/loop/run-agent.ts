@@ -166,8 +166,11 @@ export interface RunAgentOptions {
     readonly invocationId?: string;
 }
 
+/** A run that receives no turn accumulator is the turn's root. See `RunAgentOptions.turnUsage`. */
+const isTurnRoot = (opts: RunAgentOptions): boolean => opts.turnUsage === undefined;
+
 export function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
-    return traceAgentRun(agent.id, session, () => runAgentLoop(agent, initial, session, opts));
+    return traceAgentRun(agent.id, session, isTurnRoot(opts), () => runAgentLoop(agent, initial, session, opts));
 }
 
 async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
@@ -223,7 +226,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     // descendant loop folds into, and it is the only loop entitled to report a
     // turn total. Descendants receive the root's object and mutate it in place.
     const turnUsage: AgentRunUsage = opts.turnUsage ?? {};
-    const isTurnRoot = opts.turnUsage === undefined;
+    const turnRoot = isTurnRoot(opts);
 
     const toolCtx = (tu: ToolCallPart): ToolContext => ({
         invocationId: tu.toolCallId,
@@ -327,7 +330,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     /** The rollups this loop stamps on its finish — each absent when nothing reported. */
     const finishUsage = (): Pick<AgentFinish, "usage" | "turnUsage"> => ({
         ...(hasReportedUsage(usage) ? { usage: { ...usage } } : {}),
-        ...(isTurnRoot && hasReportedUsage(turnUsage) ? { turnUsage: { ...turnUsage } } : {}),
+        ...(turnRoot && hasReportedUsage(turnUsage) ? { turnUsage: { ...turnUsage } } : {}),
     });
 
     // The user said no. A subsequent model call would only let the agent argue
