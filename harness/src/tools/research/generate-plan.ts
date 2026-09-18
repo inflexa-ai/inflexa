@@ -1114,6 +1114,7 @@ export function buildPlannerSearchTools(deps: GeneratePlanDeps, hooks: { readonl
         ...createKnowledgeTools({
             ...(deps.knowledge === undefined ? {} : { client: deps.knowledge }),
             ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
+            ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
             ...(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
             ...(hooks.onRecommend === undefined ? {} : { onRecommend: hooks.onRecommend }),
         }),

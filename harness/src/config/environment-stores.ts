@@ -49,8 +49,10 @@ export interface EnvironmentStorePaths {
     readonly farmLockFile?: string;
     /**
      * Host path of the image inventory record, `image-packages.json` at the
-     * root of the package store — the image-owned tools and Node packages
-     * that `list_available_packages` merges into its report. Omit when the
+     * root of the package store — the image-owned tools, the Node packages,
+     * and the R packages that ship with the R runtime, which
+     * `list_available_packages` merges into its report and which the
+     * knowledge tools read for the environment of a step. Omit when the
      * host's own process sees the store at the container mountpoint, which
      * makes `/mnt/libs/image-packages.json` correct as-is; set it when the
      * host reads the store somewhere else. An absent or invalid record
