@@ -1,9 +1,11 @@
 /**
  * `image-packages.json` — the self-description of the sandbox image.
  *
- * The image bakes two package tracks that the content-addressed store cannot
- * hold: the conda tools at `/opt/conda` and the Node packages at `/opt/node`.
- * The image writes one record of them at `/opt/inflexa/image-packages.json`,
+ * The image bakes the package tracks that the content-addressed store cannot
+ * hold: the conda tools at `/opt/conda`, the Node packages at `/opt/node`,
+ * and the R packages that ship with the R runtime (the base and the
+ * recommended packages, which no farm lock lists). The image writes one
+ * record of them at `/opt/inflexa/image-packages.json`,
  * and the catalog build copies that record verbatim into the root of the
  * package store it packed beside it. Thus every reader of a store learns the
  * image inventory from the store alone — with no container engine, no
@@ -71,10 +73,22 @@ export const ImageNodePackageSchema = z
     })
     .passthrough();
 
+/** One R package that ships with the R runtime of the image: a base package or a recommended package. */
+export const ImageRBasePackageSchema = z
+    .object({
+        name: z.string(),
+        version: z.string(),
+        priority: z.enum(["base", "recommended"]),
+    })
+    .passthrough();
+
 /**
  * `image-packages.json` at schema version 1. The keys `system_tools` and
  * `node` are the keys of the image manifest, thus one name means one track
- * across the build and the reader.
+ * across the build and the reader. `r_base` is the track of the R runtime
+ * itself: the packages R ships, which no manifest names and no farm lock
+ * lists. It is optional, because a record from before the field existed is
+ * still a valid record of its image.
  */
 export const ImagePackagesSchema = z
     .object({
@@ -83,6 +97,7 @@ export const ImagePackagesSchema = z
         runtimes: ImageRuntimesSchema,
         system_tools: z.array(ImageSystemToolSchema),
         node: z.array(ImageNodePackageSchema),
+        r_base: z.array(ImageRBasePackageSchema).optional(),
     })
     .passthrough();
 export type ImagePackages = z.infer<typeof ImagePackagesSchema>;

@@ -60,7 +60,9 @@ docker run --rm ghcr.io/inflexa-ai/sandbox-base:latest \
 A bare `docker run` with no store mounted resolves the image-owned tools
 only. The analysis packages arrive with the store mounts. The image bakes its
 own inventory as the record at `/opt/inflexa/image-packages.json`, and the
-catalog build copies that record into the store root. Thus
+catalog build copies that record into the store root. The record also names
+the R packages that ship with the R runtime (the base and the recommended
+packages), because no farm lock lists them. Thus
 `list_available_packages` reads the record at `/mnt/libs/image-packages.json`,
 and it merges the record with the `inflexa.lock` of the mounted farm.
 
