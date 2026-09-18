@@ -415,6 +415,34 @@ describe("list_available_packages — reading the inventory", () => {
         ]);
     });
 
+    // The R runtime of the image ships its own packages, and no farm lock lists them.
+    it("lists the R packages the image ships under the R track, and finds one by name", async () => {
+        const deps = await makeStore(
+            JSON.stringify({
+                ...IMAGE_RECORD,
+                r_base: [
+                    { name: "stats", version: "4.6.0", priority: "base" },
+                    { name: "survival", version: "3.8-6", priority: "recommended" },
+                ],
+            }),
+        );
+
+        const listed = (await createListAvailablePackagesTool(deps).execute({ language: "r" }, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            content: string;
+        };
+        expect(listed.content).toContain("R (ships with R)");
+        expect(listed.content).toContain("survival==3.8-6");
+        // The R filter answers with the R tracks alone.
+        expect(listed.content).not.toContain("samtools");
+
+        const checked = (await createListAvailablePackagesTool(deps).execute({ names: ["survival"] }, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: true;
+            checked: readonly CheckedPackage[];
+        };
+        expect(checked.checked[0]).toMatchObject({ requested: "survival", present: true, name: "survival", version: "3.8-6" });
+    });
+
     // The farm is the authority on what a step imports; the record is an enrichment.
     it("keeps the farm entry when a record entry collides on a name", async () => {
         const dir = await mkdtemp(join(tmpdir(), "packages-"));

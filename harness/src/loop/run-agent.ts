@@ -101,6 +101,15 @@ export interface RunAgentOptions {
      * tool-less regardless. */
     readonly toolChoice?: ChatRequest["toolChoice"];
     /**
+     * An early cap. Read at the top of each iteration; when it answers true the
+     * loop leaves the tool phase as if `maxIterations` were reached and takes the
+     * same tool-less wrap-up path, thus a terminal wrapper salvages the run the
+     * same way. A host uses it to end a run that a policy has judged to be a
+     * loop, for example one the call guard refused too many times, without
+     * waiting for the iteration cap or the wall clock.
+     */
+    readonly stopWhen?: () => boolean;
+    /**
      * Optional outcome predicate for loop-driving agents whose result is
      * recorded by a tool into closure state. Checked immediately after each
      * dispatch round, once every sibling tool result has been appended.
@@ -412,7 +421,13 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
     };
 
+    let stoppedEarly = false;
     for (let i = 0; i < agent.maxIterations; i++) {
+        if (opts.stopWhen?.()) {
+            stoppedEarly = true;
+            log.warn("run stopped early by the host policy, taking the wrap-up path", { iterations });
+            break;
+        }
         iterations = i + 1;
         const request: ChatRequest = {
             system: agent.systemPrompt,
@@ -572,6 +587,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     settleTranscript();
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
     recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
+    if (stoppedEarly) log.warn("run finished on the early cap", { iterations });
     logFinish("warn", "max_iterations", true);
     return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
 }

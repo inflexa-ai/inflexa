@@ -2,9 +2,10 @@
 """Assemble the baked inventory record of the image.
 
 The record is the one description that the image gives of itself. It joins
-the two builder fragments with the identity of the image and the versions of
-the three runtimes. The store build copies the file verbatim, thus one writer
-owns the shape.
+the two builder fragments with the identity of the image, the versions of
+the three runtimes, and the R packages that ship with the R runtime (the
+base and the recommended packages, which no farm lock lists). The store
+build copies the file verbatim, thus one writer owns the shape.
 
 The script runs in the runtime stage. That stage has the system python3 and
 no third-party module, thus the script uses the standard library only.
@@ -49,6 +50,35 @@ def runtime_version(command, prefix):
     return line.split()[0]
 
 
+# R prints one line per package that ships with the runtime: the name, the
+# version, and the priority (base or recommended), tab-separated.
+R_BASE_COMMAND = [
+    "Rscript",
+    "-e",
+    r'ip <- installed.packages(priority = c("base", "recommended")); '
+    r'cat(paste(ip[, "Package"], ip[, "Version"], ip[, "Priority"], sep = "\t"), sep = "\n")',
+]
+
+
+def r_base_packages():
+    """Return the R packages that ship with the runtime, one row each."""
+    result = subprocess.run(R_BASE_COMMAND, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"the R package listing gave {result.returncode}: {result.stderr.strip()}")
+    rows = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        if len(fields) != 3:
+            raise ValueError(f"the R package listing gave an unexpected line: {line!r}")
+        name, version, priority = fields
+        rows.append({"name": name, "version": version, "priority": priority})
+    if not rows:
+        raise RuntimeError("the R package listing gave no package")
+    return sorted(rows, key=lambda row: row["name"].lower())
+
+
 def fragment(path):
     """Return the entry list of a builder fragment."""
     with open(path) as f:
@@ -78,6 +108,7 @@ def main():
             },
             "system_tools": fragment(args.system_tools),
             "node": fragment(args.node),
+            "r_base": r_base_packages(),
         }
     except (OSError, RuntimeError, ValueError) as error:
         print(f"ERROR: the record assembly failed: {error}", file=sys.stderr)

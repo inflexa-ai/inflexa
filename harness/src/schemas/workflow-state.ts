@@ -10,6 +10,60 @@ import { z } from "zod";
 // ── Plan structures ─────────────────────────────────────────────────
 
 /**
+ * One scientific setting of a grounded step: a parameter of the procedure
+ * that `knowledge_recommend` returned, with the procedure step it belongs to
+ * and the source of its value. The host binds the settings to the template
+ * of the step at dispatch, thus a template default never replaces a plan
+ * decision silently.
+ */
+export const GroundingSettingSchema = z.object({
+    step: z.string().describe("The procedure step the setting belongs to (for example `differential_expression` or `normalize`)."),
+    name: z.string().describe("The parameter name as the procedure names it (for example `alpha` or `lfc_shrink`)."),
+    value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).describe("The value the procedure sets."),
+    source: z.string().optional().describe("The source of the value (a doi or a document) when the procedure names one. Absent otherwise."),
+});
+export type GroundingSetting = z.infer<typeof GroundingSettingSchema>;
+
+/**
+ * The grounding of one method step: the claim identifiers and the snapshot
+ * digest that `knowledge_recommend` returned in this run, the template the
+ * step renders, the settings of the procedure, and a one-line reason.
+ * Optional on both step schemas, thus a stored plan and a plan made without
+ * the knowledge service load and validate as before. Phase 0 validates the
+ * shape only. An empty field is visible: the evaluation counts a method step
+ * without a value as ungrounded.
+ */
+export const GroundingSchema = z.object({
+    status: z
+        .enum(["grounded", "ungrounded", "flagged"])
+        .describe(
+            "`grounded` when the step follows a returned procedure; `ungrounded` when no rule covered it or the service did not answer; `flagged` when a rule changed the outcome of the step.",
+        ),
+    snapshot: z.string().describe("The `snapshot.digest` that `knowledge_recommend` returned in this run, or `none`."),
+    claims: z
+        .array(z.string())
+        .describe("The claim identifiers of the step as `knowledge_recommend` returned them (for example `R-0031@e7d0`). Empty when ungrounded."),
+    template: z
+        .string()
+        .optional()
+        .describe("The template id with its version (for example `tpl-deseq2-two-group@1.0.0`) when the step renders a template. Absent otherwise."),
+    settings: z
+        .array(GroundingSettingSchema)
+        .optional()
+        .describe(
+            "The scientific settings of the step: the parameters of the procedure steps the plan step holds, as `knowledge_recommend` returned them. " +
+                "Copy the `grounding.settings` of the skeleton step as it is, one entry per parameter, with its step, name, value, and source. " +
+                "Do not restate a setting as prose only, and do not change a value here: state a different value in the step and its reason. Absent when the step is ungrounded.",
+        ),
+    reason: z
+        .string()
+        .describe(
+            "One line: the situation and the method with the rule that selects it, the side chosen for a disputed rule, or why the step is ungrounded or flagged.",
+        ),
+});
+export type Grounding = z.infer<typeof GroundingSchema>;
+
+/**
  * A step of an analysis plan. `PlanStepSchema` (schemas/plan-schemas.ts) narrows
  * this into the planner's output contract and emits it as the `submit_plan`
  * arg schema — so each field's meaning belongs in `.describe()`,
@@ -57,6 +111,10 @@ export const AnalysisStepSchema = z.object({
         })
         .optional()
         .describe("Resources the step needs. Ground the estimate in the actual data size — see the resource-estimation rules."),
+
+    grounding: GroundingSchema.optional().describe(
+        "The knowledge grounding of a method step: fill it from the answer of `knowledge_recommend` when that tool is attached. Omit it when no knowledge tool is attached.",
+    ),
 
     // Execution fields
     agent: z.string().optional().describe("Assigned sandbox agent name from registry"),
