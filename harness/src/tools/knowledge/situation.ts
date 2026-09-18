@@ -167,7 +167,8 @@ export const SituationFieldsSchema = z.object({
         )
         .optional()
         .describe(
-            "Analyses the research question asks for beside the question kind, for example a regulator activity beside a differential expression. Each joins the procedure at its place. Omit when none.",
+            "Analyses the research question asks for beside the question kind, for example a regulator activity beside a differential expression. Each joins the procedure at its place. " +
+                "Add `annotation` when the rows of the count table are not gene symbols (Ensembl or Entrez identifiers) and a later step needs symbols: the identifier map is then a vetted step with its own template, and no other step rebuilds it. Omit when none.",
         ),
     preferred_language: z
         .enum(["R", "python"])
