@@ -27,6 +27,8 @@ export interface KnowledgeToolsDeps {
     readonly client?: KnowledgeClient;
     /** Host path of the farm `inflexa.lock`, or its resolver for each analysis, for the environment join of the recommend answer. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
+    /** Host path of the `image-packages.json` of the store, for the same join: the packages the sandbox image ships. */
+    readonly imagePackagesFile?: string;
     /** Host path of the reference store, for the same join. */
     readonly refStorePath?: string;
     /** Receives each recommend answer the planner sees; see `KnowledgeRecommendDeps.onAnswer`. */
@@ -40,6 +42,7 @@ export function createKnowledgeTools(deps: KnowledgeToolsDeps): Tool[] {
         createKnowledgeRecommendTool({
             client: deps.client,
             ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+            ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
             ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
             ...(deps.onRecommend ? { onAnswer: deps.onRecommend } : {}),
         }),

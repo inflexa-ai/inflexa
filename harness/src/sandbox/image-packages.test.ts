@@ -15,6 +15,10 @@ const RECORD = {
         { name: "eagle2", version: "2.4.1", executable: "eagle" },
     ],
     node: [{ name: "echarts", version: "6.0.0" }],
+    r_base: [
+        { name: "stats", version: "4.6.0", priority: "base" },
+        { name: "survival", version: "3.8-6", priority: "recommended" },
+    ],
 };
 
 describe("ImagePackagesSchema", () => {
@@ -29,6 +33,17 @@ describe("ImagePackagesSchema", () => {
             { name: "eagle2", version: "2.4.1", executable: "eagle" },
         ]);
         expect(parsed.data.node).toEqual([{ name: "echarts", version: "6.0.0" }]);
+        expect(parsed.data.r_base).toEqual([
+            { name: "stats", version: "4.6.0", priority: "base" },
+            { name: "survival", version: "3.8-6", priority: "recommended" },
+        ]);
+    });
+
+    // A store packed before the R runtime track existed carries a record without it.
+    it("accepts a record without the r_base track, and refuses a row with an unknown priority", () => {
+        const { r_base: _omitted, ...withoutRBase } = RECORD;
+        expect(ImagePackagesSchema.safeParse(withoutRBase).success).toBe(true);
+        expect(ImagePackagesSchema.safeParse({ ...RECORD, r_base: [{ name: "survival", version: "3.8-6", priority: "cran" }] }).success).toBe(false);
     });
 
     // The schema number is the break signal: a producer that changed the shape
