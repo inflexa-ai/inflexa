@@ -246,6 +246,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
                       client: deps.knowledge,
                       mutator,
                       ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
+                      ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
                       ...(deps.step.templateBinding ? { binding: deps.step.templateBinding } : {}),
                   })
                 : undefined,

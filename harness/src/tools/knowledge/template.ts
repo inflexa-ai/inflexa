@@ -3,8 +3,9 @@
  * rendered script and the decision record into the step workspace through
  * the same mutator seam as `write_file`. The script is never output tokens.
  *
- * The farm versions ride from the tool, not from the model: the tool reads
- * the `inflexa.lock` of the farm when the host names one, and the service
+ * The installed versions ride from the tool, not from the model: the tool
+ * reads the `inflexa.lock` of the farm and the `image-packages.json` of the
+ * store when the host names them (`installedPackages`), and the service
  * answers with the environment match, which the decision record keeps.
  *
  * The plan settings ride from the host, not from the model: the step input
@@ -19,10 +20,10 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { readFarmLockFile } from "../../sandbox/farm.js";
 import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "../workspace/mutator.js";
-import type { FarmPackage, KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable } from "./client.js";
+import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable } from "./client.js";
+import { installedPackages } from "./environment.js";
 
 /** A slot value the plan binds: a scalar, or a list of strings. JSON-serialisable, as the durable step input needs. */
 export type TemplateBindingValue = string | number | boolean | readonly string[];
@@ -43,8 +44,10 @@ export interface TemplateBinding {
 export interface KnowledgeTemplateDeps {
     readonly client: KnowledgeClient;
     readonly mutator: WorkspaceMutator;
-    /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent, the environment match reads as unknown. */
+    /** Host path of the farm `inflexa.lock`, or its resolver for each analysis. Absent with no image record, the environment match reads as unknown. */
     readonly farmLockFile?: EnvironmentStorePaths["farmLockFile"];
+    /** Host path of the `image-packages.json` of the store: the packages the sandbox image ships, among them the R packages of the R runtime. */
+    readonly imagePackagesFile?: string;
     /** The plan settings bound to the template of the step. Absent, the model values ride alone. */
     readonly binding?: TemplateBinding;
 }
@@ -106,13 +109,6 @@ export type KnowledgeTemplateOutput =
 
 /** The result of a `knowledge_template` call: each landed write rides as the call record, for the fold. */
 type KnowledgeTemplateResult = KnowledgeTemplateOutput | WithToolCallRecord<KnowledgeTemplateOutput, readonly WriteRecord[]>;
-
-function farmPackages(lockPath: string | undefined): FarmPackage[] | undefined {
-    if (!lockPath) return undefined;
-    const lock = readFarmLockFile(lockPath);
-    if (lock.isErr()) return undefined;
-    return lock.value.packages.map((pkg) => ({ name: pkg.name, version: pkg.version }));
-}
 
 const TEMPLATE_REF = /^tpl-[a-z0-9-]+(@\d+\.\d+\.\d+)?$/;
 
@@ -213,7 +209,11 @@ export function createKnowledgeTemplateTool(deps: KnowledgeTemplateDeps) {
             const merged: Record<string, unknown> = { ...(binding?.slots ?? {}), ...slots };
 
             const farmLockFile = typeof deps.farmLockFile === "function" ? deps.farmLockFile(ctx.session.scope.analysisId) : deps.farmLockFile;
-            const answer = await deps.client.render(template, merged, farmPackages(farmLockFile));
+            const installed = installedPackages({
+                ...(farmLockFile ? { farmLockFile } : {}),
+                ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
+            });
+            const answer = await deps.client.render(template, merged, installed.packages);
             // A rendered answer carries `ok: true`; the two refusals carry `match` and no `ok`.
             if (!("ok" in answer)) return ok(answer);
 
