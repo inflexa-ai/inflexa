@@ -482,8 +482,10 @@ COPY images/sandbox-base/provenance/Rprofile.site /opt/provenance/Rprofile.site
 #
 # The image describes itself in one JSON record at
 # /opt/inflexa/image-packages.json. The record joins the two builder
-# fragments with the identity of the image and the versions of the three
-# runtimes. That path sits outside the store mount, thus a mounted store
+# fragments with the identity of the image, the versions of the three
+# runtimes, and the R packages that ship with the R runtime (the base and
+# the recommended packages, which no farm lock lists). That path sits
+# outside the store mount, thus a mounted store
 # never shadows it. The harness tool list_available_packages merges the
 # record with the farm inventory, thus an agent reads one complete package
 # list. The catalog build copies the same file into the store root, and a

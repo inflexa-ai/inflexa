@@ -16,10 +16,11 @@ specs for the protocol.
 `sandbox-base` bakes **no** analysis package. The packages come from the
 **package store**, mounted read-only at `/mnt/libs`. The farm of the
 analysis mounts at `/mnt/libs/farm`, and its optional read-write cache at
-`/mnt/libs/cache`. The image advertises its two owned tracks (the conda
-tools and the Node packages) through the baked record at
-`/opt/inflexa/image-packages.json`. The record carries the identity of the
-image, the runtime versions, and the version of each tool and each package.
+`/mnt/libs/cache`. The image advertises its owned tracks (the conda tools,
+the Node packages, and the R packages that ship with the R runtime) through
+the baked record at `/opt/inflexa/image-packages.json`. The record carries
+the identity of the image, the runtime versions, and the version of each
+tool and each package.
 The catalog build copies the same file into the store root. Thus
 `list_available_packages` reads it at `/mnt/libs/image-packages.json`, and it
 merges the record with the `inflexa.lock` of the mounted farm.

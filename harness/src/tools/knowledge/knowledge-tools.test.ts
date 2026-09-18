@@ -18,6 +18,7 @@ import {
     substitutionAnswer,
 } from "./__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "./check.js";
+import { joinEnvironment } from "./environment.js";
 import { createKnowledgeTools } from "./index.js";
 import { createKnowledgeRecommendTool } from "./recommend.js";
 import { buildPlanSkeleton } from "./skeleton.js";
@@ -169,7 +170,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const { ctx } = makeToolContext();
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
-        expect(out.environment_source).toEqual({ farm: "lock", references: "store" });
+        expect(out.environment_source).toEqual({ farm: "lock", image: "unknown", references: "store" });
 
         const skeleton = out.plan_skeleton;
         expect(skeleton.map((step) => step.id)).toEqual(["T1S1", "T1S2", "T2S1"]);
@@ -284,7 +285,7 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
         const out = (await tool.execute(tool.inputSchema.parse(SITUATION), ctx))._unsafeUnwrap();
         if (out.match !== "applicable") throw new Error(out.match);
         expect(out.plan_skeleton.every((step) => step.environment === undefined)).toBe(true);
-        expect(out.environment_source).toEqual({ farm: "unknown", references: "unknown" });
+        expect(out.environment_source).toEqual({ farm: "unknown", image: "unknown", references: "unknown" });
         expect(out.plan_skeleton.length).toBe(3);
     });
 
@@ -486,7 +487,7 @@ describe("knowledge_template", () => {
         expect(record.script_path).toBe(out.script_path);
     });
 
-    it("sends the farm versions from the lock when one is given, and none otherwise", async () => {
+    it("sends the installed versions of both records when the host names them, and none otherwise", async () => {
         const lockPath = join(base, "inflexa.lock");
         await Bun.write(
             lockPath,
@@ -495,19 +496,33 @@ describe("knowledge_template", () => {
                 arch: "arm64",
                 languages: {},
                 merge_conflicts: [],
-                packages: [{ name: "DESeq2", version: "1.52.0", track: "bioconductor", store_dir: "x", hash: "y" }],
+                packages: [{ name: "DESeq2", version: "1.52.0", track: "bioconductor", store_dir: "x", hash: "y", requested: true }],
+            }),
+        );
+        const recordPath = join(base, "image-packages.json");
+        await Bun.write(
+            recordPath,
+            JSON.stringify({
+                schema: 1,
+                image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "20260917-abc1234", arch: "arm64" },
+                runtimes: { python: "3.12.3", r: "4.6.0", node: "24.19.0" },
+                system_tools: [],
+                node: [],
+                r_base: [{ name: "survival", version: "3.8-6", priority: "recommended" }],
             }),
         );
         const workspaceRoot = join(base, ANALYSIS);
         const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-1", stepId: "T1S1" });
         const mutator = createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir });
         const fake = fakeKnowledgeClient();
-        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, farmLockFile: lockPath });
+        const tool = createKnowledgeTemplateTool({ client: fake.client, mutator, farmLockFile: lockPath, imagePackagesFile: recordPath });
         const { ctx } = makeToolContext();
         await tool.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx);
         const farm = fake.calls.render[0]?.farm;
         // The lock schema may carry more than the two fields; the client sends the pair.
-        expect(farm?.some((pkg) => pkg.name === "DESeq2" && pkg.version === "1.52.0") ?? farm === undefined).toBe(true);
+        expect(farm?.some((pkg) => pkg.name === "DESeq2" && pkg.version === "1.52.0")).toBe(true);
+        // A template that pins a package of the R runtime matches against the version the image ships.
+        expect(farm?.some((pkg) => pkg.name === "survival" && pkg.version === "3.8-6")).toBe(true);
 
         const { tool: bare, calls } = build();
         await bare.execute({ template: "tpl-deseq2-two-group", slots: {} }, ctx);
@@ -532,5 +547,106 @@ describe("knowledge_template", () => {
         const { tool } = build();
         expect(tool.inputSchema.safeParse({ template: "tpl-x", slots: {}, script_name: "../evil.R" }).success).toBe(false);
         expect(tool.inputSchema.safeParse({ template: "not-a-template", slots: {} }).success).toBe(false);
+    });
+});
+
+describe("joinEnvironment", () => {
+    it("reads the packages of the R runtime from the image record, and keeps the farm version of a name both records carry", async () => {
+        const base = mkdtempSync(join(tmpdir(), "inflexa-env-"));
+        try {
+            const lockPath = join(base, "inflexa.lock");
+            await Bun.write(
+                lockPath,
+                JSON.stringify({
+                    schema: 1,
+                    arch: "arm64",
+                    languages: {},
+                    merge_conflicts: [],
+                    packages: [
+                        { name: "survminer", version: "0.5.2", track: "cran", store_dir: "x", hash: "y", requested: true },
+                        { name: "Matrix", version: "1.8-0", track: "cran", store_dir: "m", hash: "n", requested: false },
+                    ],
+                }),
+            );
+            const recordPath = join(base, "image-packages.json");
+            await Bun.write(
+                recordPath,
+                JSON.stringify({
+                    schema: 1,
+                    image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "20260917-abc1234", arch: "arm64" },
+                    runtimes: { python: "3.12.3", r: "4.6.0", node: "24.19.0" },
+                    system_tools: [{ name: "samtools", version: "1.22" }],
+                    node: [{ name: "echarts", version: "6.1.0" }],
+                    r_base: [
+                        { name: "survival", version: "3.8-6", priority: "recommended" },
+                        { name: "Matrix", version: "1.7-5", priority: "recommended" },
+                    ],
+                }),
+            );
+            const answer = {
+                match: "applicable" as const,
+                snapshot: { date: "2026-09-16", digest: "sha256:abc" },
+                procedure: [
+                    { step: "survival", rules: [], package: { name: "survival" } },
+                    { step: "clustering", rules: [], package: { name: "ConsensusClusterPlus" } },
+                    { step: "report", rules: [], package: { name: "survminer" } },
+                    { step: "coexpression", rules: [], package: { name: "Matrix" } },
+                    // A tool of the image is not of a package track a template pins, thus it answers for no package.
+                    { step: "annotation", rules: [], package: { name: "samtools" } },
+                ],
+                uncovered: [],
+                flags: [],
+                claims: [],
+            };
+
+            const joined = await joinEnvironment(answer, { farmLockFile: lockPath, imagePackagesFile: recordPath });
+            expect(joined.environment_source).toEqual({ farm: "lock", image: "record", references: "unknown" });
+            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "survival", present: true, version: "3.8-6" });
+            expect(joined.procedure[1]?.environment?.package).toEqual({ name: "ConsensusClusterPlus", present: false });
+            expect(joined.procedure[2]?.environment?.package).toEqual({ name: "survminer", present: true, version: "0.5.2" });
+            // Two records name Matrix, and the farm links the copy a step loads.
+            expect(joined.procedure[3]?.environment?.package).toEqual({ name: "Matrix", present: true, version: "1.8-0" });
+            expect(joined.procedure[4]?.environment?.package).toEqual({ name: "samtools", present: false });
+
+            // The record is the ONE source of the R runtime packages: with no record, survival is absent.
+            const withoutRecord = await joinEnvironment(answer, { farmLockFile: lockPath });
+            expect(withoutRecord.environment_source).toEqual({ farm: "lock", image: "unknown", references: "unknown" });
+            expect(withoutRecord.procedure[0]?.environment?.package).toEqual({ name: "survival", present: false });
+        } finally {
+            rmSync(base, { recursive: true, force: true });
+        }
+    });
+
+    it("reports the image record alone when no farm lock is bound", async () => {
+        const base = mkdtempSync(join(tmpdir(), "inflexa-env-"));
+        try {
+            const recordPath = join(base, "image-packages.json");
+            await Bun.write(
+                recordPath,
+                JSON.stringify({
+                    schema: 1,
+                    image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "20260917-abc1234", arch: "arm64" },
+                    runtimes: { python: "3.12.3", r: "4.6.0", node: "24.19.0" },
+                    system_tools: [],
+                    node: [],
+                    r_base: [{ name: "stats", version: "4.6.0", priority: "base" }],
+                }),
+            );
+            const answer = {
+                match: "applicable" as const,
+                snapshot: { date: "2026-09-16", digest: "sha256:abc" },
+                procedure: [{ step: "model_design", rules: [], package: { name: "stats" } }],
+                uncovered: [],
+                flags: [],
+                claims: [],
+            };
+
+            const joined = await joinEnvironment(answer, { imagePackagesFile: recordPath });
+
+            expect(joined.environment_source).toEqual({ farm: "unknown", image: "record", references: "unknown" });
+            expect(joined.procedure[0]?.environment?.package).toEqual({ name: "stats", present: true, version: "4.6.0" });
+        } finally {
+            rmSync(base, { recursive: true, force: true });
+        }
     });
 });
