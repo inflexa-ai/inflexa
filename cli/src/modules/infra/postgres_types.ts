@@ -63,17 +63,11 @@ export type PostgresConnection = {
 export type PostgresError =
     | { type: "runtime_not_ready"; message: string }
     | { type: "image_pull_failed"; image: string; message: string }
-    | { type: "container_start_failed"; message: string }
-    // The mount-source integrity guard could not make a bind-mount source usable before the engine ran
-    // (e.g. a non-empty entry occupies the file-typed proxy config path). Its message already carries the
-    // diagnosis + remediation naming the path, so consumers render it verbatim like the other variants.
+    | { type: "container_start_failed"; message: string }    
     | { type: "mount_source_unavailable"; message: string }
     | { type: "container_stop_failed"; message: string }
     | { type: "compose_file_write_failed"; message: string }
-    | { type: "ready_timeout"; message: string }
-    // The engine restarted the Postgres container again and again while the readiness wait ran, so the
-    // wait stopped before its timeout. The message carries the last lines of the container log, which
-    // hold the real cause (for example an `initdb` failure), so consumers render it verbatim.
+    | { type: "ready_timeout"; message: string }    
     | { type: "container_crash_loop"; message: string }
     | { type: "vector_install_failed"; message: string }
     | { type: "compose_not_available"; message: string };
