@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
-import { composeUp, composeDown, composePullIfMissing, composeAvailable, writeComposeFile } from "./compose.ts";
+import { composeUp, composeDown, composePullIfMissing, composeAvailable, postgresDataLocation, removePostgresVolume, writeComposeFile } from "./compose.ts";
 
 // `inflexa up` / `inflexa down` — explicit lifecycle commands for the infra
 // stack. `up` is the same as the self-healing gate but user-initiated; `down`
@@ -97,6 +97,18 @@ export async function down(options: { deleteData: boolean }): Promise<void> {
             console.error(`  Warning: could not delete ${env.postgresDataDir}`);
         }
 
+        // On every platform, with no branch here: a host that is not Windows holds no such volume, and
+        // the function reports that as `absent`. After composeDown above, because the engine refuses to
+        // remove a volume that a container still uses. The rmSync above also runs on every platform: on
+        // Windows nothing mounts that directory, but one can exist from a failed `initdb` on a bind mount.
+        const volumeResult = await removePostgresVolume(rt);
+        volumeResult.match(
+            (outcome) => {
+                if (outcome === "removed") console.log("  Deleted the Postgres volume.");
+            },
+            (e) => console.error(`  Warning: ${e.message}`),
+        );
+
         console.log("  Deleting proxy credentials…");
         try {
             rmSync(env.cliproxyAuthDir, { recursive: true, force: true });
@@ -112,12 +124,14 @@ export async function down(options: { deleteData: boolean }): Promise<void> {
 
 /**
  * Destructive-data guard: require the user to type "I understand" before
- * deleting persistent data (Postgres data dir + proxy auth credentials).
+ * deleting persistent data (the Postgres data, wherever {@link postgresDataLocation} puts it, + proxy
+ * auth credentials).
  * Non-interactive terminals always decline.
  */
 async function confirmDeleteData(): Promise<boolean> {
+    const data = postgresDataLocation();
     console.log("\n  This will permanently delete:");
-    console.log(`    • Postgres data at ${env.postgresDataDir}`);
+    console.log(data.kind === "bind" ? `    • Postgres data at ${data.path}` : `    • Postgres data in the container volume ${data.name}`);
     console.log(`    • Proxy credentials at ${env.cliproxyAuthDir}`);
     console.log();
 

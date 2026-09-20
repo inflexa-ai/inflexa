@@ -25,23 +25,80 @@ const VECTOR_SQL = "CREATE EXTENSION IF NOT EXISTS vector";
 
 const READY_POLL_INTERVAL_MS = 500;
 const READY_POLL_TIMEOUT_MS = 30_000;
+// One exit during a first start is possible on a small machine, so a single restart is not yet a loop.
+// The second restart lands a second or two after the first, so the margin costs almost nothing.
+const CRASH_LOOP_RESTARTS = 2;
+const LOG_TAIL_LINES = 20;
 
 /**
- * Poll `pg_isready` inside the container until it succeeds or the timeout expires.
- * 30s is generous for first-boot init (the image runs `initdb` on a fresh data dir).
+ * The engine's count of policy restarts for the Postgres container, or `null` when it is unknown — the
+ * container does not exist yet, the engine is unreachable, or the engine reports no such field. Unknown
+ * is in-band, not an error: the caller then keeps its plain timeout path.
+ */
+async function readRestartCount(rt: ContainerRuntime): Promise<number | null> {
+    const { code, stdout } = await capture(rt, ["container", "inspect", "--format", "{{.RestartCount}}", POSTGRES_CONTAINER_NAME]);
+    if (code !== 0) return null;
+    const text = stdout.trim();
+    return /^\d+$/.test(text) ? Number(text) : null;
+}
+
+/**
+ * The last lines of the Postgres container log as an indented message block, or `""` when the engine
+ * cannot give them — a failed `logs` call must never hide the diagnosis it was meant to decorate. Both
+ * streams are read, because the image's entrypoint writes the `initdb` failure to stderr. They are
+ * joined stream by stream, so the order ACROSS the two streams is lost; for a 20-line tail whose job is
+ * to show one fatal line, that is acceptable.
+ */
+async function logTailBlock(rt: ContainerRuntime): Promise<string> {
+    const { code, stdout, stderr } = await capture(rt, ["logs", "--tail", String(LOG_TAIL_LINES), POSTGRES_CONTAINER_NAME]);
+    if (code !== 0) return "";
+    const lines = [stdout, stderr].flatMap((stream) => stream.split("\n")).filter((line) => line.trim() !== "");
+    if (lines.length === 0) return "";
+    return `\n  Last lines of the container log:\n${lines.map((line) => `    ${line}`).join("\n")}`;
+}
+
+/**
+ * Poll `pg_isready` inside the container until it succeeds, the container proves to be in a restart loop,
+ * or the timeout expires. 30s is generous for first-boot init (the image runs `initdb` on a fresh data dir).
+ *
+ * A restart loop is detected from the engine's restart COUNT, read after every failed poll:
+ * - The count, not the status. In a loop the status moves between `running`, `exited`, and `restarting`,
+ *   and a 500ms poll can read `running` every time. The count only rises.
+ * - A RISE, not a value. The count lasts for the life of the container, so a container that the engine
+ *   restarted once last month is healthy today. The first good read is the baseline, and only a rise
+ *   above it during this wait counts.
+ * - A rise of {@link CRASH_LOOP_RESTARTS}, not of 1 — see the constant.
+ *
+ * A healthy first boot never raises the count: the image's two-phase startup restarts the SERVER inside
+ * the container, not the container. An engine that reports no count degrades to the plain timeout.
+ *
+ * Both failures carry the tail of the container log, because the cause (for example `initdb` failing to
+ * `chmod` its data directory) is only there — without it a restart loop reads as a slow start.
  */
 export async function waitForReady(rt: ContainerRuntime, conn: PostgresConnection): Promise<Result<void, PostgresError>> {
     const deadline = Date.now() + READY_POLL_TIMEOUT_MS;
     let lastStderr = "";
+    let baselineRestarts: number | null = null;
     while (Date.now() < deadline) {
         const { code, stderr } = await capture(rt, ["exec", POSTGRES_CONTAINER_NAME, "pg_isready", "-U", conn.user, "-d", conn.database]);
         if (code === 0) return ok(undefined);
         lastStderr = stderr.trim();
+
+        const restarts = await readRestartCount(rt);
+        if (restarts !== null) {
+            baselineRestarts ??= restarts;
+            if (restarts - baselineRestarts >= CRASH_LOOP_RESTARTS) {
+                return err({
+                    type: "container_crash_loop",
+                    message: `The Postgres container keeps restarting, so it cannot become ready.${await logTailBlock(rt)}\n  See the full log with \`${rt.bin} logs ${POSTGRES_CONTAINER_NAME}\`.`,
+                });
+            }
+        }
         await Promise.sleep(READY_POLL_INTERVAL_MS);
     }
     return err({
         type: "ready_timeout",
-        message: `Postgres did not become ready within ${READY_POLL_TIMEOUT_MS / 1000}s.${lastStderr ? `\n  ${lastStderr}` : ""}\n  Check ${rt.label} logs with \`${rt.bin} logs ${POSTGRES_CONTAINER_NAME}\`.`,
+        message: `Postgres did not become ready within ${READY_POLL_TIMEOUT_MS / 1000}s.${lastStderr ? `\n  ${lastStderr}` : ""}${await logTailBlock(rt)}\n  Check ${rt.label} logs with \`${rt.bin} logs ${POSTGRES_CONTAINER_NAME}\`.`,
     });
 }
 

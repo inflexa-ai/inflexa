@@ -556,7 +556,14 @@ export const envDoc: Readonly<
     postgresDataDir: {
         kind: "path",
         label: "postgres data",
-        description: "Postgres data dir, bind-mounted into the inflexa-postgres container",
+        // On Windows the infra module persists Postgres into an engine-held named volume (a Windows file
+        // share refuses the `chmod` that `initdb` needs), so nothing mounts this directory there. The row
+        // must say so rather than point a user at an empty path. The volume's name is NOT given: it
+        // lives in modules/infra/compose.ts, and `lib/` must never import a module.
+        description:
+            process.platform === "win32"
+                ? "not used on Windows: a named volume of the container engine holds the Postgres data"
+                : "Postgres data dir, bind-mounted into the inflexa-postgres container",
         baseVar: dataVar,
     },
     composeFilePath: {

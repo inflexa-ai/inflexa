@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -12,9 +12,12 @@ import {
     type PostgresError,
 } from "./postgres_types.ts";
 import { resolvePostgresConfig } from "../../lib/config.ts";
+import * as container from "../../lib/container.ts";
+import { runtimes, type CaptureResult } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { generateComposeFile, POSTGRES_CONTAINER_NAME, PROXY_CONTAINER_NAME } from "./compose.ts";
+import { waitForReady } from "./postgres.ts";
 
 describe("postgres constants", () => {
     test("container name includes inflexa-postgres (dev or prod prefix)", () => {
@@ -210,5 +213,117 @@ describe("compose file generation", () => {
         const conn = resolvePostgresConfig();
         expect(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)!.length).toBe(2);
         expect(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)!.length).toBe(1);
+    });
+});
+
+// The wait runs on a fake clock and a scripted engine, so neither a real 30s nor a real container is
+// involved. `poll` counts the `pg_isready` calls, and every other engine call is answered for the
+// current poll — the order the wait itself imposes (exec, then inspect, then logs on a failure).
+describe("waitForReady", () => {
+    const INITDB_ERROR = 'initdb: error: could not change permissions of directory "/var/lib/postgresql/18/docker": Operation not permitted';
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    type Script = {
+        /** Whether `pg_isready` passes on this poll (1-based). */
+        ready: (poll: number) => boolean;
+        /** The restart count the engine reports on this poll, or `null` for an engine that reports none. */
+        restarts: (poll: number) => number | null;
+        /** The answer of the `logs` call. */
+        logs: CaptureResult;
+    };
+
+    /** Install the fake clock and the scripted engine; returns the counters the assertions read. */
+    function drive(script: Script): { sleeps: number[]; polls: () => number } {
+        let now = 1_000_000;
+        let poll = 0;
+        const sleeps: number[] = [];
+        spies.push(spyOn(Date, "now").mockImplementation(() => now));
+        // The sleep advances the clock instead of waiting, so the deadline is reached in no real time.
+        spies.push(
+            spyOn(Promise, "sleep").mockImplementation(async (ms: number) => {
+                sleeps.push(ms);
+                now += ms;
+            }),
+        );
+        spies.push(
+            spyOn(container, "capture").mockImplementation(async (_rt, args) => {
+                if (args[0] === "exec") {
+                    poll += 1;
+                    return { code: script.ready(poll) ? 0 : 2, stdout: "", stderr: "no response" };
+                }
+                if (args[0] === "container" && args[1] === "inspect") {
+                    const count = script.restarts(poll);
+                    return count === null ? { code: 1, stdout: "", stderr: "no such field" } : { code: 0, stdout: `${count}\n`, stderr: "" };
+                }
+                if (args[0] === "logs") return script.logs;
+                return { code: 1, stdout: "", stderr: `unexpected engine call: ${args.join(" ")}` };
+            }),
+        );
+        return { sleeps, polls: () => poll };
+    }
+
+    const conn = resolvePostgresConfig();
+    const initdbLog: CaptureResult = { code: 0, stdout: "fixing permissions on existing directory\n", stderr: `${INITDB_ERROR}\n` };
+
+    test("a restart count that rises by 2 stops the wait at once, with the container log", async () => {
+        const run = drive({ ready: () => false, restarts: (poll) => poll - 1, logs: initdbLog });
+
+        const error = (await waitForReady(runtimes.podman, conn))._unsafeUnwrapErr();
+
+        expect(error.type).toBe("container_crash_loop");
+        // Poll 1 reads 0 (the baseline), poll 2 reads 1, poll 3 reads 2 — two sleeps, not sixty.
+        expect(run.polls()).toBe(3);
+        expect(run.sleeps).toEqual([500, 500]);
+        // Both streams reach the message: the entrypoint writes the fatal line to stderr.
+        expect(error.message).toContain(INITDB_ERROR);
+        expect(error.message).toContain("fixing permissions on existing directory");
+        expect(error.message).toContain(`podman logs ${POSTGRES_CONTAINER_NAME}`);
+    });
+
+    test("a rise of 1 is not yet a loop: the wait goes on, and a later pass is success", async () => {
+        const run = drive({ ready: (poll) => poll === 4, restarts: (poll) => (poll === 1 ? 0 : 1), logs: initdbLog });
+        (await waitForReady(runtimes.docker, conn))._unsafeUnwrap();
+        expect(run.polls()).toBe(4);
+    });
+
+    test("a restart count from before the wait gives no error", async () => {
+        // The count is for the life of the container: 5 past restarts, none during this wait.
+        const run = drive({ ready: (poll) => poll === 3, restarts: () => 5, logs: initdbLog });
+        (await waitForReady(runtimes.docker, conn))._unsafeUnwrap();
+        expect(run.polls()).toBe(3);
+    });
+
+    test("an engine with no restart count keeps the timeout, which now carries the container log", async () => {
+        const run = drive({ ready: () => false, restarts: () => null, logs: initdbLog });
+
+        const error = (await waitForReady(runtimes.docker, conn))._unsafeUnwrapErr();
+
+        expect(error.type).toBe("ready_timeout");
+        // The full 30s of 500ms polls ran on the fake clock.
+        expect(run.sleeps.length).toBe(60);
+        expect(error.message).toContain("within 30s");
+        expect(error.message).toContain(INITDB_ERROR);
+        expect(error.message).toContain(`docker logs ${POSTGRES_CONTAINER_NAME}`);
+    });
+
+    test("a log that the engine cannot give does not hide either error", async () => {
+        const noLogs: CaptureResult = { code: 1, stdout: "", stderr: "no such container" };
+
+        drive({ ready: () => false, restarts: (poll) => poll - 1, logs: noLogs });
+        const loop = (await waitForReady(runtimes.docker, conn))._unsafeUnwrapErr();
+        expect(loop.type).toBe("container_crash_loop");
+        expect(loop.message).toContain("keeps restarting");
+        expect(loop.message).not.toContain("Last lines of the container log");
+        expect(loop.message).toContain(`docker logs ${POSTGRES_CONTAINER_NAME}`);
+
+        for (const spy of spies.splice(0)) spy.mockRestore();
+        drive({ ready: () => false, restarts: () => null, logs: noLogs });
+        const timeout = (await waitForReady(runtimes.docker, conn))._unsafeUnwrapErr();
+        expect(timeout.type).toBe("ready_timeout");
+        expect(timeout.message).not.toContain("Last lines of the container log");
+        expect(timeout.message).toContain(`docker logs ${POSTGRES_CONTAINER_NAME}`);
     });
 });

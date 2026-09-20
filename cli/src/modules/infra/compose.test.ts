@@ -6,11 +6,15 @@ import { ok, err } from "neverthrow";
 import * as compose from "./compose.ts";
 import {
     POSTGRES_CONTAINER_NAME,
+    POSTGRES_VOLUME_NAME,
     PROXY_CONTAINER_NAME,
     ensureMountSources,
     generateComposeFile,
     mountManifest,
+    postgresDataLocation,
+    removePostgresVolume,
     writeComposeFile,
+    type ComposeHost,
     type ConnectionMode,
 } from "./compose.ts";
 import { up } from "./lifecycle.ts";
@@ -23,20 +27,102 @@ import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
 /**
- * Every absolute host path bound as a volume in a generated compose file. Volume mounts use an absolute
- * host path (`/…:/container/path`); port mappings start with `127.0.0.1`, so the leading-slash filter
- * separates the two without parsing YAML.
+ * Every absolute host path bound as a volume in a generated compose file, read back as the YAML parser
+ * would give it. A volume scalar is `"<host>:<container>"`. The container path is absolute and holds no
+ * `:`, so the LAST `:/` splits the two — a drive letter (`C:\`) never matches it, and a port mapping
+ * (`127.0.0.1:8432:5432`) has none. The scalar is matched up to the last `"` of the line, because an
+ * escaped quotation mark can sit inside it. A named volume's source is a bare name, not an absolute
+ * path, so the final filter drops it: a named volume is not a bind mount.
  */
 function bindMountHosts(yaml: string): string[] {
     const hosts: string[] = [];
     for (const line of yaml.split("\n")) {
-        const value = line.match(/^\s*-\s*"([^"]+)"\s*$/)?.[1];
+        const value = line.match(/^\s*-\s*"(.*)"\s*$/)?.[1];
         if (value === undefined) continue;
-        const host = value.split(":")[0] ?? "";
-        if (host.startsWith("/")) hosts.push(host);
+        const split = value.lastIndexOf(":/");
+        if (split === -1) continue;
+        // Undo escapeYaml's two escapes in one left-to-right pass, as a YAML parser does.
+        const host = value.slice(0, split).replace(/\\(["\\])/g, "$1");
+        if (host.startsWith("/") || /^[A-Za-z]:\\/.test(host)) hosts.push(host);
     }
     return hosts;
 }
+
+// No maintainer has a Windows host, so every Windows branch is proven through the ComposeHost seam. The
+// paths are the shape `%LOCALAPPDATA%\inflexa\…` takes — the shape issue #560 was reported with.
+const windowsHost: ComposeHost = {
+    platform: "win32",
+    cliproxyConfigPath: String.raw`C:\Users\dana\AppData\Local\inflexa\cliproxy\config.yaml`,
+    cliproxyAuthDir: String.raw`C:\Users\dana\AppData\Local\inflexa\cliproxy\auth`,
+    postgresDataDir: String.raw`C:\Users\dana\AppData\Local\inflexa\postgres`,
+};
+
+// A quotation mark is legal in a POSIX path (and illegal in a Windows one), so the `"` escape is proven
+// on a linux host.
+const quotedPosixHost: ComposeHost = {
+    platform: "linux",
+    cliproxyConfigPath: '/home/da"na/.local/share/inflexa/cliproxy/config.yaml',
+    cliproxyAuthDir: '/home/da"na/.local/share/inflexa/cliproxy/auth',
+    postgresDataDir: '/home/da"na/.local/share/inflexa/postgres',
+};
+
+describe("host paths in the compose file", () => {
+    test("a Windows path has every backslash doubled, and reads back as the exact path", () => {
+        const yaml = generateComposeFile(resolvePostgresConfig(), "cliproxy", windowsHost);
+        expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\cliproxy\\config.yaml:/CLIProxyAPI/config.yaml"`);
+        expect(yaml).toContain(String.raw`- "C:\\Users\\dana\\AppData\\Local\\inflexa\\cliproxy\\auth:/root/.cli-proxy-api"`);
+        // No raw single backslash survives: `\U` is the escape that made the compose tool reject the file.
+        expect(yaml).not.toMatch(/[^\\]\\U/);
+        expect(bindMountHosts(yaml)).toEqual([windowsHost.cliproxyConfigPath, windowsHost.cliproxyAuthDir]);
+    });
+
+    test("a quotation mark in a path is escaped, and reads back as the exact path", () => {
+        const yaml = generateComposeFile(resolvePostgresConfig(), "cliproxy", quotedPosixHost);
+        expect(yaml).toContain(String.raw`- "/home/da\"na/.local/share/inflexa/postgres:/var/lib/postgresql"`);
+        expect(bindMountHosts(yaml)).toEqual([quotedPosixHost.cliproxyConfigPath, quotedPosixHost.cliproxyAuthDir, quotedPosixHost.postgresDataDir]);
+    });
+
+    test("a path with no backslash and no quotation mark is written as it is", () => {
+        const yaml = generateComposeFile(resolvePostgresConfig(), "cliproxy");
+        expect(yaml).toContain(`      - "${env.cliproxyConfigPath}:/CLIProxyAPI/config.yaml"\n`);
+        expect(yaml).toContain(`      - "${env.cliproxyAuthDir}:/root/.cli-proxy-api"\n`);
+        expect(yaml).toContain(`      - "${env.postgresDataDir}:/var/lib/postgresql"\n`);
+    });
+});
+
+describe("Postgres data location", () => {
+    const modes: ConnectionMode[] = ["cliproxy", "direct"];
+
+    test("win32 persists into the named volume; every other platform bind-mounts the data dir", () => {
+        expect(postgresDataLocation(windowsHost)).toEqual({ kind: "volume", name: POSTGRES_VOLUME_NAME });
+        for (const platform of ["darwin", "linux"] as const) {
+            expect(postgresDataLocation({ ...quotedPosixHost, platform })).toEqual({ kind: "bind", path: quotedPosixHost.postgresDataDir });
+        }
+    });
+
+    test("the volume name is channel-aware, through the same prefix as the container name", () => {
+        expect(POSTGRES_VOLUME_NAME).toBe(`${POSTGRES_CONTAINER_NAME}-data`);
+    });
+
+    for (const mode of modes) {
+        test(`${mode}: a Windows host mounts the named volume and declares it with an explicit name`, () => {
+            const yaml = generateComposeFile(resolvePostgresConfig(), mode, windowsHost);
+            expect(yaml).toContain(`      - "${POSTGRES_VOLUME_NAME}:/var/lib/postgresql"\n`);
+            expect(yaml).toContain(`\nvolumes:\n  ${POSTGRES_VOLUME_NAME}:\n    name: ${POSTGRES_VOLUME_NAME}\n`);
+            // The data directory is mounted nowhere — neither raw nor escaped.
+            expect(yaml).not.toContain(windowsHost.postgresDataDir);
+            expect(yaml).not.toContain(windowsHost.postgresDataDir.replaceAll("\\", "\\\\"));
+        });
+
+        for (const platform of ["darwin", "linux"] as const) {
+            test(`${mode}: a ${platform} host has no top-level volumes block`, () => {
+                const yaml = generateComposeFile(resolvePostgresConfig(), mode, { ...quotedPosixHost, platform });
+                // Service-level `volumes:` keys are indented, so a line-start match sees only the top level.
+                expect(yaml).not.toMatch(/^volumes:/m);
+            });
+        }
+    }
+});
 
 describe("mount manifest coverage", () => {
     const modes: ConnectionMode[] = ["cliproxy", "direct"];
@@ -60,6 +146,18 @@ describe("mount manifest coverage", () => {
         expect(cliproxy.find((source) => source.path === env.cliproxyConfigPath)?.kind).toBe("file");
         expect(cliproxy.find((source) => source.path === env.cliproxyAuthDir)?.kind).toBe("directory");
         expect(cliproxy.find((source) => source.path === env.postgresDataDir)?.kind).toBe("directory");
+    });
+
+    // A named volume is not a mount source, so on a Windows host the manifest lists no Postgres data dir.
+    test("a Windows host: every bind mount of the cliproxy file is in the manifest, and nothing else is", () => {
+        const hosts = bindMountHosts(generateComposeFile(resolvePostgresConfig(), "cliproxy", windowsHost));
+        expect(hosts.length).toBe(2);
+        expect(mountManifest("cliproxy", windowsHost).map((source) => source.path)).toEqual(hosts);
+    });
+
+    test("a Windows host in direct mode has no bind mount and an empty manifest", () => {
+        expect(bindMountHosts(generateComposeFile(resolvePostgresConfig(), "direct", windowsHost))).toEqual([]);
+        expect(mountManifest("direct", windowsHost)).toEqual([]);
     });
 });
 
@@ -92,6 +190,13 @@ describe("ensureMountSources integrity guard", () => {
         (await ensureMountSources("direct"))._unsafeUnwrap();
         expect(statSync(env.postgresDataDir).isDirectory()).toBe(true);
         expect(existsSync(configPath)).toBe(false);
+    });
+
+    test("win32: the guard makes no Postgres data dir, because a named volume holds the data", async () => {
+        // The sandboxed POSIX path with the win32 platform: a Windows path string here would be a
+        // relative name on this host, and a wrong guard would then litter the working directory.
+        (await ensureMountSources("direct", { ...windowsHost, postgresDataDir: env.postgresDataDir }))._unsafeUnwrap();
+        expect(existsSync(env.postgresDataDir)).toBe(false);
     });
 
     test("heals an empty directory manufactured at the config path", async () => {
@@ -272,5 +377,49 @@ describe("composeProxyRunning", () => {
     test("an engine failure is an error, not a verdict", async () => {
         stubPs({ code: 1, stderr: "cannot connect to the daemon", stdout: "" });
         expect((await compose.composeProxyRunning(runtimes.docker)).isErr()).toBe(true);
+    });
+});
+
+// `inflexa down --delete-data` calls this on EVERY platform, so the absent branch is the common one: a
+// host that is not Windows never has the volume.
+describe("removePostgresVolume", () => {
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    /** Script `capture` by subcommand (`volume inspect` / `volume rm`) and record every call's args. */
+    function stubVolume(exits: { inspect: number; rm: number; rmStderr?: string }): string[][] {
+        const calls: string[][] = [];
+        spies.push(
+            spyOn(container, "capture").mockImplementation(async (_rt, args) => {
+                calls.push(args);
+                return args[1] === "inspect" ? { code: exits.inspect, stdout: "", stderr: "" } : { code: exits.rm, stdout: "", stderr: exits.rmStderr ?? "" };
+            }),
+        );
+        return calls;
+    }
+
+    test("an absent volume is ok, and no removal is attempted", async () => {
+        const calls = stubVolume({ inspect: 1, rm: 0 });
+        expect((await removePostgresVolume(runtimes.docker))._unsafeUnwrap()).toBe("absent");
+        expect(calls).toEqual([["volume", "inspect", POSTGRES_VOLUME_NAME]]);
+    });
+
+    test("a present volume is removed by its explicit name, through the engine", async () => {
+        const calls = stubVolume({ inspect: 0, rm: 0 });
+        expect((await removePostgresVolume(runtimes.podman))._unsafeUnwrap()).toBe("removed");
+        expect(calls).toEqual([
+            ["volume", "inspect", POSTGRES_VOLUME_NAME],
+            ["volume", "rm", POSTGRES_VOLUME_NAME],
+        ]);
+    });
+
+    test("an engine refusal is a typed error that carries the engine's text", async () => {
+        stubVolume({ inspect: 0, rm: 1, rmStderr: "volume is in use\n" });
+        const error = (await removePostgresVolume(runtimes.docker))._unsafeUnwrapErr();
+        expect(error.type).toBe("volume_remove_failed");
+        expect(error.message).toContain("volume is in use");
+        expect(error.message).toContain(`docker volume rm ${POSTGRES_VOLUME_NAME}`);
     });
 });

@@ -42,9 +42,77 @@ export const PROXY_CONTAINER_NAME = `${PREFIX}-cliproxy`;
 export const POSTGRES_CONTAINER_NAME = `${PREFIX}-postgres`;
 const NETWORK_NAME = PREFIX;
 
+/**
+ * The engine-held volume that carries the Postgres data on a Windows host (see
+ * {@link postgresDataLocation}). Channel-aware through `PREFIX`, the same as the container names, so a
+ * dev stack and an installed binary never share a cluster.
+ *
+ * The compose file declares it with an explicit `name:`. Without one, the compose tool prefixes the
+ * project name, and the result then depends on the provider (`docker-compose`, `podman-compose`). An
+ * explicit name is the ONE name the CLI knows, so {@link removePostgresVolume} can address the volume
+ * through the engine with no compose file on disk — the same reason {@link composeProxyRunning} asks the
+ * engine and not the compose tool.
+ */
+export const POSTGRES_VOLUME_NAME = `${PREFIX}-postgres-data`;
+
 /** Escape a value for use inside a YAML double-quoted string (`"…"`). */
 function escapeYaml(s: string): string {
     return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+}
+
+/**
+ * The host facts that shape the compose file and its mount manifest: the platform, and the three
+ * bind-mount sources. Every production caller omits it and gets {@link realHost}; only a test supplies
+ * one. It is the `EngineSocketProbes` pattern of lib/container.ts.
+ *
+ * The PATHS are part of the seam, not only the platform, because `env` fixes them at import from the
+ * platform the test runs on. Without them, no test on a POSIX host can put a backslash path through
+ * the template, and the Windows branch has no maintainer host to run on.
+ */
+export type ComposeHost = {
+    /** Decides where the Postgres data lives — see {@link postgresDataLocation}. */
+    platform: NodeJS.Platform;
+    /** Host path of the proxy config FILE, bind-mounted into the proxy container. */
+    cliproxyConfigPath: string;
+    /** Host path of the provider-credential directory, bind-mounted into the proxy container. */
+    cliproxyAuthDir: string;
+    /** Host path of the Postgres data directory. Mounted only where the location is a bind mount. */
+    postgresDataDir: string;
+};
+
+// A function, not a constant: the paths are read at call time, exactly as the template read `env`
+// before the seam existed.
+function realHost(): ComposeHost {
+    return {
+        platform: process.platform,
+        cliproxyConfigPath: env.cliproxyConfigPath,
+        cliproxyAuthDir: env.cliproxyAuthDir,
+        postgresDataDir: env.postgresDataDir,
+    };
+}
+
+/** Where the Postgres service persists its cluster: a host directory, or an engine-held named volume. */
+export type PostgresDataLocation = { kind: "bind"; path: string } | { kind: "volume"; name: string };
+
+/**
+ * The single fact that the compose template, the mount manifest, and the `--delete-data` prompt all read,
+ * so the three cannot disagree about where the Postgres data is.
+ *
+ * A Windows host gets a named volume. The file share between a Windows host and the Linux machine of the
+ * engine refuses `chmod`, and `initdb` must set the mode of its data directory — so on a bind mount it
+ * fails at every start, and `restart: unless-stopped` turns that into a restart loop. A `user:` override
+ * or a different `PGDATA` does not help: the share refuses `chmod` for every user, at every path below
+ * the mount.
+ *
+ * The key is the PLATFORM, not the engine: the cause is the host file share, which every engine on
+ * Windows has, and a named volume is correct under each of them. A Linux binary inside WSL reads `linux`
+ * and keeps its data on a Linux file system, so it keeps the bind mount.
+ *
+ * Every other platform keeps the bind mount. Existing macOS and Linux installs hold their DBOS state and
+ * their vectors in that directory; a named volume there would orphan the data for no gain.
+ */
+export function postgresDataLocation(host: ComposeHost = realHost()): PostgresDataLocation {
+    return host.platform === "win32" ? { kind: "volume", name: POSTGRES_VOLUME_NAME } : { kind: "bind", path: host.postgresDataDir };
 }
 
 /** The chat-backend connection modes that shape which services the compose file defines. */
@@ -67,7 +135,24 @@ export type ConnectionMode = "cliproxy" | "direct";
  * file coherently — proxy service dropped for direct, present again for cliproxy. `inflexa down` only
  * stops what is running and never rewrites the file.
  */
-export function generateComposeFile(conn: PostgresConnection, mode: ConnectionMode): string {
+export function generateComposeFile(conn: PostgresConnection, mode: ConnectionMode, host: ComposeHost = realHost()): string {
+    // Every host path goes through escapeYaml: inside a double-quoted scalar a backslash starts an
+    // escape, so a raw `C:\Users\…` reads `\U` as a Unicode escape and the compose tool rejects the file.
+    // Escaping is lossless — the parser gives back the exact path. Single quotes were set aside (a path
+    // can hold `'`, which needs a second escape function), and so were forward slashes (they change the
+    // text of the path the engine gets).
+    const data = postgresDataLocation(host);
+    const dataSource = data.kind === "bind" ? escapeYaml(data.path) : data.name;
+    // A named volume must be declared at the top level. The bind-mount form declares nothing, so the
+    // file of a host that is not Windows has no `volumes:` block at all.
+    const volumesBlock =
+        data.kind === "volume"
+            ? `
+volumes:
+  ${data.name}:
+    name: ${data.name}
+`
+            : "";
     const proxyService =
         mode === "cliproxy"
             ? `  ${PROXY_CONTAINER_NAME}:
@@ -78,8 +163,8 @@ export function generateComposeFile(conn: PostgresConnection, mode: ConnectionMo
       # Loopback-only: the proxy holds provider credentials, so publish it where only this host can reach it, never the LAN.
       - "127.0.0.1:${env.cliproxyPort}:${env.cliproxyPort}"
     volumes:
-      - "${env.cliproxyConfigPath}:${PROXY_CONFIG_PATH}"
-      - "${env.cliproxyAuthDir}:${PROXY_AUTH_DIR}"
+      - "${escapeYaml(host.cliproxyConfigPath)}:${PROXY_CONFIG_PATH}"
+      - "${escapeYaml(host.cliproxyAuthDir)}:${PROXY_AUTH_DIR}"
     networks:
       - ${NETWORK_NAME}
 
@@ -102,14 +187,14 @@ ${proxyService}  ${POSTGRES_CONTAINER_NAME}:
       POSTGRES_USER: "${escapeYaml(conn.user)}"
       POSTGRES_PASSWORD: "${escapeYaml(conn.password)}"
     volumes:
-      - "${env.postgresDataDir}:${CONTAINER_DATA_PATH}"
+      - "${dataSource}:${CONTAINER_DATA_PATH}"
     networks:
       - ${NETWORK_NAME}
 
 networks:
   ${NETWORK_NAME}:
     driver: bridge
-`;
+${volumesBlock}`;
 }
 
 /**
@@ -150,17 +235,25 @@ type MountSource = { kind: "file"; path: string; provision: () => Promise<Result
  * SAME mode/connection facts — so the manifest and the compose template cannot drift (a mount added to
  * one without the other is caught by the manifest-coverage test). cliproxy mode adds the proxy config
  * file (provisioned by {@link writeProxyConfig}) and the credential dir; both modes mount the Postgres
- * data dir. Direct mode has no proxy service, so it lists no proxy sources.
+ * data dir where {@link postgresDataLocation} is a bind mount. Direct mode has no proxy service, so it
+ * lists no proxy sources.
+ *
+ * A named volume is NOT a mount source: the engine holds it, and no host path backs it. So on a Windows
+ * host the manifest lists no Postgres data directory, and the guard never makes a directory that nothing
+ * mounts (the no-litter policy).
  */
-export function mountManifest(mode: ConnectionMode): MountSource[] {
+export function mountManifest(mode: ConnectionMode, host: ComposeHost = realHost()): MountSource[] {
     const sources: MountSource[] = [];
     if (mode === "cliproxy") {
         // The guard needs only writeProxyConfig's side-effect (heal/write); discard its created/apiKey
         // outcome to a uniform void Result so every file source has one provisioner shape.
-        sources.push({ kind: "file", path: env.cliproxyConfigPath, provision: async () => (await writeProxyConfig()).map((): void => undefined) });
-        sources.push({ kind: "directory", path: env.cliproxyAuthDir });
+        // writeProxyConfig always writes `env.cliproxyConfigPath`, NOT `host.cliproxyConfigPath`: a test
+        // host changes the path the manifest LISTS, never the path the provisioner writes.
+        sources.push({ kind: "file", path: host.cliproxyConfigPath, provision: async () => (await writeProxyConfig()).map((): void => undefined) });
+        sources.push({ kind: "directory", path: host.cliproxyAuthDir });
     }
-    sources.push({ kind: "directory", path: env.postgresDataDir });
+    const data = postgresDataLocation(host);
+    if (data.kind === "bind") sources.push({ kind: "directory", path: data.path });
     return sources;
 }
 
@@ -173,8 +266,8 @@ export function mountManifest(mode: ConnectionMode): MountSource[] {
  * the creator of a mount source — a role in which it would create a directory, wedging the file-typed
  * proxy config with EISDIR on every later write.
  */
-export async function ensureMountSources(mode: ConnectionMode): Promise<Result<void, InfraStateError>> {
-    for (const source of mountManifest(mode)) {
+export async function ensureMountSources(mode: ConnectionMode, host: ComposeHost = realHost()): Promise<Result<void, InfraStateError>> {
+    for (const source of mountManifest(mode, host)) {
         if (source.kind === "directory") {
             try {
                 await mkdir(source.path, { recursive: true });
@@ -318,6 +411,33 @@ export async function composeDown(rt: ContainerRuntime): Promise<Result<void, Po
         });
     }
     return ok(undefined);
+}
+
+/**
+ * Remove the named Postgres volume through the ENGINE, by its explicit name ({@link POSTGRES_VOLUME_NAME}).
+ * Exists for `inflexa down --delete-data`, and the caller runs it AFTER {@link composeDown}: the engine
+ * refuses to remove a volume that a container still uses.
+ *
+ * Not `compose down -v`: that reads the compose file on disk, and `inflexa down` never writes that file,
+ * so a missing file or one from an earlier build would hide the volume from it.
+ *
+ * Absence is the normal condition, not an error — every host that is not Windows has no such volume, and
+ * a Windows host has none before its first `up`. `volume inspect` answers that first, because the exit
+ * of `volume rm` on a missing volume differs between the engines. This also lets `down` call the function
+ * on every platform with no branch of its own.
+ */
+export async function removePostgresVolume(rt: ContainerRuntime): Promise<Result<"removed" | "absent", { type: "volume_remove_failed"; message: string }>> {
+    const inspected = await capture(rt, ["volume", "inspect", POSTGRES_VOLUME_NAME]);
+    if (inspected.code !== 0) return ok("absent");
+
+    const { code, stderr } = await capture(rt, ["volume", "rm", POSTGRES_VOLUME_NAME]);
+    if (code !== 0) {
+        return err({
+            type: "volume_remove_failed",
+            message: `Could not remove the Postgres volume ${POSTGRES_VOLUME_NAME}.${stderr ? `\n  ${stderr.trim()}` : ""}\n  Remove it with \`${rt.bin} volume rm ${POSTGRES_VOLUME_NAME}\`.`,
+        });
+    }
+    return ok("removed");
 }
 
 /** Check whether the compose subcommand is available for this runtime. */

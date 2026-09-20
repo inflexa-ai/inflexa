@@ -71,6 +71,10 @@ export type PostgresError =
     | { type: "container_stop_failed"; message: string }
     | { type: "compose_file_write_failed"; message: string }
     | { type: "ready_timeout"; message: string }
+    // The engine restarted the Postgres container again and again while the readiness wait ran, so the
+    // wait stopped before its timeout. The message carries the last lines of the container log, which
+    // hold the real cause (for example an `initdb` failure), so consumers render it verbatim.
+    | { type: "container_crash_loop"; message: string }
     | { type: "vector_install_failed"; message: string }
     | { type: "compose_not_available"; message: string };
 
