@@ -3,7 +3,7 @@
  *
  * The ONLY file in the harness that imports `openai`. The SDK client is
  * pointed at the gateway base URL of the host; the optional request headers
- * hook of the host gives the headers of each call. Embeds with OpenAI
+ * hook of the host gives the headers of each attempt. Embeds with OpenAI
  * `text-embedding-3-small`.
  */
 
@@ -11,14 +11,24 @@ import OpenAI from "openai";
 import { ResultAsync, err, ok, okAsync, type Result } from "neverthrow";
 
 import { scopeWorkloadId } from "../auth/types.js";
-import { DEFAULT_SUSPEND_ON, type ProviderError, type SuspendOn, toProviderError } from "./errors.js";
-import { headersRefusalError, requestHeadersFor, type ResolveRequestHeaders } from "./request-headers.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
+import { createRetry, failureOf, headersForAttempt, type HookCall } from "./ai-sdk.js";
+import { DEFAULT_SUSPEND_ON, type ProviderError, type SuspendOn } from "./errors.js";
+import type { ResolveRequestHeaders } from "./request-headers.js";
 import type { EmbeddingProvider, FetchLike } from "./types.js";
 import type { AgentSession } from "../auth/types.js";
 
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 /** Vector width of the default model — `text-embedding-3-small` emits 1536-dim vectors. */
 const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+/**
+ * The retries of one embed call: the default count of the OpenAI client. The
+ * harness envelope owns them, and the client makes one attempt, thus the
+ * request headers hook runs before each attempt and a mapped status is never
+ * retried.
+ */
+const EMBEDDING_MAX_RETRIES = 2;
 
 export interface EmbeddingProviderDeps {
     /** Gateway base URL — all embedding traffic is routed through it. */
@@ -38,6 +48,8 @@ export interface EmbeddingProviderDeps {
     readonly resolveRequestHeaders?: ResolveRequestHeaders;
     /** The map from an HTTP status to a suspend reason. Absent, the provider uses `DEFAULT_SUSPEND_ON`. */
     readonly suspendOn?: SuspendOn;
+    /** Diagnostics sink for the retry envelope. Defaults to a no-op. */
+    readonly logger?: Logger;
     /**
      * `fetch` override. Production omits it (the SDK's default is used);
      * tests inject a fake to feed a recorded response.
@@ -49,27 +61,34 @@ export function createEmbeddingProvider(deps: EmbeddingProviderDeps): EmbeddingP
     const client = new OpenAI({
         baseURL: deps.baseURL,
         apiKey: deps.token,
+        maxRetries: 0,
         ...(deps.fetch ? { fetch: deps.fetch } : {}),
     });
     const model = deps.model ?? DEFAULT_EMBEDDING_MODEL;
     const dimensions = deps.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
     const suspendOn = deps.suspendOn ?? DEFAULT_SUSPEND_ON;
+    const logger = deps.logger ?? createNoopLogger();
 
     function embed(texts: readonly string[], session: AgentSession): ResultAsync<number[][], ProviderError> {
         if (texts.length === 0) return okAsync([]);
 
         const workload = `${session.scope.kind}:${scopeWorkloadId(session.scope)}`;
         const run = async (): Promise<Result<number[][], ProviderError>> => {
-            // A refusal of the hook stops the call before a request is sent.
-            const headers = await requestHeadersFor(deps.resolveRequestHeaders, session);
-            if (headers.isErr()) return err(headersRefusalError(headers.error, workload));
+            const hookCall: HookCall = { unsettled: false };
+            const retry = createRetry(undefined, logger, EMBEDDING_MAX_RETRIES, suspendOn, hookCall);
             try {
-                const response = await client.embeddings.create({ model, input: [...texts], encoding_format: "float" }, { headers: { ...headers.value } });
+                const response = await retry(async () => {
+                    // The hook runs before each attempt. A refusal stops the call before a request is sent.
+                    const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
+                    return await client.embeddings.create({ model, input: [...texts], encoding_format: "float" }, { headers });
+                });
                 // The API does not guarantee response order; re-key by `index`.
                 const rows = [...response.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
                 return ok(rows);
             } catch (e) {
-                return err(toProviderError(e, workload, suspendOn));
+                // A rejection of the hook is a defect of the host, and it passes through with no change.
+                if (hookCall.unsettled) throw e;
+                return err(failureOf(e, workload, suspendOn));
             }
         };
         return new ResultAsync(run());

@@ -130,4 +130,45 @@ describe("createEmbeddingProvider.embed", () => {
         });
         expect(() => fake.lastHeaders()).toThrow("fetch was never called");
     });
+
+    it("calls the hook before each attempt", async () => {
+        let fetches = 0;
+        let hookCalls = 0;
+        const sent: string[] = [];
+        const served = fakeEmbeddingFetch([{ object: "embedding", index: 0, embedding: [0.1] }]);
+        const provider = createEmbeddingProvider({
+            baseURL: "http://gateway.test/openai",
+            token: "test-token",
+            resolveRequestHeaders: () => {
+                hookCalls += 1;
+                return okAsync({ "x-attempt": `attempt-${hookCalls}` });
+            },
+            fetch: async (input, init) => {
+                fetches += 1;
+                sent.push(new Headers(init?.headers).get("x-attempt") ?? "");
+                if (fetches === 1) return new Response(JSON.stringify({ error: { message: "unavailable" } }), { status: 503 });
+                return served.fetch(input, init);
+            },
+        });
+
+        expect((await provider.embed(["alpha"], makeSession()))._unsafeUnwrap()).toEqual([[0.1]]);
+        expect(hookCalls).toBe(2);
+        expect(sent).toEqual(["attempt-1", "attempt-2"]);
+    }, 10_000);
+
+    it("never retries a status that the map of the host holds", async () => {
+        let fetches = 0;
+        const provider = createEmbeddingProvider({
+            baseURL: "http://gateway.test/openai",
+            token: "test-token",
+            suspendOn: { 429: "quota_exhausted" },
+            fetch: async () => {
+                fetches += 1;
+                return new Response(JSON.stringify({ error: { message: "slow down" } }), { status: 429 });
+            },
+        });
+
+        expect((await provider.embed(["alpha"], makeSession()))._unsafeUnwrapErr()).toMatchObject({ type: "suspend", reason: "quota_exhausted" });
+        expect(fetches).toBe(1);
+    });
 });
