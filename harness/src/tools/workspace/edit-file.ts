@@ -20,6 +20,7 @@ import { z } from "zod";
 import { defineTool, withToolCallRecord, type ToolError, type WithToolCallRecord } from "../define-tool.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
+import { noteScriptChange, scriptSha256 } from "./decision-record.js";
 import type { WorkspaceMutator, WriteFileResult, WriteRecord } from "./mutator.js";
 
 /** Outcome of an `edit_file` call — expected outcomes are data variants, never throws. */
@@ -45,8 +46,10 @@ export type EditFileResult =
               readonly bytesWritten: number;
               /** Regex mode only: 1-based line numbers where the matches started. */
               readonly lines?: readonly number[];
+              /** True when the file is a rendered script and its decision record now lists this edit. */
+              readonly decision_record_noted?: true;
           },
-          WriteRecord
+          readonly WriteRecord[]
       >;
 
 const EditFileInputSchema = z.object({
@@ -243,6 +246,19 @@ export function createEditFileTool(deps: EditFileDeps) {
                 session: ctx.session,
             });
             if (write.status !== "ok") return ok(write);
+            // A rendered script carries a decision record. The edit is a change the curator did not vet, and the
+            // record keeps it with the digest after the change, thus an empty `unvetted_edits` stays a fact.
+            const noted = await noteScriptChange({
+                filesystem: deps.workspaceFilesystem,
+                mutator: deps.mutator,
+                session: ctx.session,
+                ...(deps.workingDir !== undefined ? { workingDir: deps.workingDir } : {}),
+                invocationId: ctx.invocationId,
+                toolName: "edit_file",
+                scriptPath: path,
+                note: `edit_file: ${replaced.replacements} replacement(s)`,
+                sha256: scriptSha256(replaced.content),
+            });
             const lines: readonly number[] | undefined = replaced.lines;
             return ok(
                 withToolCallRecord(
@@ -252,11 +268,14 @@ export function createEditFileTool(deps: EditFileDeps) {
                         replacements: replaced.replacements,
                         bytesWritten: write.bytesWritten,
                         ...(lines === undefined ? {} : { lines }),
+                        ...(noted.status === "noted" ? { decision_record_noted: true as const } : {}),
                     },
-                    write.record,
+                    noted.status === "noted" ? [write.record, noted.write] : [write.record],
                 ),
             );
         },
-        foldCallRecord: (record) => deps.mutator.recordWrite(record),
+        foldCallRecord: (records) => {
+            for (const record of records) deps.mutator.recordWrite(record);
+        },
     });
 }

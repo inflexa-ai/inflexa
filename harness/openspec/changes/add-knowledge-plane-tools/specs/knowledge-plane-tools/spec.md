@@ -108,13 +108,19 @@ When that template is a declared substitute, the answer MUST name the substitute
 
 ### Requirement: The situation is typed and carries no data
 
-The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situation schema: enumerated fields for the question, the modality, the data state, the count source, the organism, the batch structure, the library type, the strandedness, and the quality flags, plus the group and replicate counts, the pairing, the blocking factor, the covariates, the time points, and the interaction flag. The tool MUST NOT accept a sample identifier, a file path, or free text.
+The input of `knowledge_recommend` and `knowledge_check` MUST be the flat situation schema: enumerated fields for the question, the modality, the data state, the count source, the organism, the batch structure, the library type, the strandedness, and the quality flags, plus the group and replicate counts, the pairing, the blocking factor, the covariates, the time points, and the interaction flag. The tool MUST NOT accept a sample identifier, a file path, or free text. The blocking factor, each covariate, and the continuous predictor MUST be a role from an enum, never a column name, because the situation leaves the machine.
 
 #### Scenario: An absent optional field is omitted
 
 - **GIVEN** a call without `covariates`
 - **WHEN** the tool sends the situation
 - **THEN** the request carries no `covariates` key
+
+#### Scenario: A column name is not a role
+
+- **GIVEN** a call with `blocking_factor: "donor_id"`
+- **WHEN** the tool validates the input
+- **THEN** the schema refuses the value, and the permitted roles are `individual`, `cell_line`, `litter`, `site`, `pair`, and `other`
 
 ### Requirement: The template tool writes through the mutator
 
@@ -219,3 +225,51 @@ The recommend tool MUST give each answer to the planner invocation that holds it
 - **GIVEN** the same answer
 - **WHEN** the planner submits a step with the same id and a snapshot of `none`
 - **THEN** the stored step carries no template
+
+### Requirement: A plan pins one release of the service
+
+The two planner tools of one plan generation MUST share one pin. The first `knowledge_recommend` answer MUST set the pin to the served snapshot digest. Each later call of `knowledge_recommend` and `knowledge_check` in the same plan MUST send the pin as `expected_snapshot`. `knowledge_template` MUST send the snapshot digest of the grounding of its step as `expected_snapshot`, with the step id and the claims of the step. A 409 of the service MUST be the data variant `snapshot_mismatch`, with the expected and the served digests, and the tool MUST do no work on it. The render call of `knowledge_template` MUST run in a durable step, thus a replay of the step reads the cached answer and writes the same bytes.
+
+#### Scenario: The service moves between two calls
+
+- **GIVEN** a plan whose first recommend answer came from release A, and a service that now serves release B
+- **WHEN** the planner calls `knowledge_check`
+- **THEN** the tool answers `match: snapshot_mismatch` with the two digests, and the planner submits the draft as it is
+
+#### Scenario: A replay renders the same bytes
+
+- **GIVEN** a step that rendered a template and a workflow that recovers
+- **WHEN** the step replays its `knowledge_template` call
+- **THEN** the render answer comes from the cached step, and the script and the record hold the same bytes as the first run
+
+### Requirement: A local slot never leaves the machine
+
+A slot the contract marks `local` (a path, a column name, a level label, a design formula) MUST NOT be sent to the service. `knowledge_template` MUST take the local slots from the `templateBinding` of the step, or from the contract when the binding carries none, and it MUST send the other slots only. The service answers with the marker `{{name}}` in each local slot, and the tool MUST bind the local values on the machine with the rule of the service (`bindLocalSlots`) before it writes the script. A local value the contract refuses MUST be refused by the tool, with the slot and the reason, before any write. The briefing MUST mark each local slot.
+
+#### Scenario: A path stays on the machine
+
+- **GIVEN** a render call with `counts_path` and `lfc_shrink`
+- **WHEN** the tool calls the service
+- **THEN** the request carries `lfc_shrink` only, the written script carries the count path in the marked line, and the record names `counts_path` as bound on this machine
+
+#### Scenario: A local value the contract refuses
+
+- **GIVEN** a render call whose `counts_path` is a number
+- **WHEN** the tool binds the local slots
+- **THEN** the tool answers `match: rejected` with the slot and the reason, and no file is written
+
+### Requirement: The decision record follows the script
+
+The record on disk MUST carry the step, the claims, the digest of the script as the service rendered it, and `written_sha256`, the digest of the bytes the tool wrote. `edit_file` on a script under `scripts/` that has a record MUST append an entry to `unvetted_edits` with the path, a note, and the digest after the change. Before `execute_command` runs a script that has a record, it MUST compare the script with the last recorded digest, and a difference MUST be appended as an unvetted change with the digest of the bytes that run. A script without a record is untouched.
+
+#### Scenario: An edit lands on the record
+
+- **GIVEN** a rendered script and its record
+- **WHEN** `edit_file` changes a marked line
+- **THEN** the record lists the edit with the digest of the script after the change
+
+#### Scenario: A change no tool recorded
+
+- **GIVEN** a rendered script whose bytes differ from the last recorded digest
+- **WHEN** `execute_command` runs it
+- **THEN** the record lists the change with the digest of the bytes that run, before the command runs

@@ -25,5 +25,6 @@ export * from "./mutator.js";
 export * from "./execute-command.js";
 export * from "./write-file.js";
 export * from "./edit-file.js";
+export * from "./decision-record.js";
 export { EXEC_STREAM_BYTE_CAP, boundExecResult } from "./result-bounds.js";
 export type { BoundedExecResult } from "./result-bounds.js";

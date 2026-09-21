@@ -24,7 +24,14 @@ import { apiFetchValidated, describeApiError, type ApiError } from "../lib/api-u
 
 // ── The situation ───────────────────────────────────────────────────
 
-/** The typed description of one analysis situation. Never a sample row and never an identifier. */
+/** The role of the blocking factor. A role and never a column name, because the situation leaves the machine. */
+export type BlockingRole = "individual" | "cell_line" | "litter" | "site" | "pair" | "other";
+/** The role of a covariate of the design. A role and never a column name. */
+export type CovariateRole = "sex" | "age" | "clinical" | "technical" | "other";
+/** The role of the numeric variable of interest when the question is a trend, not a comparison of groups. */
+export type PredictorRole = "dose" | "time" | "age" | "score" | "other";
+
+/** The typed description of one analysis situation. Never a sample row, never an identifier, and never a column name. */
 export interface KnowledgeSituation {
     readonly question: "differential_expression" | "enrichment" | "qc" | "full_plan";
     readonly modality: "bulk_rna_seq";
@@ -41,14 +48,16 @@ export interface KnowledgeSituation {
     /** The number of samples with an observed event, for a survival question. Never required. */
     readonly n_events?: number;
     readonly paired: boolean;
-    readonly blocking_factor?: string | null;
+    /** The role of the blocking factor, or null. The column name stays on the machine. */
+    readonly blocking_factor?: BlockingRole | null;
     /** How the blocking factor relates to the condition: crossed, or nested inside one condition. */
     readonly block_structure?: "crossed" | "nested";
     readonly batch: "none" | "known_balanced" | "known_confounded" | "known_unbalanced" | "suspected";
-    readonly covariates?: readonly string[];
+    /** The role of each covariate of the design, one entry per covariate. The column names stay on the machine. */
+    readonly covariates?: readonly CovariateRole[];
     readonly n_timepoints?: number | null;
-    /** The name of the numeric column of interest when the question is a trend over it; then `n_groups` is 1. */
-    readonly continuous_predictor?: string | null;
+    /** The role of the numeric variable of interest when the question is a trend over it; then `n_groups` is 1. The column name stays on the machine. */
+    readonly continuous_predictor?: PredictorRole | null;
     /** True when some columns of the count table are technical replicates of one biological sample. */
     readonly technical_replicates?: boolean;
     /** The row unit of the count table. Absent for a gene-level table. */
@@ -160,8 +169,21 @@ export const RenderResponseSchema = z.looseObject({
         substitute_for: MethodRefSchema.optional(),
         language: z.string(),
     }),
+    /** The script with each local slot as its marker `{{name}}`. The host binds the local values before it writes the file. */
     script: z.string(),
-    slots: z.array(z.looseObject({ name: z.string(), value: z.unknown(), source: z.string(), adaptable: z.boolean(), lines: z.array(z.number()) })),
+    /** A local slot entry has no value: the host binds it. */
+    slots: z.array(
+        z.looseObject({
+            name: z.string(),
+            value: z.unknown().optional(),
+            source: z.string(),
+            adaptable: z.boolean(),
+            lines: z.array(z.number()),
+            read: z.boolean().optional(),
+        }),
+    ),
+    /** The local slots the host must bind: each marker still in `script`. */
+    local_slots: z.array(z.string()).optional(),
     environment: z.looseObject({ match: z.string() }),
     syntax: z.looseObject({ status: z.string() }),
     outputs: z.array(z.looseObject({ name: z.string(), path: z.string(), description: z.string().optional() })),
@@ -187,6 +209,8 @@ const TemplateParameterSchema = z.looseObject({
     type: z.string(),
     description: z.string(),
     adaptable: z.boolean(),
+    /** True for a slot whose value is a fact of the machine (a path, a column name, a level label, a formula): the host binds it, and the service never sees it. */
+    local: z.boolean().optional(),
     required: z.boolean().optional(),
     default: SlotValueSchema.optional(),
     default_source: z.string().optional(),
@@ -267,6 +291,18 @@ export interface KnowledgeUnavailable {
     readonly reason: string;
 }
 
+/**
+ * The service serves another release than the one the plan pinned, and it
+ * did no work. A plan is not moved to a new release in silence: the caller
+ * proceeds as with an unavailable service, and it states the two digests.
+ */
+export interface KnowledgeSnapshotMismatch {
+    readonly match: "snapshot_mismatch";
+    readonly message: string;
+    readonly expected: string;
+    readonly served: { readonly date: string; readonly digest: string };
+}
+
 /** The service refused the request and named the field or the slot and the permitted values. */
 export interface KnowledgeRejected {
     readonly match: "rejected";
@@ -280,18 +316,36 @@ export interface KnowledgeRejected {
     }[];
 }
 
+/** What a render call carries beside the template and the slots. */
+export interface RenderCallOptions {
+    /** The id of the plan step that runs the script. */
+    readonly step?: string;
+    /** The claims of the plan step that selected the template. Each must resolve in the served snapshot. */
+    readonly claims?: readonly string[];
+    /** The release digest the plan pinned. The service refuses another release with `snapshot_mismatch`. */
+    readonly expectedSnapshot?: string;
+}
+
 export interface KnowledgeClient {
+    /** `expectedSnapshot` pins the release of an earlier answer of the same plan; the first call of a plan has none. */
     recommend(
         situation: KnowledgeSituation,
         responseFormat?: "concise" | "detailed",
         preferences?: KnowledgePreferences,
-    ): Promise<RecommendResponse | KnowledgeUnavailable | KnowledgeRejected>;
-    check(situation: KnowledgeSituation, steps: readonly DraftedStep[]): Promise<CheckResponse | KnowledgeUnavailable | KnowledgeRejected>;
+        expectedSnapshot?: string,
+    ): Promise<RecommendResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch>;
+    check(
+        situation: KnowledgeSituation,
+        steps: readonly DraftedStep[],
+        expectedSnapshot?: string,
+    ): Promise<CheckResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch>;
+    /** `slots` never holds a local slot: the host binds those after the render, on the machine. */
     render(
         template: string,
         slots: Readonly<Record<string, unknown>>,
         farm?: readonly FarmPackage[],
-    ): Promise<RenderResponse | KnowledgeUnavailable | KnowledgeRejected>;
+        options?: RenderCallOptions,
+    ): Promise<RenderResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch>;
     /**
      * The slot contract of a template, by reference (`tpl-x@1.0.0`) or by id.
      * The service serves one version per snapshot, thus the answer carries the
@@ -327,16 +381,36 @@ function templateIdOf(reference: string): string {
     return at < 0 ? reference : reference.slice(0, at);
 }
 
+const SnapshotMismatchSchema = z.looseObject({
+    error: z.literal("snapshot_mismatch"),
+    message: z.string(),
+    expected: z.string(),
+    served: SnapshotRefSchema,
+});
+
 /**
  * A 400 is a rejection that names the field and the permitted values. A 404
  * is one only on a lookup route, where `notFoundField` names the field whose
- * value the service does not hold. Every other failure is `unavailable`.
+ * value the service does not hold. A 409 is a snapshot mismatch: the service
+ * serves another release than the pinned one. Every other failure is
+ * `unavailable`.
  */
-function rejectedOf(error: ApiError, notFoundField?: string): KnowledgeRejected | undefined {
+function refusalOf(error: ApiError, notFoundField?: string): KnowledgeRejected | KnowledgeSnapshotMismatch | undefined {
     if (error.type !== "http_status") return undefined;
     if (error.status === 404 && notFoundField) {
         const message = messageOf(error.body) ?? `no such ${notFoundField}`;
         return { match: "rejected", message, issues: [{ field: notFoundField, message }] };
+    }
+    if (error.status === 409) {
+        let raw: unknown;
+        try {
+            raw = JSON.parse(error.body);
+        } catch {
+            return undefined;
+        }
+        const parsed = SnapshotMismatchSchema.safeParse(raw);
+        if (!parsed.success) return undefined;
+        return { match: "snapshot_mismatch", message: parsed.data.message, expected: parsed.data.expected, served: parsed.data.served };
     }
     if (error.status !== 400) return undefined;
     let raw: unknown;
@@ -364,7 +438,7 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
         body: unknown,
         schema: S,
         notFoundField?: string,
-    ): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected> {
+    ): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch> {
         const headers: Record<string, string> = body === undefined ? { authorization } : { "content-type": "application/json", authorization };
         const result = await apiFetchValidated(`${base}${path}`, schema, {
             ...policy,
@@ -373,21 +447,50 @@ export function createHttpKnowledgeClient(config: HttpKnowledgeClientConfig): Kn
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
         if (result.isOk()) return result.value;
-        const rejected = rejectedOf(result.error, notFoundField);
-        if (rejected) return rejected;
+        const refusal = refusalOf(result.error, notFoundField);
+        if (refusal) return refusal;
         return { match: "unavailable", reason: describeApiError(result.error) };
     }
 
+    /** A contract lookup carries no pin, thus a mismatch cannot come back; the type says so. */
+    async function lookup<S extends z.ZodType>(path: string, schema: S, notFoundField: string): Promise<z.infer<S> | KnowledgeUnavailable | KnowledgeRejected> {
+        const answer = await call("GET", path, undefined, schema, notFoundField);
+        // A GET without a body has no pin, thus a 409 is not among its answers; the guard keeps the type honest.
+        if (typeof answer === "object" && answer !== null && "match" in answer && answer.match === "snapshot_mismatch") {
+            return { match: "unavailable", reason: answer.message };
+        }
+        return answer as z.infer<S> | KnowledgeUnavailable | KnowledgeRejected;
+    }
+
     return {
-        recommend: (situation, responseFormat, preferences) =>
+        recommend: (situation, responseFormat, preferences, expectedSnapshot) =>
             call(
                 "POST",
                 "/v1/recommend",
-                { situation, ...(responseFormat ? { response_format: responseFormat } : {}), ...(preferences ? { preferences } : {}) },
+                {
+                    situation,
+                    ...(responseFormat ? { response_format: responseFormat } : {}),
+                    ...(preferences ? { preferences } : {}),
+                    ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}),
+                },
                 RecommendResponseSchema,
             ),
-        check: (situation, steps) => call("POST", "/v1/check", { situation, steps }, CheckResponseSchema),
-        render: (template, slots, farm) => call("POST", "/v1/template/render", { template, slots, ...(farm ? { farm } : {}) }, RenderResponseSchema),
-        contract: (template) => call("GET", `/v1/templates/${encodeURIComponent(templateIdOf(template))}`, undefined, TemplateContractSchema, "template"),
+        check: (situation, steps, expectedSnapshot) =>
+            call("POST", "/v1/check", { situation, steps, ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) }, CheckResponseSchema),
+        render: (template, slots, farm, options) =>
+            call(
+                "POST",
+                "/v1/template/render",
+                {
+                    template,
+                    slots,
+                    ...(farm ? { farm } : {}),
+                    ...(options?.step ? { step: options.step } : {}),
+                    ...(options?.claims ? { claims: options.claims } : {}),
+                    ...(options?.expectedSnapshot ? { expected_snapshot: options.expectedSnapshot } : {}),
+                },
+                RenderResponseSchema,
+            ),
+        contract: (template) => lookup(`/v1/templates/${encodeURIComponent(templateIdOf(template))}`, TemplateContractSchema, "template"),
     };
 }
