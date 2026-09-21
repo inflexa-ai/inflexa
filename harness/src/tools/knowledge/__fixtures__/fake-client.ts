@@ -16,13 +16,19 @@ import type {
     RecommendResponse,
     RenderResponse,
     KnowledgePreferences,
+    RenderCallOptions,
     TemplateContract,
 } from "../client.js";
 
 export const SNAPSHOT = { date: "2026-09-04", digest: "sha256:71ac0000000000000000000000000000000000000000000000000000000000ab" };
 
 const DE_METHOD = { id: "M-0001", label: "Count-model Wald test with effect shrinkage" };
-const QC_STEP = { step: "qc_sample_structure", method: { id: "M-0006", label: "Sample structure check" }, template: "tpl-qc-eda@1.0.0", rules: ["R-0033@1a2b"] };
+const QC_STEP = {
+    step: "qc_sample_structure",
+    method: { id: "M-0006", label: "Sample structure check" },
+    template: "tpl-qc-eda@1.0.0",
+    rules: ["R-0033@1a2b"],
+};
 
 function claim(id: string, statement: string): RecommendResponse["claims"][number] {
     return {
@@ -158,21 +164,25 @@ export function notAssessedCheckAnswer(): CheckResponse {
     };
 }
 
+/** The marked render of the two-group template: the count path is a local slot, thus the service leaves its marker. */
 export function renderAnswer(): RenderResponse {
     return {
         ok: true,
         snapshot: SNAPSHOT,
         template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "Two-group count model", method: DE_METHOD, language: "R" },
-        script: 'COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n',
-        slots: [{ name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] }],
+        script: 'COUNTS <- {{counts_path}}  # [adaptable: counts_path]\nmessage("hello")\n',
+        slots: [{ name: "counts_path", source: "local", adaptable: true, lines: [1] }],
+        local_slots: ["counts_path"],
         environment: { match: "exact" },
         syntax: { status: "ok" },
         outputs: [{ name: "results", path: "output/de_results.csv" }],
         decision_record: {
-            schema: "inflexa.decision_record/0.1",
+            schema: "inflexa.decision_record/0.2",
+            claims: [],
             template: { id: "tpl-deseq2-two-group", version: "1.0.0", label: "Two-group count model", method: DE_METHOD },
             snapshot: SNAPSHOT,
-            slots: [],
+            slots: [{ name: "counts_path", source: "local", adaptable: true, lines: [1] }],
+            script_sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             unvetted_edits: [],
         },
     };
@@ -185,12 +195,14 @@ export function substituteRenderAnswer(): RenderResponse {
     return {
         ...renderAnswer(),
         template: { id: "tpl-decoupler-scores", version: "1.0.0", label: "decoupler pathway scores", method, substitute_for, language: "python" },
-        script: 'SCORES = "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nprint("hello")\n',
+        script: 'SCORES = {{counts_path}}  # [adaptable: counts_path]\nprint("hello")\n',
         decision_record: {
-            schema: "inflexa.decision_record/0.1",
+            schema: "inflexa.decision_record/0.2",
+            claims: [],
             template: { id: "tpl-decoupler-scores", version: "1.0.0", label: "decoupler pathway scores", method, substitute_for },
             snapshot: SNAPSHOT,
             slots: [],
+            script_sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             unvetted_edits: [],
         },
     };
@@ -211,9 +223,16 @@ export function contractAnswer(): TemplateContract {
         method: DE_METHOD.id,
         language: "R",
         parameters: [
-            { name: "counts_path", type: "string", description: "The count table file.", adaptable: true },
-            { name: "metadata_path", type: "string", description: "The sample table file.", adaptable: true },
-            { name: "condition_column", type: "string", description: "The sample table column with the contrast.", adaptable: true },
+            { name: "counts_path", type: "string", description: "The count table file.", adaptable: true, local: true },
+            { name: "metadata_path", type: "string", description: "The sample table file.", adaptable: true, local: true, required: false },
+            {
+                name: "condition_column",
+                type: "string",
+                description: "The sample table column with the contrast.",
+                adaptable: true,
+                local: true,
+                required: false,
+            },
             {
                 name: "design",
                 type: "formula",
@@ -257,6 +276,7 @@ export function contractAnswer(): TemplateContract {
                 default_source: "doi:10.1093/bioinformatics/bty895",
                 enum: ["apeglm", "ashr", "none"],
             },
+            { name: "covariates", type: "string_list", description: "The covariate terms of the design, as a list.", adaptable: true, required: false },
         ],
         inputs: [
             { name: "counts", path: "{{counts_path}}", description: "Gene by sample integer counts, CSV." },
@@ -267,9 +287,9 @@ export function contractAnswer(): TemplateContract {
 }
 
 export interface FakeCalls {
-    readonly recommend: { situation: KnowledgeSituation; preferences?: KnowledgePreferences }[];
-    readonly check: { situation: KnowledgeSituation; steps: readonly DraftedStep[] }[];
-    readonly render: { template: string; slots: Readonly<Record<string, unknown>>; farm?: readonly FarmPackage[] }[];
+    readonly recommend: { situation: KnowledgeSituation; preferences?: KnowledgePreferences; expected_snapshot?: string }[];
+    readonly check: { situation: KnowledgeSituation; steps: readonly DraftedStep[]; expected_snapshot?: string }[];
+    readonly render: { template: string; slots: Readonly<Record<string, unknown>>; farm?: readonly FarmPackage[]; options?: RenderCallOptions }[];
     readonly contract: { template: string }[];
 }
 
@@ -284,16 +304,16 @@ export function fakeKnowledgeClient(
     const calls: FakeCalls = { recommend: [], check: [], render: [], contract: [] };
     const checkAnswer: CheckResponse = { ok: true, snapshot: SNAPSHOT, violations: [], warnings: [], not_assessed: [] };
     const client: KnowledgeClient = {
-        async recommend(situation, _responseFormat, preferences) {
-            calls.recommend.push({ situation, ...(preferences ? { preferences } : {}) });
+        async recommend(situation, _responseFormat, preferences, expectedSnapshot) {
+            calls.recommend.push({ situation, ...(preferences ? { preferences } : {}), ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) });
             return answers.recommend ?? recommendAnswer();
         },
-        async check(situation, steps) {
-            calls.check.push({ situation, steps });
+        async check(situation, steps, expectedSnapshot) {
+            calls.check.push({ situation, steps, ...(expectedSnapshot ? { expected_snapshot: expectedSnapshot } : {}) });
             return answers.check ?? checkAnswer;
         },
-        async render(template, slots, farm) {
-            calls.render.push({ template, slots, ...(farm ? { farm } : {}) });
+        async render(template, slots, farm, options) {
+            calls.render.push({ template, slots, ...(farm ? { farm } : {}), ...(options ? { options } : {}) });
             return answers.render ?? renderAnswer();
         },
         async contract(template) {

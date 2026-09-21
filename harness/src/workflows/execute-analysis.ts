@@ -654,7 +654,11 @@ async function resolveTemplateContract(step: AnalysisStep, client: KnowledgeClie
                 : `the knowledge service refused the lookup: ${answer.message}`;
         return { briefing: { templateNotRetrieved: reason } };
     }
-    return bindTemplateContract(ref, answer, step.grounding?.settings ?? []);
+    return bindTemplateContract(ref, answer, step.grounding?.settings ?? [], {
+        stepId: step.id,
+        claims: step.grounding?.claims ?? [],
+        ...(step.grounding?.snapshot && step.grounding.snapshot !== "none" ? { snapshot: step.grounding.snapshot } : {}),
+    });
 }
 
 /** The version of a template reference (`tpl-x@1.0.0` gives `1.0.0`), or `undefined` when the reference has none. */
@@ -699,7 +703,14 @@ function fitsSlot(slot: TemplateParameter, value: unknown): boolean {
  * nothing: the render refuses the plan version, and the settings then ride
  * as unbound lines under the caveat the section renders.
  */
-function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[]): TemplateSeedPart {
+/** What binds the render to the plan step beside the settings: its id, its claims, and the release the plan pinned. */
+interface StepGroundingRef {
+    readonly stepId: string;
+    readonly claims: readonly string[];
+    readonly snapshot?: string;
+}
+
+function bindTemplateContract(ref: string, contract: TemplateContract, settings: readonly GroundingSetting[], grounding: StepGroundingRef): TemplateSeedPart {
     const refVersion = versionOfRef(ref);
     const versionMatches = refVersion === undefined || refVersion === contract.version;
     const adaptable = contract.parameters.filter((slot) => slot.adaptable);
@@ -761,7 +772,22 @@ function bindTemplateContract(ref: string, contract: TemplateContract, settings:
                 unbound_settings: unbound,
             },
         },
-        ...(versionMatches ? { binding: { template: ref, slots, sources } } : {}),
+        ...(versionMatches
+            ? {
+                  binding: {
+                      template: ref,
+                      slots,
+                      sources,
+                      step: grounding.stepId,
+                      claims: grounding.claims,
+                      ...(grounding.snapshot ? { snapshot: grounding.snapshot } : {}),
+                      // The local slots of the contract, thus the tool binds a path or a column name on the machine
+                      // without a second read of the contract.
+                      local: contract.parameters.filter((slot) => slot.local === true),
+                      adaptable: adaptable.map((slot) => slot.name),
+                  },
+              }
+            : {}),
     };
 }
 

@@ -9,19 +9,27 @@ import { createSandboxAgents } from "../../agents/sandbox/index.js";
 import { stepWritePrefix } from "../../workspace/paths.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createWorkspaceMutator } from "../workspace/mutator.js";
-import { fakeKnowledgeClient, renderAnswer, substituteRenderAnswer } from "./__fixtures__/fake-client.js";
-import { createKnowledgeTemplateTool, decisionRecordPath, type TemplateBinding } from "./template.js";
+import { contractAnswer, fakeKnowledgeClient, renderAnswer, SNAPSHOT, substituteRenderAnswer } from "./__fixtures__/fake-client.js";
+import { decisionRecordPath } from "../workspace/decision-record.js";
+import { createKnowledgeTemplateTool, type TemplateBinding } from "./template.js";
 
 const ANALYSIS = "analysis-001";
 const TEMPLATE = "tpl-deseq2-two-group@1.0.0";
 const COUNTS = "/analysis-001/data/inputs/f1/counts.csv";
 
-/** The two-group binding of the plan: the shrinkage estimator, the count filter, and a list-valued slot. */
+/** The two-group binding of the plan: the shrinkage estimator, the count filter, a list-valued slot, and the grounding of the step. */
 function binding(over: Partial<TemplateBinding> = {}): TemplateBinding {
     return {
         template: TEMPLATE,
         slots: { lfc_shrink: "apeglm", min_count: 10, covariates: ["batch", "sex"] },
         sources: { lfc_shrink: "doi:10.1093/bioinformatics/bty895", min_count: "doi:10.12688/f1000research.7035.1" },
+        step: "T1S2",
+        claims: ["R-0001@e7d0"],
+        snapshot: SNAPSHOT.digest,
+        local: contractAnswer().parameters.filter((slot) => slot.local === true),
+        adaptable: contractAnswer()
+            .parameters.filter((slot) => slot.adaptable)
+            .map((slot) => slot.name),
         ...over,
     };
 }
@@ -55,7 +63,9 @@ describe("knowledge_template with a binding", () => {
         expect(out).toMatchObject({ status: "ok" });
         expect(calls.render).toHaveLength(1);
         expect(calls.render[0]?.template).toBe(TEMPLATE);
-        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "apeglm", min_count: 10, covariates: ["batch", "sex"], counts_path: COUNTS });
+        // The count path is local: it is bound here and never in the request.
+        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "apeglm", min_count: 10, covariates: ["batch", "sex"] });
+        expect(await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8")).toContain(`COUNTS <- ${JSON.stringify(COUNTS)}`);
         const record = await recordOf(workingDir);
         expect(record.bound_slots).toEqual([
             { slot: "lfc_shrink", value: "apeglm", source: "doi:10.1093/bioinformatics/bty895" },
@@ -64,6 +74,38 @@ describe("knowledge_template with a binding", () => {
         ]);
         expect(record.settings_overrides).toEqual([]);
         expect(record.script_path).toBe(`/${ANALYSIS}/runs/run-1/T1S2/scripts/tpl-deseq2-two-group.R`);
+    });
+
+    it("binds the render to the plan step: the step, its claims, and the pinned release ride in the request, and the local slots come from the binding", async () => {
+        const { tool, calls } = build(binding());
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ template: TEMPLATE, slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
+        expect(out).toMatchObject({ status: "ok", local_slots: ["counts_path"] });
+        expect(calls.render[0]?.options).toEqual({ step: "T1S2", claims: ["R-0001@e7d0"], expectedSnapshot: SNAPSHOT.digest });
+        // The binding names the local slots, thus no contract is read at render time.
+        expect(calls.contract).toHaveLength(0);
+    });
+
+    it("binds a bound local slot on the machine when the model omits it, and lists it among the bound slots", async () => {
+        const { tool, workingDir, calls } = build(binding({ slots: { lfc_shrink: "apeglm", condition_column: "dex" }, sources: { condition_column: "plan" } }));
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ template: TEMPLATE, slots: { counts_path: COUNTS } }, ctx))._unsafeUnwrap();
+        expect(out).toMatchObject({ status: "ok", local_slots: ["counts_path", "condition_column"] });
+        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "apeglm" });
+        const record = await recordOf(workingDir);
+        expect(record.bound_slots).toEqual([
+            { slot: "lfc_shrink", value: "apeglm", source: "plan" },
+            { slot: "condition_column", value: "dex", source: "plan" },
+        ]);
+    });
+
+    it("refuses an unknown slot name before anything leaves the machine", async () => {
+        const { tool, calls } = build(binding());
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ template: TEMPLATE, slots: { counts_path: COUNTS, count_path: "/analysis-001/SENTINEL.csv" } }, ctx))._unsafeUnwrap();
+        expect(out).toMatchObject({ match: "rejected", issues: [{ slot: "count_path", reason: "the template has no such adaptable slot" }] });
+        expect(calls.render).toHaveLength(0);
+        expect(calls.contract).toHaveLength(0);
     });
 
     it("renders when the model sends every bound value as it is, the list included", async () => {
@@ -111,7 +153,7 @@ describe("knowledge_template with a binding", () => {
             await tool.execute({ template: TEMPLATE, slots: { counts_path: COUNTS, lfc_shrink: "ashr" }, overrides: [{ slot: "lfc_shrink", reason }] }, ctx)
         )._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok" });
-        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr", min_count: 10, covariates: ["batch", "sex"], counts_path: COUNTS });
+        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr", min_count: 10, covariates: ["batch", "sex"] });
         const record = await recordOf(workingDir);
         expect(record.settings_overrides).toEqual([{ slot: "lfc_shrink", plan_value: "apeglm", new_value: "ashr", reason }]);
         expect(record.bound_slots).toHaveLength(3);
@@ -154,9 +196,11 @@ describe("knowledge_template with a binding", () => {
     it("writes empty bound slots and overrides without a binding, and accepts any template reference", async () => {
         const { tool, workingDir, calls } = build(undefined);
         const { ctx } = makeToolContext();
-        const out = (await tool.execute({ template: "tpl-deseq2-two-group", slots: { lfc_shrink: "ashr" } }, ctx))._unsafeUnwrap();
+        const out = (await tool.execute({ template: "tpl-deseq2-two-group", slots: { lfc_shrink: "ashr", counts_path: COUNTS } }, ctx))._unsafeUnwrap();
         expect(out).toMatchObject({ status: "ok" });
         expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr" });
+        // Without a binding the request carries no step, no claims, and no pin.
+        expect(calls.render[0]?.options).toEqual({});
         const record = await recordOf(workingDir);
         expect(record.bound_slots).toEqual([]);
         expect(record.settings_overrides).toEqual([]);

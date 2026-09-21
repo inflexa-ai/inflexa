@@ -171,7 +171,7 @@ describe("renderTemplateContract", () => {
         // A default with its source.
         expect(rendered).toContain("`min_count` (integer; default 10 [doi:10.12688/f1000research.7035.1]; min 0)");
         // A required slot without a default, and an optional one.
-        expect(rendered).toContain("`counts_path` (string; required)");
+        expect(rendered).toContain("`counts_path` (string; local; required)");
         expect(rendered).toContain("`min_samples` (integer; optional; min 1)");
     });
 
