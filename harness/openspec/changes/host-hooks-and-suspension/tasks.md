@@ -84,8 +84,8 @@
 
 ## 7. The exports, the documents, and the archive
 
-- [ ] 7.1 Update `src/index.ts`: export the new hook types and remove the billing names
-- [ ] 7.2 Update `CLAUDE.md` and `CONTEXT.md` of the harness where they name the billing seam or the `402` cascade.
+- [x] 7.1 Update `src/index.ts`: export the new hook types and remove the billing names
+- [x] 7.2 Update `CLAUDE.md` and `CONTEXT.md` of the harness where they name the billing seam or the `402` cascade.
   In the house rules of `CLAUDE.md`, add the `Result` recipe of D7 and the throw rule
 - [ ] 7.3 After the archive, update the Purpose sections that name `ResolveBilling` or the `402` pause:
   `harness-providers`, `harness-session-model`, and `workflow-failure-lifecycle`. A delta cannot change a Purpose

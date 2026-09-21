@@ -287,21 +287,23 @@ never branches on which realization is bound, and a unit test passes a fake.
   `auth` (`makeLocalAuth`, `auth/local-auth-context.ts`), and the local harness
   never inspects it.
 
-### The five seams
+### The four seams and the two hooks
 
 The harness declares each seam as an interface. An embedder binds one realization
 at the composition root.
+
+Each method of a seam, and each hook, is a gate or a notice (`lib/hooks.ts`). A
+gate gives a value that the operation must have. Its `err` fails the operation.
+If the host sets `suspend`, the `err` suspends the operation. A notice reports a
+fact after the operation. Its `err` goes to the log, and the operation continues.
 
 - **`RunAuthorizer`** (`execution/run-authorizer.ts`) — it changes the opaque
   caller `auth` into a durable `RunSession` at the async edge. It is the sole
   constructor of a `RunSession`, thus it is the single chokepoint where the
   in-process identity becomes the durable workflow identity. OSS realization:
   `auth/local-run-authorizer.ts` issues a `RunSession` with no remote mint, no jti,
-  and no revoke, thus the authorization is purely structural.
-- **`ResolveBilling`** (`billing/resolver.ts`) — it gives a call-attribution
-  header map that the provider spreads at the LLM or embedding call site. It
-  resolves lazily, only at the wire boundary. OSS realization:
-  `createNoopBillingResolver` gives `{}`, an empty header map.
+  and no revoke, thus the authorization is purely structural. `authorize` is a
+  gate. `revoke` and `revokeByJti` are notices.
 - **`ArtifactRegistry`** (`execution/artifact-registry.ts`) — post-step artifact
   recording with content-attested lineage. `register(input, session)` and
   `sync(input, session)` are the two methods. `register` takes the manifest of the
@@ -310,14 +312,15 @@ at the composition root.
   realization: `createNoopArtifactRegistry` registers nothing outside and reports
   zero failures, because the harness itself writes the local `cortex_artifacts`
   ledger around the seam. Its `sync` does nothing, because the bytes are already
-  in the local workspace tree.
+  in the local workspace tree. `register` is a gate, and `sync` is a notice.
 - **`RunCharge`** (`billing/run-charge.ts`) — the run-level billing bracket that
   `executeAnalysis` opens at the init and closes on the terminal path, for one of
-  four reasons. Local realization: `createNoopRunCharge` does nothing.
+  four reasons. `open` is a gate, and `close` is a notice. Local realization:
+  `createNoopRunCharge` does nothing.
 - **`UsageRecorder`** (`billing/usage-recorder.ts`) — one attributed
-  `LlmUsageRecord` for each completed LLM call, delivered from the loop. The
-  contract makes it fire-and-forget, thus a realization must not throw and must
-  not block. A consumer upserts on the replay-stable `recordKey` of the record.
+  `LlmUsageRecord` for each completed LLM call, delivered from the loop. `record`
+  is a notice, and the loop does not wait for it. A consumer upserts on the
+  replay-stable `recordKey` of the record.
   Local realization: `createNoopUsageRecorder`
   (`billing/noop-usage-recorder.ts`) drops each record.
 - **`RunLauncher`** (`execution/run-launcher.ts`) — it starts a registered
@@ -326,6 +329,18 @@ at the composition root.
   that `execute_analysis` does not import the durability engine. One
   host-neutral realization, `createDbosRunLauncher`
   (`execution/dbos-run-launcher.ts`), is shared by each embedder.
+
+The two hooks are optional gates. The harness does not read the values that they
+give:
+
+- **`resolveRequestHeaders`** (`providers/request-headers.ts`) — a gate on each
+  model provider and on the embedding provider. The provider adds the headers
+  that the hook gives to each request. If the hook is absent, the provider adds
+  no headers.
+- **`resolveSandboxLabels`** (`sandbox/types.ts`) — a gate on the configuration
+  of the sandbox client. The client calls it at each spawn, on the Docker backend
+  and on the K8s backend. It stamps each host label as the host gives it. If the
+  hook is absent, the sandbox has only the harness labels.
 
 ### Embedder and composition roots
 
@@ -697,17 +712,16 @@ Other facts:
   `dbos.operation_outputs`. Refer to
   [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
 
-### Call attribution at the wire boundary
+### Request headers at the wire boundary
 
 - The session is the compile-time obligation. `ChatProvider.chat(req, session, signal?)`
   and `EmbeddingProvider.embed(texts, session)` both take an `AgentSession`, thus
-  you cannot construct a wire call without one. The provider resolves the call
-  attribution internally, with its injected `resolveBilling(session)` seam at call
-  time. Then it spreads the header map that the seam gives onto the request. The
-  OSS realization gives an empty map.
-- There is no ALS, no fetch-patch, and no wrapper. A read-only route never
-  resolves the attribution, because the seam is lazy and fires only at the LLM or
-  embedding call site.
+  you cannot construct a wire call without one. The provider calls its optional
+  `resolveRequestHeaders(session)` hook before each attempt of a request. Then it
+  adds the headers that the hook gives to the request, and it does not read them.
+  Without the hook, the provider adds no headers.
+- There is no ALS, no fetch-patch, and no wrapper. A read-only route never calls
+  the hook, because the hook runs only at the LLM or embedding call site.
 - A background task (a data profile trigger, an async memory write) constructs
   an explicit `RunSession` through the `RunAuthorizer` seam. The task then
   carries that session. The scope is whatever resource the task acts against. The
@@ -715,7 +729,7 @@ Other facts:
   (`DATA_PROFILE_RUN_LITERAL` and `DATA_PROFILE_STEP_LITERAL`) as the run tag
   and the step tag. The unique DBOS `workflowID` does the routing.
 
-### Budget-exceeded resume
+### Suspension and resume
 
 Do not conflate the two replay scenarios:
 
@@ -723,10 +737,10 @@ Do not conflate the two replay scenarios:
   **same input**. The `attempt` does not change, thus each step name is identical
   and the whole body hits the cache. This is the common case, and it works with no
   extra work.
-- **Budget resume** deliberately **increases `attempt`**, thus the failed LLM call
-  fires again against a budget that is now available.
+- **A resume after a suspension** deliberately **increases `attempt`**, thus the
+  failed LLM call fires again after the host removes the cause.
 
-The mechanism of the budget resume:
+The mechanism of the suspension and the resume:
 
 - The step names carry the attempt as a suffix. `attemptStepNameFormatter` (in
   `sandbox-step.ts`) names the loop steps `llm:${iteration}:${attempt}` and
@@ -734,11 +748,17 @@ The mechanism of the budget resume:
   `open-running-charge:${attempt}`, `close-running-charge:${attempt}`, and
   `revoke-run-auth:${attempt}`. An increased attempt is a name that the cache has
   never held, thus the call fires fresh.
-- On a budget error the caller catches the provider-specific error, calls
-  `DBOS.cancelWorkflow(DBOS.workflowID!)`, and returns. The next step boundary
-  throws `DBOSWorkflowCancelledError`, and the status becomes **`CANCELLED`**. It
-  is not `ERROR`, because `ERROR` is terminal in DBOS v4 and it cannot resume.
-  Cortex marks the analysis `suspended` from the status flip.
+- A suspension starts from a model request that fails with a `suspend` error, or
+  from a gate refusal with the suspend flag. The suspend map of the provider
+  makes the `suspend` error. Its default maps `402` to `payment_required`.
+- A durable owner records the reason and calls `cancelSelf`
+  (`workflows/suspension.ts`). The next step boundary throws
+  `DBOSWorkflowCancelledError`, and the status becomes **`CANCELLED`**. It is not
+  `ERROR`, because `ERROR` is terminal in DBOS v4 and it cannot resume. A child
+  sends a typed suspension on the topic `child-suspended` before it cancels
+  itself. Then the parent cancels the in-flight siblings.
+- The harness marks the analysis as suspended with `suspendAnalysis`
+  (`state/analyses.ts`). It carries the reason of the host and never reads it.
 - On resume, `prepareExecuteAnalysisResume` atomically increases
   `cortex_runs.attempt_count`. Then the caller calls `DBOS.resumeWorkflow(wfId)`.
   The parent body replays, reads the increased `attempt` again, and opens the
@@ -748,8 +768,8 @@ The mechanism of the budget resume:
   because the DBOS resume excludes a terminal status. `forkWorkflow` works, but it
   makes a new workflow ID, thus Cortex must update its run-to-workflow mapping.
   `CANCELLED` plus `resumeWorkflow` keeps the ID stable.
-- **A known limitation: child-level budget resume is not wired (a follow-up).** A
-  budget pause that starts inside a **child** sandbox-step (a sandbox-agent LLM
+- **A known limitation: the resume of a child is not wired (a follow-up).** A
+  suspension that starts inside a **child** sandbox-step (a sandbox-agent LLM
   call) is not cleanly resumable today. Three facts cause this. The parent
   dispatches a child again with `DBOS.startWorkflow(childWorkflowId)`, which
   **dedups on the existing canceled child**: `initWorkflowStatus` gives the
