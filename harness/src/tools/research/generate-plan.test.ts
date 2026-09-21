@@ -416,6 +416,74 @@ describe("generatePlan loop-driving tool", () => {
             expect(stored.steps[0]?.grounding?.template).toBe("tpl-deseq2-two-group@1.0.0");
         });
 
+        it("stamps the digest of a step outside the skeleton when one of its claims is a claim of the answer, and leaves one with no such claim", async () => {
+            const analysisId = "an-stamped-outside";
+            await seedAnalysis(pool, analysisId, { dpStatus: null });
+            const { client } = fakeKnowledgeClient();
+            const situation = {
+                question: "differential_expression",
+                modality: "bulk_rna_seq",
+                data_state: "counts",
+                organism: "human",
+                n_groups: 2,
+                n_per_group_min: 6,
+                n_per_group_max: 6,
+                paired: false,
+                batch: "none",
+            };
+            // The model adds a robustness step under its own id, cites a claim of the
+            // answer, and miscopies the digest; the claim vouches for the step, thus
+            // the host stamps the digest. A second added step cites nothing of the
+            // answer, and the host leaves its digest as the model wrote it.
+            const base = validCandidate({
+                id: "T1S2",
+                grounding: { status: "grounded", snapshot: SNAPSHOT.digest, claims: ["R-0001@e7d0"], reason: "DESeq2 Wald test per R-0001@e7d0" },
+            });
+            const first = base.steps[0]!;
+            const typed = `${SNAPSHOT.digest.slice(0, 60)}0000`;
+            const plan = {
+                ...base,
+                steps: [
+                    first,
+                    {
+                        ...first,
+                        id: "T2S1",
+                        track: "T2",
+                        name: "edgeR quasi-likelihood robustness check",
+                        grounding: {
+                            status: "grounded",
+                            snapshot: typed,
+                            claims: ["R-0001@e7d0"],
+                            reason: "the second method of R-0001@e7d0 for a robustness check",
+                        },
+                    },
+                    {
+                        ...first,
+                        id: "T2S2",
+                        track: "T2",
+                        name: "Sample sheet audit",
+                        grounding: { status: "ungrounded", snapshot: typed, claims: [], reason: "no rule covers the audit of the sample sheet" },
+                    },
+                ],
+            };
+            const provider = scriptedProvider([
+                makeMessage([toolUseBlock("t1", "knowledge_recommend", situation)], "tool_use"),
+                makeMessage([toolUseBlock("t2", "submit_plan", { plan })], "tool_use"),
+            ]);
+            const tool = createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, bioKeys: TEST_BIO_KEYS, knowledge: client });
+
+            const result = (await tool.execute(INPUT, toolContext(analysisId)))._unsafeUnwrap() as PlanResult;
+
+            expect(result.event).toBe("plan_complete");
+            const stored = (await loadPlan(pool, result.planId!, { analysisId }))._unsafeUnwrap() as {
+                steps: { id: string; grounding?: { snapshot?: string } }[];
+            };
+            const digestOf = (id: string) => stored.steps.find((step) => step.id === id)?.grounding?.snapshot;
+            expect(digestOf("T1S2")).toBe(SNAPSHOT.digest);
+            expect(digestOf("T2S1")).toBe(SNAPSHOT.digest);
+            expect(digestOf("T2S2")).toBe(typed);
+        });
+
         it("stamps the digest of a step that departs from the answer, and restores no template", async () => {
             const analysisId = "an-departed-step";
             await seedAnalysis(pool, analysisId, { dpStatus: null });
