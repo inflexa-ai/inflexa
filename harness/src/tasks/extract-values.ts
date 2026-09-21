@@ -19,6 +19,7 @@ import type { AuthContext, RunSession } from "../auth/types.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { ExtractionArm, ExtractionArtifact, ExtractionRequest } from "../report-model/production-resolver.js";
 import type { SandboxClient } from "../sandbox/client.js";
@@ -137,6 +138,8 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
     const logger = (deps.logger ?? createNoopLogger()).named("extract-values").with({ analysisId: input.analysisId });
     const { analysisId, runSession, requests, ownsMandate = true } = input; // oss-core-managed-ok
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
+    // The revoke is a notice: a failure is logged, and the outcome of the pass stays.
+    const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
     try {
         const executionId = generateExecutionId(EXTRACT_VALUES_AGENT_ID);
@@ -163,7 +166,7 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
             await deps.sandboxClient.submitExec(sandbox, buildExtractionExec(analysisId, requests, executionId));
             const result = await deps.sandboxClient.awaitExec(sandbox, executionId, noopEmit, deadlineAbs);
             const map = parseExtractionOutput(result);
-            await deps.runAuthorizer.revoke(authorization, "extract-values-completed");
+            await revoke("extract-values-completed");
             return map;
         } finally {
             try {
@@ -174,7 +177,7 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
         }
     } catch (err) {
         logger.error("extraction failed", logger.errorFields(err));
-        await deps.runAuthorizer.revoke(authorization, "extract-values-failed");
+        await revoke("extract-values-failed");
         throw err;
     }
 }
@@ -215,13 +218,17 @@ export interface ExtractValuesTriggerParams {
  */
 export async function triggerExtractValues(deps: ExtractValuesTriggerDeps, params: ExtractValuesTriggerParams): Promise<ExtractValuesResult> {
     const { auth, analysisId, requests } = params;
-    const { runSession, ownsMandate } = await deps.runAuthorizer.authorize({
-        // oss-core-managed-ok
-        auth,
-        scope: { kind: "analysis", analysisId },
-        provenance: { agentId: EXTRACT_VALUES_AGENT_ID, callPath: [EXTRACT_VALUES_AGENT_ID] },
-        frame: { runId: EXTRACT_VALUES_RUN_LITERAL, stepId: EXTRACT_VALUES_STEP_LITERAL },
-    });
+    const authorized = await passGate(
+        "RunAuthorizer.authorize",
+        deps.runAuthorizer.authorize({
+            auth,
+            scope: { kind: "analysis", analysisId },
+            provenance: { agentId: EXTRACT_VALUES_AGENT_ID, callPath: [EXTRACT_VALUES_AGENT_ID] },
+            frame: { runId: EXTRACT_VALUES_RUN_LITERAL, stepId: EXTRACT_VALUES_STEP_LITERAL },
+        }),
+    );
+    if (authorized.isErr()) throw new Error(`the extraction was not authorized: ${authorized.error.reason}`);
+    const { runSession, ownsMandate } = authorized.value; // oss-core-managed-ok
     const handle = (await DBOS.startWorkflow(deps.workflow, {
         workflowID: extractValuesWorkflowId(analysisId, randomUUID()),
     })({ analysisId, runSession, requests: [...requests], ownsMandate })) as WorkflowHandle<ExtractValuesResult>; // oss-core-managed-ok

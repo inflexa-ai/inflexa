@@ -72,6 +72,7 @@ import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
 import { recordRunCompleted, recordStepCompleted, stepOutcomeOf } from "../lib/metrics.js";
@@ -104,7 +105,7 @@ import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
 import type { EmitFn } from "../loop/types.js";
-import type { RunCharge } from "../billing/run-charge.js";
+import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
@@ -692,6 +693,28 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             canceledSteps: [],
         };
     }
+    if (init.kind === "charge-refused") {
+        // The charge gate refused the run, thus no step starts. The terminal block
+        // still writes the terminal state, with the reason of the host.
+        const refusedAtMs = await DBOS.now();
+        const refused = await collectAndComplete({
+            input,
+            runId,
+            workflowId,
+            startedAtMs: refusedAtMs,
+            completed: new Set(),
+            failed: new Set(),
+            canceled: new Set(),
+            budgetExceeded: false,
+            failureReason: init.refusal.reason,
+            forceFailed: true,
+            findings: [],
+            synthesisOutcome: null,
+            deps,
+        });
+        observeRunGuarded(deps, buildRunObservation({ input, runId, status: refused.status, stepStates: new Map() }));
+        return refused;
+    }
 
     // Seed the full DAG as `pending` rows so ledger readers see every step from
     // run start (honest done/total), not just the ones that began executing.
@@ -917,7 +940,13 @@ interface ValidateAndInitJoinedExisting {
     readonly runId: string;
 }
 
-type ValidateAndInitResult = ValidateAndInitFresh | ValidateAndInitJoinedExisting;
+/** The `RunCharge.open` gate refused the run. */
+interface ValidateAndInitChargeRefused {
+    readonly kind: "charge-refused";
+    readonly refusal: GateRefusal;
+}
+
+type ValidateAndInitResult = ValidateAndInitFresh | ValidateAndInitJoinedExisting | ValidateAndInitChargeRefused;
 
 async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps: ExecuteAnalysisDeps): Promise<ValidateAndInitResult> {
     // The cortex_runs row already exists (inserted by `executePlan`). Sanity-
@@ -949,15 +978,20 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
         { name: "init-run-filesystem" },
     );
 
-    await DBOS.runStep(
-        () =>
-            deps.runCharge.open({
-                analysisId: input.analysisId,
-                runId,
-                session: input.runSession,
-            }),
+    // A gate: the checkpoint holds the `Result`, thus a replay reads the same refusal.
+    const opened = await DBOS.runStep(
+        async () =>
+            await passGate(
+                "RunCharge.open",
+                deps.runCharge.open({
+                    analysisId: input.analysisId,
+                    runId,
+                    session: input.runSession,
+                }),
+            ),
         { name: "open-running-charge" },
     );
+    if (opened.isErr()) return { kind: "charge-refused", refusal: opened.error };
 
     return { kind: "fresh" };
 }
@@ -1414,8 +1448,14 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
               budgetExceeded,
           });
 
-    const chargeReason =
-        status === "completed" || status === "partial" ? "ok" : status === "failed" ? "error" : budgetExceeded ? "budget_exceeded" : "canceled";
+    const chargeOutcome: RunChargeOutcome =
+        status === "completed" || status === "partial"
+            ? { kind: "ok" }
+            : status === "failed"
+              ? { kind: "error" }
+              : budgetExceeded
+                ? { kind: "suspended", reason: "budget_exceeded" }
+                : { kind: "canceled" };
     const revokeReason =
         status === "completed" || status === "partial"
             ? "workflow-completed"
@@ -1532,20 +1572,21 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         }
     }
 
-    try {
-        await DBOS.runStep(
-            () =>
+    // A notice: a failed close is logged, and the terminal status stays.
+    await DBOS.runStep(
+        () =>
+            deliverNotice(
+                logger.with({ chargeOutcome: chargeOutcome.kind }),
+                "RunCharge.close",
                 deps.runCharge.close({
                     analysisId: input.analysisId,
                     runId,
-                    reason: chargeReason,
+                    outcome: chargeOutcome,
                     session: input.runSession,
                 }),
-            { name: "close-running-charge" },
-        );
-    } catch (err) {
-        logger.error("closeRunningCharge failed", { chargeReason, ...logger.errorFields(err) });
-    }
+            ),
+        { name: "close-running-charge" },
+    );
 
     // Revoke the run authorization for the terminal run state. Ownership
     // defaults to true for inputs persisted before the field existed (a
@@ -1554,11 +1595,9 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         runSession: input.runSession,
         ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
     };
-    try {
-        await DBOS.runStep(() => deps.runAuthorizer.revoke(authorization, revokeReason), { name: "revoke-run-auth" });
-    } catch (err) {
-        logger.error("revokeRunAuthorization failed", { revokeReason, ...logger.errorFields(err) });
-    }
+    await DBOS.runStep(() => deliverNotice(logger.with({ revokeReason }), "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, revokeReason)), {
+        name: "revoke-run-auth",
+    });
 
     // The `run_completed` provenance was already emitted above (before the status write, to
     // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose

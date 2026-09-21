@@ -6,20 +6,20 @@
 
 ## 2. The hook kinds
 
-- [ ] 2.1 Add the types `GateFailure` and `NoticeFailure` (D1)
-- [ ] 2.2 Add one internal helper for a gate and one for a notice. The notice helper logs an `err` at the error level
-- [ ] 2.3 Add tests for the two helpers: a gate `err`, a gate `err` with `suspend`, and a notice `err`
-- [ ] 2.4 Change `RunAuthorizer`: `authorize` becomes a gate, and `revoke` and `revokeByJti` become notices. Update
+- [x] 2.1 Add the types `GateFailure` and `NoticeFailure` (D1)
+- [x] 2.2 Add one internal helper for a gate and one for a notice. The notice helper logs an `err` at the error level
+- [x] 2.3 Add tests for the two helpers: a gate `err`, a gate `err` with `suspend`, and a notice `err`
+- [x] 2.4 Change `RunAuthorizer`: `authorize` becomes a gate, and `revoke` and `revokeByJti` become notices. Update
   `createLocalRunAuthorizer`
-- [ ] 2.5 Change each caller of `authorize`, `revoke`, and `revokeByJti` to use the helpers. Remove each `try`,
+- [x] 2.5 Change each caller of `authorize`, `revoke`, and `revokeByJti` to use the helpers. Remove each `try`,
   `catch`, and `.catch(() => {})` around them (`src/tools/execute-analysis.ts`,
   `src/tools/report-session/derive-table.ts`, `src/tasks/extract-values.ts`, `src/tasks/data-profile.ts`,
   `src/workflows/execute-analysis.ts`, `src/execution/run-canceler.ts`)
-- [ ] 2.6 Change `RunCharge`: `open` becomes a gate, and `close` becomes a notice that takes the outcome union of D6.
+- [x] 2.6 Change `RunCharge`: `open` becomes a gate, and `close` becomes a notice that takes the outcome union of D6.
   Update `createNoopRunCharge` and each caller
-- [ ] 2.7 Change `UsageRecorder.record` to a notice. Update `createNoopUsageRecorder` and the delivery in
+- [x] 2.7 Change `UsageRecorder.record` to a notice. Update `createNoopUsageRecorder` and the delivery in
   `src/loop/run-agent.ts`, which does not wait for the result
-- [ ] 2.8 Change `ArtifactRegistry`: `register` becomes a gate, and `sync` becomes a notice. Update
+- [x] 2.8 Change `ArtifactRegistry`: `register` becomes a gate, and `sync` becomes a notice. Update
   `createNoopArtifactRegistry`, `src/execution/artifact-registration.ts`, and `src/workflows/sandbox-step.ts`
 
 ## 3. The model request headers hook and the provider errors

@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 
@@ -15,6 +15,7 @@ import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { buildRunCardData } from "../memory/card-builders.js";
@@ -444,21 +445,26 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
                 }
             }
 
-            let authorization;
-            try {
-                authorization = await deps.runAuthorizer.authorize({
+            const authorized = await passGate(
+                "RunAuthorizer.authorize",
+                deps.runAuthorizer.authorize({
                     auth: ctx.session.auth,
                     scope: ctx.session.scope,
                     provenance: ctx.session.provenance,
                     frame: { runId },
-                });
-            } catch (error) {
-                await updateRunStatus(deps.pool, runId, "failed", "run authorization failed").match(
+                }),
+            );
+            if (authorized.isErr()) {
+                // The refusal ends the run before a workflow exists, thus the
+                // reserved row must not stay `running`.
+                const { reason } = authorized.error;
+                await updateRunStatus(deps.pool, runId, "failed", reason).match(
                     () => {},
                     () => {},
                 );
-                throw error;
+                return err({ error: `The run was not authorized: ${reason}`, retryable: false });
             }
+            const authorization = authorized.value;
 
             const wfInput = workflowInput(planId, plan, {
                 analysisId,
@@ -471,7 +477,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             try {
                 await deps.runLauncher.launch(deps.executeAnalysisWorkflow, { workflowId: runId }, wfInput);
             } catch (error) {
-                await deps.runAuthorizer.revoke(authorization, "workflow-start-failed").catch(() => {});
+                await deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, "workflow-start-failed"));
                 await updateRunStatus(deps.pool, runId, "failed", "workflow start failed").match(
                     () => {},
                     () => {},

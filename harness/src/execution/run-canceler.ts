@@ -23,6 +23,7 @@ import type { Pool } from "pg";
 import type { AgentSession } from "../auth/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { elapsedSinceIso, recordRunCompleted, recordStepCompleted } from "../lib/metrics.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -166,25 +167,21 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 logger.error("pending-step sweep failed", { runId, ...logger.errorFields(err) });
             }
 
-            // Best-effort: the billing authority self-heals (defensive open + stale
-            // reaper), so a failed close loses attribution only.
-            let charge = false;
-            try {
-                await runCharge.close({ analysisId: row.analysisId, runId, reason: "canceled", session });
-                charge = true;
-            } catch (err) {
-                logger.error("running-charge close failed", { runId, ...logger.errorFields(err) });
-            }
+            // The close and the revoke are notices: each failure is logged and
+            // reported in `converged`, and the cancel stands.
+            const charge = await deliverNotice(
+                logger.with({ runId }),
+                "RunCharge.close",
+                runCharge.close({ analysisId: row.analysisId, runId, outcome: { kind: "canceled" }, session }),
+            );
 
-            let mandate = row.mandateJti === null;
-            if (row.mandateJti !== null) {
-                try {
-                    await runAuthorizer.revokeByJti({ jti: row.mandateJti, auth: session.auth }, EXTERNAL_CANCEL_REASON);
-                    mandate = true;
-                } catch (err) {
-                    logger.error("mandate revoke failed", { runId, jti: row.mandateJti, ...logger.errorFields(err) });
-                }
-            }
+            const mandate =
+                row.mandateJti === null ||
+                (await deliverNotice(
+                    logger.with({ runId, jti: row.mandateJti }),
+                    "RunAuthorizer.revokeByJti",
+                    runAuthorizer.revokeByJti({ jti: row.mandateJti, auth: session.auth }, EXTERNAL_CANCEL_REASON),
+                ));
 
             // No transition means the run reached a terminal state on its own (or the
             // write failed) — report the row as it stands rather than claiming `canceled`.

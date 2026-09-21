@@ -20,7 +20,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
-import { ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
@@ -34,6 +34,7 @@ import type { BioToolKeys } from "../tools/bio/keys.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -447,6 +448,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     // Cortex-owned and must be revoked here.
     const { analysisId, runSession, ownsMandate = true, stagedInputs } = input; // oss-core-managed-ok
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
+    // The revoke is a notice: a failure is logged, and the terminal outcome of the profile stays.
+    const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
     // The profile's activity channel. `DBOS.writeStream` is body-only, so the write is bound here
     // while every phase and phrase lives in the emitter — the phrases are the observable contract of
@@ -490,7 +493,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // empty-manifest path invisible to the same monitoring that watches every other.
             logProfileMonitoring(logger, { dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
             settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId)), "completed");
-            await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            await revoke("data-profile-completed");
             // This is a terminal completion like any other, so it reports one — a consumer watching
             // an empty-manifest profile sees it settle rather than seeing the stream simply stop.
             await activity.complete();
@@ -550,7 +553,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             await indexProfile({ deps, analysisId, session: runSession, record, scan, logger });
             logProfileMonitoring(logger, { resolution, dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
             settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, record)), "completed");
-            await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            await revoke("data-profile-completed");
             await activity.complete();
             return;
         }
@@ -577,7 +580,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 absorb: absorb.kind,
             });
             settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, absorbed)), "completed");
-            await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            await revoke("data-profile-completed");
             await activity.complete();
             return;
         }
@@ -788,7 +791,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // 6. Complete — store the FULL profiler finding plus the input signature for
             // staleness detection. The scratch tree is gone; this row is all that survives.
             settleTerminalWrite(logger, analysisId, unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, profileRecord)), "completed");
-            await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
+            await revoke("data-profile-completed");
             // LAST statement of the success path, and that placement is the guarantee that exactly
             // one terminal activity is ever emitted. Everything that could still throw — the ledger
             // write above, the revoke — is already behind us, so any failure on the way here reaches
@@ -807,7 +810,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
         settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason)), "failed");
-        await deps.runAuthorizer.revoke(authorization, "data-profile-failed");
+        await revoke("data-profile-failed");
         // The same bounded, user-safe line the ledger receives — never the raw error, whose paths and
         // stack frames stay in the log record above. This is the only other terminal emission, so
         // reaching it means the success path did not emit one.
@@ -884,14 +887,17 @@ export interface DataProfileTriggerParams {
  * `RunAuthorizer` seam from the opaque auth; this passes that auth straight
  * through and never inspects it.
  */
-export async function authorizeDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<RunAuthorization> {
+export function authorizeDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): ResultAsync<RunAuthorization, GateRefusal> {
     const { auth, analysisId } = params;
-    return deps.runAuthorizer.authorize({
-        auth,
-        scope: { kind: "analysis", analysisId },
-        provenance: { agentId: DATA_PROFILE_AGENT_ID, callPath: [DATA_PROFILE_AGENT_ID] },
-        frame: { runId: DATA_PROFILE_RUN_LITERAL, stepId: DATA_PROFILE_STEP_LITERAL },
-    });
+    return passGate(
+        "RunAuthorizer.authorize",
+        deps.runAuthorizer.authorize({
+            auth,
+            scope: { kind: "analysis", analysisId },
+            provenance: { agentId: DATA_PROFILE_AGENT_ID, callPath: [DATA_PROFILE_AGENT_ID] },
+            frame: { runId: DATA_PROFILE_RUN_LITERAL, stepId: DATA_PROFILE_STEP_LITERAL },
+        }),
+    );
 }
 
 /**
@@ -916,10 +922,12 @@ export function dataProfileWorkflowId(analysisId: string, nonce: string): string
  * triggers are already serialized by the ledger CAS. The caller has already
  * staged the inputs and supplied the manifest in `params.stagedInputs`; this
  * forwards it into the workflow input. Fire-and-forget: the handle result is
- * not awaited.
+ * not awaited. A refused authorization is the `err`, and no workflow starts.
  */
-async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<void> {
-    const { runSession, ownsMandate } = await authorizeDataProfile(deps, params); // oss-core-managed-ok
+async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<Result<void, GateRefusal>> {
+    const authorized = await authorizeDataProfile(deps, params);
+    if (authorized.isErr()) return err(authorized.error);
+    const { runSession, ownsMandate } = authorized.value; // oss-core-managed-ok
     const attemptNonce = randomUUID();
     await DBOS.startWorkflow(deps.workflow, {
         workflowID: dataProfileWorkflowId(params.analysisId, attemptNonce),
@@ -929,6 +937,20 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
         ownsMandate, // oss-core-managed-ok
         stagedInputs: params.stagedInputs,
     });
+    return ok(undefined);
+}
+
+/**
+ * Dispatch a claimed profile, fire-and-forget. The claim already flipped the
+ * row to `running`, thus a refused authorization and a rejected start each
+ * settle the row as `failed`, and it never wedges at `running`.
+ */
+async function dispatchClaimedProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, phase: string): Promise<void> {
+    const started = await startDataProfileWorkflow(deps, params).catch(async (cause: unknown) => {
+        await compensateStartFailure(deps, params.analysisId, phase, cause);
+        return undefined;
+    });
+    if (started?.isErr()) await refuseClaimedProfile(deps, params.analysisId, phase, started.error);
 }
 
 /**
@@ -994,12 +1016,12 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
 
         const started = unwrapOrThrow(await tryStartDataProfile(deps.pool, analysisId));
         if (started) {
-            startDataProfileWorkflow(deps, params).catch((err) => compensateStartFailure(deps, analysisId, "Run", err));
+            void dispatchClaimedProfile(deps, params, "Run");
             return "started";
         }
         const restarted = unwrapOrThrow(await tryRerunDataProfile(deps.pool, analysisId));
         if (restarted) {
-            startDataProfileWorkflow(deps, params).catch((err) => compensateStartFailure(deps, analysisId, "Re-run", err));
+            void dispatchClaimedProfile(deps, params, "Re-run");
             return "restarted";
         }
         const status = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
@@ -1020,10 +1042,26 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
  * Best-effort — a compensation write that itself fails is only logged, since
  * there is no further channel to report it on.
  */
-async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: string, phase: string, err: unknown): Promise<void> {
+async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: string, phase: string, cause: unknown): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
-    logger.error("start failed", { phase, ...logger.errorFields(err) });
-    const failed = await failDataProfile(deps.pool, analysisId, profileFailureReason(err));
+    logger.error("start failed", { phase, ...logger.errorFields(cause) });
+    await failClaimedProfile(deps, analysisId, phase, profileFailureReason(cause));
+}
+
+/**
+ * Settle a claimed profile whose authorization the host refused. No workflow
+ * exists, thus the row fails with the reason of the host.
+ */
+async function refuseClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, refusal: GateRefusal): Promise<void> {
+    const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
+    logger.error("the profile was not authorized", { phase, reason: refusal.reason });
+    await failClaimedProfile(deps, analysisId, phase, refusal.reason);
+}
+
+/** Fail the `running` row of a profile that never got a workflow. */
+async function failClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, reason: string): Promise<void> {
+    const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
+    const failed = await failDataProfile(deps.pool, analysisId, reason);
     if (failed.isErr()) {
         logger.error("failed to mark failed after a start error", { phase, err: failed.error });
     } else if (!failed.value.stamped) {
@@ -1044,14 +1082,18 @@ async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: 
  * await the workflow's completion, but a start that rejects compensates the
  * ledger (see {@link compensateStartFailure}) before re-throwing, so a caller's
  * own `.catch` still observes the error and the row never wedges at `running`.
+ * A refused authorization fails the row with the reason of the host, and the
+ * promise resolves: the row is where a caller reads the outcome.
  */
 export async function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<void> {
+    let started: Result<void, GateRefusal>;
     try {
-        await startDataProfileWorkflow(deps, params);
-    } catch (err) {
-        await compensateStartFailure(deps, params.analysisId, "Retry", err);
-        throw err;
+        started = await startDataProfileWorkflow(deps, params);
+    } catch (cause) {
+        await compensateStartFailure(deps, params.analysisId, "Retry", cause);
+        throw cause;
     }
+    if (started.isErr()) await refuseClaimedProfile(deps, params.analysisId, "Retry", started.error);
 }
 
 /**

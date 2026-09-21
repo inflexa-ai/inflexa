@@ -7,11 +7,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { captureMetrics } from "../__tests__/setup/metrics.js";
 import type { AgentSession } from "../auth/types.js";
-import type { RunCharge } from "../billing/run-charge.js";
+import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
 import { createRunCanceler, UnknownRunError } from "./run-canceler.js";
 
@@ -101,15 +102,19 @@ function fakeDb(run: Row | null, stepBatches: Row[][] = [[]], opts: { sweepFails
     return { pool, state };
 }
 
-function recordingCharge(opts: { fail?: boolean } = {}): { charge: RunCharge; closes: Array<{ analysisId: string; runId: string; reason: string }> } {
-    const closes: Array<{ analysisId: string; runId: string; reason: string }> = [];
+function recordingCharge(opts: { fail?: boolean } = {}): {
+    charge: RunCharge;
+    closes: Array<{ analysisId: string; runId: string; outcome: RunChargeOutcome }>;
+} {
+    const closes: Array<{ analysisId: string; runId: string; outcome: RunChargeOutcome }> = [];
     const charge: RunCharge = {
-        open: async () => {
+        open: () => {
             throw new Error("open is not reached by the canceler");
         },
-        close: async ({ analysisId, runId, reason }) => {
-            if (opts.fail) throw new Error("close exploded");
-            closes.push({ analysisId, runId, reason });
+        close: ({ analysisId, runId, outcome }) => {
+            if (opts.fail) return errAsync({ reason: "close exploded" });
+            closes.push({ analysisId, runId, outcome });
+            return okAsync(undefined);
         },
     };
     return { charge, closes };
@@ -118,14 +123,15 @@ function recordingCharge(opts: { fail?: boolean } = {}): { charge: RunCharge; cl
 function recordingAuthorizer(): { authorizer: RunAuthorizer; revoked: Array<{ jti: string; reason: string }> } {
     const revoked: Array<{ jti: string; reason: string }> = [];
     const authorizer: RunAuthorizer = {
-        authorize: async () => {
+        authorize: () => {
             throw new Error("authorize is not reached by the canceler");
         },
-        revoke: async () => {
+        revoke: () => {
             throw new Error("terminal-path revoke is not reached by the canceler");
         },
-        revokeByJti: async ({ jti }, reason) => {
+        revokeByJti: ({ jti }, reason) => {
             revoked.push({ jti, reason });
+            return okAsync(undefined);
         },
     };
     return { authorizer, revoked };
@@ -188,7 +194,7 @@ describe("createRunCanceler", () => {
         expect(db.state.run?.error).toBe("external_cancel");
         expect(db.state.run?.completed_at).not.toBeNull();
         expect(db.state.swept).toBe(1);
-        expect(closes).toEqual([{ analysisId: "analysis-1", runId: "run-1", reason: "canceled" }]);
+        expect(closes).toEqual([{ analysisId: "analysis-1", runId: "run-1", outcome: { kind: "canceled" } }]);
         expect(revoked).toEqual([{ jti: "jti-1", reason: "external_cancel" }]);
     });
 
@@ -206,7 +212,7 @@ describe("createRunCanceler", () => {
         expect(result.finalStatus).toBe("canceled");
     });
 
-    it("still revokes the mandate when the charge close throws, and resolves with converged.charge false", async () => {
+    it("still revokes the mandate when the charge close gives an err, and resolves with converged.charge false", async () => {
         const db = fakeDb(runRow({ mandate_jti: "jti-1" }));
         const { charge } = recordingCharge({ fail: true });
         const { authorizer, revoked } = recordingAuthorizer();

@@ -10,9 +10,11 @@
  * decision — this module never names one.
  */
 
+import { err, ok, type Result } from "neverthrow";
 import type { Pool, PoolClient } from "pg";
 import type { AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { RegisterArtifactInput } from "../state/index.js";
 import { upsertArtifacts, updateArtifactId } from "../state/index.js";
@@ -39,6 +41,9 @@ export interface ArtifactRegistrationResult {
  * Builds the `cortex_artifacts` rows from the manifest, upserts them, then
  * delegates external provenance registration to the injected `ArtifactRegistry`
  * and applies any returned external ids back onto the local rows.
+ *
+ * `register` is a gate. Its refusal is the `err` of this function, and no
+ * external id is written: the upserted rows keep `artifact_id = NULL`.
  */
 export async function registerStepArtifacts(
     db: Pool | PoolClient,
@@ -49,12 +54,12 @@ export async function registerStepArtifacts(
     // the seam's payload, handed verbatim to `registry.register`, and an
     // embedder's registry has no business receiving the host's logger.
     logger: Logger = createNoopLogger(),
-): Promise<ArtifactRegistrationResult> {
+): Promise<Result<ArtifactRegistrationResult, GateRefusal>> {
     const { resourceId, runId, stepId, artifacts } = input;
     const log = logger.named("artifact-registration").with({ runId, stepId });
 
     if (artifacts.length === 0) {
-        return { localCount: 0, externalRegistered: 0, externalFailed: 0, failureDetails: [] };
+        return ok({ localCount: 0, externalRegistered: 0, externalFailed: 0, failureDetails: [] });
     }
 
     const dbPathPrefix = `runs/${runId}/${stepId}/`;
@@ -78,7 +83,9 @@ export async function registerStepArtifacts(
     await upsertArtifacts(db, localEntries);
 
     const localPaths = new Set(localEntries.map((e) => e.path));
-    const result = await registry.register(input, session);
+    const registered = await passGate("ArtifactRegistry.register", registry.register(input, session));
+    if (registered.isErr()) return err(registered.error);
+    const result = registered.value;
 
     // The registry excluded these from `failed` by its own severity judgement, so
     // this is their only record. Logged here rather than left to the registry:
@@ -99,10 +106,10 @@ export async function registerStepArtifacts(
         externalRegistered++;
     }
 
-    return {
+    return ok({
         localCount: localEntries.length,
         externalRegistered,
         externalFailed: result.failedCount,
         failureDetails: result.failed,
-    };
+    });
 }

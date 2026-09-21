@@ -35,6 +35,7 @@ import type { Pool } from "pg";
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { recordStepCompleted } from "../lib/metrics.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
@@ -58,6 +59,7 @@ import type { ArtifactRegistry } from "../execution/artifact-registry.js";
 import { walkStepArtifacts } from "../execution/post-step.js";
 import {
     collectStepOutputs,
+    describeStepRegistrationFailure,
     generateStepFileMetadata,
     generateStepSummaryAndWrite,
     reconcileAndRegisterStepArtifacts,
@@ -862,55 +864,50 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         "post-step.summary",
         undefined,
     );
-    // Lineage attestation (registration + sync) is fail-fast (see the artifact-manifest spec): unlike
+    // Lineage attestation (registration) is fail-fast (see the artifact-manifest spec): unlike
     // the best-effort enrichment stages, a failure here orphans the step's real
     // outputs, so it fails the step loudly instead of finishing green. Transient
-    // managed-root errors are already retried in the client, so anything thrown here is
+    // managed-root errors are already retried in the client, so a failure here is
     // persistent — tear down, mark failed, and re-raise so the parent's fail-fast
-    // cascade fires (mirrors the agent-loop failure path). The two operations are
-    // sequenced independently: byte-sync is attempted on both arms, so a rejected
-    // registration still uploads the bytes of whatever DID register.
+    // cascade fires (mirrors the agent-loop failure path). The byte-sync is
+    // attempted after the registration on every arm, so a rejected registration
+    // still uploads the bytes of whatever DID register: the rows that registered
+    // carry `artifact_id` with `file_id` still NULL, which is exactly what
+    // `queryUnsyncedStepArtifacts` selects, and a row that never registered is not
+    // selected, so the sync stays idempotent under re-execution.
     await emitActivity("persisting", "Registering artifacts");
     // A bare call, deliberately not `DBOS.runStep`-wrapped: it is reachable from
     // two arms below, and a checkpointed step reached from a conditional arm
     // would shift the body's function-ID sequence between the two paths (see the
-    // harness-durable-runtime spec).
-    const syncStepArtifacts = (): Promise<void> =>
-        deps.artifactRegistry.sync(
-            {
-                resourceId: input.analysisId,
-                runId: input.runId,
-                stepId: input.stepId,
-            },
-            session,
+    // harness-durable-runtime spec). The sync is a notice: its failure is logged,
+    // it never fails the step, and it never displaces a registration failure as
+    // the cause of one.
+    const syncStepArtifacts = (): Promise<boolean> =>
+        deliverNotice(
+            logger.named("post-step.sync"),
+            "ArtifactRegistry.sync",
+            deps.artifactRegistry.sync(
+                {
+                    resourceId: input.analysisId,
+                    runId: input.runId,
+                    stepId: input.stepId,
+                },
+                session,
+            ),
         );
-    let reconciledManifest: readonly ArtifactManifestEntry[];
+    let registered: Awaited<ReturnType<typeof reconcileAndRegisterStepArtifacts>>;
     try {
-        reconciledManifest = await reconcileAndRegisterStepArtifacts(deps, postCtx, manifest);
-    } catch (registrationErr) {
-        // Registration and byte-sync are independent, and a registry rejection is
-        // partial: the rows that DID register carry `artifact_id` with `file_id`
-        // still NULL, which is exactly what `queryUnsyncedStepArtifacts` selects.
-        // Syncing anyway uploads their bytes (rows that never registered are not
-        // selected, so this stays idempotent under re-execution); skipping it is
-        // what strands them registered-but-byteless.
-        try {
-            await syncStepArtifacts();
-        } catch (syncErr) {
-            // A cancellation is control-flow, not a sync failure — re-raise it
-            // verbatim, as every other stage in this body does. Any real failure
-            // is swallowed so it cannot displace the registration rejection as the
-            // step's cause; this record is the only account of it.
-            if (syncErr instanceof DBOSErrors.DBOSWorkflowCancelledError) throw syncErr;
-            logger.named("post-step.sync").warn("failed after a registration rejection (non-fatal)", logger.errorFields(syncErr));
-        }
-        throw await failStep("lineage_attestation", registrationErr);
-    }
-    try {
+        registered = await reconcileAndRegisterStepArtifacts(deps, postCtx, manifest);
+    } catch (attestationErr) {
+        if (attestationErr instanceof DBOSErrors.DBOSWorkflowCancelledError) throw attestationErr;
         await syncStepArtifacts();
-    } catch (err) {
-        throw await failStep("lineage_attestation", err);
+        throw await failStep("lineage_attestation", attestationErr);
     }
+    await syncStepArtifacts();
+    if (registered.isErr()) {
+        throw await failStep("lineage_attestation", new Error(describeStepRegistrationFailure(registered.error)));
+    }
+    const reconciledManifest = registered.value;
 
     const postArtifacts: PostStepArtifacts = {
         metadataEntries,

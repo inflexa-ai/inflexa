@@ -28,11 +28,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import { okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession } from "../auth/types.js";
+import type { RunChargeOutcome } from "../billing/run-charge.js";
 
 import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "./execute-analysis.js";
@@ -253,7 +255,7 @@ function handleFor(workflowID: string, result: SandboxStepResult | Error): FakeW
 interface FakeDepsRecord {
     /** Reference to `dbosState.emittedParts` — the parts written via writeStream. */
     readonly emittedParts: Array<Record<string, unknown>>;
-    readonly chargeCloseCalls: Array<{ reason: string }>;
+    readonly chargeCloseCalls: Array<{ outcome: RunChargeOutcome }>;
     readonly mandateRevokeCalls: Array<{ reason: string }>;
     readonly threadWrites: Array<{ kind: string }>;
 }
@@ -288,17 +290,19 @@ function makeDeps(opts: {
         synthesisModel: "test-synthesis-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         runCharge: {
-            open: async () => {},
-            close: async ({ reason }) => {
-                record.chargeCloseCalls.push({ reason });
+            open: () => okAsync(undefined),
+            close: ({ outcome }) => {
+                record.chargeCloseCalls.push({ outcome });
+                return okAsync(undefined);
             },
         },
         runAuthorizer: {
-            async authorize() {
+            authorize() {
                 throw new Error("runAuthorizer.authorize not exercised in body tests");
             },
-            async revoke(_authorization, reason) {
+            revoke(_authorization, reason) {
                 record.mandateRevokeCalls.push({ reason });
+                return okAsync(undefined);
             },
         },
         // Omitted entirely when absent so the "no run emit" tests exercise
@@ -380,7 +384,7 @@ describe("executeAnalysis body", () => {
         expect(result.failedSteps).toEqual(["B"]);
         // No sibling was cancelled.
         expect(dbosState.cancelled.size).toBe(0);
-        expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
         expect(suspendWrites(pool)).toEqual([]);
         const terminal = record.emittedParts.find((p) => p.type === "data-run-failed" || p.type === "data-run-completed");
@@ -416,7 +420,7 @@ describe("executeAnalysis body", () => {
         expect([...result.completedSteps].sort()).toEqual(["A", "C"]);
         expect(dbosState.cancelled.size).toBe(0);
         expect(dbosState.childInputs.map((i) => i.stepId)).not.toContain("D");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
     });
 
     it("failure isolation: a diamond plan continues its independent branch; doomed dependents show skipped", async () => {
@@ -527,7 +531,7 @@ describe("executeAnalysis body", () => {
         expect([...result.completedSteps].sort()).toEqual(["A", "B", "C"]);
         expect(result.failedSteps).toEqual([]);
         expect(result.canceledSteps).toEqual([]);
-        expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
     });
 
     // ── Budget admission ────────────────────────────────────────────────
@@ -689,7 +693,7 @@ describe("executeAnalysis body", () => {
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
 
         expect(result.status).toBe("canceled");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "canceled" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "canceled" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-canceled" }]);
         expect(suspendWrites(pool)).toEqual([]);
     });
@@ -877,7 +881,7 @@ describe("executeAnalysis body", () => {
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
         expect(result.status).toBe("completed");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
     });
 
@@ -900,7 +904,7 @@ describe("executeAnalysis body", () => {
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
         expect(result.status).toBe("canceled");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "budget_exceeded" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "budget_exceeded" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
         expect(suspendWrites(pool).length).toBe(1);
         // Terminal failed part carries `reason: "budget_exceeded"`.
@@ -925,7 +929,7 @@ describe("executeAnalysis body", () => {
 
         await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toThrow("synth boom");
 
-        expect(record.chargeCloseCalls).toEqual([{ reason: "error" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "error" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
         expect(suspendWrites(pool)).toEqual([]);
     });
@@ -1258,7 +1262,7 @@ describe("executeAnalysis body", () => {
         // the terminal sweep must reap. Nothing completed, so the run is failed.
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
         expect(result.status).toBe("failed");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "error" }]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "error" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
 
         const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));

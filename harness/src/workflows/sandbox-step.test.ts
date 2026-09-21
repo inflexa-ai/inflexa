@@ -22,7 +22,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } fro
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ok, okAsync } from "neverthrow";
+import { errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
@@ -36,6 +36,7 @@ import type { AgentChat, ChatResponse, ChatUsage, EmbeddingProvider } from "../p
 import type { SandboxClient } from "../sandbox/client.js";
 import type { CreateSandboxMeta, SandboxRef } from "../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../execution/artifact-registry.js";
+import type { GateFailure } from "../lib/hooks.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -239,8 +240,8 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         embedding: { dimensions: 3, embed: (texts) => okAsync(texts.map(() => [0, 0, 0])) } as EmbeddingProvider,
         sandboxClient: makeSandboxClient(),
         artifactRegistry: {
-            register: async () => ({ registered: [], failed: [], failedCount: 0 }),
-            sync: async () => undefined,
+            register: () => okAsync({ registered: [], failed: [], failedCount: 0 }),
+            sync: () => okAsync(undefined),
         } as ArtifactRegistry,
         workspaceFs: {} as WorkspaceFilesystem,
         resolveWorkspaceRoot: () => workspaceRoot,
@@ -468,23 +469,29 @@ describe("sandbox-step lineage attestation", () => {
         readonly order: string[];
     }
 
-    function attestationDeps(args: { logger?: SandboxStepDeps["logger"]; rejectRegistration: boolean; syncThrows: boolean }): AttestationProbe {
+    function attestationDeps(args: {
+        logger?: SandboxStepDeps["logger"];
+        rejectRegistration: boolean;
+        syncFails: boolean;
+        refuseRegistration?: GateFailure;
+    }): AttestationProbe {
         const syncCalls: ArtifactSyncInput[] = [];
         const order: string[] = [];
         const artifactRegistry: ArtifactRegistry = {
-            register: async (registration) => {
+            register: (registration) => {
                 order.push("register");
-                if (!args.rejectRegistration) return { registered: [], failed: [], failedCount: 0 };
-                return {
+                if (args.refuseRegistration) return errAsync(args.refuseRegistration);
+                if (!args.rejectRegistration) return okAsync({ registered: [], failed: [], failedCount: 0 });
+                return okAsync({
                     registered: [],
                     failed: [{ path: `runs/${registration.runId}/${registration.stepId}/output/result.csv`, error: REGISTRY_REJECTION }],
                     failedCount: 1,
-                };
+                });
             },
-            sync: async (syncInput) => {
+            sync: (syncInput) => {
                 order.push("sync");
                 syncCalls.push(syncInput);
-                if (args.syncThrows) throw new Error(SYNC_FAILURE);
+                return args.syncFails ? errAsync({ reason: SYNC_FAILURE }) : okAsync(undefined);
             },
         };
         return {
@@ -507,7 +514,7 @@ describe("sandbox-step lineage attestation", () => {
         // block before the sync, stranding every row that DID register with an
         // `artifact_id` and a NULL `file_id`.
         await seedStepOutput();
-        const { deps, syncCalls, order } = attestationDeps({ rejectRegistration: true, syncThrows: false });
+        const { deps, syncCalls, order } = attestationDeps({ rejectRegistration: true, syncFails: false });
 
         await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toThrow(SCRUBBED);
 
@@ -521,7 +528,7 @@ describe("sandbox-step lineage attestation", () => {
         // only thing an operator can diagnose from.
         await seedStepOutput();
         const logger = createCapturingLogger();
-        const { deps, syncCalls } = attestationDeps({ logger, rejectRegistration: true, syncThrows: true });
+        const { deps, syncCalls } = attestationDeps({ logger, rejectRegistration: true, syncFails: true });
 
         await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toThrow(SCRUBBED);
 
@@ -531,15 +538,35 @@ describe("sandbox-step lineage attestation", () => {
         expect(failure?.err).toContain(REGISTRY_REJECTION);
         expect(failure?.err).not.toContain(SYNC_FAILURE);
 
-        // The swallowed sync failure is still reported, under its own stage name.
-        const syncWarn = logger.records.find((r) => r.msg.includes("post-step.sync"));
-        expect(syncWarn?.level).toBe("warn");
-        expect(String(syncWarn?.fields.err)).toContain(SYNC_FAILURE);
+        // The sync is a notice: its failure is logged at the error level, under its own stage name.
+        const syncFailure = logger.records.find((r) => r.fields.notice === "ArtifactRegistry.sync");
+        expect(syncFailure?.level).toBe("error");
+        expect(syncFailure?.msg).toContain("post-step.sync");
+        expect(syncFailure?.fields.reason).toBe(SYNC_FAILURE);
+    });
+
+    it("fails the step with the reason of the host when the register gate refuses, and still syncs", async () => {
+        await seedStepOutput();
+        const logger = createCapturingLogger();
+        const { deps, syncCalls, order } = attestationDeps({
+            logger,
+            rejectRegistration: false,
+            syncFails: false,
+            refuseRegistration: { reason: "ledger refused", suspend: false },
+        });
+
+        await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toThrow(SCRUBBED);
+
+        expect(order).toEqual(["register", "sync"]);
+        expect(syncCalls).toEqual([SYNC_INPUT]);
+        const failure = stepFailure(logger);
+        expect(failure?.errorClass).toBe("lineage_attestation");
+        expect(failure?.err).toContain("ledger refused");
     });
 
     it("registers then syncs once and completes when both succeed", async () => {
         await seedStepOutput();
-        const { deps, syncCalls, order } = attestationDeps({ rejectRegistration: false, syncThrows: false });
+        const { deps, syncCalls, order } = attestationDeps({ rejectRegistration: false, syncFails: false });
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
@@ -548,19 +575,21 @@ describe("sandbox-step lineage attestation", () => {
         expect(syncCalls).toEqual([SYNC_INPUT]);
     });
 
-    it("still fails the step when registration succeeds and the sync does not", async () => {
-        // Fail-fast on the success arm is unchanged: bytes that never landed are
-        // the same orphan, and the step must not finish green.
+    it("completes the step when registration succeeds and the sync gives an err, and logs the reason", async () => {
+        // The sync is a notice: the rows stay unsynced, and a later sync of the
+        // step selects them again, thus the step does not fail over it.
         await seedStepOutput();
         const logger = createCapturingLogger();
-        const { deps, syncCalls } = attestationDeps({ logger, rejectRegistration: false, syncThrows: true });
+        const { deps, syncCalls } = attestationDeps({ logger, rejectRegistration: false, syncFails: true });
 
-        await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toThrow(SCRUBBED);
+        const result = await runSandboxStepBody(usageStepInput(), deps);
 
+        expect(result.status).toBe("complete");
         expect(syncCalls).toEqual([SYNC_INPUT]);
-        const failure = stepFailure(logger);
-        expect(failure?.errorClass).toBe("lineage_attestation");
-        expect(failure?.err).toContain(SYNC_FAILURE);
+        expect(stepFailure(logger)).toBeUndefined();
+        const syncFailure = logger.records.find((r) => r.fields.notice === "ArtifactRegistry.sync");
+        expect(syncFailure?.level).toBe("error");
+        expect(syncFailure?.fields.reason).toBe(SYNC_FAILURE);
     });
 });
 

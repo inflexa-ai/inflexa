@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
@@ -27,25 +28,22 @@ const HASH = `sha256:${"a".repeat(64)}`;
 /** Every write this module makes is fire-and-forget SQL, and none of it is read back. */
 const stubDb = (): Pool => ({ query: async () => ({ rows: [], rowCount: 0 }) }) as unknown as Pool;
 
-const manifest = (): ArtifactManifestEntry[] => [
-    { stepId: STEP, runId: RUN, path: "output/out.csv", size: 40, type: "output", hash: HASH },
-];
+const manifest = (): ArtifactManifestEntry[] => [{ stepId: STEP, runId: RUN, path: "output/out.csv", size: 40, type: "output", hash: HASH }];
 
-const registryReturning = (result: ExternalRegistrationResult): ArtifactRegistry =>
-    ({ register: async () => result, sync: async () => {} }) as unknown as ArtifactRegistry;
+const registryReturning = (result: ExternalRegistrationResult): ArtifactRegistry => ({ register: () => okAsync(result), sync: () => okAsync(undefined) });
 
 const run = async (result: ExternalRegistrationResult) => {
     const logger = createCapturingLogger();
-    const registration = await registerStepArtifacts(
-        stubDb(),
-        registryReturning(result),
-        { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
-        {} as AgentSession,
-        logger,
-    );
-    const rejectionWarnings = logger.records.filter(
-        (r) => r.level === "warn" && r.msg.includes("excluded from the failure count"),
-    );
+    const registration = (
+        await registerStepArtifacts(
+            stubDb(),
+            registryReturning(result),
+            { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
+            {} as AgentSession,
+            logger,
+        )
+    )._unsafeUnwrap();
+    const rejectionWarnings = logger.records.filter((r) => r.level === "warn" && r.msg.includes("excluded from the failure count"));
     return { registration, rejectionWarnings };
 };
 
@@ -66,9 +64,7 @@ describe("registerStepArtifacts — uncounted rejections", () => {
         // ...but the rejection is on the record, with enough to check the verdict
         // against what the external system actually said.
         expect(rejectionWarnings).toHaveLength(1);
-        expect(rejectionWarnings[0]!.fields.rejected).toEqual([
-            { path: "data/unused.csv", error: "ArtifactNotReferencedError" },
-        ]);
+        expect(rejectionWarnings[0]!.fields.rejected).toEqual([{ path: "data/unused.csv", error: "ArtifactNotReferencedError" }]);
         // Bound context, so the line is attributable without reading around it.
         expect(rejectionWarnings[0]!.fields).toMatchObject({ runId: RUN, stepId: STEP });
     });
@@ -96,5 +92,29 @@ describe("registerStepArtifacts — uncounted rejections", () => {
         expect(registration.externalFailed).toBe(1);
         expect(registration.failureDetails).toEqual([{ path: OUT, error: "leaf transaction rolled back" }]);
         expect(rejectionWarnings).toHaveLength(1);
+    });
+});
+
+describe("registerStepArtifacts — a refusal of the register gate", () => {
+    it("returns the refusal as its err, throws nothing, and writes no external id", async () => {
+        const statements: string[] = [];
+        const db = {
+            query: async (query: string | { text: string }) => {
+                statements.push(typeof query === "string" ? query : query.text);
+                return { rows: [], rowCount: 0 };
+            },
+        } as unknown as Pool;
+        const refusing: ArtifactRegistry = { register: () => errAsync({ reason: "r", suspend: false }), sync: () => okAsync(undefined) };
+
+        const registration = await registerStepArtifacts(
+            db,
+            refusing,
+            { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
+            {} as AgentSession,
+        );
+
+        expect(registration._unsafeUnwrapErr()).toEqual({ kind: "failed", gate: "ArtifactRegistry.register", reason: "r" });
+        expect(statements.some((sql) => sql.includes("INSERT INTO cortex_artifacts"))).toBe(true);
+        expect(statements.some((sql) => sql.includes("SET artifact_id"))).toBe(false);
     });
 });

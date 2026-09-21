@@ -7,12 +7,13 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { RequestSession, RunSession } from "../auth/types.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import type { GateFailure } from "../lib/hooks.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
@@ -45,14 +46,16 @@ function recordingAuthorizer(): {
 } {
     const revokes: string[] = [];
     const authorizer: RunAuthorizer = {
-        authorize: async (): Promise<RunAuthorization> => ({
-            runSession: {} as RunSession,
-            ownsMandate: true,
-        }),
-        revoke: async (_authorization, reason) => {
+        authorize: () =>
+            okAsync<RunAuthorization, GateFailure>({
+                runSession: {} as RunSession,
+                ownsMandate: true,
+            }),
+        revoke: (_authorization, reason) => {
             revokes.push(reason);
+            return okAsync(undefined);
         },
-        revokeByJti: async () => {},
+        revokeByJti: () => okAsync(undefined),
     };
     return { authorizer, revokes };
 }
@@ -63,8 +66,8 @@ const throwingAuthorizer: RunAuthorizer = {
     authorize: () => {
         throw new Error("authorize should not be reached in this test");
     },
-    revoke: async () => {},
-    revokeByJti: async () => {},
+    revoke: () => okAsync(undefined),
+    revokeByJti: () => okAsync(undefined),
 };
 
 const ANALYSIS_ID = "analysis-test-1";
@@ -352,19 +355,17 @@ describe("createExecuteAnalysisTool plan mode", () => {
         }
     });
 
-    it("marks the reserved run failed and rethrows when authorization fails", async () => {
+    it("marks the reserved run failed with the reason of the host when the authorization gate refuses", async () => {
         setEnv();
         // No "FROM cortex_runs" key → dedup pre-check misses; the INSERT reserves
-        // the slot; then authorization throws.
+        // the slot; then the authorization gate refuses.
         const { pool, queries } = fakePool({
             "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
         });
         const failingAuthorizer: RunAuthorizer = {
-            authorize: async () => {
-                throw new Error("mint exploded");
-            },
-            revoke: async () => {},
-            revokeByJti: async () => {},
+            authorize: () => errAsync({ reason: "mint refused", suspend: false }),
+            revoke: () => okAsync(undefined),
+            revokeByJti: () => okAsync(undefined),
         };
         const tool = createExecuteAnalysisTool({
             ...utilityDeps,
@@ -376,11 +377,13 @@ describe("createExecuteAnalysisTool plan mode", () => {
             },
         });
 
-        await expect(tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext())).rejects.toThrow(/mint exploded/);
+        const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        // The reserved row is released — marked failed — so the partial-unique
-        // slot frees up and a retry can re-run.
-        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed"))).toBe(true);
+        // The refusal is a value: the tool result carries the reason, and nothing throws.
+        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("mint refused"), retryable: false });
+        // The reserved row is released — marked failed with the reason — so the
+        // partial-unique slot frees up and a retry can re-run.
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("mint refused"))).toBe(true);
     });
 
     it("launches the run through the RunLauncher and returns the reserved runId", async () => {

@@ -13,7 +13,10 @@
  * bags. OSS default: `createNoopUsageRecorder` (`./noop-usage-recorder.ts`).
  */
 
+import type { ResultAsync } from "neverthrow";
+
 import type { Scope } from "../auth/types.js";
+import type { NoticeFailure } from "../lib/hooks.js";
 import type { ChatUsage } from "../providers/types.js";
 
 /** One completed LLM call's token usage, with the attribution held at the call site. */
@@ -55,12 +58,13 @@ export interface LlmUsageRecord {
 /**
  * Records one `LlmUsageRecord` per completed LLM call.
  *
- * Fire-and-forget: the loop neither awaits `record` nor guards it, so a
- * realization MUST NOT throw and MUST NOT block — buffer and flush
- * internally, and own your error handling (diagnostics belong on the injected
- * `Logger`). A recorder that violates the contract fails or stalls the run it
- * was only meant to observe.
+ * `record` is a notice (see `lib/hooks.ts`). It gives a failure as an `err`,
+ * never as a throw. The loop does not wait for the result and puts no `try`
+ * around the call. When the result arrives, the loop logs the reason of an
+ * `err`, and the run continues with no change. A recorder that blocks does not
+ * make a run slower, but a realization that throws before it returns a
+ * `ResultAsync` still fails the run it was only meant to observe.
  */
 export interface UsageRecorder {
-    record(record: LlmUsageRecord): void;
+    record(record: LlmUsageRecord): ResultAsync<void, NoticeFailure>;
 }
