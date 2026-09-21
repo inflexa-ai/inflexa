@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { errAsync, okAsync } from "neverthrow";
+import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
+import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
@@ -18,6 +19,8 @@ import type { RunSession } from "../auth/types.js";
 import { silentLogger } from "../__tests__/setup/logger.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
+import type { SandboxError } from "../sandbox/sandbox-error.js";
+import type { SandboxRef } from "../sandbox/types.js";
 import { createWorkspaceFilesystem } from "../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps } from "./data-profile.js";
 
@@ -127,5 +130,23 @@ describe("the data profile — a refused spawn", () => {
         expect(String(failed[0]!.values.find((v) => typeof v === "string" && v.includes("labels_unavailable")))).toContain("labels_unavailable");
         expect(revoked).toEqual(["data-profile-failed"]);
         expect(statements.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(false);
+    });
+
+    it("passes a cancel from DBOS through with no change, and runs no failure path", async () => {
+        const { pool, statements } = statementPool();
+        const revoked: string[] = [];
+        const cancel = new DBOSErrors.DBOSWorkflowCancelledError("wf-profile");
+        const cancelled = {
+            createSandbox: () => new ResultAsync<SandboxRef, SandboxError>(Promise.reject(cancel)),
+        } as unknown as SandboxClient;
+
+        const outcome = await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, cancelled, revoked)).then(
+            () => "completed",
+            (thrown: unknown) => thrown,
+        );
+
+        expect(outcome).toBe(cancel);
+        expect(statements.some((q) => /data_profile_status\s*=\s*'failed'/i.test(q.text))).toBe(false);
+        expect(revoked).toEqual([]);
     });
 });
