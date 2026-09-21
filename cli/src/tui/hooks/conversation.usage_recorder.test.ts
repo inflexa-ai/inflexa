@@ -72,6 +72,8 @@ describe("the TUI chat turn's runAgent options carry the runtime's usage recorde
                         captured = opts;
                         return Promise.resolve({ messages: [...initial], finish: { reason: "stop" as const, cappedOut: false, truncationRecoveries: 0 } });
                     },
+                    // No identity: this case is about the recorder, thus the turn stamps no author.
+                    readAuthor: () => null,
                 }),
         };
 
@@ -97,6 +99,8 @@ describe("the TUI chat turn's runAgent options carry the runtime's usage recorde
                         captured = opts;
                         return Promise.resolve({ messages: [...initial], finish: { reason: "stop" as const, cappedOut: false, truncationRecoveries: 0 } });
                     },
+                    // No identity: this case is about the recorder, thus the turn stamps no author.
+                    readAuthor: () => null,
                 }),
         };
 

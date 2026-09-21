@@ -24,6 +24,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { getLogger, harnessLogger } from "../../lib/log.ts";
+import { currentUserEmail } from "../auth/whoami.ts";
 import { enterChatTurn } from "./agent_switch.ts";
 import { provenanceSeam } from "./prov_bridge.ts";
 
@@ -179,9 +180,20 @@ export type ChatTurnSeams = {
     readonly prepare: typeof prepareChatTurn;
     /** The agent tool loop. Real: `runAgent`. */
     readonly run: typeof runAgent;
+    /**
+     * Who sent the message: the email of the signed-in identity, or `null` when the cli can name
+     * nobody. Real: `currentUserEmail`.
+     *
+     * REQUIRED, like `usageRecorder` on {@link RunChatTurnArgs} and for the same reason: an omission
+     * must be a compile error, not a turn that silently stores no sender. It is injectable because
+     * the suite runs in a sandbox with no auth file — a direct read inside the engine would leave
+     * the signed-in branch unreachable without a token fixture, which would bind the engine to the
+     * file format of the session.
+     */
+    readonly readAuthor: () => string | null;
 };
 
-const realTurnSeams: ChatTurnSeams = { prepare: prepareChatTurn, run: runAgent };
+const realTurnSeams: ChatTurnSeams = { prepare: prepareChatTurn, run: runAgent, readAuthor: currentUserEmail };
 
 /**
  * Build the {@link AgentSession} a chat turn runs under. Parameterized
@@ -259,6 +271,16 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
     // store a figure that reads shorter than the one the user watched.
     const turnStartedAt = Date.now();
     try {
+        // Read at the TOP of the turn, and not at the append below. The author is who sent the
+        // message, thus the value belongs to the moment of the message: a sign-out during a long
+        // turn must leave the sender on the row rather than erase the person who wrote it. The
+        // price is one read of a small file on a turn that `prepare` then refuses and that stores
+        // nothing at all.
+        //
+        // INSIDE the try, because the `finally` below settles the work token of the turn. The real
+        // read cannot throw, but the type of the member promises nothing, and a throw above this
+        // line would strand the token and leave a pending agent switch that never lands.
+        const author = seams.readAuthor();
         // The logger rides into preparation so the history-repair warning of the
         // message assembly reaches the file log — without it, a repaired thread
         // heals silently and the writer defect it covers stays invisible.
@@ -415,6 +437,12 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
             await history.appendTurn(threadId, {
                 modelMessages: run.toPersist,
                 displayMessages,
+                // Spread only for a non-empty string, although `currentUserEmail` already maps an
+                // empty claim to `null`. This is the boundary of the store: the harness writes what
+                // it gets, thus an empty string would reach the column and read back as a sender
+                // with no name. The duplicated condition buys that no future reader of the member
+                // can put a nameless author into a transcript.
+                ...(author ? { author } : {}),
                 ...(run.phase.turnUsage ? { turnUsage: run.phase.turnUsage } : {}),
                 ...(run.phase.durationMs !== undefined ? { turnDurationMs: run.phase.durationMs } : {}),
             })

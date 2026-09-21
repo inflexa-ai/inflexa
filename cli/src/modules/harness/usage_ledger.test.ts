@@ -255,7 +255,12 @@ describe("a chat turn's calls land in the local ledger", () => {
                 threadId: "thr-chat-turn",
                 userInput: "go",
             },
-            { prepare: () => Promise.resolve({ kind: "ok", threadType: "conversation", messages: [userMessage], userMessage }), run: runAgent },
+            {
+                prepare: () => Promise.resolve({ kind: "ok", threadType: "conversation", messages: [userMessage], userMessage }),
+                run: runAgent,
+                // No identity: this case is about the usage ledger, thus the turn stamps no author.
+                readAuthor: () => null,
+            },
         );
 
         expect(outcome.kind).toBe("ok");

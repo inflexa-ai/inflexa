@@ -14,8 +14,7 @@ import { findAnalysesByRef, findAnalysesByRefWithAnchor, getAnalysisIntegrity } 
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
 import { provModel, provSubject } from "./document.ts";
 import { loadOrGenerateKeypair } from "./signing.ts";
-import { loadAuth } from "../auth/auth.ts";
-import { decodeIdTokenClaims } from "../auth/whoami.ts";
+import { currentUserEmail } from "../auth/whoami.ts";
 import pkg from "../../../package.json";
 import { WaitGroup } from "@/lib/wg.ts";
 
@@ -35,12 +34,8 @@ import { WaitGroup } from "@/lib/wg.ts";
  * documents (see `types/prov.ts`).
  */
 export function currentUserActor(): ProvActor {
-    return loadAuth()
-        .map((auth) => decodeIdTokenClaims(auth.idToken)?.email)
-        .match<ProvActor>(
-            (email) => (email ? { kind: "user", id: email, email } : { kind: "anonymous" }),
-            () => ({ kind: "anonymous" }),
-        );
+    const email = currentUserEmail();
+    return email ? { kind: "user", id: email, email } : { kind: "anonymous" };
 }
 
 /** The agent for a change inflexa makes autonomously: the CLI itself, stamped with its version and source commit. */
