@@ -64,10 +64,11 @@ export interface SandboxClient {
      *
      * The analysis id, the run id, and the step id come from `session`. The
      * client calls its label hook with that session before it makes the step
-     * tree and before it calls a backend (sandbox-labels spec). Each failure is
-     * an `err` value, the refusal of the label hook (`labels_refused`)
-     * included, and nothing throws: a spawn path splits the result with
-     * `keepSuspendingRefusal`.
+     * tree and before it calls a backend (sandbox-labels spec). Each spawn
+     * failure is an `err` value, the refusal of the label hook
+     * (`labels_refused`) included: a spawn path splits the result with
+     * `keepSuspendingRefusal`. Only a defect of the deployment config, or a
+     * throw of the workspace-root resolver, throws, and it fails the workflow.
      */
     createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
 
