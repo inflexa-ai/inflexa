@@ -9,7 +9,7 @@ import type { Pool } from "pg";
 
 import type { ChatProvider } from "../../../providers/types.js";
 import type { SandboxClient } from "../../../sandbox/client.js";
-import type { CreateSandboxMeta, ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../../sandbox/types.js";
+import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../../../workspace/filesystem.js";
 
 import type { SandboxAgentDeps } from "../shared.js";
@@ -24,8 +24,8 @@ export function makeFakeSandboxClient(): SandboxClient {
     };
     return {
         toolchainSource: "store",
-        async createSandbox(_meta: CreateSandboxMeta) {
-            return ref;
+        createSandbox() {
+            return okAsync(ref);
         },
         async submitExec(_ref: SandboxRef, _body: SubmitExecBody) {},
         async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadline: number): Promise<ExecResult> {

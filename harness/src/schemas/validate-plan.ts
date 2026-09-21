@@ -16,6 +16,7 @@ import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
 import { parseQuery, type ParseQueryError } from "../sandbox/package-identity.js";
+import { isLabelValue } from "../sandbox/labels.js";
 import { isSafeId, STEP_SUBDIRS, SYNTHESIS_STEP_ID } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 
@@ -195,6 +196,21 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
             errors.push(
                 `Step "${step.id}" has an unsafe id — step ids may contain only letters, digits, '.', '_', '-' ` +
                     `and cannot be '.' or '..' (the id becomes a workspace directory and container mount segment)`,
+            );
+        }
+    }
+
+    // 8. Step-id label safety. The id also becomes the value of the sandbox
+    //    label `cortex/step-id`, and the harness stamps a label value with no
+    //    change (sandbox-labels spec). A safe id can be too long for a label
+    //    value, or it can start or end with a separator. Refused here, the
+    //    planner makes the plan again; left alone, the K8s API server refuses
+    //    the spawn of the step.
+    for (const step of plan.steps) {
+        if (isSafeId(step.id) && !isLabelValue(step.id)) {
+            errors.push(
+                `Step "${step.id}" is not a valid label value — a step id has 1 to 63 characters, and it starts and ends ` +
+                    `with a letter or a digit (the id becomes the value of the sandbox label cortex/step-id)`,
             );
         }
     }

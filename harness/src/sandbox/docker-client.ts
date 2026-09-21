@@ -45,12 +45,14 @@ import { dirname, join } from "node:path";
 import Docker from "dockerode";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
+import type { SpawnSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { readFarmLock, resolveFarmSource } from "./farm.js";
-import { buildMountPlan, sandboxWriteTail } from "./mount-plan.js";
+import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_WORKFLOW_KEY, SANDBOX_ID_LABEL } from "./labels.js";
+import { buildMountPlan, mountCoordsOf, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
 
@@ -59,12 +61,13 @@ function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
 import type {
-    CreateSandboxMeta,
     FarmSource,
     ManagedSandbox,
     SandboxIdentity,
+    SandboxLabels,
     SandboxLiveness,
     SandboxRef,
+    SandboxSpec,
     SandboxTransport,
     ToolchainSource,
 } from "./types.js";
@@ -87,11 +90,8 @@ const SANDBOX_USER = "1000:1000";
 const SANDBOX_ROOT_USER = "0:0";
 const HEALTH_POLL_MS = 250;
 
-const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
-const MANAGED_BY_VALUE = "cortex";
-const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
-const RUN_ID_LABEL = "cortex/run-id";
-const STEP_ID_LABEL = "cortex/step-id";
+/** A Docker label value has no limit, thus the owner workflow id is a label here, verbatim. */
+const OWNER_WORKFLOW_LABEL = OWNER_WORKFLOW_KEY;
 
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
 const CPU_FILES_DIR = ".cpu";
@@ -164,7 +164,7 @@ export interface DockerClientConfig {
      */
     logger?: Logger;
     /** Hook called after the registry row is written. */
-    registerSandbox: (meta: CreateSandboxMeta, ref: SandboxRef) => Promise<void>;
+    registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
 }
 
 /**
@@ -327,7 +327,7 @@ function removeContainerIgnoreMissing(docker: Docker, sandboxId: string): Result
 }
 
 export function createDockerSandboxOps(config: DockerClientConfig): {
-    createSandbox(meta: CreateSandboxMeta, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
+    createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity, hostLabels: SandboxLabels): ResultAsync<SandboxRef, SandboxError>;
     teardown(ref: SandboxRef): ResultAsync<void, SandboxError>;
     teardownById(sandboxId: string): ResultAsync<void, SandboxError>;
     isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
@@ -347,17 +347,19 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     const cpuDirs = new Map<string, string>();
 
     return {
-        createSandbox(meta, identity) {
+        createSandbox(session, spec, identity, hostLabels) {
             return new ResultAsync(
                 (async () => {
                     const { sandboxId, callbackSecret } = identity;
+                    const analysisId = session.scope.analysisId;
+                    const coords = mountCoordsOf(session, spec);
 
                     // Farm resolution comes before any container work: a resolver
                     // refusal and a resolver throw refuse the whole call, and no
                     // container is made. The reason of the embedder rides in the error.
                     let farm;
                     if (config.libStorePath) {
-                        const resolved = await resolveFarmSource(config.farmSource, meta.analysisId, "docker.createSandbox");
+                        const resolved = await resolveFarmSource(config.farmSource, analysisId, "docker.createSandbox");
                         if (resolved.isErr()) return err(resolved.error);
                         farm = resolved.value;
                     }
@@ -379,7 +381,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             return err({
                                 type: "farm_unusable",
                                 op: "docker.createSandbox",
-                                analysisId: meta.analysisId,
+                                analysisId,
                                 farmPath: farm.farmPath,
                                 lockPath: lock.error.lockPath,
                                 lockError: lock.error.type,
@@ -415,21 +417,21 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // noise. A store that appears mid-session is picked up by the next create.
                     const refsMounted = !!config.refStorePath && refStoreUsable(config.refStorePath);
 
-                    const plan = buildMountPlan(meta, {
+                    const plan = buildMountPlan(coords, {
                         libs: libsMounted,
                         refs: refsMounted,
                         toolchainSource: config.toolchainSource,
                         cache: cacheBindable,
                     });
 
-                    const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
+                    const hostTreePath = config.resolveWorkspaceRoot(analysisId);
                     // `tailWritePrefix` (not a raw `join`) so the RW bind source runs through
                     // the same validation as the pre-created write tree — a crafted stepId or
                     // a crafted tail cannot escape the resolved root into the container. The
                     // tail is the step directory, or the one the caller declared.
-                    const write = sandboxWriteTail(meta);
+                    const write = sandboxWriteTail(coords);
                     // The same floor as `threadLimitEnv`: a fractional cpu request is one cpu.
-                    const threads = Math.max(1, Math.floor(meta.resources.cpu));
+                    const threads = Math.max(1, Math.floor(spec.resources.cpu));
                     const cpuinfo = await readHostCpuinfo();
                     if (cpuinfo === undefined) {
                         logger.debug("no host /proc/cpuinfo — the sandbox gets the online file only", { sandboxId });
@@ -461,9 +463,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         cause,
                     });
 
-                    const image = meta.image ?? config.image;
+                    const image = spec.image ?? config.image;
 
-                    const spec = meta.resources;
+                    const limits = spec.resources;
 
                     // Poll mode never dials out and carries no CORTEX_BASE_URL; it sets the
                     // firewall flag so the root entrypoint installs the egress block before
@@ -476,9 +478,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         SANDBOX_TRANSPORT: transport,
                         SANDBOX_CALLBACK_SECRET: callbackSecret,
                         ...(pollMode ? { SANDBOX_EGRESS_FIREWALL: "1" } : { CORTEX_BASE_URL: config.cortexBaseUrl }),
-                        ...threadLimitEnv(spec),
+                        ...threadLimitEnv(limits),
                         ...plan.env,
-                        ...(meta.extraEnv ?? {}),
+                        ...(spec.extraEnv ?? {}),
                     }).map(([k, v]) => `${k}=${v}`);
 
                     const createOpts: Docker.ContainerCreateOptions = {
@@ -488,14 +490,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         Env: env,
                         User: pollMode ? SANDBOX_ROOT_USER : SANDBOX_USER,
                         WorkingDir: plan.workingDir,
-                        Labels: {
-                            [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
-                            [OWNER_WORKFLOW_LABEL]: meta.childWorkflowId,
-                            [RUN_ID_LABEL]: meta.runId,
-                            [STEP_ID_LABEL]: meta.stepId,
-                            role: "sandbox",
-                            "cortex/sandbox-id": sandboxId,
-                        },
+                        // The host labels merge first, thus a harness key wins a clash; the
+                        // owner workflow id is a harness key here too (`labels.ts`).
+                        Labels: mergeLabels(hostLabels, { ...harnessLabels(session, sandboxId), [OWNER_WORKFLOW_LABEL]: spec.childWorkflowId }),
                         ExposedPorts: { [`${SANDBOX_SERVER_PORT}/tcp`]: {} },
                         HostConfig: {
                             Binds: binds,
@@ -513,18 +510,18 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             // — and `no-new-privileges` prevents regaining any.
                             ...(pollMode ? { CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"] } : {}),
                             SecurityOpt: ["no-new-privileges"],
-                            NanoCpus: Math.round(spec.cpu * 1e9),
-                            Memory: spec.memoryGb * 1024 ** 3,
+                            NanoCpus: Math.round(limits.cpu * 1e9),
+                            Memory: limits.memoryGb * 1024 ** 3,
                             // `Memory` alone lets the container swap as much again. A fork
                             // storm then thrashes for minutes, and sandbox-server stops to
                             // answer. With no swap the OOM killer removes the largest fork in
                             // seconds, and sandbox-server survives. K8s runs with no swap.
-                            MemorySwap: spec.memoryGb * 1024 ** 3,
+                            MemorySwap: limits.memoryGb * 1024 ** 3,
                             AutoRemove: false,
                         },
                     };
 
-                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, meta.childWorkflowId, createFailed, logger);
+                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, spec.childWorkflowId, createFailed, logger);
                     if (sandbox.isErr()) return err(sandbox.error);
                     if (!sandbox.value.alreadyRunning) {
                         const started = await trySandbox(() => sandbox.value.container.start(), createFailed);
@@ -554,7 +551,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         callbackSecret,
                     };
 
-                    const registered = await trySandbox(() => config.registerSandbox(meta, ref), createFailed);
+                    const registered = await trySandbox(() => config.registerSandbox(session, spec, ref), createFailed);
                     if (registered.isErr()) return err(registered.error);
                     return ok(ref);
                 })(),
@@ -587,7 +584,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     .map((c) => {
                         const labels = c.Labels ?? {};
                         return {
-                            sandboxId: labels["cortex/sandbox-id"] ?? "",
+                            sandboxId: labels[SANDBOX_ID_LABEL] ?? "",
                             // Docker label values are unconstrained, so the id is stored verbatim.
                             ownerWorkflowId: labels[OWNER_WORKFLOW_LABEL] ?? null,
                             // Docker reports `Created` as unix seconds.

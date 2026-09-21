@@ -26,14 +26,18 @@
  * rule yet, thus a new caller must read this paragraph.
  */
 
+import type { ResultAsync } from "neverthrow";
+
+import type { SpawnSession } from "../auth/types.js";
+import type { SandboxError } from "./sandbox-error.js";
 import type {
-    CreateSandboxMeta,
     ExecEmit,
     ExecResult,
     ManagedSandbox,
     SandboxIdentity,
     SandboxLiveness,
     SandboxRef,
+    SandboxSpec,
     SubmitExecBody,
     ToolchainSource,
 } from "./types.js";
@@ -53,12 +57,19 @@ export interface SandboxClient {
      * DBOS step (`sandbox.create`) — the spawn half of the two-step create
      * (see the harness-sandbox-exec spec). Launches the sandbox-base container/Job under the
      * pre-minted `identity` (name + HMAC secret checkpointed by `sandbox.mint`),
-     * stamps ownership labels, waits for `/health`, records the live handle in
+     * stamps the labels, waits for `/health`, records the live handle in
      * the active-sandbox registry, and returns the in-memory `SandboxRef`. A
      * recovery re-run whose machine already exists (the crash window between
      * spawn and checkpoint) **adopts** it rather than leaking a second one.
+     *
+     * The analysis id, the run id, and the step id come from `session`. The
+     * client calls its label hook with that session before it makes the step
+     * tree and before it calls a backend (sandbox-labels spec). Each failure is
+     * an `err` value, the refusal of the label hook (`labels_refused`)
+     * included, and nothing throws: a spawn path splits the result with
+     * `keepLabelsRefusal`.
      */
-    createSandbox(meta: CreateSandboxMeta, identity: SandboxIdentity): Promise<SandboxRef>;
+    createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
 
     /**
      * DBOS step (`sandbox.submit-exec.${execId}`). POSTs the command to

@@ -596,10 +596,18 @@ export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
+// Hook: sandbox labels. An optional gate on the config of the sandbox client.
+// The client calls it at each spawn with the `SpawnSession` of the spawn, on
+// both backends, and stamps each label as the hook gives it under the harness
+// label set. `createSandbox` takes the session and the `SandboxSpec` of a spawn.
+export type { ResolveSandboxLabels, SandboxLabels, SandboxSpec } from "./sandbox/types.js";
+export type { SpawnSession } from "./auth/types.js";
 // The throw of the client seam. An embedder matches the class and reads the
 // typed variant on `error`, instead of a string match on the message.
-export { describeSandboxError, SandboxFailure } from "./sandbox/sandbox-error.js";
-export type { SandboxError } from "./sandbox/sandbox-error.js";
+// `createSandbox` gives each failure as an `err`, and `keepLabelsRefusal`
+// keeps a refusal of the label hook as a value and throws each other failure.
+export { describeSandboxError, keepLabelsRefusal, SandboxFailure } from "./sandbox/sandbox-error.js";
+export type { LabelsRefused, SandboxError } from "./sandbox/sandbox-error.js";
 // Package-store seams. `FarmSource` is a required backend config field: the
 // embedder names where the farm of an analysis comes from. `ExtendAnalysisFarm`
 // is the optional link seam behind the `link_packages` tool.

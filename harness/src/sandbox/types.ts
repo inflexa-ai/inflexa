@@ -9,9 +9,12 @@
  * `createSandbox` DBOS step output.
  */
 
+import type { ResultAsync } from "neverthrow";
 import { z } from "zod";
 
+import type { RunSession } from "../auth/types.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
+import type { GateFailure } from "../lib/hooks.js";
 import type { PackageQuery } from "./package-identity.js";
 import { PersistedSandboxRefSchema } from "../state/schema.js";
 
@@ -359,11 +362,13 @@ export interface SubmitExecBody {
     stderrByteCap?: number;
 }
 
-/** Step-meta passed to `createSandbox` — what the registry row needs. */
-export interface CreateSandboxMeta {
-    runId: string;
-    stepId: string;
-    analysisId: string;
+/**
+ * What a spawn needs beside its session. The analysis id, the run id, and the
+ * step id come from the `SpawnSession` of `createSandbox`, thus the spec holds
+ * none of them. It holds no label either: the client gets the host labels
+ * from its label hook.
+ */
+export interface SandboxSpec {
     /** The first `execId` that will fire against this sandbox; nullable for
      *  early-create flows where the workflow mints the first execId later. */
     execId?: string | null;
@@ -387,11 +392,17 @@ export interface CreateSandboxMeta {
      *  mount, thus a run provisions exactly as before. A tail beside `readOnly` is
      *  a contradiction, and the mount builders refuse it. */
     writableTail?: string;
-    /** Host-supplied labels stamped onto the sandbox pod, verbatim. Opaque here:
-     *  the harness reads no key and no value, it only sanitizes each value into a
-     *  valid label. Absent ⇒ the pod carries the harness's own labels only. */
-    podLabels?: Record<string, string>;
 }
+
+/** The labels that the host adds to a sandbox. The harness stamps each one as the host gives it. */
+export type SandboxLabels = Readonly<Record<string, string>>;
+
+/**
+ * The sandbox label hook of the host: a gate (`lib/hooks.ts`). The sandbox
+ * client calls it at each spawn, on both backends, before it makes the step
+ * tree and before it calls a backend.
+ */
+export type ResolveSandboxLabels = (session: RunSession) => ResultAsync<SandboxLabels, GateFailure>;
 
 /**
  * The identity minted for a sandbox machine *before* it is spawned — the

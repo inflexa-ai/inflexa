@@ -21,10 +21,13 @@
 
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
 
+import { forStep } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { unwrapOrThrow } from "../lib/result.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
+import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
 import type { ExecEmit, ExecResult } from "../sandbox/types.js";
 import {
     buildDerivationExec,
@@ -62,16 +65,16 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
     // callback host parses to find the workflow that awaits this exec.
     const execId = `${workflowId}:${DERIVE_STEP_LITERAL}:fn-0`;
 
-    const sandbox = await deps.sandboxClient.createSandbox(
-        {
-            runId: DERIVE_RUN_LITERAL,
-            stepId: DERIVE_STEP_LITERAL,
-            analysisId: input.analysisId,
-            childWorkflowId: workflowId,
-            resources: DERIVATION_RESOURCES,
-            writableTail: input.writableTail,
-        },
-        mintSandboxIdentity(DERIVE_RUN_LITERAL),
+    // The sandbox takes its ids from the session that the tool authorized, and the client calls the label
+    // hook of the host with it. A refusal of that hook is a value.
+    const sandbox = unwrapOrThrow(
+        keepLabelsRefusal(
+            await deps.sandboxClient.createSandbox(
+                forStep(input.runSession, DERIVE_STEP_LITERAL),
+                { childWorkflowId: workflowId, resources: DERIVATION_RESOURCES, writableTail: input.writableTail },
+                mintSandboxIdentity(DERIVE_RUN_LITERAL),
+            ),
+        ).mapErr((refusal) => new SandboxFailure(refusal)),
     );
 
     try {

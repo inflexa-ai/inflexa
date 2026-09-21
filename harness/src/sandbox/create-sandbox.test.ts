@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
-import { errAsync } from "neverthrow";
+import { err, errAsync, okAsync } from "neverthrow";
 
 import type { AwaitExecOptions } from "./await-exec.js";
 import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
@@ -20,9 +20,11 @@ import { mintSandboxIdentity } from "./identity.js";
 import * as k8sClient from "./k8s-client.js";
 import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
 import { createNoopLogger } from "../lib/console-logger.js";
-import { STEP_SUBDIRS } from "./mount-plan.js";
-import { describeSandboxError, SandboxFailure, type SandboxError } from "./sandbox-error.js";
-import type { CreateSandboxMeta, FarmSource, SandboxLiveness } from "./types.js";
+import { STEP_SUBDIRS, type MountPlanCoords } from "./mount-plan.js";
+import { describeSandboxError, keepLabelsRefusal, SandboxFailure, type SandboxError } from "./sandbox-error.js";
+import type { FarmSource, SandboxLabels, SandboxLiveness, SandboxSpec } from "./types.js";
+import type { SpawnSession } from "../auth/types.js";
+import { splitSpawn } from "./__fixtures__/spawn.js";
 
 const opsProbe = async (): Promise<SandboxLiveness> => ({ alive: false, oomKilled: false });
 const injectedProbe = async (): Promise<SandboxLiveness> => ({ alive: true, oomKilled: false });
@@ -64,12 +66,10 @@ describe("precreateStepTree — step-tree access mode", () => {
         await rm(root, { recursive: true, force: true });
     });
 
-    const meta: CreateSandboxMeta = {
+    const meta: MountPlanCoords = {
         runId: "run-1",
         stepId: "step-a",
         analysisId: "an-1",
-        childWorkflowId: "run-1-0",
-        resources: { cpu: 1, memoryGb: 1 },
     };
     const deps = (stepTreeAccess?: "world-writable") => ({ resolveWorkspaceRoot: () => root, stepTreeAccess });
     const stepDir = () => join(root, "runs", "run-1", "step-a");
@@ -304,8 +304,8 @@ describe("createSandboxClient — the required-store fact", () => {
     });
 });
 
-describe("createSandboxClient — the seam throw", () => {
-    test("a backend refusal reaches the caller as a SandboxFailure carrying the description and the variant", async () => {
+describe("createSandboxClient — a spawn failure is a value", () => {
+    test("a backend refusal reaches the caller as an err, and the split throws it as a SandboxFailure with the description", async () => {
         const root = await mkdtemp(join(tmpdir(), "harness-seam-"));
         const variant: SandboxError = {
             type: "farm_unusable",
@@ -332,16 +332,20 @@ describe("createSandboxClient — the seam throw", () => {
                 packageStore: "required",
             });
 
-            const thrown = await client
-                .createSandbox(
-                    { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+            const failed = (
+                await client.createSandbox(
+                    ...splitSpawn({ runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } }),
                     mintSandboxIdentity("run-1"),
                 )
-                .then(
-                    () => null,
-                    (e: unknown) => e,
-                );
+            )._unsafeUnwrapErr();
+            expect(failed).toBe(variant);
 
+            let thrown: unknown;
+            try {
+                keepLabelsRefusal(err(failed))._unsafeUnwrap();
+            } catch (e) {
+                thrown = e;
+            }
             expect(thrown).toBeInstanceOf(SandboxFailure);
             // The barrel hands an embedder the same class, thus its `instanceof`
             // holds without a deep import.
@@ -357,6 +361,83 @@ describe("createSandboxClient — the seam throw", () => {
             spy.mockRestore();
             await rm(root, { recursive: true, force: true });
         }
+    });
+});
+
+describe("createSandboxClient — the label hook", () => {
+    interface BackendCall {
+        readonly session: SpawnSession;
+        readonly spec: SandboxSpec;
+        readonly hostLabels: SandboxLabels;
+    }
+
+    const SPAWN = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } };
+    const REF = { sandboxId: "sbx-1", host: "127.0.0.1", port: 8765, backend: "docker" as const, callbackSecret: "s" };
+
+    let root: string;
+    let calls: BackendCall[];
+    let spy: ReturnType<typeof spyOn>;
+    beforeEach(async () => {
+        root = await mkdtemp(join(tmpdir(), "harness-labels-"));
+        calls = [];
+        spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation(
+            () =>
+                ({
+                    createSandbox: (session: SpawnSession, spec: SandboxSpec, _identity: unknown, hostLabels: SandboxLabels) => {
+                        calls.push({ session, spec, hostLabels });
+                        return okAsync(REF);
+                    },
+                }) as unknown as ReturnType<typeof dockerClient.createDockerSandboxOps>,
+        );
+    });
+    afterEach(async () => {
+        spy.mockRestore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    const clientWith = (resolveSandboxLabels?: Parameters<typeof createSandboxClient>[0]["resolveSandboxLabels"]) =>
+        createSandboxClient({
+            pool: {} as unknown as Pool,
+            env: { backend: "docker", namespace: "default" },
+            cortexBaseUrl: "https://x",
+            image: "sandbox-base:latest",
+            resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+            resolveWorkspaceRoot: () => root,
+            farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
+            ...(resolveSandboxLabels ? { resolveSandboxLabels } : {}),
+        });
+
+    test("a client with no hook gives the backend no host labels", async () => {
+        (await clientWith().createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        expect(calls).toHaveLength(1);
+        expect(calls[0]!.hostLabels).toEqual({});
+    });
+
+    test("the hook gets the session of the spawn, and its labels reach the backend as the hook gives them", async () => {
+        const seen: SpawnSession[] = [];
+        const client = clientWith((session) => {
+            seen.push(session as SpawnSession);
+            return okAsync({ "example.com/tenant": "acme" });
+        });
+
+        const [session, spec] = splitSpawn(SPAWN);
+        (await client.createSandbox(session, spec, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(seen).toEqual([session]);
+        expect(calls[0]!.session).toBe(session);
+        expect(calls[0]!.hostLabels).toEqual({ "example.com/tenant": "acme" });
+    });
+
+    test("a refused spawn gives labels_refused with the reason and the flag, makes no step tree, and calls no backend", async () => {
+        const client = clientWith(() => errAsync({ reason: "no_funds", suspend: true }));
+
+        const refusal = (await client.createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1")))._unsafeUnwrapErr();
+
+        expect(refusal).toEqual({ type: "labels_refused", op: "createSandbox", reason: "no_funds", suspend: true });
+        expect(calls).toEqual([]);
+        await expect(stat(join(root, "runs", "run-1", "step-a"))).rejects.toThrow();
+        // The split keeps the refusal as a value, thus a spawn path reads a suspension with no catch.
+        expect(keepLabelsRefusal(err(refusal))._unsafeUnwrapErr()).toMatchObject({ type: "labels_refused", suspend: true });
     });
 });
 

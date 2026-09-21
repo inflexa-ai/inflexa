@@ -8,6 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,8 +47,8 @@ function makeFakeClient(opts: { lsResult?: { stdout: string; stderr: string } } 
     return {
         submits,
         toolchainSource: "store",
-        async createSandbox() {
-            return makeSandboxRef();
+        createSandbox() {
+            return okAsync(makeSandboxRef());
         },
         async submitExec(_ref, body) {
             submits.push(body);

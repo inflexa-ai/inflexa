@@ -36,22 +36,22 @@
 
 ## 4. The sandbox spawn and the labels
 
-- [ ] 4.1 Change `createSandbox` to `(session: SpawnSession, spec: SandboxSpec, identity)` (D4). Read the analysis
+- [x] 4.1 Change `createSandbox` to `(session: SpawnSession, spec: SandboxSpec, identity)` (D4). Read the analysis
   id, the run id, and the step id from the session in `create-sandbox.ts`, `k8s-client.ts`, `docker-client.ts`, and
   `mount-plan.ts`
-- [ ] 4.2 Add the optional `resolveSandboxLabels` to `CreateSandboxClientConfig`. Call it in `createSandbox` before
+- [x] 4.2 Add the optional `resolveSandboxLabels` to `CreateSandboxClientConfig`. Call it in `createSandbox` before
   `precreateStepTree`. Add the `SandboxError` variant `labels_refused`
-- [ ] 4.3 Stamp the label set of D5 on the Docker container, the K8s Job, and the K8s pod template. Merge the host
+- [x] 4.3 Stamp the label set of D5 on the Docker container, the K8s Job, and the K8s pod template. Merge the host
   labels first. Keep the owner workflow id as a Docker label and as a K8s annotation
-- [ ] 4.4 Remove `sanitizeLabelValue` and its tests
-- [ ] 4.5 Remove `resolvePodLabels` from `SandboxStepDeps` and `DataProfileDeps`, with their branches and warnings
-- [ ] 4.6 Pass the session at the four spawn paths. Add `runSession` to `DeriveTableExecInput`, and fill it from the
+- [x] 4.4 Remove `sanitizeLabelValue` and its tests
+- [x] 4.5 Remove `resolvePodLabels` from `SandboxStepDeps` and `DataProfileDeps`, with their branches and warnings
+- [x] 4.6 Pass the session at the four spawn paths. Add `runSession` to `DeriveTableExecInput`, and fill it from the
   authorization in `src/tools/report-session/derive-table.ts`
-- [ ] 4.7 In `src/schemas/validate-plan.ts`, accept a step id only if it is a safe id and a valid label value (D8)
-- [ ] 4.8 Add a test of the label set on each backend
-- [ ] 4.9 Add a test of a host key that clashes with a harness key
-- [ ] 4.10 Add a test of an absent label hook, and a test of `labels_refused` with no backend call
-- [ ] 4.11 Add a test of a step id that is too long, and a test of a step id with a wrong first character
+- [x] 4.7 In `src/schemas/validate-plan.ts`, accept a step id only if it is a safe id and a valid label value (D8)
+- [x] 4.8 Add a test of the label set on each backend
+- [x] 4.9 Add a test of a host key that clashes with a harness key
+- [x] 4.10 Add a test of an absent label hook, and a test of `labels_refused` with no backend call
+- [x] 4.11 Add a test of a step id that is too long, and a test of a step id with a wrong first character
 
 ## 5. The suspension
 

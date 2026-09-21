@@ -12,9 +12,10 @@ import { join } from "node:path";
 import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-node";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import { createK8sSandboxOps, sanitizeLabelValue, waitForPodReady } from "./k8s-client.js";
+import { createK8sSandboxOps, waitForPodReady } from "./k8s-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 import type { FarmSource } from "./types.js";
+import { splitSpawn } from "./__fixtures__/spawn.js";
 
 /** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
 const SESSION_PVC_ROOT = "/sessions";
@@ -106,21 +107,22 @@ describe("k8s createSandbox", () => {
             refStorePvc: "cortex-refs",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox: async (_meta, ref) => {
+            registerSandbox: async (_session, _spec, ref) => {
                 registered.push(ref.sandboxId);
             },
         });
 
         const ref = (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -193,8 +195,9 @@ describe("k8s createSandbox", () => {
 
         (
             await ops.createSandbox(
-                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+                ...splitSpawn({ runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -225,15 +228,16 @@ describe("k8s createSandbox", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "derive-table",
                     stepId: "derive",
                     analysisId: "an-1",
                     childWorkflowId: "derive-table:x",
                     resources: { cpu: 1, memoryGb: 1 },
                     writableTail: "report-sessions/thread-1/derived",
-                },
+                }),
                 mintSandboxIdentity("derive-table"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -271,8 +275,9 @@ describe("k8s createSandbox", () => {
         // DBOS workflow body, where only a throw records the step as durably failed.
         const attempt = async () =>
             ops.createSandbox(
-                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+                ...splitSpawn({ runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } }),
                 mintSandboxIdentity("run-1"),
+                {},
             );
         await expect(attempt()).rejects.toThrow(/does not live under sessionPvcRoot/);
     });
@@ -300,14 +305,15 @@ describe("k8s createSandbox", () => {
 
         const ref = (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 1, memoryGb: 2 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -342,15 +348,16 @@ describe("k8s createSandbox", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "ephemeral",
                     stepId: "ephemeral",
                     analysisId: "an-1",
                     childWorkflowId: "ephemeral:x",
                     resources: { cpu: 2, memoryGb: 4 },
                     readOnly: true,
-                },
+                }),
                 mintSandboxIdentity("ephemeral"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -398,14 +405,15 @@ describe("k8s createSandbox", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -444,14 +452,15 @@ describe("k8s createSandbox", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -484,14 +493,15 @@ describe("k8s createSandbox", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -529,14 +539,15 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
         });
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
         return stub.createdJobs[0]!.spec!.template.spec!;
@@ -576,14 +587,15 @@ describe("k8s host-side lock gate (libStorePvcRoot)", () => {
             });
 
             const result = await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             );
 
             expect(result.isErr()).toBe(true);
@@ -636,14 +648,15 @@ describe("k8s createSandbox failure cleanup", () => {
         });
 
         const result = await ops.createSandbox(
-            {
+            ...splitSpawn({
                 runId: "run-1",
                 stepId: "step-a",
                 analysisId: "an-1",
                 childWorkflowId: "run-1-0",
                 resources: { cpu: 2, memoryGb: 4 },
-            },
+            }),
             mintSandboxIdentity("run-1"),
+            {},
         );
         expect(result.isErr()).toBe(true);
         const created = stub.createdJobs[0]!.metadata!.name!;
@@ -668,14 +681,15 @@ describe("k8s createSandbox failure cleanup", () => {
         });
 
         const result = await ops.createSandbox(
-            {
+            ...splitSpawn({
                 runId: "run-1",
                 stepId: "step-a",
                 analysisId: "an-1",
                 childWorkflowId: "run-1-0",
                 resources: { cpu: 2, memoryGb: 4 },
-            },
+            }),
             mintSandboxIdentity("run-1"),
+            {},
         );
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -702,21 +716,22 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
-            registerSandbox: async (_meta, ref) => {
+            registerSandbox: async (_session, _spec, ref) => {
                 registered.push(ref.sandboxId);
             },
         });
 
         const ref = (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -752,14 +767,15 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
 
         const ref = (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -789,14 +805,15 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
         });
 
         const result = await ops.createSandbox(
-            {
+            ...splitSpawn({
                 runId: "run-1",
                 stepId: "step-a",
                 analysisId: "an-1",
                 childWorkflowId: "run-1-0",
                 resources: { cpu: 2, memoryGb: 4 },
-            },
+            }),
             mintSandboxIdentity("run-1"),
+            {},
         );
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -824,14 +841,15 @@ describe("k8s job ownership labels", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "run-1",
                     stepId: "step-a",
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                },
+                }),
                 mintSandboxIdentity("run-1"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -866,8 +884,9 @@ describe("k8s job ownership labels", () => {
 
         (
             await ops.createSandbox(
-                { runId: "data-profile", stepId: "profile", analysisId: "an-1", childWorkflowId, resources: { cpu: 2, memoryGb: 4 } },
+                ...splitSpawn({ runId: "data-profile", stepId: "profile", analysisId: "an-1", childWorkflowId, resources: { cpu: 2, memoryGb: 4 } }),
                 mintSandboxIdentity("data-profile"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -911,25 +930,7 @@ describe("k8s job ownership labels", () => {
     });
 });
 
-describe("sanitizeLabelValue", () => {
-    test("rewrites invalid chars, trims to alnum boundaries, and caps at 63", () => {
-        expect(sanitizeLabelValue("run-1-0")).toBe("run-1-0");
-        expect(sanitizeLabelValue("a:b/c")).toBe("a-b-c");
-        expect(sanitizeLabelValue(":lead-and-trail:")).toBe("lead-and-trail");
-        const long = "x".repeat(80);
-        expect(sanitizeLabelValue(long).length).toBe(63);
-    });
-
-    test("UUIDs pass through unaltered and trailing non-alnum is trimmed after the cap", () => {
-        const uuid = "2f9c1f6e-9f4b-4c1e-8a3d-0b1c2d3e4f5a";
-        expect(sanitizeLabelValue(uuid)).toBe(uuid);
-        // 62 alnum chars + "-" at position 63: the cap keeps the dash, the tail trim removes it.
-        expect(sanitizeLabelValue(`${"x".repeat(62)}-tail`)).toBe("x".repeat(62));
-        expect(sanitizeLabelValue("---")).toBe("");
-    });
-});
-
-describe("k8s host-supplied pod labels", () => {
+describe("k8s label set", () => {
     const READY_POD = [
         {
             status: { phase: "Running" as const, podIP: "10.0.0.1" },
@@ -952,97 +953,71 @@ describe("k8s host-supplied pod labels", () => {
         });
     }
 
-    test("host labels reach the pod template and the Job metadata, beside the harness's own", async () => {
-        // The pod template is the placement that a cost reconciler allocates on;
-        // a Job-only label never reaches it.
+    const SPAWN = { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } };
+
+    test("the Job metadata and the pod template each carry the six harness labels from the session", async () => {
         const stub = stubApis(READY_POD);
-        (
-            await opsWith(stub).createSandbox(
-                {
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    childWorkflowId: "run-1-0",
-                    resources: { cpu: 2, memoryGb: 4 },
-                    podLabels: { "cortex/billing-context": "bc-123", "cortex/user-id": "user-9" },
-                },
-                mintSandboxIdentity("run-1"),
-            )
-        )._unsafeUnwrap();
+        const identity = mintSandboxIdentity("run-1");
+        (await opsWith(stub).createSandbox(...splitSpawn(SPAWN), identity, {}))._unsafeUnwrap();
 
         const job = stub.createdJobs[0]!;
-        for (const labels of [job.metadata!.labels!, job.spec!.template.metadata!.labels!]) {
-            expect(labels["cortex/billing-context"]).toBe("bc-123");
-            expect(labels["cortex/user-id"]).toBe("user-9");
-            expect(labels["cortex/analysis-id"]).toBe("an-1");
+        const expected = {
+            "app.kubernetes.io/managed-by": "cortex",
+            role: "sandbox",
+            "cortex/sandbox-id": identity.sandboxId,
+            "cortex/analysis-id": "an-1",
+            "cortex/run-id": "run-1",
+            "cortex/step-id": "step-a",
+        };
+        expect(job.metadata!.labels).toEqual(expected);
+        expect(job.spec!.template.metadata!.labels).toEqual(expected);
+        expect(job.metadata!.annotations!["cortex/owner-workflow-id"]).toBe("run-1-0");
+    });
+
+    test("the host labels merge under the harness labels, thus a harness key wins a clash", async () => {
+        const stub = stubApis(READY_POD);
+        (
+            await opsWith(stub).createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1"), {
+                "cortex/run-id": "other",
+                "example.com/tenant": "acme",
+            })
+        )._unsafeUnwrap();
+
+        for (const labels of [stub.createdJobs[0]!.metadata!.labels!, stub.createdJobs[0]!.spec!.template.metadata!.labels!]) {
             expect(labels["cortex/run-id"]).toBe("run-1");
+            expect(labels["example.com/tenant"]).toBe("acme");
         }
     });
 
-    test("host label values are sanitized, because one invalid value loses the whole Job", async () => {
+    test("a host value reaches the Job with no change, also a value that the API server can refuse", async () => {
+        // The API server is the authority on a label value: the harness changes
+        // no host value, because a host reconciler uses it as a lookup key.
+        const stub = stubApis(READY_POD);
+        (await opsWith(stub).createSandbox(...splitSpawn(SPAWN), mintSandboxIdentity("run-1"), { "example.com/user": "user@example.com" }))._unsafeUnwrap();
+
+        expect(stub.createdJobs[0]!.metadata!.labels!["example.com/user"]).toBe("user@example.com");
+        expect(stub.createdJobs[0]!.spec!.template.metadata!.labels!["example.com/user"]).toBe("user@example.com");
+    });
+
+    test("a literal spawn path stamps its literal run id and step id", async () => {
         const stub = stubApis(READY_POD);
         (
             await opsWith(stub).createSandbox(
-                {
+                ...splitSpawn({
                     runId: "data-profile",
                     stepId: "profile",
                     analysisId: "an-1",
-                    childWorkflowId: "data-profile:x",
+                    childWorkflowId: "dataprofile:an-1:n",
                     resources: { cpu: 1, memoryGb: 1 },
-                    podLabels: { "cortex/billing-context": "bc:123", "cortex/user-id": "user@example.com" },
-                },
+                }),
                 mintSandboxIdentity("data-profile"),
+                {},
             )
         )._unsafeUnwrap();
 
-        const podLabels = stub.createdJobs[0]!.spec!.template.metadata!.labels!;
-        expect(podLabels["cortex/billing-context"]).toBe("bc-123");
-        expect(podLabels["cortex/user-id"]).toBe("user-example.com");
-        expect(podLabels["cortex/run-id"]).toBe("data-profile");
-    });
-
-    test("an arbitrary host key is stamped verbatim — the harness reads no key", async () => {
-        const stub = stubApis(READY_POD);
-        (
-            await opsWith(stub).createSandbox(
-                {
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    childWorkflowId: "run-1-0",
-                    resources: { cpu: 2, memoryGb: 4 },
-                    podLabels: { "example.com/tenant": "acme" },
-                },
-                mintSandboxIdentity("run-1"),
-            )
-        )._unsafeUnwrap();
-
-        expect(stub.createdJobs[0]!.spec!.template.metadata!.labels!["example.com/tenant"]).toBe("acme");
-    });
-
-    test("absent pod labels stamp nothing extra and still spawn", async () => {
-        const stub = stubApis(READY_POD);
-        const ref = (
-            await opsWith(stub).createSandbox(
-                {
-                    runId: "run-1",
-                    stepId: "step-a",
-                    analysisId: "an-1",
-                    childWorkflowId: "run-1-0",
-                    resources: { cpu: 2, memoryGb: 4 },
-                },
-                mintSandboxIdentity("run-1"),
-            )
-        )._unsafeUnwrap();
-
-        expect(ref.host).toBe("10.0.0.1");
-        for (const labels of [stub.createdJobs[0]!.metadata!.labels!, stub.createdJobs[0]!.spec!.template.metadata!.labels!]) {
-            expect(labels["cortex/billing-context"]).toBeUndefined();
-            expect(labels["cortex/user-id"]).toBeUndefined();
-            // The two identifiers the harness holds itself stay on both.
-            expect(labels["cortex/analysis-id"]).toBe("an-1");
-            expect(labels["cortex/run-id"]).toBe("run-1");
-        }
+        const labels = stub.createdJobs[0]!.spec!.template.metadata!.labels!;
+        expect(labels["cortex/run-id"]).toBe("data-profile");
+        expect(labels["cortex/step-id"]).toBe("profile");
     });
 });
 
@@ -1202,7 +1177,7 @@ describe("k8s createSandbox — the farm mounts", () => {
     test("the farm mounts as a read-only subPath of the libs PVC, after the store mount", async () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.2" }, metadata: { name: "sbx-f" } }]);
 
-        (await opsWith(FIXED_FARM, stub).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await opsWith(FIXED_FARM, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
         const mounts = container.volumeMounts!.filter((m) => m.name === "libs");
@@ -1216,7 +1191,7 @@ describe("k8s createSandbox — the farm mounts", () => {
         const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.3" }, metadata: { name: "sbx-c" } }]);
         const source: FarmSource = { kind: "fixed", location: { farmPath: "farms/an-1", cachePath: "caches/an-1" } };
 
-        (await opsWith(source, stub, "image").createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await opsWith(source, stub, "image").createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const podSpec = stub.createdJobs[0]!.spec!.template.spec!;
         const libsVolume = podSpec.volumes!.find((v) => v.name === "libs")!;
@@ -1236,7 +1211,7 @@ describe("k8s createSandbox — the farm mounts", () => {
         const stub = stubApis([]);
         const source: FarmSource = { kind: "per-analysis", resolve: async () => ({ kind: "unavailable", reason: "no store yet" }) };
 
-        const result = await opsWith(source, stub).createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await opsWith(source, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1251,7 +1226,7 @@ describe("k8s createSandbox — the farm mounts", () => {
         const source: FarmSource = { kind: "fixed", location: { farmPath: "/mnt/libs/farms/x" } };
 
         const attempt = async (): Promise<void> => {
-            (await opsWith(source, stub).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+            (await opsWith(source, stub).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
         };
         await expect(attempt()).rejects.toThrow(/PVC-relative/);
         expect(stub.createdJobs).toHaveLength(0);

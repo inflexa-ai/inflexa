@@ -156,6 +156,15 @@ export interface RunSession {
 }
 
 /**
+ * A `RunSession` whose run frame names a step: the session of a sandbox spawn.
+ * A sandbox takes its analysis id, its run id, and its step id from this
+ * session, thus a spawn without one does not compile.
+ */
+export interface SpawnSession extends RunSession {
+    readonly runFrame: RunFrame & { readonly stepId: string };
+}
+
+/**
  * The minimal session view that a host hook reads. Both bundles satisfy it;
  * `runFrame` is present only on a `RunSession`, so a hook that gets a
  * `RequestSession` sees no run or step.
@@ -194,9 +203,10 @@ export function forSubAgent<S extends { readonly provenance: Provenance }>(sessi
 /**
  * Derive a child `RunSession` for a sandbox step — pure value derivation.
  * Sets `runFrame.stepId`; identity, scope, auth, and provenance are
- * unchanged. Used by parents when computing child workflow input.
+ * unchanged. Used by parents when computing child workflow input, and by a
+ * spawn path that names the step of its sandbox.
  */
-export function forStep(parent: RunSession, stepId: string): RunSession {
+export function forStep(parent: RunSession, stepId: string): SpawnSession {
     return {
         ...parent,
         runFrame: { runId: parent.runFrame.runId, stepId },

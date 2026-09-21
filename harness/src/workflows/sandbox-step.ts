@@ -48,7 +48,7 @@ import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
-import { forSubAgent, type RunSession } from "../auth/types.js";
+import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
 import type { FileMetadataEntry } from "../execution/artifact-metadata.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
@@ -67,7 +67,8 @@ import {
 } from "../execution/post-step-pipeline.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
-import type { CreateSandboxMeta, SandboxRef } from "../sandbox/types.js";
+import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
+import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { createBlockerHolder, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
 
@@ -123,11 +124,12 @@ export interface SandboxStepInput {
     readonly timeoutSeconds?: number;
     /**
      * Durable `RunSession` derived by the parent via `forStep`. Carries the
-     * run-authorization credential, identity, scope, and `runFrame = { runId, stepId }`.
+     * run-authorization credential, identity, scope, and `runFrame = { runId, stepId }`,
+     * thus it is the `SpawnSession` of the sandbox of the step.
      * DBOS replay reconstructs it on resume — the body never reads the JWT
      * from `cortex_runs`.
      */
-    readonly runSession: RunSession;
+    readonly runSession: SpawnSession;
 }
 
 /**
@@ -281,13 +283,6 @@ export interface SandboxStepDeps {
     /** Write-side embedder for the post-step vector index. */
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
-    /**
-     * Host-supplied labels for this step's sandbox pod, resolved under the
-     * step's session. The map is opaque to the harness: it stamps each entry
-     * and interprets none of it. Absent in a wiring that attributes nothing —
-     * the pod then carries the harness's own labels only.
-     */
-    readonly resolvePodLabels?: (session: RunSession) => Promise<Record<string, string>>;
     /**
      * External artifact registration + sync seam. The harness's post-step pipeline
      * registers each step's outputs through it (filesystem index in the
@@ -446,35 +441,20 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // (2b) sandbox.create — spawn (or adopt) the machine under the minted
     // identity. The handle (secret included) is cached so recovery picks the
-    // same machine back up without re-provisioning. Pod-label resolution lives
-    // INSIDE this step (not as its own step) so the child's step sequence is
-    // unchanged — in-flight workflows resumed across a deploy replay cleanly.
-    const sandboxMeta: CreateSandboxMeta = {
-        runId: input.runId,
-        stepId: input.stepId,
-        analysisId: input.analysisId,
+    // same machine back up without re-provisioning. The ids of the sandbox come
+    // from the step session, and the client calls the label hook of the host
+    // inside this step. A refusal of that hook is the checkpointed `err`; each
+    // other spawn failure fails the step inside it.
+    const sandboxSpec: SandboxSpec = {
         childWorkflowId,
         image: input.image,
         extraEnv: input.extraEnv,
         resources: input.resources,
     };
-    const sandbox = await DBOS.runStep(
-        async () => {
-            let podLabels: Record<string, string> | undefined;
-            if (deps.resolvePodLabels) {
-                try {
-                    podLabels = await deps.resolvePodLabels(session);
-                } catch (err) {
-                    logger.warn("pod-label resolution failed", { analysisId: input.analysisId, ...logger.errorFields(err) });
-                }
-                // A wired resolver that yields nothing is the one loud case: the
-                // host asked for attribution and the pod spawns without it.
-                if (!podLabels || Object.keys(podLabels).length === 0) logger.warn("sandbox spawned with no pod labels", { analysisId: input.analysisId });
-            }
-            return deps.sandboxClient.createSandbox({ ...sandboxMeta, podLabels }, identity);
-        },
-        { name: "sandbox.create" },
-    );
+    const spawned = await DBOS.runStep(async () => keepLabelsRefusal(await deps.sandboxClient.createSandbox(session, sandboxSpec, identity)), {
+        name: "sandbox.create",
+    });
+    const sandbox = unwrapOrThrow(spawned.mapErr((refusal) => new SandboxFailure(refusal)));
 
     // Recovery path: re-check `isAlive` on the persisted ref before continuing.
     // A classified-dead sandbox triggers a fresh `createSandbox` (task 4.6).

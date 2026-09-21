@@ -16,6 +16,7 @@ import Docker from "dockerode";
 import { createDockerSandboxOps, engineConnectionOptions } from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 import type { FarmSource } from "./types.js";
+import { splitSpawn } from "./__fixtures__/spawn.js";
 
 // A real, usable on-disk farm: the Docker client resolves the farm source at
 // each createSandbox and gates the store mounts on a parseable `inflexa.lock`
@@ -201,7 +202,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created)!;
         expect(sandbox.capDrop).toEqual(["ALL"]);
@@ -233,7 +234,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created)!;
         expect(sandbox.user).toBe("1000:1000");
@@ -259,7 +260,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // Exactly one container — no sidecar.
         expect(created).toHaveLength(1);
@@ -284,12 +285,12 @@ describe("docker createSandbox — transport modes", () => {
             refStorePath: refsRoot,
             docker,
             fetch: okFetch,
-            registerSandbox: async (meta, ref) => {
-                registered.push({ runId: meta.runId, stepId: meta.stepId, sandboxId: ref.sandboxId });
+            registerSandbox: async (session, _spec, ref) => {
+                registered.push({ runId: session.runFrame.runId, stepId: session.runFrame.stepId, sandboxId: ref.sandboxId });
             },
         });
 
-        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
         expect(ref.callbackSecret.length).toBeGreaterThan(40);
@@ -324,7 +325,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // A fork copies the pool size of its parent, thus a pool at the quota
         // runs workers * quota threads. One thread per pool is the safe
@@ -350,7 +351,11 @@ describe("docker createSandbox — transport modes", () => {
         });
 
         (
-            await ops.createSandbox({ ...META, resources: { cpu: 0.5, memoryGb: 1 }, extraEnv: { OMP_NUM_THREADS: "8" } }, mintSandboxIdentity("run-1"))
+            await ops.createSandbox(
+                ...splitSpawn({ ...META, resources: { cpu: 0.5, memoryGb: 1 }, extraEnv: { OMP_NUM_THREADS: "8" } }),
+                mintSandboxIdentity("run-1"),
+                {},
+            )
         )._unsafeUnwrap();
 
         const env = envMapOf(sandboxOf(created)!);
@@ -370,7 +375,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // With swap a fork storm thrashes instead of an OOM kill, and
         // sandbox-server in the same cgroup stops to answer /exec.
@@ -392,7 +397,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // `parallel::detectCores()` greps /proc/cpuinfo and `os.cpu_count()` reads
         // the online list. Both files describe the host, thus a small file over
@@ -427,7 +432,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const binds = sandboxOf(created)!.binds;
         expect(binds).toContain(`${join(wsRoot, ".cpu", ref.sandboxId, "online")}:/sys/devices/system/cpu/online:ro`);
@@ -449,7 +454,7 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // The sandbox still starts: the thread env limits each library, and only
         // the two base calls report the host.
@@ -490,10 +495,60 @@ describe("docker createSandbox — transport modes", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
         expect(removed.length).toBeGreaterThan(0);
+    });
+});
+
+describe("docker createSandbox — the label set", () => {
+    function labelledOps() {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://cortex.example.com:443",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            farmSource,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+        return { ops, created };
+    }
+
+    test("the container carries the six harness labels from the session and the owner workflow id", async () => {
+        const { ops, created } = labelledOps();
+        const identity = mintSandboxIdentity("run-1");
+        (await ops.createSandbox(...splitSpawn(META), identity, {}))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.labels).toEqual({
+            "app.kubernetes.io/managed-by": "cortex",
+            role: "sandbox",
+            "cortex/sandbox-id": identity.sandboxId,
+            "cortex/analysis-id": "an-1",
+            "cortex/run-id": "run-1",
+            "cortex/step-id": "step-a",
+            "cortex/owner-workflow-id": "run-1-0",
+        });
+    });
+
+    test("the host labels merge under the harness labels, and each host value reaches the container with no change", async () => {
+        const { ops, created } = labelledOps();
+        (
+            await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {
+                "cortex/run-id": "other",
+                "cortex/owner-workflow-id": "other",
+                "example.com/tenant": "acme",
+                "example.com/user": "user@example.com",
+            })
+        )._unsafeUnwrap();
+
+        const labels = sandboxOf(created)!.labels!;
+        expect(labels["cortex/run-id"]).toBe("run-1");
+        expect(labels["cortex/owner-workflow-id"]).toBe("run-1-0");
+        expect(labels["example.com/tenant"]).toBe("acme");
+        expect(labels["example.com/user"]).toBe("user@example.com");
     });
 });
 
@@ -510,7 +565,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created)!;
         const env = envMapOf(sandbox);
@@ -534,7 +589,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.hasPlatformKey).toBe(true);
         expect(sandboxOf(created)!.platform).toBe("linux/arm64");
@@ -552,7 +607,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.hasPlatformKey).toBe(false);
         expect(sandboxOf(created)!.platform).toBeUndefined();
@@ -573,15 +628,16 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (
             await ops.createSandbox(
-                {
+                ...splitSpawn({
                     runId: "ephemeral",
                     stepId: "ephemeral",
                     analysisId: "an-1",
                     childWorkflowId: "ephemeral:x",
                     resources: { cpu: 2, memoryGb: 4 },
                     readOnly: true,
-                },
+                }),
                 mintSandboxIdentity("ephemeral"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -604,8 +660,9 @@ describe("docker createSandbox — mounts and platform", () => {
 
         (
             await ops.createSandbox(
-                { ...META, runId: "derive-table", stepId: "derive", writableTail: "report-sessions/thread-1/derived" },
+                ...splitSpawn({ ...META, runId: "derive-table", stepId: "derive", writableTail: "report-sessions/thread-1/derived" }),
                 mintSandboxIdentity("derive-table"),
+                {},
             )
         )._unsafeUnwrap();
 
@@ -632,7 +689,7 @@ describe("docker createSandbox — mounts and platform", () => {
         // The mount builders validate each segment, thus a traversal never becomes a bind source. The
         // refusal is a throw at the builder, and the `ResultAsync` carries it as a rejection.
         const attempt = async (): Promise<void> => {
-            (await ops.createSandbox({ ...META, writableTail: "../escape" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+            (await ops.createSandbox(...splitSpawn({ ...META, writableTail: "../escape" }), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
         };
         await expect(attempt()).rejects.toThrow(/Invalid writableTail/);
         expect(created).toHaveLength(0);
@@ -653,7 +710,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const env = envMapOf(sandboxOf(created)!);
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
@@ -677,7 +734,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const warnings = logger.records.filter((r) => r.level === "warn");
         expect(warnings).toHaveLength(1);
@@ -703,7 +760,7 @@ describe("docker createSandbox — mounts and platform", () => {
 
         // The unusable-store path logs; with no logger injected it must take the
         // no-op fallback instead of dereferencing undefined.
-        expect((await ops.createSandbox(META, mintSandboxIdentity("run-1"))).isOk()).toBe(true);
+        expect((await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {})).isOk()).toBe(true);
     });
 
     test("skips the /mnt/libs mounts when the inflexa.lock does not parse", async () => {
@@ -721,7 +778,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
@@ -744,7 +801,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -778,7 +835,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr() && result.error.type === "farm_unusable") {
@@ -803,7 +860,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
@@ -828,7 +885,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(resolverCalls).toBe(0);
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
@@ -848,7 +905,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -877,7 +934,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("farm_unavailable");
@@ -905,7 +962,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(resolvedFor).toEqual(["an-1"]);
         expect(sandboxOf(created)!.binds).toContain(`${farmDir}:/mnt/libs/current:ro`);
@@ -928,7 +985,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created)!;
         const libsIdx = sandbox.binds.indexOf(`${libRoot}:/mnt/libs:ro`);
@@ -958,7 +1015,7 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         const sandbox = sandboxOf(created)!;
         expect(sandbox.binds).toContain(`${farmDir}:/mnt/libs/farm:ro`);
@@ -992,7 +1049,7 @@ describe("docker createSandbox — ref store re-check", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
         // The harness must never materialize the bind source: a real bind would make Docker
@@ -1020,7 +1077,7 @@ describe("docker createSandbox — ref store re-check", () => {
 
         await mkdir(installedLater, { recursive: true });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds).toContain(`${installedLater}:/mnt/refs:ro`);
     });
@@ -1045,7 +1102,7 @@ describe("docker createSandbox — ref store re-check", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
     });
@@ -1064,7 +1121,7 @@ describe("docker teardown / isAlive", () => {
             registerSandbox: async () => {},
         });
 
-        const ref = (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
         (await ops.teardown(ref))._unsafeUnwrap();
         expect(removed).toContain(ref.sandboxId);
     });
@@ -1243,7 +1300,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("adopts a running owned container when the engine answers the duplicate create with 500 (podman's shape)", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
 
-        const ref = (await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
         // Adopted as-is: no create landed and nothing was removed.
@@ -1254,7 +1311,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("adopts a running owned container when the engine answers the duplicate create with 409 (Docker's shape)", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 409, standing: { labels: ownedLabels, running: true } });
 
-        (await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(created).toEqual([]);
         expect(removed).toEqual([]);
@@ -1266,7 +1323,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: true },
         });
 
-        const result = await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1284,7 +1341,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: false },
         });
 
-        const result = await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1302,7 +1359,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("returns the original create error (not the inspect 404) when no container stands under the name", async () => {
         const { docker } = reconcileDocker({ createStatus: 500, standing: null });
 
-        const result = await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) {
@@ -1315,7 +1372,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
     test("removes and recreates a stopped owned container", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: false } });
 
-        const ref = (await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        const ref = (await reconcileOps(docker).createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         expect(ref.backend).toBe("docker");
         // The stopped prior attempt is removed, then a fresh container is created.
@@ -1344,7 +1401,7 @@ describe("docker createSandbox — recovery reconciliation", () => {
             registerSandbox: async () => {},
         });
 
-        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+        const result = await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {});
 
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
@@ -1381,7 +1438,7 @@ describe("docker createSandbox — engine connection", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(...splitSpawn(META), mintSandboxIdentity("run-1"), {}))._unsafeUnwrap();
 
         // The create landed through the injected stub — the configured socket was never dialed.
         expect(sandboxOf(created)).toBeDefined();

@@ -39,6 +39,7 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
+import type { RunSession } from "../../auth/types.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { deliverNotice, passGate } from "../../lib/hooks.js";
@@ -205,6 +206,11 @@ export function describeExecFailure(result: ExecResult): string | undefined {
  */
 export interface DeriveTableExecInput {
     readonly analysisId: string;
+    /**
+     * The session that the tool authorized for the derivation. The container takes its analysis id, its run
+     * id, and its step id from it, and the label hook of the host gets it.
+     */
+    readonly runSession: RunSession;
     readonly executionId: string;
     readonly script: string;
     readonly writableTail: string;
@@ -357,6 +363,7 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                     root,
                     threadId,
                     analysisId,
+                    runSession: authorization.runSession,
                     script: input.script,
                     sources,
                     writableTail,
@@ -412,6 +419,7 @@ async function derive(args: {
     readonly root: string;
     readonly threadId: string;
     readonly analysisId: string;
+    readonly runSession: RunSession;
     readonly script: string;
     readonly sources: readonly DerivationSource[];
     readonly writableTail: string;
@@ -440,6 +448,7 @@ async function derive(args: {
     // thus that refusal stays a throw and it never reads as a fault of the container.
     const execInput: DeriveTableExecInput = {
         analysisId: args.analysisId,
+        runSession: args.runSession,
         executionId,
         script: args.script,
         writableTail: args.writableTail,

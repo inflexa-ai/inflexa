@@ -16,8 +16,11 @@ import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { V1Toleration } from "@kubernetes/client-node";
+import { ResultAsync, err, okAsync, type Result } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { SpawnSession } from "../auth/types.js";
+import { passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { recordSandboxExec } from "../lib/metrics.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
@@ -31,10 +34,19 @@ import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
 import { noteExecOutcome, sandboxExecOutcomeOf, summarizeExec } from "./exec-outcome.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
-import { sandboxWriteTail } from "./mount-plan.js";
+import { mountCoordsOf, sandboxWriteTail, type MountPlanCoords } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
-import { toPersistedRef, type CreateSandboxMeta, type FarmSource, type SandboxRef, type SandboxTransport, type ToolchainSource } from "./types.js";
+import {
+    toPersistedRef,
+    type FarmSource,
+    type ResolveSandboxLabels,
+    type SandboxLabels,
+    type SandboxRef,
+    type SandboxSpec,
+    type SandboxTransport,
+    type ToolchainSource,
+} from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -161,6 +173,15 @@ export interface CreateSandboxClientConfig {
     /** Override the backend selection — defaults to `env.SANDBOX_BACKEND`. */
     backend?: "docker" | "k8s";
     /**
+     * The sandbox label hook of the host: a gate (`lib/hooks.ts`). The client
+     * calls it at each spawn with the session of the spawn, before it makes the
+     * step tree and before it calls a backend, on both backends. Its labels
+     * merge under the harness labels, and the client stamps each value as the
+     * hook gives it (`labels.ts`). A refusal is the `labels_refused` variant,
+     * and no backend call occurs. Absent, a sandbox carries no host labels.
+     */
+    resolveSandboxLabels?: ResolveSandboxLabels;
+    /**
      * Optional logger forwarded to the Docker backend so a store degradation
      * (a resolved farm whose `inflexa.lock` vanished or went invalid
      * mid-session) is observable rather than a silent mount drop. No-op when
@@ -209,14 +230,14 @@ export function composeAwaitOptions(
  */
 export async function precreateStepTree(
     deps: { resolveWorkspaceRoot: ResolveWorkspaceRoot; stepTreeAccess?: "world-writable" },
-    meta: CreateSandboxMeta,
+    coords: MountPlanCoords,
 ): Promise<void> {
-    const write = sandboxWriteTail(meta);
+    const write = sandboxWriteTail(coords);
     if (write === undefined) return;
     // `tailWritePrefix` (not a raw `join`) so every segment runs through the same
     // id validation the mount builders apply — a crafted tail cannot escape the
     // resolved root.
-    const writeDir = tailWritePrefix({ workspaceRoot: deps.resolveWorkspaceRoot(meta.analysisId), tail: write.tail });
+    const writeDir = tailWritePrefix({ workspaceRoot: deps.resolveWorkspaceRoot(coords.analysisId), tail: write.tail });
     await mkdir(writeDir, { recursive: true });
     await Promise.all(write.subdirs.map((sub) => mkdir(join(writeDir, sub), { recursive: true })));
     if (deps.stepTreeAccess === "world-writable") {
@@ -266,8 +287,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
      */
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
 
-    const registerSandbox = async (meta: CreateSandboxMeta, ref: SandboxRef) => {
-        unwrapOrThrow(await setSandboxRef(config.pool, meta.runId, meta.stepId, toPersistedRef(ref), meta.execId ?? null));
+    const registerSandbox = async (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => {
+        unwrapOrThrow(await setSandboxRef(config.pool, session.runFrame.runId, session.runFrame.stepId, toPersistedRef(ref), spec.execId ?? null));
     };
 
     const ops =
@@ -335,29 +356,66 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     // poll loop's escalation probe are the same backend inspect.
     const isAlive = async (ref: SandboxRef) => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
 
-    return {
-        toolchainSource,
-        createSandbox: async (meta, identity) => {
-            // The config states an engine fact (binds preserve host ownership);
-            // which remediation that fact demands — today, a world-writable step
-            // write tree — is harness-owned and chosen here, not by the embedder.
-            await precreateStepTree(
+    /** The host labels of one spawn: the labels of the hook, or none when no hook is wired. */
+    const hostLabelsFor = (session: SpawnSession): ResultAsync<SandboxLabels, SandboxError> => {
+        const hook = config.resolveSandboxLabels;
+        if (hook === undefined) return okAsync({});
+        return passGate("resolveSandboxLabels", hook(session)).mapErr((refusal): SandboxError => ({
+            type: "labels_refused",
+            op: "createSandbox",
+            reason: refusal.reason,
+            suspend: refusal.kind === "suspended",
+        }));
+    };
+
+    const createSandbox = async (
+        session: SpawnSession,
+        spec: SandboxSpec,
+        identity: Parameters<typeof ops.createSandbox>[2],
+    ): Promise<Result<SandboxRef, SandboxError>> => {
+        // The label hook runs first: a refusal makes no step tree and calls no backend.
+        const hostLabels = await hostLabelsFor(session);
+        if (hostLabels.isErr()) return err(hostLabels.error);
+        const precreateFailed = (cause: unknown): SandboxError => ({
+            type: "container_create_failed",
+            op: "createSandbox.precreateStepTree",
+            sandboxId: identity.sandboxId,
+            cause,
+        });
+        // Every caller must declare resources — a sandbox with no cpu/memory
+        // request is a semantic error, not something to paper over with a
+        // default.
+        if (!spec.resources) {
+            return err(
+                precreateFailed(
+                    new Error(
+                        `createSandbox: ${session.scope.analysisId}/${session.runFrame.runId}/${session.runFrame.stepId} has no resources — every caller must declare cpu/memoryGb`,
+                    ),
+                ),
+            );
+        }
+        // The config states an engine fact (binds preserve host ownership);
+        // which remediation that fact demands — today, a world-writable step
+        // write tree — is harness-owned and chosen here, not by the embedder.
+        const precreated = await ResultAsync.fromPromise(
+            precreateStepTree(
                 {
                     resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                     stepTreeAccess: config.engineBindOwnership === "host-preserved" ? "world-writable" : undefined,
                 },
-                meta,
-            );
-            // Every caller must declare resources — a sandbox with no cpu/memory
-            // request is a semantic error, not something to paper over with a
-            // default (a DBOS replay of a pre-resources workflow input lands here).
-            if (!meta.resources) {
-                throw new Error(`createSandbox: ${meta.analysisId}/${meta.runId}/${meta.stepId} has no resources — every caller must declare cpu/memoryGb`);
-            }
-            // Clamp to cluster ceilings so the pod is always quota-admissible.
-            const resources = clampResources(meta.resources, config.resourceLimits);
-            return unwrapOrThrow((await ops.createSandbox({ ...meta, resources }, identity)).mapErr(failing));
-        },
+                mountCoordsOf(session, spec),
+            ),
+            precreateFailed,
+        );
+        if (precreated.isErr()) return err(precreated.error);
+        // Clamp to cluster ceilings so the pod is always quota-admissible.
+        const resources = clampResources(spec.resources, config.resourceLimits);
+        return ops.createSandbox(session, { ...spec, resources }, identity, hostLabels.value);
+    };
+
+    return {
+        toolchainSource,
+        createSandbox: (session, spec, identity) => new ResultAsync(createSandbox(session, spec, identity)),
         submitExec: async (ref, body) =>
             submitExec(ref, body, {
                 ...config.submitDeps,

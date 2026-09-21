@@ -25,7 +25,9 @@ import type { DbError } from "../../lib/db-result.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { CreateSandboxMeta, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecResult, SandboxRef, SandboxSpec, SubmitExecBody } from "../../sandbox/types.js";
+import type { SpawnSession } from "../../auth/types.js";
+import type { TestSpawn } from "../../sandbox/__fixtures__/spawn.js";
 import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
 import { workflowIdFromExec } from "../../sandbox/exec-id.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
@@ -142,7 +144,7 @@ function makeLedger(outcome?: AppendDerivationOutcome, fault?: DbError): FakeLed
 /** A stubbed sandbox client. It records what the tool asked for, and it gives back one exec result. */
 interface FakeSandbox {
     readonly client: SandboxClient;
-    readonly creates: CreateSandboxMeta[];
+    readonly creates: TestSpawn[];
     readonly submits: SubmitExecBody[];
     readonly teardowns: string[];
 }
@@ -168,15 +170,16 @@ function makeSandbox(args: {
     readonly throws?: boolean;
     readonly write?: (outputHostPath: string) => Promise<void>;
 }): FakeSandbox {
-    const creates: CreateSandboxMeta[] = [];
+    const creates: TestSpawn[] = [];
     const submits: SubmitExecBody[] = [];
     const teardowns: string[] = [];
     const ref: SandboxRef = { sandboxId: "sbx-derive-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: "base64:secret" };
     const client = {
         toolchainSource: "store" as const,
-        createSandbox(meta: CreateSandboxMeta): Promise<SandboxRef> {
-            creates.push(meta);
-            return Promise.resolve(ref);
+        createSandbox(session: SpawnSession, spec: SandboxSpec) {
+            // Recorded as one literal: the ids of the session beside the spec.
+            creates.push({ analysisId: session.scope.analysisId, runId: session.runFrame.runId, stepId: session.runFrame.stepId, ...spec });
+            return okAsync(ref);
         },
         submitExec(_ref: SandboxRef, body: SubmitExecBody): Promise<void> {
             submits.push(body);
