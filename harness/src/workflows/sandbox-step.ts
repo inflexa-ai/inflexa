@@ -40,10 +40,10 @@ import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
+import { findSuspendError } from "../providers/errors.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
@@ -677,7 +677,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         hitMaxSteps = agentResult.finish.cappedOut;
         stepUsage = agentResult.finish.usage;
     } catch (err) {
-        if (isBudgetExceeded(err)) {
+        if (findSuspendError(err) !== undefined) {
             // Notify the parent BEFORE self-cancel — DBOSWorkflowCancelledError
             // surfaced by `getResult` carries a generic message that
             // `isBudgetExceeded` cannot match, so without this side-channel the

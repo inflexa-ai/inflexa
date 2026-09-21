@@ -95,7 +95,7 @@ import {
     updateStepExecution,
 } from "../state/index.js";
 import type { StepExecutionRow, SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
-import { isBudgetExceeded } from "../loop/budget-exceeded.js";
+import { findSuspendError } from "../providers/errors.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
@@ -1323,7 +1323,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // money decision, not a DAG one. Any other throw is treated exactly
             // like a step failure: dependents doomed, siblings continue.
             failed.add(settled.stepId);
-            const isBudgetThrow = childWasBudgetExceeded || isBudgetExceeded(settled.err);
+            const isBudgetThrow = childWasBudgetExceeded || findSuspendError(settled.err) !== undefined;
             if (isBudgetThrow) {
                 if (!budgetExceeded) {
                     budgetExceeded = true;

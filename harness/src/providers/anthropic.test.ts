@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 
 import { makeSession } from "./__fixtures__/session.js";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "./ai-sdk.js";
@@ -84,7 +85,7 @@ describe("createAnthropicProvider", () => {
             baseURL: "http://billing.test/anthropic",
             token: "test-token",
             model: "claude-opus-4-7",
-            resolveBilling: async () => ({ "X-Billing-Virtual-Key": "sk-billing-test" }),
+            resolveRequestHeaders: () => okAsync({ "X-Billing-Virtual-Key": "sk-billing-test" }),
             fetch: cap.fetch,
         });
 
@@ -105,7 +106,6 @@ describe("createAnthropicProvider", () => {
             baseURL: "http://billing.test/anthropic",
             token: "test-token",
             model: "claude-opus-4-7",
-            resolveBilling: async () => ({}),
             fetch: cap.fetch,
         });
 
@@ -149,7 +149,6 @@ describe("createAnthropicProvider", () => {
             baseURL: "http://billing.test/anthropic",
             token: "test-token",
             model: "claude-opus-4-7",
-            resolveBilling: async () => ({}),
             fetch: cap.fetch,
         });
 

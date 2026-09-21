@@ -72,7 +72,7 @@ it("exports the loop and model-call spans as one trace, with no prompt or comple
         [{ role: "user", content: "SECRET-PROMPT" }],
         makeSession(),
         {
-            provider: createAiSdkProvider({ model, resolveBilling: async () => ({}) }),
+            provider: createAiSdkProvider({ model }),
             signal: new AbortController().signal,
             emit: () => {},
             runStep: passthroughStep,
@@ -115,7 +115,7 @@ it("writes only chat and execute_tool under invoke_agent for a durable model cal
         [{ role: "user", content: "go" }],
         makeSession(),
         {
-            provider: createAiSdkProvider({ model, resolveBilling: async () => ({}) }),
+            provider: createAiSdkProvider({ model }),
             signal: new AbortController().signal,
             emit: () => {},
             runStep: dbosStep,

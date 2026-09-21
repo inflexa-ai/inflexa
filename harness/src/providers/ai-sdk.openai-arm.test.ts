@@ -104,7 +104,6 @@ describe("openai arm capability default", () => {
     it("asserts the picture capability for the default endpoint", () => {
         const provider = createConfiguredAiSdkProvider({
             config: { kind: "openai", apiKey: "test-key", model: MODEL },
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.capabilities.imageToolResults).toBe(true);
@@ -113,7 +112,6 @@ describe("openai arm capability default", () => {
     it("leaves the picture capability absent for a custom endpoint", () => {
         const provider = createConfiguredAiSdkProvider({
             config: { kind: "openai", baseURL: "http://models.local/v1", apiKey: "test-key", model: MODEL },
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.capabilities.imageToolResults).toBeUndefined();
@@ -122,7 +120,6 @@ describe("openai arm capability default", () => {
     it("honors the config over the endpoint default in both directions", () => {
         const refused = createConfiguredAiSdkProvider({
             config: { kind: "openai", apiKey: "test-key", model: MODEL, capabilities: { imageToolResults: false } },
-            resolveBilling: async () => ({}),
         });
         const declared = createConfiguredAiSdkProvider({
             config: {
@@ -132,7 +129,6 @@ describe("openai arm capability default", () => {
                 model: MODEL,
                 capabilities: { imageToolResults: true },
             },
-            resolveBilling: async () => ({}),
         });
 
         expect(refused.capabilities.imageToolResults).toBe(false);
@@ -145,7 +141,7 @@ describe("openai arm usage", () => {
         // The arm owns no usage mapping. The package normalizes the two nested
         // wire counts, and the shared runtime copies them onto `ChatUsage`.
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
 
@@ -162,7 +158,7 @@ describe("openai arm usage", () => {
 describe("openai arm stream", () => {
     it("yields the text deltas and one terminal event that carries the usage", async () => {
         const cap = capturingFetch(() => responsesSse(["Hel", "lo"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
         const events: ChatStreamEvent[] = [];
         for await (const event of provider.chatStream(request, makeSession())) events.push(event);
@@ -187,7 +183,6 @@ describe("openai arm stream failure", () => {
         const cap = capturingFetch(() => responsesErrorSse("upstream exploded"));
         const provider = createConfiguredAiSdkProvider({
             config: openaiArm(cap.fetch, { maxRetries: 0 }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -205,7 +200,7 @@ describe("openai arm store directive", () => {
         // An unset value lets the server keep the response, and it makes the
         // package emit an item reference for a round-tripped item.
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
         const result = await provider.chat(request, makeSession());
 
@@ -215,7 +210,7 @@ describe("openai arm store directive", () => {
 
     it("sends store true when the config declares it", async () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }) });
 
         const result = await provider.chat(request, makeSession());
 
@@ -228,7 +223,7 @@ describe("openai arm store directive", () => {
         // the `user` key carries the proof: the merge adds, and it does not
         // replace.
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
         const result = await provider.chat(
             {
@@ -250,7 +245,7 @@ describe("openai arm output ceiling", () => {
         // the cap of the model fails each call, thus the arm sends none and the
         // server holds the reply at the cap.
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
         const result = await provider.chat(request, makeSession());
 
@@ -260,7 +255,7 @@ describe("openai arm output ceiling", () => {
 
     it("sends the ceiling that the config names", async () => {
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { maxOutputTokens: 4_096 }), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { maxOutputTokens: 4_096 }) });
 
         const result = await provider.chat(request, makeSession());
 
@@ -275,7 +270,7 @@ describe("openai arm encrypted reasoning", () => {
         // provider-scoped options of a reasoning part. A later turn hands the
         // same history back, and the blob must reach the wire again.
         const cap = capturingFetch(() => responsesSse(["The second answer."]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
 
         const result = await provider.chat(
             {

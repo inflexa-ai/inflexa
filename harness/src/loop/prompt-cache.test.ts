@@ -456,7 +456,6 @@ describe("prompt caching against an openai-compatible provider", () => {
                 model: "local-model",
                 fetch: cannedOpenAiFetch(bodies),
             },
-            resolveBilling: async () => ({}),
         });
 
         const result = await runAgent(agentDef(4), GO, makeSession(), opts(provider));
@@ -484,7 +483,6 @@ describe("prompt caching against an openai-compatible provider", () => {
                 model: "local-model",
                 fetch: cannedOpenAiFetch([]),
             },
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat({ system: "s", messages: GO, tools: {} }, makeSession()))._unsafeUnwrap();

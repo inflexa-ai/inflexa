@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { APICallError } from "@ai-sdk/provider";
+import { errAsync, okAsync } from "neverthrow";
 import type {
     LanguageModelV4,
     LanguageModelV4CallOptions,
@@ -194,14 +195,14 @@ function streamDeltaThenError(delta: string, error: unknown): LanguageModelV4Str
 }
 
 describe("createAiSdkProvider", () => {
-    it("runs an embedder-supplied AI SDK language model and applies billing headers", async () => {
+    it("runs an embedder-supplied AI SDK language model and adds the headers of the hook as the hook gives them", async () => {
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
             model: fakeModel(async (options) => {
                 calls.push(options);
                 return okResult("done");
             }),
-            resolveBilling: async () => ({ "X-Billing-Context": "bc-test", "X-Billing-Virtual-Key": "vk-test" }),
+            resolveRequestHeaders: () => okAsync({ "x-attribution": "a1", "x-no-harness-name": "v2" }),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -212,28 +213,60 @@ describe("createAiSdkProvider", () => {
         // the case rather than pinning the spelling the SDK happens to forward.
         const sent = Object.fromEntries(Object.entries(calls[0]!.headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
         expect(sent).toMatchObject({
-            "x-billing-context": "bc-test",
-            "x-billing-virtual-key": "vk-test",
+            "x-attribution": "a1",
+            "x-no-harness-name": "v2",
         });
     });
 
-    it("returns classified ProviderError values for provider failures", async () => {
+    it("adds no header from a hook when the provider has no hook", async () => {
+        const calls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                calls.push(options);
+                return okResult("done");
+            }),
+        });
+
+        expect((await provider.chat(request, makeSession())).isOk()).toBe(true);
+        const sent = Object.keys(calls[0]!.headers ?? {}).map((name) => name.toLowerCase());
+        expect(sent.filter((name) => name.startsWith("x-attribution"))).toEqual([]);
+    });
+
+    it("gives a 402 as a suspend error with the default reason, and no budget word", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(async () => {
                 throw Object.assign(new Error("payment required"), { status: 402 });
             }),
-            resolveBilling: async () => ({}),
         });
 
-        const result = await provider.chat(request, makeSession());
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        expect(failure).toMatchObject({ type: "suspend", status: 402, reason: "payment_required", retryable: false });
+        expect(failure.message).toContain("HTTP 402");
+        expect(failure.message).not.toMatch(/budget|tenant|billing/i);
+    });
 
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error).toMatchObject({
-                type: "budget",
-                retryable: false,
+    it("gives an unmapped 403 as a non-retryable provider error", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                throw Object.assign(new Error("forbidden"), { status: 403 });
+            }),
+        });
+
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+        expect(failure).toMatchObject({ type: "provider", retryable: false });
+    });
+
+    it("uses a map from the host in place of the default map", async () => {
+        const failing = (status: number) =>
+            createAiSdkProvider({
+                model: fakeModel(async () => {
+                    throw Object.assign(new Error("refused"), { status });
+                }),
+                suspendOn: { 429: "quota" },
             });
-        }
+
+        expect((await failing(429).chat(request, makeSession()))._unsafeUnwrapErr()).toMatchObject({ type: "suspend", status: 429, reason: "quota" });
+        expect((await failing(402).chat(request, makeSession()))._unsafeUnwrapErr()).toMatchObject({ type: "provider", retryable: false });
     });
 
     it("rethrows aborts instead of classifying them", async () => {
@@ -242,7 +275,6 @@ describe("createAiSdkProvider", () => {
             model: fakeModel(async () => {
                 throw new DOMException("aborted", "AbortError");
             }),
-            resolveBilling: async () => ({}),
         });
 
         try {
@@ -268,7 +300,7 @@ describe("createAiSdkProvider", () => {
                     return streamResult(["he", "llo"]);
                 },
             ),
-            resolveBilling: async () => ({ "X-Billing-Context": "bc-test" }),
+            resolveRequestHeaders: () => okAsync({ "x-attribution": "a1" }),
         });
 
         const events = [];
@@ -278,7 +310,7 @@ describe("createAiSdkProvider", () => {
 
         expect(generateCalls).toHaveLength(0);
         expect(streamCalls).toHaveLength(1);
-        expect(streamCalls[0]!.headers).toMatchObject({ "X-Billing-Context": "bc-test" });
+        expect(streamCalls[0]!.headers).toMatchObject({ "x-attribution": "a1" });
         expect(events).toEqual([
             { type: "text-delta", text: "he" },
             { type: "text-delta", text: "llo" },
@@ -302,7 +334,6 @@ describe("createAiSdkProvider", () => {
                 calls.push(options);
                 return okResult();
             }),
-            resolveBilling: async () => ({}),
             capabilities: { toolCalling: false },
         });
 
@@ -315,12 +346,10 @@ describe("createAiSdkProvider", () => {
     it("copies a stated user-message picture flag, and leaves an absent one absent", () => {
         const declared = createAiSdkProvider({
             model: fakeModel(async () => okResult()),
-            resolveBilling: async () => ({}),
             capabilities: { imageUserMessages: true },
         });
         const silent = createAiSdkProvider({
             model: fakeModel(async () => okResult()),
-            resolveBilling: async () => ({}),
             capabilities: { toolCalling: true },
         });
 
@@ -341,7 +370,6 @@ describe("empty text block sanitization", () => {
                 calls.push(options);
                 return okResult("done");
             }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(
@@ -397,7 +425,6 @@ describe("usage reporting", () => {
                 usage: cachedUsage,
                 warnings: [],
             })),
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -428,7 +455,6 @@ describe("usage reporting", () => {
                     }),
                 }),
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -456,7 +482,6 @@ describe("usage reporting", () => {
                 },
                 warnings: [],
             })),
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -481,7 +506,6 @@ describe("usage reporting", () => {
                 },
                 warnings: [],
             })),
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -501,7 +525,6 @@ describe("usage reporting", () => {
                 },
                 warnings: [],
             })),
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -534,7 +557,6 @@ describe("usage reporting", () => {
                     }),
                 }),
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -552,7 +574,6 @@ describe("usage reporting", () => {
                 calls.push(options);
                 return okResult();
             }),
-            resolveBilling: async () => ({}),
         });
 
         (
@@ -574,7 +595,6 @@ describe("createConfiguredAiSdkProvider", () => {
                 model: "local-tool-model",
                 capabilities: { toolCalling: true },
             },
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.capabilities.toolCalling).toBe(true);
@@ -585,7 +605,6 @@ describe("createConfiguredAiSdkProvider", () => {
     it("asserts the picture capability for the default anthropic endpoint", () => {
         const provider = createConfiguredAiSdkProvider({
             config: { kind: "anthropic", apiKey: "test-key", model: "claude-opus-5" },
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.capabilities.imageToolResults).toBe(true);
@@ -594,7 +613,6 @@ describe("createConfiguredAiSdkProvider", () => {
     it("leaves the picture capability absent for an anthropic config with a custom endpoint", () => {
         const provider = createConfiguredAiSdkProvider({
             config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-5" },
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.capabilities.imageToolResults).toBeUndefined();
@@ -609,11 +627,9 @@ describe("createConfiguredAiSdkProvider", () => {
                 model: "claude-opus-5",
                 capabilities: { imageToolResults: true },
             },
-            resolveBilling: async () => ({}),
         });
         const refused = createConfiguredAiSdkProvider({
             config: { kind: "anthropic", apiKey: "test-key", model: "claude-opus-5", capabilities: { imageToolResults: false } },
-            resolveBilling: async () => ({}),
         });
 
         expect(declared.capabilities.imageToolResults).toBe(true);
@@ -632,7 +648,6 @@ describe("createConfiguredAiSdkProvider", () => {
                 model: "local-tool-model",
                 capabilities: { toolCalling: true, imageUserMessages: true },
             },
-            resolveBilling: async () => ({}),
         });
         const silent = createConfiguredAiSdkProvider({
             config: {
@@ -643,7 +658,6 @@ describe("createConfiguredAiSdkProvider", () => {
                 model: "local-tool-model",
                 capabilities: { toolCalling: true },
             },
-            resolveBilling: async () => ({}),
         });
 
         expect(declared.capabilities.imageUserMessages).toBe(true);
@@ -708,7 +722,6 @@ describe("createAiSdkProvider chat retry", () => {
                 }
                 return okResult("recovered");
             }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -723,8 +736,8 @@ describe("createAiSdkProvider chat retry", () => {
     it("returns the classified error after exactly one attempt for a non-retryable status", async () => {
         const cases = [
             { status: 401, type: "auth" },
-            { status: 402, type: "budget" },
-            { status: 403, type: "tenant-blocked" },
+            { status: 402, type: "suspend" },
+            { status: 403, type: "provider" },
             { status: 400, type: "provider" },
         ] as const;
 
@@ -735,7 +748,6 @@ describe("createAiSdkProvider chat retry", () => {
                     attempts += 1;
                     throw Object.assign(new Error(`HTTP ${status}`), { status });
                 }),
-                resolveBilling: async () => ({}),
             });
 
             const result = await provider.chat(request, makeSession());
@@ -758,7 +770,6 @@ describe("createAiSdkProvider chat retry", () => {
                 // chain; asserting type/retryable proves it stayed reachable.
                 throw apiError503();
             }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -778,7 +789,6 @@ describe("createAiSdkProvider chat retry", () => {
                 attempts += 1;
                 throw apiError503();
             }),
-            resolveBilling: async () => ({}),
             maxRetries: 2,
         });
 
@@ -792,8 +802,8 @@ describe("createAiSdkProvider chat retry", () => {
         }
     });
 
-    it("resolves fresh billing headers on every attempt", async () => {
-        let billingInvocations = 0;
+    it("calls the request headers hook before each attempt", async () => {
+        let hookCalls = 0;
         let attempts = 0;
         const calls: LanguageModelV4CallOptions[] = [];
         const provider = createAiSdkProvider({
@@ -803,17 +813,34 @@ describe("createAiSdkProvider chat retry", () => {
                 if (attempts === 1) throw apiError503();
                 return okResult();
             }),
-            resolveBilling: async () => {
-                billingInvocations += 1;
-                return { "x-billing-attempt": `attempt-${billingInvocations}` };
+            resolveRequestHeaders: () => {
+                hookCalls += 1;
+                return okAsync({ "x-attempt": `attempt-${hookCalls}` });
             },
         });
 
         const result = await provider.chat(request, makeSession());
 
         expect(result.isOk()).toBe(true);
+        expect(hookCalls).toBe(2);
         expect(calls).toHaveLength(2);
-        expect(calls[1]!.headers).toMatchObject({ "x-billing-attempt": "attempt-2" });
+        expect(calls[1]!.headers).toMatchObject({ "x-attempt": "attempt-2" });
+    });
+
+    it("never retries a status that the map of the host holds", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                attempts += 1;
+                throw Object.assign(new Error("HTTP 429"), { status: 429 });
+            }),
+            suspendOn: { 429: "quota_exhausted" },
+        });
+
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+
+        expect(failure).toMatchObject({ type: "suspend", status: 429, reason: "quota_exhausted", retryable: false });
+        expect(attempts).toBe(1);
     });
 });
 
@@ -827,7 +854,6 @@ describe("createAiSdkProvider abort during backoff", () => {
                 // the abort — not the delay elapsing — can end the call quickly.
                 throw apiError503({ "retry-after-ms": "4000" });
             }),
-            resolveBilling: async () => ({}),
         });
 
         const controller = new AbortController();
@@ -857,7 +883,6 @@ describe("createAiSdkProvider abort during backoff", () => {
                 attempts += 1;
                 throw new DOMException("The operation timed out.", "TimeoutError");
             }),
-            resolveBilling: async () => ({}),
         });
 
         const controller = new AbortController();
@@ -887,7 +912,6 @@ describe("createAiSdkProvider chatStream retry", () => {
                     return streamResult(["a", "b"]);
                 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -920,7 +944,6 @@ describe("createAiSdkProvider chatStream retry", () => {
                     return streamDeltaThenError("a", apiError503());
                 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         const deltas: string[] = [];
@@ -948,7 +971,6 @@ describe("createAiSdkProvider chatStream retry", () => {
                     return streamErrorsBeforeDelta(apiError503());
                 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         let caught: unknown;
@@ -984,7 +1006,6 @@ describe("createAiSdkProvider chatStream retry", () => {
                     return streamResult(["a", "b"]);
                 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -1017,7 +1038,6 @@ describe("createAiSdkProvider chatStream retry", () => {
                     throw apiError503();
                 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         let caught: unknown;
@@ -1048,7 +1068,6 @@ describe("createAiSdkProvider chatStream retry", () => {
                     return streamWithNoText();
                 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -1072,60 +1091,68 @@ describe("retry policy constants", () => {
     });
 });
 
-describe("createAiSdkProvider billing resolution fail-fast", () => {
-    // A connection-shaped failure is retryable by nature (its `retryable: true`
-    // flag says so), but the billing seam is a different system from the model
-    // wire: its failure must surface immediately rather than consume the retry
-    // envelope. The single resolver invocation — not the flag — is the assertion.
-    it("does not retry a connection-shaped billing failure and never calls the model", async () => {
+describe("createAiSdkProvider request headers hook", () => {
+    // The hook is not the model wire: its refusal stops the call at once, and the
+    // refused attempt is never sent. The count of wire calls is the assertion.
+    it("stops the call at once on a hook err, sends no request, and never retries", async () => {
         let generateCalls = 0;
-        let billingInvocations = 0;
+        let hookCalls = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(async () => {
                 generateCalls += 1;
                 return okResult();
             }),
-            resolveBilling: async () => {
-                billingInvocations += 1;
-                throw Object.assign(new TypeError("fetch failed"), {
-                    cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
-                });
+            resolveRequestHeaders: () => {
+                hookCalls += 1;
+                return errAsync({ reason: "attribution refused", suspend: false });
             },
         });
 
-        const result = await provider.chat(request, makeSession());
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
 
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) expect(result.error.type).toBe("provider");
+        expect(failure).toMatchObject({ type: "provider", retryable: false });
+        expect(failure.message).toContain("attribution refused");
+        expect(failure.message).toContain("analysis:");
         expect(generateCalls).toBe(0);
-        expect(billingInvocations).toBe(1);
+        expect(hookCalls).toBe(1);
     });
 
-    it("classifies a billing 402 as budget after a single resolver call", async () => {
-        let generateCalls = 0;
-        let billingInvocations = 0;
+    it("gives a suspend error with the reason and no status on a hook err with the suspend flag", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => okResult()),
+            resolveRequestHeaders: () => errAsync({ reason: "account_frozen", suspend: true }),
+        });
+
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+
+        expect(failure).toMatchObject({ type: "suspend", reason: "account_frozen", retryable: false });
+        expect(failure.type === "suspend" ? failure.status : "not a suspend error").toBeUndefined();
+    });
+
+    it("stops the retries when the hook refuses a later attempt", async () => {
+        let wireCalls = 0;
+        let hookCalls = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(async () => {
-                generateCalls += 1;
-                return okResult();
+                wireCalls += 1;
+                throw apiError503();
             }),
-            resolveBilling: async () => {
-                billingInvocations += 1;
-                throw Object.assign(new Error("payment required"), { status: 402 });
+            resolveRequestHeaders: () => {
+                hookCalls += 1;
+                return hookCalls === 1 ? okAsync({}) : errAsync({ reason: "second refused", suspend: false });
             },
         });
 
-        const result = await provider.chat(request, makeSession());
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
 
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) expect(result.error.type).toBe("budget");
-        expect(generateCalls).toBe(0);
-        expect(billingInvocations).toBe(1);
-    });
+        expect(wireCalls).toBe(1);
+        expect(hookCalls).toBe(2);
+        expect(failure).toMatchObject({ type: "provider", retryable: false });
+        expect(failure.message).toContain("second refused");
+    }, 10_000);
 
-    it("fails a stream fast on a billing failure without opening the stream", async () => {
+    it("fails a stream at once on a hook err without opening the stream", async () => {
         let streamCalls = 0;
-        let billingInvocations = 0;
         const provider = createAiSdkProvider({
             model: fakeModel(
                 async () => okResult(),
@@ -1134,27 +1161,21 @@ describe("createAiSdkProvider billing resolution fail-fast", () => {
                     return streamResult(["a"]);
                 },
             ),
-            resolveBilling: async () => {
-                billingInvocations += 1;
-                throw Object.assign(new TypeError("fetch failed"), {
-                    cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
-                });
-            },
+            resolveRequestHeaders: () => errAsync({ reason: "attribution refused", suspend: false }),
         });
 
         let caught: unknown;
         try {
             for await (const _event of provider.chatStream(request, makeSession())) {
-                // Establishment fails at billing before any event is produced.
+                // Establishment fails at the hook before any event is produced.
             }
         } catch (e) {
             caught = e;
         }
 
         expect(isProviderError(caught)).toBe(true);
-        if (isProviderError(caught)) expect(caught.type).toBe("provider");
+        if (isProviderError(caught)) expect(caught).toMatchObject({ type: "provider", retryable: false });
         expect(streamCalls).toBe(0);
-        expect(billingInvocations).toBe(1);
     });
 });
 
@@ -1177,7 +1198,6 @@ describe("model identity", () => {
                 response: { id: "resp-1", timestamp: new Date(0), modelId: "fake-model-20260101" },
                 warnings: [],
             })),
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -1189,7 +1209,6 @@ describe("model identity", () => {
     it("leaves servedModelId absent when the endpoint reports no model id", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(async () => okResult()),
-            resolveBilling: async () => ({}),
         });
 
         const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
@@ -1216,7 +1235,6 @@ describe("model identity", () => {
                     }),
                 }),
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -1234,7 +1252,6 @@ describe("model identity", () => {
                 async () => okResult(),
                 async () => streamResult(["do", "ne"]),
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -1261,7 +1278,6 @@ describe("model identity", () => {
                     }),
                 }),
             ),
-            resolveBilling: async () => ({}),
         });
 
         const events = [];
@@ -1291,7 +1307,6 @@ describe("stream error parts", () => {
     it("fails the call rather than returning the empty turn the parts describe", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(async () => okResult("unused"), erroringStream(new Error("upstream exploded"))),
-            resolveBilling: async () => ({}),
             maxRetries: 0,
         });
 
@@ -1307,7 +1322,6 @@ describe("stream error parts", () => {
     it("fails the call with the message of an overload in the stream, and the failure stays retryable", async () => {
         const provider = createAiSdkProvider({
             model: fakeModel(async () => okResult("unused"), erroringStream({ type: "overloaded_error", message: "Overloaded" })),
-            resolveBilling: async () => ({}),
             maxRetries: 0,
         });
 
@@ -1346,7 +1360,6 @@ describe("failure logging", () => {
             model: fakeModel(async () => {
                 throw Object.assign(new Error("payment required"), { status: 402 });
             }),
-            resolveBilling: async () => ({}),
             maxRetries: 0,
             logger,
         });
@@ -1356,7 +1369,7 @@ describe("failure logging", () => {
         expect(result.isErr()).toBe(true);
         expect(errors).toHaveLength(1);
         expect(errors[0]!.msg).toBe("provider call failed");
-        expect(errors[0]!.fields).toMatchObject({ kind: "budget", retryable: false, error: "payment required" });
+        expect(errors[0]!.fields).toMatchObject({ kind: "suspend", retryable: false, error: "payment required" });
     });
 
     it("leaves a caller abort unrecorded, because a cancellation is not a failure", async () => {
@@ -1367,7 +1380,6 @@ describe("failure logging", () => {
                 controller.abort();
                 throw controller.signal.reason;
             }),
-            resolveBilling: async () => ({}),
             maxRetries: 0,
             logger,
         });

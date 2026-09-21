@@ -2,18 +2,20 @@
  * Provider error taxonomy.
  *
  * Callers (the agent loop, the chat route, DBOS steps) branch on error
- * origin: a billing-gateway governance rejection is permanent and user-facing; a
+ * origin: a status that the host maps to a suspension stops the work; a
  * transient upstream hiccup is retryable. This module owns the
  * classification so callers do not re-derive it.
  *
- * The billing-gateway convention is status-code driven (no dedicated error header
- * is required to disambiguate): the gateway emits `402` exclusively for
- * `budget_exceeded` and `403` for a blocked tenant. Provider-originated
- * failures (429, 5xx, connection) surface with their own status or as a
- * network error with no status at all. A `401` is `auth`: the credential the
- * host put behind the call is expired, revoked, or absent, and only a human
- * re-authenticating fixes it — which is a different remedy from every other
- * non-retryable 4xx, so it is a different kind.
+ * The classification keys on the HTTP status alone. The meaning of a status
+ * belongs to the gateway of the host, thus each provider takes a map from a
+ * status to a suspend reason (`suspendOn`). A status in the map is a `suspend`
+ * error, before each other rule, and it is never retried. The harness carries
+ * the reason and never reads it. Provider-originated failures (429, 5xx,
+ * connection) surface with their own status or as a network error with no
+ * status at all. A `401` is `auth`: the credential the host put behind the call
+ * is expired, revoked, or absent, and only a human re-authenticating fixes it —
+ * which is a different remedy from every other non-retryable 4xx, so it is a
+ * different kind.
  */
 
 import { redactSecrets } from "../input-sanitization.js";
@@ -38,21 +40,40 @@ export class RequestTimeoutError extends Error {
     }
 }
 
-export type ProviderErrorKind = "auth" | "budget" | "tenant-blocked" | "provider";
+export type ProviderErrorKind = "auth" | "suspend" | "provider";
+
+/**
+ * A map from an HTTP status to the suspend reason of the host. A map from the
+ * host replaces {@link DEFAULT_SUSPEND_ON}, and the two maps do not merge.
+ */
+export type SuspendOn = Readonly<Record<number, string>>;
+
+/** The map of a provider that the host gives no map: `402` names a payment that the gateway requires. */
+export const DEFAULT_SUSPEND_ON: SuspendOn = { 402: "payment_required" };
 
 /**
  * The provider error value channel — a `DomainError`-conforming
  * discriminated union mirroring `ProviderErrorKind`. `chat` / `embed` return
  * `err(ProviderError)` instead of throwing a typed Error; `toProviderError`
- * is the sole constructor. `cause` carries the original SDK throwable so the
- * cause-walking classifiers (`isBudgetExceeded`, `classifyProviderError`)
- * still reach the `status` / `code` signals after `toThrowable` rethrows at a
- * step boundary.
+ * is the sole constructor of a classified failure. `cause` carries the
+ * original SDK throwable so the cause-walking classifier
+ * (`classifyProviderError`) still reaches the `status` / `code` signals after
+ * `toThrowable` rethrows at a step boundary.
+ *
+ * A `suspend` error carries the `reason` of the host. It carries the `status`
+ * that the map matched, and no status when the request headers hook refused
+ * the call with the suspend flag.
  */
 export type ProviderError =
     | { readonly type: "auth"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
-    | { readonly type: "budget"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
-    | { readonly type: "tenant-blocked"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
+    | {
+          readonly type: "suspend";
+          readonly retryable: false;
+          readonly reason: string;
+          readonly status?: number;
+          readonly message: string;
+          readonly cause?: unknown;
+      }
     | { readonly type: "provider"; readonly retryable: boolean; readonly message: string; readonly cause?: unknown };
 
 /**
@@ -64,19 +85,28 @@ export type ProviderError =
 export function isProviderError(value: unknown): value is ProviderError {
     if (typeof value !== "object" || value === null) return false;
     const v = value as { type?: unknown; retryable?: unknown; message?: unknown };
-    return (
-        (v.type === "auth" || v.type === "budget" || v.type === "tenant-blocked" || v.type === "provider") &&
-        typeof v.retryable === "boolean" &&
-        typeof v.message === "string"
-    );
+    return (v.type === "auth" || v.type === "suspend" || v.type === "provider") && typeof v.retryable === "boolean" && typeof v.message === "string";
+}
+
+/** A `suspend` error: a status in the map of the provider, or a refusal of a gate with the suspend flag. */
+export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
+
+/**
+ * Find a `suspend` error on a failure or on its `cause` chain. A step boundary
+ * rethrows a `ProviderError` inside a `ResultError`, with the value on
+ * `.cause`, thus the walk reaches it. The walk reads the kind of the error and
+ * never its message.
+ */
+export function findSuspendError(err: unknown): SuspendError | undefined {
+    return findInCauseChain(err, (link) => (isProviderError(link) && link.type === "suspend" ? link : undefined));
 }
 
 /**
  * Turn a caught SDK throwable into a `ProviderError` value. Routes through
- * `classifyProviderError` so the `provider` variant's `retryable` keeps the
- * transient (429 / 5xx / connection) classification. `cause` is the original
- * throwable verbatim — for the budget variant it MUST be the SDK error
- * carrying status 402, which is what `isBudgetExceeded` walks.
+ * `classifyProviderError` with the `suspendOn` map of the provider, so the
+ * `provider` variant's `retryable` keeps the transient (429 / 5xx / connection)
+ * classification and a mapped status becomes a `suspend` error. `cause` is the
+ * original throwable verbatim.
  *
  * Idempotent: `chatStream` throws a `ProviderError` value, which
  * `streaming-chat`'s `catch` re-wraps by calling this again. Returning an
@@ -84,7 +114,7 @@ export function isProviderError(value: unknown): value is ProviderError {
  * `String()`-ing the object (a `ProviderError` is not an `Error`) into a
  * `"[object Object]"` message that would bury the real inner one.
  */
-export function toProviderError(e: unknown, workload: string): ProviderError {
+export function toProviderError(e: unknown, workload: string, suspendOn: SuspendOn = DEFAULT_SUSPEND_ON): ProviderError {
     if (isProviderError(e)) return e;
     // A guard abort names the configured value in its message. Compose a message
     // that also names the workload, thus a reader sees both. This runs before the
@@ -100,9 +130,9 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
             cause: e,
         };
     }
-    const { kind, retryable } = classifyProviderError(e);
+    const classified = classifyProviderError(e, suspendOn);
     const detail = e instanceof Error ? e.message : String(e);
-    if (kind === "auth") {
+    if (classified.kind === "auth") {
         return {
             type: "auth",
             retryable: false,
@@ -110,25 +140,11 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
             cause: e,
         };
     }
-    if (kind === "budget") {
-        return {
-            type: "budget",
-            retryable: false,
-            message: `Billing budget exceeded for ${workload}: ${detail}`,
-            cause: e,
-        };
-    }
-    if (kind === "tenant-blocked") {
-        return {
-            type: "tenant-blocked",
-            retryable: false,
-            message: `Billing gateway blocked tenant for ${workload}: ${detail}`,
-            cause: e,
-        };
-    }
-    // The `provider` arm composes like its three siblings rather than forwarding
-    // the SDK message verbatim. It has to: when a 4xx body does not parse against
-    // the configured provider's error schema, the AI SDK falls back to
+    // The `provider` and `suspend` arms compose one generic HTTP message rather
+    // than forwarding the SDK message verbatim. A `suspend` message names no
+    // cause of its own: the reason of the host rides beside it, and the harness
+    // does not read it. The composition has to happen: when a 4xx body does not
+    // parse against the configured provider's error schema, the AI SDK falls back to
     // `response.statusText`, so the "detail" is a bare HTTP reason phrase —
     // `"Bad Request"` — that names neither the call nor the cause, while the
     // status, the workload, and the body the SDK captured are all still on the
@@ -142,18 +158,17 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
     // A transport that carries no reason phrase (an HTTP/2 hop yields
     // `statusText === ""`) leaves `detail` empty; appending it regardless would
     // trail a bare `": "` on an otherwise complete message.
-    const reason = detail.trim();
-    const diagnosed = reason ? `${lead}: ${reason}` : lead;
+    const phrase = detail.trim();
+    const diagnosed = phrase ? `${lead}: ${phrase}` : lead;
     const body = extractResponseBody(e);
-    return {
-        type: "provider",
-        retryable,
-        // The excerpt trails deliberately — workload and status lead, so a
-        // downstream truncation (`profileFailureReason` cuts the line at 200)
-        // eats the least diagnostic content first.
-        message: body ? `${diagnosed} — response body: ${excerptResponseBody(body)}` : diagnosed,
-        cause: e,
-    };
+    // The excerpt trails deliberately — workload and status lead, so a
+    // downstream truncation (`profileFailureReason` cuts the line at 200)
+    // eats the least diagnostic content first.
+    const message = body ? `${diagnosed} — response body: ${excerptResponseBody(body)}` : diagnosed;
+    if (classified.kind === "suspend") {
+        return { type: "suspend", retryable: false, reason: classified.reason, status: classified.status, message, cause: e };
+    }
+    return { type: "provider", retryable: classified.retryable, message, cause: e };
 }
 
 /**
@@ -191,16 +206,18 @@ function excerptResponseBody(body: string): string {
     return chars.length > PROVIDER_BODY_EXCERPT_MAX_LEN ? chars.slice(0, PROVIDER_BODY_EXCERPT_MAX_LEN - 1).join("") + "…" : singleLine;
 }
 
-export interface ProviderErrorClassification {
-    readonly kind: ProviderErrorKind;
-    /**
-     * Whether re-issuing the same call could plausibly succeed. The Anthropic
-     * SDK already retries transient failures internally; a `retryable: true`
-     * classification on an error that still reached here tells the caller the
-     * failure is transient in nature, not that a retry is mandatory.
-     */
-    readonly retryable: boolean;
-}
+/**
+ * The classification of a provider failure. `retryable` says whether
+ * re-issuing the same call could plausibly succeed. The Anthropic SDK already
+ * retries transient failures internally; a `retryable: true` classification on
+ * an error that still reached here tells the caller the failure is transient in
+ * nature, not that a retry is mandatory. A `suspend` classification carries the
+ * status that the map matched and the reason of the host.
+ */
+export type ProviderErrorClassification =
+    | { readonly kind: "suspend"; readonly retryable: false; readonly reason: string; readonly status: number }
+    | { readonly kind: "auth"; readonly retryable: false }
+    | { readonly kind: "provider"; readonly retryable: boolean };
 
 /** Max links walked on the `cause` chain looking for a structured status. */
 const MAX_CAUSE_HOPS = 5;
@@ -335,13 +352,13 @@ function looksLikeConnectionError(err: unknown): boolean {
 /**
  * Classify a provider failure by origin.
  *
+ * - A status in `suspendOn` → `suspend` with the reason of the map, not
+ *   retryable. This rule comes before each other status rule.
  * - Provider `401` → `auth`, not retryable.
- * - Billing-gateway `402` → `budget`, not retryable.
- * - Billing-gateway `403` → `tenant-blocked`, not retryable.
  * - Provider `429` / `5xx` / connection errors → `provider`, retryable.
  * - Other `4xx` and parse / unknown errors → `provider`, not retryable.
  */
-export function classifyProviderError(e: unknown): ProviderErrorClassification {
+export function classifyProviderError(e: unknown, suspendOn: SuspendOn = DEFAULT_SUSPEND_ON): ProviderErrorClassification {
     // The request-timeout guard aborts an attempt with a typed sentinel, and the
     // chunk bound of the SDK aborts one with a `TimeoutError`. Each classifies as
     // a retryable provider timeout, thus the envelope retries it under the same
@@ -352,20 +369,22 @@ export function classifyProviderError(e: unknown): ProviderErrorClassification {
 
     const status = extractStatus(e);
 
+    if (status !== undefined && Object.hasOwn(suspendOn, status)) {
+        return { kind: "suspend", retryable: false, reason: suspendOn[status]!, status };
+    }
+
     // `auth` is its own kind rather than a plain non-retryable 4xx because the
     // remedy is categorically different: the request was well-formed and the
     // credential behind it is not, so no amount of re-issuing or rephrasing
     // helps — a human has to re-authenticate. Callers surface that; the generic
     // 4xx branch below would tell them the request was wrong, which is false.
     if (status === 401) return { kind: "auth", retryable: false };
-    if (status === 402) return { kind: "budget", retryable: false };
-    if (status === 403) return { kind: "tenant-blocked", retryable: false };
     if (status === 429 || (status !== undefined && status >= 500)) {
         return { kind: "provider", retryable: true };
     }
     if (status !== undefined) {
-        // A concrete 4xx (other than 402/403) — the request is wrong; retrying
-        // it unchanged will fail again.
+        // A concrete 4xx that the map does not hold — the request is wrong;
+        // retrying it unchanged will fail again.
         return { kind: "provider", retryable: false };
     }
     // No status: a transport failure is retryable; anything else (parse

@@ -86,7 +86,7 @@ describe("provider configuration front door", () => {
             model: "claude-opus-4-7",
             fetch: cap.fetch,
         };
-        const deps: ConfiguredAiSdkProviderDeps = { config, resolveBilling: async () => ({}) };
+        const deps: ConfiguredAiSdkProviderDeps = { config };
         const provider = createConfiguredAiSdkProvider(deps);
 
         const result = await provider.chat(request, makeSession());
@@ -109,7 +109,7 @@ describe("provider configuration front door", () => {
             model: "local-tool-model",
             fetch: cap.fetch,
         };
-        const provider = createConfiguredAiSdkProvider({ config, resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config });
 
         const result = await provider.chat(request, makeSession());
 
@@ -129,7 +129,7 @@ describe("provider configuration front door", () => {
             model: "gpt-5.1",
             fetch: cap.fetch,
         };
-        const deps: ConfiguredAiSdkProviderDeps = { config, resolveBilling: async () => ({}) };
+        const deps: ConfiguredAiSdkProviderDeps = { config };
         const provider = createConfiguredAiSdkProvider(deps);
 
         const result = await provider.chat(request, makeSession());
@@ -151,8 +151,8 @@ describe("provider configuration front door", () => {
             apiKey: "shared-key",
             fetch: cap.fetch,
         };
-        const conversationProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-a" }, resolveBilling: async () => ({}) });
-        const sandboxProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-b" }, resolveBilling: async () => ({}) });
+        const conversationProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-a" } });
+        const sandboxProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-b" } });
 
         const first = await conversationProvider.chat(request, makeSession());
         const second = await sandboxProvider.chat(request, makeSession());
@@ -172,7 +172,7 @@ describe("output-token ceiling", () => {
         build: (fetch: FetchLike) => AiSdkProviderConfig,
     ): Promise<number | undefined> {
         const cap = capturingFetch(respond);
-        const provider = createConfiguredAiSdkProvider({ config: build(cap.fetch), resolveBilling: async () => ({}) });
+        const provider = createConfiguredAiSdkProvider({ config: build(cap.fetch) });
 
         const result = await provider.chat(request, makeSession());
 

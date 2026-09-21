@@ -95,7 +95,6 @@ describe("request-timeout guard", () => {
     it("trips on a slow response start and classifies as a retryable provider timeout", async () => {
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetchThatNeverStarts(), { requestTimeoutMs: 30, maxRetries: 0 }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -114,7 +113,6 @@ describe("request-timeout guard", () => {
         // the body, whatever its total length.
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetchWithSteadyBody(OK_COMPLETION, 5, 15), { requestTimeoutMs: 60, maxRetries: 0 }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -128,7 +126,6 @@ describe("request-timeout guard", () => {
             // A large window makes the caller abort, not the guard, the only thing
             // that ends the stalled request.
             config: openAiConfig(fetchThatNeverStarts(), { requestTimeoutMs: 500 }),
-            resolveBilling: async () => ({}),
         });
 
         const controller = new AbortController();
@@ -152,7 +149,6 @@ describe("request-timeout guard", () => {
         };
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetch, { requestTimeoutMs: 30 }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -171,7 +167,6 @@ describe("request-timeout guard", () => {
                 }),
                 { requestTimeoutMs: 20, maxRetries: 1 },
             ),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -273,7 +268,6 @@ describe("request-timeout transport lift", () => {
                 inits.push(init);
                 return Promise.resolve(sseResponse(OK_COMPLETION));
             }),
-            resolveBilling: async () => ({}),
         });
 
         const result = await provider.chat(request, makeSession());
@@ -288,7 +282,6 @@ describe("request-timeout advertisement", () => {
     it("advertises the configured value on the provider instance", () => {
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetchThatNeverStarts(), { requestTimeoutMs: 1234 }),
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.requestTimeoutMs).toBe(1234);
@@ -297,7 +290,6 @@ describe("request-timeout advertisement", () => {
     it("installs no wrapper and advertises no value when the field is absent", async () => {
         const provider = createConfiguredAiSdkProvider({
             config: openAiConfig(fetchThatNeverStarts()),
-            resolveBilling: async () => ({}),
         });
 
         expect(provider.requestTimeoutMs).toBeUndefined();
@@ -403,7 +395,6 @@ function providerOver(baseURL: string, requestTimeoutMs: number) {
             requestTimeoutMs,
             maxRetries: 0,
         },
-        resolveBilling: async () => ({}),
     });
 }
 

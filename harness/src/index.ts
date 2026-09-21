@@ -80,17 +80,25 @@ export type { BioToolKeys } from "./tools/bio/keys.js";
 export { createLocalRunAuthorizer } from "./auth/local-run-authorizer.js";
 export type { RunAuthorizer, AuthorizeRunInput, RunAuthorization, RevokeByJtiRef } from "./execution/run-authorizer.js";
 
-// Seam: billing resolution.
-export { createNoopBillingResolver } from "./billing/noop-resolver.js";
-export type { ResolveBilling, ResolvableSession, BillingMap, BillingHeaders, BillingFetchResult } from "./billing/resolver.js";
+// The two kinds of host hook. A gate gives a value that the harness must have
+// before it continues an operation: its err fails the operation, or suspends it
+// when the host sets `suspend`. A notice reports a fact after the operation: the
+// harness logs its err, and the outcome stays. The type of each hook shows its
+// kind, and the harness reads no reason of the host.
+export type { GateFailure, NoticeFailure } from "./lib/hooks.js";
 
-// Seam: run-level billing bracket.
+// Hook: model request headers. An optional gate on each provider. The provider
+// calls it before each attempt of a model request and adds the headers as the
+// hook gives them; with no hook, a request carries no header from a hook.
+export type { RequestHeaders, ResolveRequestHeaders } from "./providers/request-headers.js";
+
+// Seam: run-level billing bracket. `open` is a gate and `close` is a notice.
 export { createNoopRunCharge } from "./billing/noop-run-charge.js";
-export type { RunCharge } from "./billing/run-charge.js";
+export type { RunCharge, RunChargeOutcome } from "./billing/run-charge.js";
 
-// Seam: per-call LLM usage accounting. `record` is fire-and-forget — the loop
-// neither awaits nor guards it, so a realization must not throw and must not
-// block. Wired as the optional `usageRecorder` of `assembleCoreRuntime`;
+// Seam: per-call LLM usage accounting. `record` is a notice: the loop does not
+// wait for its result, and it logs the reason of an err when the result
+// arrives. Wired as the optional `usageRecorder` of `assembleCoreRuntime`;
 // unwired, every call is dropped by `createNoopUsageRecorder`.
 export { createNoopUsageRecorder } from "./billing/noop-usage-recorder.js";
 export type { UsageRecorder, LlmUsageRecord } from "./billing/usage-recorder.js";
@@ -246,6 +254,8 @@ export type {
     RunFrame,
     AuthContext,
     ResourceCoordinates,
+    HookSessionView,
+    ResolvableSession,
 } from "./auth/types.js";
 export { makeLocalAuth } from "./auth/local-auth-context.js";
 
@@ -258,7 +268,7 @@ export type { AnthropicProviderDeps } from "./providers/anthropic.js";
 // `ConfiguredAiSdkProviderDeps` as its argument shape. `createAnthropicProvider`
 // above is a convenience over this union's `anthropic` arm.
 export { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "./providers/ai-sdk.js";
-export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps } from "./providers/ai-sdk.js";
+export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps, ProviderHostPolicy } from "./providers/ai-sdk.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";
 export type {
@@ -305,6 +315,10 @@ export { DEFAULT_REASONING } from "./providers/reasoning.js";
 // not an `Error`), so a `catch` recognizes it by shape, not `instanceof`.
 export { toProviderError, isProviderError } from "./providers/errors.js";
 export type { ProviderError } from "./providers/errors.js";
+// The suspend map of a provider: an HTTP status to the suspend reason of the
+// host. A map from the host replaces `DEFAULT_SUSPEND_ON`, which holds `402`.
+export { DEFAULT_SUSPEND_ON } from "./providers/errors.js";
+export type { SuspendOn } from "./providers/errors.js";
 // `createStreamingChat` wraps a `ChatProvider` as a streaming `AgentChat` (the
 // type `runAgent`'s `provider` option takes): its `chat` drives the provider's
 // `chatStream` and forwards each text delta to `onText`, so a same-process host

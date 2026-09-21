@@ -24,15 +24,15 @@
 
 ## 3. The model request headers hook and the provider errors
 
-- [ ] 3.1 Replace `resolveBilling` with the optional `resolveRequestHeaders` in `src/providers/ai-sdk.ts`,
+- [x] 3.1 Replace `resolveBilling` with the optional `resolveRequestHeaders` in `src/providers/ai-sdk.ts`,
   `anthropic.ts`, and `embedding.ts`. Remove `BillingSeamFailure`
-- [ ] 3.2 Remove `ResolveBilling`, `createNoopBillingResolver`, `BillingResolutionError`, `BillingMap`,
+- [x] 3.2 Remove `ResolveBilling`, `createNoopBillingResolver`, `BillingResolutionError`, `BillingMap`,
   `BillingHeaders`, `BillingFetchResult`, and `BillingFetcher`. Rename `BillingSessionView` to `HookSessionView`
-- [ ] 3.3 Add the optional `suspendOn` map to the provider configuration, with the default `{ 402: "payment_required" }`
-- [ ] 3.4 In `src/providers/errors.ts`, replace the kinds `budget` and `tenant-blocked` with the kind `suspend`. Make
+- [x] 3.3 Add the optional `suspendOn` map to the provider configuration, with the default `{ 402: "payment_required" }`
+- [x] 3.4 In `src/providers/errors.ts`, replace the kinds `budget` and `tenant-blocked` with the kind `suspend`. Make
   the messages generic HTTP messages. Make sure that the retry envelope never retries a `suspend` error
-- [ ] 3.5 Remove `src/loop/budget-exceeded.ts` and its text match. Change its callers to read the kind `suspend`
-- [ ] 3.6 Update the provider tests: a mapped status, an unmapped `403`, a hook `err`, and an absent hook
+- [x] 3.5 Remove `src/loop/budget-exceeded.ts` and its text match. Change its callers to read the kind `suspend`
+- [x] 3.6 Update the provider tests: a mapped status, an unmapped `403`, a hook `err`, and an absent hook
 
 ## 4. The sandbox spawn and the labels
 

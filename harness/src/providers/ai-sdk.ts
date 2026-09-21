@@ -18,11 +18,12 @@ import { trace } from "@opentelemetry/api";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
-import type { ResolveBilling } from "../billing/resolver.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughTracer } from "../lib/otel-spans.js";
-import { classifyProviderError, type ProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
+import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
+import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
 
 /**
@@ -75,9 +76,19 @@ function routeSdkWarningsTo(logger: Logger): void {
     };
 }
 
-export interface AiSdkProviderDeps {
+/**
+ * The two policies of the host that each provider takes: the request headers
+ * hook, and the map from an HTTP status to a suspend reason. Both are optional.
+ * With no hook the provider adds no headers, and with no map it uses
+ * {@link DEFAULT_SUSPEND_ON}.
+ */
+export interface ProviderHostPolicy {
+    readonly resolveRequestHeaders?: ResolveRequestHeaders;
+    readonly suspendOn?: SuspendOn;
+}
+
+export interface AiSdkProviderDeps extends ProviderHostPolicy {
     readonly model: LanguageModel;
-    readonly resolveBilling: ResolveBilling;
     readonly capabilities?: Partial<ProviderCapabilities>;
     readonly logger?: Logger;
     /**
@@ -243,9 +254,8 @@ export type AiSdkProviderConfig =
           readonly maxRetries?: number;
       };
 
-export interface ConfiguredAiSdkProviderDeps {
+export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
     readonly config: AiSdkProviderConfig;
-    readonly resolveBilling: ResolveBilling;
     readonly logger?: Logger;
 }
 
@@ -336,39 +346,28 @@ export function computeRetryDelayMs(error: unknown, exponentialBackoffDelay: num
 }
 
 /**
- * Marks a failure that came from the `ResolveBilling` seam rather than the model
- * wire. The retry envelope's budget is sized for model-provider outages; the
- * billing seam is a separate system whose failure must surface immediately, not
- * after a multi-minute retry window — even when the underlying failure is
- * connection-shaped and would otherwise read as retryable. The original throwable
- * rides on `cause` so the outer catch can hand it to `toProviderError` unchanged
- * and classify it byte-identically to a billing failure raised outside the
- * envelope (right down to the surfaced message).
+ * A refusal of the request headers hook inside the retry envelope. The envelope
+ * speaks exceptions, thus the refusal crosses it as this throw. The hook is not
+ * the model wire, thus the envelope never retries it, and the outer catch turns
+ * it back into the provider error of the refusal.
  */
-class BillingSeamFailure extends Error {
-    constructor(cause: unknown) {
-        super("billing resolution failed", { cause });
-        this.name = "BillingSeamFailure";
+class HeadersRefused extends Error {
+    constructor(readonly refusal: GateRefusal) {
+        super(`the request headers hook refused the model call: ${refusal.reason}`);
+        this.name = "HeadersRefused";
     }
 }
 
-/**
- * Resolve attribution headers for one attempt, tagging any non-abort failure as
- * a `BillingSeamFailure` so the retry envelope fails fast on it. An abort is
- * rethrown raw so it stays on the abort control-flow path.
- */
-async function resolveBillingHeaders(resolveBilling: ResolveBilling, session: AgentSession) {
-    try {
-        return await resolveBilling(session);
-    } catch (e) {
-        if (isAbortError(e)) throw e;
-        throw new BillingSeamFailure(e);
-    }
+/** The headers of one attempt. A refusal of the hook throws `HeadersRefused`, and the attempt is not sent. */
+async function headersForAttempt(hook: ResolveRequestHeaders | undefined, session: AgentSession): Promise<Record<string, string>> {
+    const resolved = await requestHeadersFor(hook, session);
+    if (resolved.isErr()) throw new HeadersRefused(resolved.error);
+    return { ...resolved.value } satisfies RequestHeaders;
 }
 
-/** Unwrap a billing-seam failure to the original throwable for classification. */
-function unwrapForClassification(e: unknown): unknown {
-    return e instanceof BillingSeamFailure ? e.cause : e;
+/** The provider error of a call that failed: a refusal of the hook, or a classified wire failure. */
+function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): ProviderError {
+    return e instanceof HeadersRefused ? headersRefusalError(e.refusal, workload) : toProviderError(e, workload, suspendOn);
 }
 
 /**
@@ -376,10 +375,10 @@ function unwrapForClassification(e: unknown): unknown {
  * the caller's `AbortSignal` reaches the primitive: it rethrows abort errors
  * without retrying and cancels its own backoff sleep when the signal fires, so
  * the retried closure adds no abort handling of its own. `shouldRetry` defers to
- * the harness retryability taxonomy — but never retries a `BillingSeamFailure`,
- * whose fail-fast is the whole point of the marker — and a non-retried first
- * failure is rethrown untouched, preserving the exact throwable the outer catch
- * classifies. `createRetryError` carries the last real failure on `cause` so
+ * the harness retryability taxonomy under the `suspendOn` map of the provider —
+ * thus a mapped status is never retried — and it never retries a refusal of the
+ * request headers hook. A non-retried first failure is rethrown untouched,
+ * preserving the exact throwable the outer catch classifies. `createRetryError` carries the last real failure on `cause` so
  * that, once retries are exhausted, `toProviderError`'s status walk reaches the
  * true HTTP status instead of stopping at a synthetic wrapper. The attempt
  * counter is per-instance because each call builds its own retry.
@@ -389,14 +388,14 @@ function unwrapForClassification(e: unknown): unknown {
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
  */
-function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number) {
+function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn) {
     let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries,
         initialDelayInMs: RETRY_INITIAL_DELAY_MS,
         backoffFactor: RETRY_BACKOFF_FACTOR,
         abortSignal: signal,
-        shouldRetry: (e) => !(e instanceof BillingSeamFailure) && signal?.aborted !== true && classifyProviderError(e).retryable,
+        shouldRetry: (e) => !(e instanceof HeadersRefused) && signal?.aborted !== true && classifyProviderError(e, suspendOn).retryable,
         getDelayInMs: ({ error, exponentialBackoffDelay }) => {
             const delayMs = computeRetryDelayMs(error, exponentialBackoffDelay);
             retryCount += 1;
@@ -656,6 +655,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     // stream, thus the two cannot disagree about the ceiling of a request.
     const outputCeiling: { maxOutputTokens?: number } = maxOutputTokens === "provider-maximum" ? {} : { maxOutputTokens };
     const maxRetries = deps.maxRetries ?? RETRY_MAX_RETRIES;
+    const suspendOn = deps.suspendOn ?? DEFAULT_SUSPEND_ON;
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
     // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
@@ -688,13 +688,13 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
-            const retry = createRetry(signal, logger, maxRetries);
+            const retry = createRetry(signal, logger, maxRetries, suspendOn);
             const capture = captureServedModelId(deps.model);
             try {
                 const collected = await retry(async () => {
-                    // Attribution headers are time-limited; resolving them inside the
-                    // retried closure keeps them fresh across a multi-minute window.
-                    const headers = await resolveBillingHeaders(deps.resolveBilling, session);
+                    // The hook runs before each attempt: a host header can be
+                    // time-limited, and the retry window can last minutes.
+                    const headers = await headersForAttempt(deps.resolveRequestHeaders, session);
                     // The call streams on the wire and collapses below.
                     //
                     // A non-streaming turn sends no header until the model completes,
@@ -765,7 +765,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 );
             } catch (e) {
                 if (isAbortError(e) || signal?.aborted) throw e;
-                const failure = toProviderError(unwrapForClassification(e), workloadOf(session));
+                const failure = failureOf(e, workloadOf(session), suspendOn);
                 logFailure(session, failure, e);
                 return err(failure);
             }
@@ -774,7 +774,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const retry = createRetry(signal, logger, maxRetries);
+        const retry = createRetry(signal, logger, maxRetries, suspendOn);
         const capture = captureServedModelId(deps.model);
         try {
             // Retry covers only stream establishment: streamText defers wire errors
@@ -783,10 +783,10 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             // live with a first delta in hand, or it finished without yielding any
             // text — and a delta is only ever yielded OUTSIDE the closure, so a
             // retried attempt can never re-emit a delta the consumer already saw.
-            // Resolving billing inside the closure keeps attribution headers fresh
-            // per attempt.
+            // The request headers hook runs inside the closure, thus it runs
+            // before each attempt.
             const opened = await retry(async () => {
-                const headers = await resolveBillingHeaders(deps.resolveBilling, session);
+                const headers = await headersForAttempt(deps.resolveRequestHeaders, session);
                 const result = streamText({
                     model: capture.model,
                     system: req.system,
@@ -881,7 +881,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted) throw e;
-            const failure = toProviderError(unwrapForClassification(e), workloadOf(session));
+            const failure = failureOf(e, workloadOf(session), suspendOn);
             logFailure(session, failure, e);
             throw failure;
         }
@@ -984,6 +984,14 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
  * value on the returned instance. When the field is absent, it installs no
  * wrapper, it hands the SDK no bound, and it advertises no value.
  */
+/** The host policy of a config, with each absent member left absent. */
+function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
+    return {
+        ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),
+        ...(deps.suspendOn !== undefined ? { suspendOn: deps.suspendOn } : {}),
+    };
+}
+
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     const requestTimeoutMs = config.requestTimeoutMs;
@@ -1006,7 +1014,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
         return createAiSdkProvider({
             model: provider.chat(config.model),
-            resolveBilling: deps.resolveBilling,
+            ...hostPolicyOf(deps),
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
@@ -1034,7 +1042,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             // factory callable of the package resolves to the same path today,
             // but nothing in the package holds it there.
             model: withStoreDirective(provider.responses(config.model), config.store ?? false),
-            resolveBilling: deps.resolveBilling,
+            ...hostPolicyOf(deps),
             capabilities: { ...pictureDefault, ...config.capabilities },
             logger: deps.logger,
             // The package puts this number on the wire as it is, and it clamps
@@ -1058,7 +1066,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // The compatible package reads the neutral `reasoning` of the call, thus
         // the seam needs no middleware to carry the depth into its namespace.
         model: provider.chatModel(config.model),
-        resolveBilling: deps.resolveBilling,
+        ...hostPolicyOf(deps),
         capabilities: config.capabilities,
         logger: deps.logger,
         ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),

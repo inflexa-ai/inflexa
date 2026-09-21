@@ -16,8 +16,9 @@
  *   - `RunSession` — durable, JSON-serializable. Carries a `RunFrame`; minted
  *     only at the run-authorization seam.
  *
- * Neither bundle carries resolved billing headers — billing is resolved
- * lazily at the LLM call site (see `harness/billing/resolver.ts`).
+ * Neither bundle carries request headers — a provider gets them at the call
+ * site from the optional request headers hook of the host (see
+ * `providers/request-headers.ts`).
  */
 
 /** Who the request is. Always complete. */
@@ -111,7 +112,7 @@ export interface AuthContext {
  * consumer is the provider, which reads every field, so the conduit type is
  * "all fields, generalized to what's read" — `credential` widened to the
  * opaque `Credential` (nothing in the harness branches on the concrete shape),
- * `runFrame` optional (only the billing assembler reads it).
+ * `runFrame` optional (only a host hook reads it).
  *
  * Both bundles satisfy this: a `RequestSession` (no RunFrame) and a
  * `RunSession` (with RunFrame) are each structurally assignable, so the
@@ -155,15 +156,24 @@ export interface RunSession {
 }
 
 /**
- * The minimal session view the billing-header assembler reads. Both bundles
- * satisfy it; `runFrame` is present only on a `RunSession`, so a
- * `RequestSession` emits no run/step tags.
+ * The minimal session view that a host hook reads. Both bundles satisfy it;
+ * `runFrame` is present only on a `RunSession`, so a hook that gets a
+ * `RequestSession` sees no run or step.
  */
-export interface BillingSessionView {
+export interface HookSessionView {
     readonly identity: Identity;
     readonly scope: Scope;
     readonly provenance: Provenance;
     readonly runFrame?: RunFrame;
+}
+
+/**
+ * The session that the request headers hook gets: the hook view plus the
+ * opaque `auth`, which a host realization downcasts to reach its credential.
+ * `AgentSession` structurally satisfies it.
+ */
+export interface ResolvableSession extends HookSessionView {
+    readonly auth: AuthContext;
 }
 
 /**

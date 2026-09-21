@@ -46,9 +46,9 @@ export interface DomainError {
 /**
  * A thrown wrapper for a structured error value that is not already an
  * `Error`. The original value rides on `.cause`, so the cause-walking
- * classifiers (`classifyProviderError`, `isBudgetExceeded`) still reach the
- * `status` / `code` signals they look for after a `Result` is rethrown at a
- * boundary.
+ * classifiers (`classifyProviderError`, `findSuspendError`) still reach the
+ * `status` / `code` / `type` signals they look for after a `Result` is
+ * rethrown at a boundary.
  */
 export class ResultError extends Error {
     constructor(readonly value: unknown) {
@@ -61,9 +61,8 @@ function describe(value: unknown): string {
     if (value instanceof Error) return value.message;
     if (value && typeof value === "object" && "type" in value) {
         // Prefer a human `message` field when the structured error carries one
-        // (e.g. a `ProviderError`) so the wrapped `Error.message` stays
-        // pattern-matchable (`isBudgetExceeded`'s message backstop); fall back
-        // to the `type` discriminant otherwise.
+        // (e.g. a `ProviderError`) so the wrapped `Error.message` names the
+        // failure; fall back to the `type` discriminant otherwise.
         const message = (value as { message?: unknown }).message;
         if (typeof message === "string" && message.length > 0) return message;
         return String((value as DomainError).type);

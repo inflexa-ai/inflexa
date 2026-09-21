@@ -86,7 +86,6 @@ describe.skipIf(!API_KEY)("Anthropic prompt caching", () => {
                 apiKey: API_KEY!,
                 model: MODEL,
             },
-            resolveBilling: async () => ({}),
         });
         const session = makeSession();
 
