@@ -90,7 +90,7 @@
 - [ ] 7.3 After the archive, update the Purpose sections that name `ResolveBilling` or the `402` pause:
   `harness-providers`, `harness-session-model`, and `workflow-failure-lifecycle`. A delta cannot change a Purpose
   section
-- [ ] 7.4 Before the archive, archive the change `drop-analysis-billing-context`, which modifies the same requirement
+- [x] 7.4 Before the archive, archive the change `drop-analysis-billing-context`, which modifies the same requirement
   `cortex_analysis_state table schema`. Then copy the new text of that requirement from `openspec/specs/` into this
   delta, and apply the change of the suspend scenario again
 
