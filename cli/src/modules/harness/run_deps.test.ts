@@ -3,7 +3,6 @@ import { join } from "node:path";
 import {
     createAnthropicProvider,
     createEmbeddingProvider,
-    createNoopBillingResolver,
     createNoopLogger,
     createPool,
     createSandboxClient,
@@ -34,18 +33,17 @@ import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineCompositi
 // can prove an arbitrary configured provider/model flows into the recorded identity with no id sniffing;
 // the conversation agent stays fixed since no run-engine builder reads it.
 function testComposition(overrides: { sandbox?: string; modelProvider?: string } = {}): RunEngineComposition {
-    const resolveBilling = createNoopBillingResolver();
     const pool = createPool({ host: "localhost", port: "5", database: "d", user: "u", password: "p", sslMode: "disable" });
     // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
     // produced, so every expected path below stays literal and readable.
     const resolveWorkspaceRoot = (analysisId: string): string => join("/tmp/sessions", analysisId);
-    const makeProvider = (model: string): ChatProvider => createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model, resolveBilling });
+    const makeProvider = (model: string): ChatProvider => createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model });
     const sandboxModel = overrides.sandbox ?? "claude-test";
     const modelProvider = overrides.modelProvider ?? "anthropic";
     return {
         pool,
         logger: createNoopLogger(),
-        embedding: createEmbeddingProvider({ baseURL: "http://emb.test/v1", token: "t", model: "text-embedding-3-small", resolveBilling }),
+        embedding: createEmbeddingProvider({ baseURL: "http://emb.test/v1", token: "t", model: "text-embedding-3-small" }),
         sandboxClient: createSandboxClient({
             pool,
             env: { backend: "docker", namespace: "" },
@@ -131,7 +129,7 @@ describe("run-engine provenance wiring", () => {
             artifacts: [{ stepId: "step-1", runId: "run-1", path: "output/r.csv", size: 7, type: "output", hash: "sha256:deadbeef" }],
             collector: emptyCollector,
         };
-        const result = await deps.artifactRegistry.register(input, noSession);
+        const result = (await deps.artifactRegistry.register(input, noSession))._unsafeUnwrap();
 
         // No step event from the registry — the scheduler settlement owns step lifecycle now.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
@@ -260,7 +258,7 @@ describe("snapshot-safety — a captured deps field observes a live swap through
             artifacts: [{ stepId: "step-1", runId: "run-1", path: "output/r.csv", size: 7, type: "output", hash: "sha256:deadbeef" }],
             collector,
         };
-        await capturedRegistry.register(input, noSession);
+        (await capturedRegistry.register(input, noSession))._unsafeUnwrap();
 
         const cmdEvent = captured.find((e) => e.type === "prov.command_executed");
         if (cmdEvent?.type !== "prov.command_executed") throw new Error("expected prov.command_executed");

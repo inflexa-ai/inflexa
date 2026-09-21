@@ -330,7 +330,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 signal: new AbortController().signal,
                 // The turn's accounting seam. Nothing here records — the `run` seam never completes a
                 // model call — but the engine requires it, which is what stops a call site forgetting it.
-                usageRecorder: { record: () => {} },
+                usageRecorder: { record: () => okAsync(undefined) },
                 analysisId: "an-1",
                 threadId: "t-1",
                 userInput: "?",

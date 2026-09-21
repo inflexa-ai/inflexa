@@ -105,7 +105,7 @@ describe("createBusArtifactRegistry — register", () => {
             ]),
         };
 
-        const result = await registry.register(input, noSession);
+        const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         // One command event, then its two file events (declaration-before-reference order).
         expect(captured.map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.file_written"]);
@@ -158,7 +158,7 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([{ outputPath: "output/summary.md", producer: tool }]),
         };
 
-        const result = await registry.register(input, noSession);
+        const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         // No pseudo-command exists for a file-tool write — the call ref rides the file event and the
         // kernel mints the deterministic call activity from it.
@@ -184,7 +184,7 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([]),
         };
 
-        await registry.register(input, noSession);
+        (await registry.register(input, noSession))._unsafeUnwrap();
 
         // No command activity references a leaf; only the file event fires.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
@@ -220,7 +220,7 @@ describe("createBusArtifactRegistry — register", () => {
             ]),
         };
 
-        await registry.register(input, noSession);
+        (await registry.register(input, noSession))._unsafeUnwrap();
 
         // cmdA's group first (command then its file), then cmdB's group (command then its file).
         expect(captured.map((e) => e.type)).toEqual(["prov.command_executed", "prov.file_written", "prov.command_executed", "prov.file_written"]);
@@ -245,7 +245,7 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([{ outputPath: "output/de_results.csv", producer: cmd, scriptPath: "scripts/de.py" }]),
         };
 
-        await registry.register(input, noSession);
+        (await registry.register(input, noSession))._unsafeUnwrap();
 
         const ref = commandEvents()[0]!.command;
         if (ref.kind !== "command") throw new Error("expected a command-kind ref");
@@ -273,7 +273,7 @@ describe("createBusArtifactRegistry — register", () => {
             ),
         };
 
-        await registry.register(input, noSession);
+        (await registry.register(input, noSession))._unsafeUnwrap();
 
         // Only the three non-artifacts reads emit; the `artifacts` read is skipped; no other events.
         expect(captured.map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used", "prov.input_used"]);
@@ -305,7 +305,7 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([], [{ path: "/an-1/runs/run-001/step-de/output/results.csv", hash: "sha256:same", source: "prior" }]),
         };
 
-        await registry.register(input, noSession);
+        (await registry.register(input, noSession))._unsafeUnwrap();
 
         const inputEvent = captured.find((e) => e.type === "prov.input_used");
         if (inputEvent?.type !== "prov.input_used") throw new Error("expected a prov.input_used event");
@@ -326,7 +326,7 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([]),
         };
 
-        const result = await registry.register(input, noSession);
+        const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         // Two files (the hash-less one is skipped, not emitted); no step event.
         expect(captured.map((e) => e.type)).toEqual(["prov.file_written", "prov.file_written"]);
@@ -358,7 +358,7 @@ describe("createBusArtifactRegistry — register", () => {
             ),
         };
 
-        const result = await registry.register(input, noSession);
+        const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         expect(captured.map((e) => e.type)).toEqual(["prov.input_used", "prov.input_used"]);
         const emittedPaths = captured.filter((e) => e.type === "prov.input_used").map((e) => (e.type === "prov.input_used" ? e.input.path : ""));
@@ -382,7 +382,7 @@ describe("createBusArtifactRegistry — register", () => {
             collector: fakeCollector([]),
         };
 
-        const result = await registry.register(input, noSession);
+        const result = (await registry.register(input, noSession))._unsafeUnwrap();
 
         expect(captured).toEqual([]);
         expect(result).toEqual({ registered: [], failed: [], failedCount: 0 });
@@ -537,9 +537,9 @@ describe("createSwappableSandboxEmitters", () => {
         const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
         const registry = emitters.artifactRegistry;
 
-        await registry.register(commandInput(), noSession);
+        (await registry.register(commandInput(), noSession))._unsafeUnwrap();
         emitters.swap("anthropic/claude-new");
-        await registry.register(commandInput(), noSession);
+        (await registry.register(commandInput(), noSession))._unsafeUnwrap();
 
         expect(commandEvents().map((c) => c.model)).toEqual(["anthropic/claude-old", "anthropic/claude-new"]);
     });

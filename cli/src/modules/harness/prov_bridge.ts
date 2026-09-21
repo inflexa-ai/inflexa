@@ -1,7 +1,10 @@
+import { okAsync, ResultAsync } from "neverthrow";
 import type {
     ArtifactRegistrationInput,
     ArtifactRegistry,
     ExternalRegistrationResult,
+    GateFailure,
+    NoticeFailure,
     ProvenanceExport,
     ProvenanceSeam,
     RunProvenanceEvent,
@@ -197,135 +200,143 @@ function toCommandRef(
  *     lineage across runs for free.
  */
 export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry {
-    return {
-        register: async (input: ArtifactRegistrationInput): Promise<ExternalRegistrationResult> => {
-            // One actor stamp for the whole step — `systemActor()` is pure over pkg version + build
-            // commit, so a single value across the step's events is identical to re-reading per event.
-            const actor = systemActor();
-            const step: ProvStepRef = { runId: input.runId, stepId: input.stepId };
-            // Manifest entries + collector output records both key on the STEP-relative path; scope to the
-            // analysis-scoped form for the event, the QName seed, and the ledger write-back key (fact #2).
-            const scopePath = (relativePath: string): string => `runs/${input.runId}/${input.stepId}/${relativePath}`;
+    const registerOnBus = async (input: ArtifactRegistrationInput): Promise<ExternalRegistrationResult> => {
+        // One actor stamp for the whole step — `systemActor()` is pure over pkg version + build
+        // commit, so a single value across the step's events is identical to re-reading per event.
+        const actor = systemActor();
+        const step: ProvStepRef = { runId: input.runId, stepId: input.stepId };
+        // Manifest entries + collector output records both key on the STEP-relative path; scope to the
+        // analysis-scoped form for the event, the QName seed, and the ledger write-back key (fact #2).
+        const scopePath = (relativePath: string): string => `runs/${input.runId}/${input.stepId}/${relativePath}`;
 
-            // The collector keys its records by STEP-relative output path — the same shape the manifest
-            // entry arrives in — so the record lookup happens on the raw `entry.path`, before scoping.
-            const recordByPath = new Map<string, CollectorRecord>();
-            for (const rec of input.collector.getRecords()) recordByPath.set(rec.outputPath, rec);
+        // The collector keys its records by STEP-relative output path — the same shape the manifest
+        // entry arrives in — so the record lookup happens on the raw `entry.path`, before scoping.
+        const recordByPath = new Map<string, CollectorRecord>();
+        for (const rec of input.collector.getRecords()) recordByPath.set(rec.outputPath, rec);
 
-            // The analysis-scoped path → surviving content hash of every file entity this registration
-            // WILL register — the map an intra-step `"artifacts"` self-read resolves against,
-            // keying its `used` edge onto the hash actually registered rather than the read's own. Hash-
-            // less entries are excluded: they fail below and never register an entity, so a read of one
-            // finds no key and is dropped rather than dangling.
-            const producedHashByPath = new Map<string, string>();
-            for (const entry of input.artifacts) if (entry.hash) producedHashByPath.set(scopePath(entry.path), entry.hash);
+        // The analysis-scoped path → surviving content hash of every file entity this registration
+        // WILL register — the map an intra-step `"artifacts"` self-read resolves against,
+        // keying its `used` edge onto the hash actually registered rather than the read's own. Hash-
+        // less entries are excluded: they fail below and never register an entity, so a read of one
+        // finds no key and is dropped rather than dangling.
+        const producedHashByPath = new Map<string, string>();
+        for (const entry of input.artifacts) if (entry.hash) producedHashByPath.set(scopePath(entry.path), entry.hash);
 
-            // Partition: one lookup per entry buckets it by its record's `producer` OBJECT, or
-            // into the leaf bucket when it has no record. Exclusive by construction — this single get()
-            // decides — so a file can never land in both a command group and the leaf bucket (which would
-            // write two `wasGeneratedBy` edges for one entity). Insertion order is preserved for emission.
-            const groups = new Map<CollectorProducer, { record: CollectorRecord; entries: ManifestEntry[] }>();
-            const leaves: ManifestEntry[] = [];
-            for (const entry of input.artifacts) {
-                const rec = recordByPath.get(entry.path);
-                if (rec === undefined) {
-                    leaves.push(entry);
-                    continue;
-                }
-                const group = groups.get(rec.producer);
-                if (group !== undefined) group.entries.push(entry);
-                else groups.set(rec.producer, { record: rec, entries: [entry] });
+        // Partition: one lookup per entry buckets it by its record's `producer` OBJECT, or
+        // into the leaf bucket when it has no record. Exclusive by construction — this single get()
+        // decides — so a file can never land in both a command group and the leaf bucket (which would
+        // write two `wasGeneratedBy` edges for one entity). Insertion order is preserved for emission.
+        const groups = new Map<CollectorProducer, { record: CollectorRecord; entries: ManifestEntry[] }>();
+        const leaves: ManifestEntry[] = [];
+        for (const entry of input.artifacts) {
+            const rec = recordByPath.get(entry.path);
+            if (rec === undefined) {
+                leaves.push(entry);
+                continue;
             }
+            const group = groups.get(rec.producer);
+            if (group !== undefined) group.entries.push(entry);
+            else groups.set(rec.producer, { record: rec, entries: [entry] });
+        }
 
-            const registered: ExternalRegistrationResult["registered"] = [];
-            const failed: ExternalRegistrationResult["failed"] = [];
+        const registered: ExternalRegistrationResult["registered"] = [];
+        const failed: ExternalRegistrationResult["failed"] = [];
 
-            // Attest one manifest entry to a `ProvFileRef`, or record a fail-fast rejection and return
-            // null. Reconcile rehashes every surviving entry from disk, so a missing/empty hash past that
-            // point is an attestation-invariant violation, not a routine case. The producer joins from the
-            // entry's record; a leaf (no record) falls back to "command" — an observed sandbox write with
-            // no in-process producer record (inotify-only observation) is by construction a command effect.
-            const attest = (entry: ManifestEntry): ProvFileRef | null => {
-                const path = scopePath(entry.path);
-                if (!entry.hash) {
-                    failed.push({ path, error: `missing content hash for ${path} — reconcile guarantees one, so its absence is an upstream defect` });
-                    return null;
-                }
-                return { path, hash: entry.hash, size: entry.size, producer: recordByPath.get(entry.path)?.producer.type ?? "command" };
-            };
+        // Attest one manifest entry to a `ProvFileRef`, or record a fail-fast rejection and return
+        // null. Reconcile rehashes every surviving entry from disk, so a missing/empty hash past that
+        // point is an attestation-invariant violation, not a routine case. The producer joins from the
+        // entry's record; a leaf (no record) falls back to "command" — an observed sandbox write with
+        // no in-process producer record (inotify-only observation) is by construction a command effect.
+        const attest = (entry: ManifestEntry): ProvFileRef | null => {
+            const path = scopePath(entry.path);
+            if (!entry.hash) {
+                failed.push({ path, error: `missing content hash for ${path} — reconcile guarantees one, so its absence is an upstream defect` });
+                return null;
+            }
+            return { path, hash: entry.hash, size: entry.size, producer: recordByPath.get(entry.path)?.producer.type ?? "command" };
+        };
 
-            // Per producer group, in declaration-before-reference order. A COMMAND group emits one
-            // `prov.command_executed`, then its `prov.file_written` events flagged `generation:
-            // "command"` — their generation edge is the command activity's. A FILE-TOOL group emits
-            // only `prov.file_written` with `generation: "call"`: the kernel mints the deterministic
-            // call activity from `(step, invocationId)`, so no command event exists for it.
-            for (const { record, entries } of groups.values()) {
-                const files: ProvFileRef[] = [];
-                for (const entry of entries) {
-                    const file = attest(entry);
-                    if (file !== null) files.push(file);
-                }
-                // A group whose every output failed attestation has no entity to anchor a generation
-                // edge — skip it rather than mint a zero-output activity.
-                if (files.length === 0) continue;
+        // Per producer group, in declaration-before-reference order. A COMMAND group emits one
+        // `prov.command_executed`, then its `prov.file_written` events flagged `generation:
+        // "command"` — their generation edge is the command activity's. A FILE-TOOL group emits
+        // only `prov.file_written` with `generation: "call"`: the kernel mints the deterministic
+        // call activity from `(step, invocationId)`, so no command event exists for it.
+        for (const { record, entries } of groups.values()) {
+            const files: ProvFileRef[] = [];
+            for (const entry of entries) {
+                const file = attest(entry);
+                if (file !== null) files.push(file);
+            }
+            // A group whose every output failed attestation has no entity to anchor a generation
+            // edge — skip it rather than mint a zero-output activity.
+            if (files.length === 0) continue;
 
-                const producer = record.producer;
-                if (producer.type === "file_tool") {
-                    const call = { invocationId: producer.invocationId, tool: producer.tool };
-                    for (const file of files) {
-                        Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "call", call, step });
-                        registered.push({ path: file.path, externalId: provModel.fileQName(file) });
-                    }
-                    continue;
-                }
-
-                const outputs: ProvFileKey[] = files.map((f) => ({ path: f.path, hash: f.hash }));
-                const command = toCommandRef(producer, record, outputs, input.resourceId, input.runId, input.stepId, producedHashByPath);
-                Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command, model });
+            const producer = record.producer;
+            if (producer.type === "file_tool") {
+                const call = { invocationId: producer.invocationId, tool: producer.tool };
                 for (const file of files) {
-                    Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "command", step });
+                    Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "call", call, step });
                     registered.push({ path: file.path, externalId: provModel.fileQName(file) });
                 }
+                continue;
             }
 
-            // Leaf bucket: an observed write with no in-process producer record — no producing activity,
-            // so its generation edge falls to the step activity (`generation: "step"`, the fallback path).
-            for (const entry of leaves) {
-                const file = attest(entry);
-                if (file === null) continue;
-                Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "step", step });
+            const outputs: ProvFileKey[] = files.map((f) => ({ path: f.path, hash: f.hash }));
+            const command = toCommandRef(producer, record, outputs, input.resourceId, input.runId, input.stepId, producedHashByPath);
+            Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command, model });
+            for (const file of files) {
+                Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "command", step });
                 registered.push({ path: file.path, externalId: provModel.fileQName(file) });
             }
+        }
 
-            // Step-level attested-input registry: container-absolute reads strip to analysis-relative so a
-            // prior read lands in the producing file's QName space (fact #3); the step's own `"artifacts"`
-            // reads are skipped, and a hash-less ref fails the step.
-            for (const ref of input.collector.getTrackedInputs()) {
-                // The step's own outputs re-surface here as reads; skip them, mirroring reconcile's skip.
-                const source = ref.source;
-                if (source === "artifacts") continue;
+        // Leaf bucket: an observed write with no in-process producer record — no producing activity,
+        // so its generation edge falls to the step activity (`generation: "step"`, the fallback path).
+        for (const entry of leaves) {
+            const file = attest(entry);
+            if (file === null) continue;
+            Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, model, file, generation: "step", step });
+            registered.push({ path: file.path, externalId: provModel.fileQName(file) });
+        }
 
-                const path = stripContainerPrefix(ref.path, input.resourceId);
+        // Step-level attested-input registry: container-absolute reads strip to analysis-relative so a
+        // prior read lands in the producing file's QName space (fact #3); the step's own `"artifacts"`
+        // reads are skipped, and a hash-less ref fails the step.
+        for (const ref of input.collector.getTrackedInputs()) {
+            // The step's own outputs re-surface here as reads; skip them, mirroring reconcile's skip.
+            const source = ref.source;
+            if (source === "artifacts") continue;
 
-                // `fillInputHashesFromDisk` fails the step on an unattestable input, so a hash-less ref
-                // here is an upstream defect — fail registration rather than record a non-attested read.
-                if (!ref.hash) {
-                    failed.push({
-                        path,
-                        error: `missing content hash for input ${path} — fillInputHashesFromDisk attests every input upstream, so its absence is an upstream defect`,
-                    });
-                    continue;
-                }
+            const path = stripContainerPrefix(ref.path, input.resourceId);
 
-                const usedInput: ProvUsedInputRef = { path, hash: ref.hash, source, ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) };
-                Bus.emit("inflexa", { type: "prov.input_used", analysisId: input.resourceId, actor, step, input: usedInput });
+            // `fillInputHashesFromDisk` fails the step on an unattestable input, so a hash-less ref
+            // here is an upstream defect — fail registration rather than record a non-attested read.
+            if (!ref.hash) {
+                failed.push({
+                    path,
+                    error: `missing content hash for input ${path} — fillInputHashesFromDisk attests every input upstream, so its absence is an upstream defect`,
+                });
+                continue;
             }
 
-            return { registered, failed, failedCount: failed.length };
-        },
-        // No-op: the artifact bytes already live in the host workspace tree, so there is nothing to push
-        // to permanent storage (the managed adapter uploads them; the local host does not).
-        sync: async (): Promise<void> => {},
+            const usedInput: ProvUsedInputRef = { path, hash: ref.hash, source, ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) };
+            Bus.emit("inflexa", { type: "prov.input_used", analysisId: input.resourceId, actor, step, input: usedInput });
+        }
+
+        return { registered, failed, failedCount: failed.length };
+    };
+    return {
+        // A gate: a throw from below (a bus subscriber, the QName mint) comes back as a refusal with its
+        // reason, never as a throw into the harness step. No suspend flag: a provenance fault fails the
+        // step, and it is no reason to pause the analysis.
+        register: (input: ArtifactRegistrationInput): ResultAsync<ExternalRegistrationResult, GateFailure> =>
+            ResultAsync.fromPromise(registerOnBus(input), (cause): GateFailure => ({
+                reason: `provenance registration threw: ${cause instanceof Error ? cause.message : "a non-Error value"}`,
+                suspend: false,
+            })),
+        // A notice, and a no-op: the artifact bytes already live in the host workspace tree, so there is
+        // nothing to push to permanent storage (the managed adapter uploads them; the local host does not).
+        sync: (): ResultAsync<void, NoticeFailure> => okAsync(undefined),
     };
 }
 

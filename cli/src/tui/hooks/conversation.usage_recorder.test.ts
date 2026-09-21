@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { ok } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 import type { AgentChat, AgentDefinition, AgentSession, LlmUsageRecord, ModelMessage, Pool, UsageRecorder } from "@inflexa-ai/harness";
 
 import { resetHotState, send, type SendSeams } from "./conversation.ts";
@@ -28,7 +28,7 @@ const SID = "s-usage";
 const AID = "a-usage";
 
 /** A recorder identity to look for — nothing is recorded here, only forwarded. */
-const runtimeRecorder: UsageRecorder = { record: (_r: LlmUsageRecord) => {} };
+const runtimeRecorder: UsageRecorder = { record: (_r: LlmUsageRecord) => okAsync(undefined) };
 
 /**
  * A stub runtime carrying the ONE recorder a boot would have constructed.

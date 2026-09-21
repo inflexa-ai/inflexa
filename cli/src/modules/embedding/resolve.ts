@@ -9,14 +9,14 @@
  * - `local`   → {@link createLocalEmbeddingProvider} (in-process bge-small GGUF).
  * - `api-key` → harness `createEmbeddingProvider` (OpenAI-shaped), connecting
  *   DIRECTLY to the configured endpoint — never through the chat proxy, which
- *   fronts OAuth chat providers and serves no embeddings route. The noop billing
- *   resolver applies: the CLI's local mode does no attribution.
+ *   fronts OAuth chat providers and serves no embeddings route. No request
+ *   headers hook is wired: the CLI's local mode does no attribution.
  * - `off`     → error: embeddings are not configured (the default until setup).
  */
 
 import { err, ok, type Result } from "neverthrow";
 
-import { createEmbeddingProvider, createNoopBillingResolver, type EmbeddingProvider } from "@inflexa-ai/harness";
+import { createEmbeddingProvider, type EmbeddingProvider } from "@inflexa-ai/harness";
 
 import type { Config } from "../../lib/config.ts";
 import { createLocalEmbeddingProvider } from "./local-provider.ts";
@@ -90,8 +90,8 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
     }
 
     // `api-key`: connect directly to the configured OpenAI-compatible endpoint.
-    // The CLI's local mode does no billing attribution, so the noop resolver is
-    // the correct `ResolveBilling` realization here. `model`/`dimensions` fall
+    // The CLI's local mode does no attribution, so it wires no request headers
+    // hook. `model`/`dimensions` fall
     // through to the harness defaults (text-embedding-3-small / 1536) when unset;
     // a custom `model` needs a matching `dimensions` or the boot probe rejects it.
     const apiKey = config.embedding.apiKey;
@@ -107,7 +107,6 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
             token: apiKey,
             model: config.embedding.model,
             dimensions: config.embedding.dimensions,
-            resolveBilling: createNoopBillingResolver(),
         }),
     );
 }

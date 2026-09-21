@@ -23,7 +23,7 @@ import { dirname } from "node:path";
 import { log, spinner as clackSpinner } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
-import { createEmbeddingProvider, createNoopBillingResolver, type AgentSession } from "@inflexa-ai/harness";
+import { createEmbeddingProvider, type AgentSession } from "@inflexa-ai/harness";
 
 import { readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { promptSecret, promptText, select } from "../../lib/cli.ts";
@@ -262,10 +262,10 @@ export async function verifyModel(modelPath: string, expectedDim?: number): Prom
     s.start("Verifying model (spawn runtime + embed probe)");
 
     const provider = createLocalEmbeddingProvider({ modelPath });
-    // The local provider does no billing and reads only `scope` (for a log label),
-    // so a structural stand-in satisfies the seam. The `as unknown as` is required
-    // because we do not build a full RunSession for a one-shot probe, and nothing
-    // downstream reads the omitted fields (the noop billing resolver ignores it).
+    // The local provider wires no request headers hook and reads only `scope` (for a
+    // log label), so a structural stand-in satisfies the seam. The `as unknown as` is
+    // required because we do not build a full RunSession for a one-shot probe, and
+    // nothing downstream reads the omitted fields.
     const probeSession = { scope: { kind: "analysis", analysisId: "embedding-setup-verify" } } as unknown as AgentSession;
     const outcome = await provider.embed(["inflexa embedding verification probe"], probeSession).match(
         (vectors): { readonly ok: true; readonly dim: number } => ({ ok: true, dim: vectors[0]?.length ?? 0 }),
@@ -571,7 +571,7 @@ async function runCustomLocalSetup(config: ReturnType<typeof readConfig>, answer
 
 /**
  * Probe a candidate api-key configuration with ONE real embed against the endpoint — the same wire path
- * the hot loop uses (the harness provider + noop billing) — and MEASURE the vector width it emits. A
+ * the hot loop uses (the harness provider, with no request headers hook) — and MEASURE the vector width it emits. A
  * wrong key, endpoint, or model id surfaces here, at setup, instead of late in the profile workflow;
  * the measured width is returned so the caller records the true index size rather than trusting a
  * guessed `dimensions`. Failures are `verify_failed` — the message carries the provider's own cause.
@@ -584,10 +584,9 @@ async function probeApiEmbedding(candidate: { baseURL: string; apiKey: string; m
         baseURL: candidate.baseURL,
         token: candidate.apiKey,
         model: candidate.model,
-        resolveBilling: createNoopBillingResolver(),
     });
-    // Same structural stand-in as verifyModel's probe: the noop billing resolver reads only `scope`,
-    // and nothing downstream touches the omitted RunSession fields — hence the `as unknown as`.
+    // Same structural stand-in as verifyModel's probe: with no request headers hook nothing reads
+    // the session, and nothing downstream touches the omitted RunSession fields — hence the `as unknown as`.
     const probeSession = { scope: { kind: "analysis", analysisId: "embedding-setup-verify" } } as unknown as AgentSession;
     const outcome = await provider.embed(["inflexa embedding verification probe"], probeSession).match(
         (vectors): { readonly ok: true; readonly dim: number } => ({ ok: true, dim: vectors[0]?.length ?? 0 }),

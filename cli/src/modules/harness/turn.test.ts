@@ -120,13 +120,19 @@ function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsy
 }
 
 /**
- * A recorder that keeps what it was handed. Total and synchronous, matching the seam's own contract
- * (`record` neither throws nor awaits) — a stub that violated it would make a passing turn prove less
+ * A recorder that keeps what it was handed. Total, matching the seam's own contract (`record` is a
+ * notice that never throws and gives its failure as an `err`) — a stub that violated it would make a passing turn prove less
  * than it appears to.
  */
 function recordingRecorder(): UsageRecorder & { records: LlmUsageRecord[] } {
     const records: LlmUsageRecord[] = [];
-    return { records, record: (r: LlmUsageRecord) => void records.push(r) };
+    return {
+        records,
+        record: (r: LlmUsageRecord) => {
+            records.push(r);
+            return okAsync(undefined);
+        },
+    };
 }
 
 /** Drive one turn with the given seams/history/signal, filling the fixed primitives. */

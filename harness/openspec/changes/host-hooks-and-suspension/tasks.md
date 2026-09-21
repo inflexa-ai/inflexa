@@ -98,11 +98,11 @@
 
 The `cli` jobs of CI link the working-copy harness. Thus the CLI must change in the same pull request.
 
-- [ ] 8.1 Remove `createNoopBillingResolver` and `resolveBilling` from `cli/src/modules/harness/runtime.ts`
-- [ ] 8.2 Change the CLI `UsageRecorder` (`cli/src/modules/harness/usage_recorder.ts`) to a notice
-- [ ] 8.3 Change the CLI `ArtifactRegistry` (`cli/src/modules/harness/prov_bridge.ts`) to a gate `register` and a
+- [x] 8.1 Remove `createNoopBillingResolver` and `resolveBilling` from `cli/src/modules/harness/runtime.ts`
+- [x] 8.2 Change the CLI `UsageRecorder` (`cli/src/modules/harness/usage_recorder.ts`) to a notice
+- [x] 8.3 Change the CLI `ArtifactRegistry` (`cli/src/modules/harness/prov_bridge.ts`) to a gate `register` and a
   notice `sync`
-- [ ] 8.4 Run the CLI typecheck and the CLI tests against the linked harness
+- [x] 8.4 Run the CLI typecheck and the CLI tests against the linked harness
 
 ## 9. Verification
 

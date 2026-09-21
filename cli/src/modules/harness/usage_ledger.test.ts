@@ -12,8 +12,6 @@ import {
     type ChatRequest,
     type ChatResponse,
     type ChatUsage,
-    type LogFields,
-    type Logger,
     type Pool,
     type ThreadHistory,
     type Tool,
@@ -38,17 +36,6 @@ let conn: Database;
 beforeEach(() => {
     conn = freshDb();
 });
-
-/** Silent logger — a passing run logs nothing, and a failing write would be a test failure, not a log to read. */
-const silentLogger: Logger = {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    with: () => silentLogger,
-    named: () => silentLogger,
-    errorFields: (e: unknown): LogFields => ({ err: e }),
-};
 
 /**
  * A model stub that replies from a script, one entry per call, and records what it was asked.
@@ -119,7 +106,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             signal: new AbortController().signal,
             emit: () => {},
             runStep: passthroughStep,
-            usageRecorder: createUsageRecorder({ logger: silentLogger }),
+            usageRecorder: createUsageRecorder(),
         });
 
         const ledger = rows();
@@ -154,7 +141,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             signal: new AbortController().signal,
             emit: () => {},
             runStep: passthroughStep,
-            usageRecorder: createUsageRecorder({ logger: silentLogger }),
+            usageRecorder: createUsageRecorder(),
         });
 
         const totals = getAnalysisUsageTotals("ana-total")._unsafeUnwrap();
@@ -167,7 +154,7 @@ describe("a chat turn's calls land in the local ledger", () => {
 
     test("a sub-agent's calls reach the same ledger under its own id and call path", async () => {
         const session = buildChatSession("tui-chat", "ana-nested", "thr-nested");
-        const recorder = createUsageRecorder({ logger: silentLogger });
+        const recorder = createUsageRecorder();
         // The nested loop is what a real sub-agent tool (planner, literature reviewer) does: derive a
         // child session with `forSubAgent` and drive another `runAgent` under the SAME injected
         // recorder. Both loops' calls must arrive, each carrying its own agent id and chain.
@@ -250,7 +237,7 @@ describe("a chat turn's calls land in the local ledger", () => {
                 session,
                 emit: () => {},
                 signal: new AbortController().signal,
-                usageRecorder: createUsageRecorder({ logger: silentLogger }),
+                usageRecorder: createUsageRecorder(),
                 analysisId: "ana-chat-turn",
                 threadId: "thr-chat-turn",
                 userInput: "go",
@@ -274,7 +261,7 @@ describe("a chat turn's calls land in the local ledger", () => {
 
     test("a re-delivered record updates its row in place instead of double-counting the turn", async () => {
         const session = buildChatSession("tui-chat", "ana-replay", "thr-replay");
-        const recorder = createUsageRecorder({ logger: silentLogger });
+        const recorder = createUsageRecorder();
         // A replayed durable body re-fires `record` with a byte-identical key. Chat keys are minted
         // per call, so the re-delivery is staged by hand — the property under test is the sink's, not
         // the key scheme's.
@@ -288,8 +275,8 @@ describe("a chat turn's calls land in the local ledger", () => {
             usage: { inputTokens: 100, outputTokens: 20 },
         } as const;
 
-        recorder.record(call);
-        recorder.record({ ...call, usage: { inputTokens: 140, outputTokens: 35 } });
+        expect((await recorder.record(call)).isOk()).toBe(true);
+        expect((await recorder.record({ ...call, usage: { inputTokens: 140, outputTokens: 35 } })).isOk()).toBe(true);
 
         const ledger = rows();
         expect(ledger).toHaveLength(1);
