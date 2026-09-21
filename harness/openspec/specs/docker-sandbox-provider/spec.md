@@ -349,6 +349,8 @@ container `HostConfig`: `NanoCpus` set to `round(cpu * 1e9)` and `Memory` set to
 
 ### Requirement: The cpu quota is visible inside the container
 
+The Docker backend MUST make the cpu quota of a step visible inside the container.
+
 A cgroup quota is invisible to the runtimes inside it. `parallel::detectCores()`
 greps `/proc/cpuinfo`, and `os.cpu_count()` reads
 `/sys/devices/system/cpu/online`, and the two files describe the host. Thus the
