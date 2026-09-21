@@ -91,11 +91,12 @@ export const SituationFieldsSchema = z.object({
         ),
     paired: z.boolean().describe("True when each subject contributes a sample to more than one condition (paired or repeated measures)."),
     blocking_factor: z
-        .string()
-        .min(1)
+        .enum(["individual", "cell_line", "litter", "site", "pair", "other"])
         .nullable()
         .optional()
-        .describe("The name of a blocking factor that is not the condition, for example `subject` or `donor`. Omit when there is none."),
+        .describe(
+            "The role of the blocking factor that is not the condition, never its column name: `individual` when the same subject, donor, or animal gives more than one sample; `cell_line`; `litter`; `site` for a center or a lab of a multi-site study; `pair` for matched pairs of different individuals; `other`. Omit when there is none. The column name stays in the step.",
+        ),
     block_structure: z
         .enum(["crossed", "nested"])
         .optional()
@@ -108,17 +109,18 @@ export const SituationFieldsSchema = z.object({
             "The batch structure: none; a known batch whose levels each hold every condition; a known batch whose levels coincide with the conditions; a known batch whose levels do not each hold every condition but at least one level holds two conditions (estimable, unbalanced); or a suspected structure (dates, lanes, plates) the metadata does not name.",
         ),
     covariates: z
-        .array(z.string().min(1))
+        .array(z.enum(["sex", "age", "clinical", "technical", "other"]))
         .optional()
-        .describe('Other sample covariates the design must hold, by column name, for example ["sex", "age"]. Omit when there are none.'),
+        .describe(
+            'The role of each other sample covariate the design must hold, one entry per covariate and never a column name, for example ["sex", "age"]: `clinical` for a stage, a grade, or a diagnosis; `technical` for a variable that is not the batch, for example the RNA integrity. Omit when there are none. The column names stay in the step.',
+        ),
     n_timepoints: z.number().int().min(1).nullable().optional().describe("The number of time points when the design is a time course. Omit otherwise."),
     continuous_predictor: z
-        .string()
-        .min(1)
+        .enum(["dose", "time", "age", "score", "other"])
         .nullable()
         .optional()
         .describe(
-            "The name of the numeric column of interest, for example `dose` or `age`, when the research question is a trend over that value and not a comparison of groups. Then set `n_groups` to 1 and the per-group counts to the number of samples. Omit when the variable of interest is a factor.",
+            "The role of the numeric variable of interest, never its column name, when the research question is a trend over that value and not a comparison of groups: `dose`, `time`, `age`, `score`, or `other`. Then set `n_groups` to 1 and the per-group counts to the number of samples. Omit when the variable of interest is a factor. The column name stays in the step.",
         ),
     technical_replicates: z
         .boolean()

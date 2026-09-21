@@ -1,7 +1,16 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { makeToolContext } from "../__fixtures__/tool-context.js";
+import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
+import { stepWritePrefix } from "../../workspace/paths.js";
+import { createWorkspaceMutator } from "./mutator.js";
+import { scriptSha256 } from "./decision-record.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { createExecuteCommandTool } from "./execute-command.js";
@@ -71,6 +80,97 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
         },
     };
 }
+
+describe("execute_command and the decision record of a script", () => {
+    const ANALYSIS = "analysis-001";
+    let base: string;
+    beforeEach(async () => {
+        base = mkdtempSync(join(tmpdir(), "ec-record-"));
+        await mkdir(join(base, ANALYSIS, "runs", "run-abc", "step1", "scripts"), { recursive: true });
+        await mkdir(join(base, ANALYSIS, "runs", "run-abc", "step1", "output"), { recursive: true });
+    });
+    afterEach(() => {
+        rmSync(base, { recursive: true, force: true });
+    });
+
+    function stepDir(): string {
+        return join(base, ANALYSIS, "runs", "run-abc", "step1");
+    }
+
+    function buildTool() {
+        const workspaceRoot = join(base, ANALYSIS);
+        const workingDir = stepWritePrefix({ workspaceRoot, runId: "run-abc", stepId: "step1" });
+        const client = makeFakeClient();
+        const tool = createExecuteCommandTool({
+            sandboxClient: client,
+            sandbox: makeSandboxRef(),
+            workflowId: "wf1",
+            stepId: "step1",
+            nextFunctionId: () => "fn1",
+            deadlineMs: () => 9_999_999,
+            defaultCwd: DEFAULT_CWD,
+            workspaceFilesystem: createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) }),
+            mutator: createWorkspaceMutator({ workspaceRoot, analysisId: ANALYSIS, workingDir }),
+        });
+        return { tool, client };
+    }
+
+    async function record(): Promise<Record<string, unknown>> {
+        return JSON.parse(await readFile(join(stepDir(), "output", "decision_record_de.json"), "utf8"));
+    }
+
+    it("notes a script that changed since its record before the command runs, and leaves an unchanged one alone", async () => {
+        const written = "ALPHA <- 0.05\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), written);
+        await writeFile(join(stepDir(), "output", "decision_record_de.json"), JSON.stringify({ written_sha256: scriptSha256(written), unvetted_edits: [] }));
+        const { tool, client } = buildTool();
+        const { ctx } = makeToolContext();
+
+        // Unchanged: the record stays as it is.
+        await tool.execute({ command: ["Rscript", "scripts/de.R"] }, ctx);
+        expect((await record()).unvetted_edits).toEqual([]);
+        expect(client.submits).toHaveLength(1);
+
+        // Changed by a path no file tool recorded: the note lands before the run, with the digest of the bytes that run.
+        const changed = "ALPHA <- 0.5\n";
+        await writeFile(join(stepDir(), "scripts", "de.R"), changed);
+        await tool.execute({ command: ["Rscript", "scripts/de.R", "--verbose"] }, ctx);
+        const noted = await record();
+        expect(noted.unvetted_edits).toEqual([
+            { path: `${DEFAULT_CWD}/scripts/de.R`, note: "the script changed by a path no file tool recorded, before it ran", sha256: scriptSha256(changed) },
+        ]);
+        expect(client.submits).toHaveLength(2);
+
+        // A second run of the same bytes notes nothing more: the last note is the expected digest now.
+        await tool.execute({ command: ["Rscript", `${DEFAULT_CWD}/scripts/de.R`] }, ctx);
+        expect(((await record()).unvetted_edits as unknown[]).length).toBe(1);
+    });
+
+    it("runs a script of another step whose record it cannot write, and leaves that record as it is", async () => {
+        const other = join(base, ANALYSIS, "runs", "run-abc", "step0");
+        await mkdir(join(other, "scripts"), { recursive: true });
+        await mkdir(join(other, "output"), { recursive: true });
+        await writeFile(join(other, "scripts", "de.R"), "ALPHA <- 1\n");
+        await writeFile(join(other, "output", "decision_record_de.json"), JSON.stringify({ written_sha256: "sha256:old", unvetted_edits: [] }));
+        const { tool, client } = buildTool();
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ command: ["Rscript", `/${ANALYSIS}/runs/run-abc/step0/scripts/de.R`] }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("ok");
+        expect(client.submits).toHaveLength(1);
+        // The record of another step is outside the writable prefix: the mutator refused the note, and the record is untouched.
+        expect(JSON.parse(await readFile(join(other, "output", "decision_record_de.json"), "utf8")).unvetted_edits).toEqual([]);
+    });
+
+    it("runs a script without a record, and a command without a script, with no record read", async () => {
+        await writeFile(join(stepDir(), "scripts", "own.R"), "x <- 1\n");
+        const { tool, client } = buildTool();
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ command: ["Rscript", "scripts/own.R"] }, ctx))._unsafeUnwrap();
+        expect(out.status).toBe("ok");
+        await tool.execute({ command: ["ls", "-la"] }, ctx);
+        expect(client.submits).toHaveLength(2);
+    });
+});
 
 describe("execute_command tool", () => {
     it("calls submitExec then awaitExec exactly once with one stable execId", async () => {

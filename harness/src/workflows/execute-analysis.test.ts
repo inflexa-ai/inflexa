@@ -45,7 +45,7 @@ import { __resetWorkflowMetricsForTest } from "./metrics.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { KnowledgeClient } from "../tools/knowledge/client.js";
-import { fakeKnowledgeClient } from "../tools/knowledge/__fixtures__/fake-client.js";
+import { contractAnswer, fakeKnowledgeClient } from "../tools/knowledge/__fixtures__/fake-client.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 import { captureMetrics } from "../__tests__/setup/metrics.js";
 
@@ -1787,6 +1787,13 @@ describe("executeAnalysis child input projection", () => {
             template: "tpl-deseq2-two-group@1.0.0",
             slots: { lfc_shrink: "apeglm" },
             sources: { lfc_shrink: "doi:10.1093/bioinformatics/bty895" },
+            step: "B",
+            claims: ["R-0001@e7d0"],
+            snapshot: "sha256:71ac",
+            local: contractAnswer().parameters.filter((slot) => slot.local === true),
+            adaptable: contractAnswer()
+                .parameters.filter((slot) => slot.adaptable)
+                .map((slot) => slot.name),
         });
         expect(childB.prompt).toContain("## Template contract");
         expect(dbosState.childInputs.find((i) => i.stepId === "A")!.templateBinding).toBeUndefined();

@@ -17,7 +17,8 @@
 import { ok, type Result } from "neverthrow";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import type { KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable, RecommendResponse } from "./client.js";
+import type { KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable, RecommendResponse } from "./client.js";
+import type { SnapshotPin } from "./pin.js";
 import { joinEnvironment, type EnvironmentPaths, type RecommendWithEnvironment } from "./environment.js";
 import { SITUATION_EXAMPLE, SituationFieldsSchema, toPreferences, toSituation } from "./situation.js";
 import { buildPlanSkeleton, type SkeletonStep } from "./skeleton.js";
@@ -30,6 +31,12 @@ export interface KnowledgeRecommendDeps extends EnvironmentPaths {
      * model dropped when it copied a skeleton step.
      */
     readonly onAnswer?: (answer: KnowledgeRecommendAnswer) => void;
+    /**
+     * The release of the plan. The first answer sets it, and each later call
+     * of this tool and of `knowledge_check` sends it, thus a service that moved
+     * to another release between two calls refuses instead of mixing releases.
+     */
+    readonly pin?: SnapshotPin;
 }
 
 /**
@@ -54,7 +61,7 @@ export interface KnowledgeRecommendAnswer {
     readonly reason?: string;
 }
 
-export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected;
+export type KnowledgeRecommendOutput = KnowledgeRecommendAnswer | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -123,8 +130,9 @@ export function createKnowledgeRecommendTool(deps: KnowledgeRecommendDeps) {
         describeResult: (_input, result: KnowledgeRecommendOutput) =>
             result.match === "applicable" ? `${result.plan_skeleton.length} steps, ${result.claims.length} claims` : result.match,
         execute: async (input): Promise<Result<KnowledgeRecommendOutput, ToolError>> => {
-            const answer = await deps.client.recommend(toSituation(input), "concise", toPreferences(input));
-            if (answer.match === "unavailable" || answer.match === "rejected") return ok(answer);
+            const answer = await deps.client.recommend(toSituation(input), "concise", toPreferences(input), deps.pin?.get());
+            if (answer.match === "unavailable" || answer.match === "rejected" || answer.match === "snapshot_mismatch") return ok(answer);
+            deps.pin?.set(answer.snapshot.digest);
             const joined = await joinEnvironment(answer, {
                 ...(deps.farmLockFile ? { farmLockFile: deps.farmLockFile } : {}),
                 ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),

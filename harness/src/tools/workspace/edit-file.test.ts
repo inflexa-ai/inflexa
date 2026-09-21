@@ -80,6 +80,41 @@ describe("edit_file tool", () => {
         if (read.status === "ok") expect(read.content).toBe("hello harness");
     });
 
+    it("notes an edit of a rendered script on its decision record, with the digest after the change", async () => {
+        const stepDir = join(sessionsBasePath, ANALYSIS, "runs", RUN, STEP);
+        await mkdir(join(stepDir, "scripts"), { recursive: true });
+        await writeFile(join(stepDir, "scripts", "de.R"), "ALPHA <- 0.05  # [adaptable: alpha]\n");
+        await writeFile(
+            join(stepDir, "output", "decision_record_de.json"),
+            JSON.stringify({ template: { id: "tpl-x" }, written_sha256: "sha256:old", unvetted_edits: [] }),
+        );
+        const { tool } = buildTool();
+        const { ctx } = makeToolContext();
+
+        const out = (await tool.execute({ path: "scripts/de.R", old_string: "0.05", new_string: "0.1", replace_all: false }, ctx))._unsafeUnwrap();
+        expect(out).toMatchObject({ status: "ok", decision_record_noted: true });
+
+        const record = JSON.parse(await readHostFile(join(stepDir, "output", "decision_record_de.json"), "utf8"));
+        expect(record.written_sha256).toBe("sha256:old");
+        expect(record.unvetted_edits).toEqual([
+            { path: "scripts/de.R", note: "edit_file: 1 replacement(s)", sha256: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) },
+        ]);
+        const edited = await readHostFile(join(stepDir, "scripts", "de.R"), "utf8");
+        expect(edited).toBe("ALPHA <- 0.1  # [adaptable: alpha]\n");
+
+        // A file that is not a rendered script, and a script without a record, note nothing.
+        await seed("hello world");
+        const plain = (
+            await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`, old_string: "world", new_string: "there", replace_all: false }, ctx)
+        )._unsafeUnwrap();
+        expect(plain).toMatchObject({ status: "ok" });
+        expect("decision_record_noted" in plain).toBe(false);
+        await writeFile(join(stepDir, "scripts", "own.R"), "x <- 1\n");
+        const own = (await tool.execute({ path: "scripts/own.R", old_string: "1", new_string: "2", replace_all: false }, ctx))._unsafeUnwrap();
+        expect(own).toMatchObject({ status: "ok" });
+        expect("decision_record_noted" in own).toBe(false);
+    });
+
     it("rejects edits under the read-only inputs tree as out_of_prefix and lands nothing", async () => {
         const { tool } = buildTool();
         const { ctx } = makeToolContext();

@@ -24,8 +24,10 @@ const SITUATION: KnowledgeSituation = {
     batch: "none",
 };
 
-/** The requests the stub served, for the assertions on the route and the method. */
-const served: { method: string; pathname: string }[] = [];
+/** The requests the stub served, for the assertions on the route, the method, and the body. */
+const served: { method: string; pathname: string; body?: Record<string, unknown> }[] = [];
+
+const OTHER_DIGEST = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
 /** A stub of the service: one route per behavior the client must classify. */
 function stubService() {
@@ -34,8 +36,16 @@ function stubService() {
         hostname: "127.0.0.1",
         async fetch(request) {
             const url = new URL(request.url);
-            served.push({ method: request.method, pathname: url.pathname });
+            const body = request.method === "POST" ? ((await request.clone().json()) as Record<string, unknown>) : undefined;
+            served.push({ method: request.method, pathname: url.pathname, ...(body ? { body } : {}) });
             if (request.headers.get("authorization") !== "Bearer secret") return Response.json({ error: "unauthorized" }, { status: 401 });
+            // A pin on another release refuses every operation with the served digest, before any work.
+            if (body?.expected_snapshot === OTHER_DIGEST) {
+                return Response.json(
+                    { error: "snapshot_mismatch", message: "the service serves another snapshot", expected: OTHER_DIGEST, served: SNAPSHOT },
+                    { status: 409 },
+                );
+            }
             const templateMatch = url.pathname.match(/^\/v1\/templates\/(.+)$/);
             if (request.method === "GET" && templateMatch) {
                 const id = decodeURIComponent(templateMatch[1]!);
@@ -125,6 +135,40 @@ describe("createHttpKnowledgeClient", () => {
         expect(answer.template.language).toBe("python");
     });
 
+    it("sends the pin of the plan on each operation, and classifies a 409 as a snapshot mismatch with the served digest", async () => {
+        const pinned = await client().recommend(SITUATION, "concise", undefined, SNAPSHOT.digest);
+        expect(pinned.match).toBe("applicable");
+        expect(served.at(-1)?.body?.expected_snapshot).toBe(SNAPSHOT.digest);
+        const check = await client().check(SITUATION, [{ step_type: "differential_expression", method: "DESeq2 Wald" }], SNAPSHOT.digest);
+        expect("ok" in check).toBe(true);
+        expect(served.at(-1)?.body?.expected_snapshot).toBe(SNAPSHOT.digest);
+
+        const mismatch = await client().render("tpl-deseq2-two-group", {}, undefined, { expectedSnapshot: OTHER_DIGEST });
+        expect(mismatch).toEqual({ match: "snapshot_mismatch", message: "the service serves another snapshot", expected: OTHER_DIGEST, served: SNAPSHOT });
+        const checkMismatch = await client().check(SITUATION, [{ step_type: "differential_expression", method: "DESeq2 Wald" }], OTHER_DIGEST);
+        expect(checkMismatch.match).toBe("snapshot_mismatch");
+        const recommendMismatch = await client().recommend(SITUATION, undefined, undefined, OTHER_DIGEST);
+        expect(recommendMismatch.match).toBe("snapshot_mismatch");
+    });
+
+    it("sends the step and the claims of a render, and parses the local slots of the answer and of the contract", async () => {
+        const answer = await client().render("tpl-decoupler-scores@1.0.0", { lfc_shrink: "ashr" }, undefined, { step: "T1S2", claims: ["R-0001@e7d0"] });
+        expect(served.at(-1)?.body).toMatchObject({
+            template: "tpl-decoupler-scores@1.0.0",
+            slots: { lfc_shrink: "ashr" },
+            step: "T1S2",
+            claims: ["R-0001@e7d0"],
+        });
+        expect(served.at(-1)?.body?.expected_snapshot).toBeUndefined();
+        if (!("ok" in answer)) throw new Error("expected a render");
+        expect(answer.local_slots).toEqual(["counts_path"]);
+        expect(answer.slots[0]).toMatchObject({ name: "counts_path", source: "local" });
+        const contract = await client().contract("tpl-deseq2-two-group");
+        if ("match" in contract && typeof contract.match === "string") throw new Error("expected a contract");
+        expect(contract.parameters.find((slot) => slot.name === "counts_path")?.local).toBe(true);
+        expect(contract.parameters.find((slot) => slot.name === "lfc_shrink")?.local).toBeUndefined();
+    });
+
     it("classifies a 400 as rejected with the field and the permitted values", async () => {
         const answer = await client().recommend({ ...SITUATION, n_groups: 99 });
         expect(answer).toEqual({ match: "rejected", message: "bad field", issues: [{ field: "n_groups", message: "too many", permitted: ["2"] }] });
@@ -158,6 +202,7 @@ describe("createHttpKnowledgeClient", () => {
             "min_samples",
             "alpha",
             "lfc_shrink",
+            "covariates",
         ]);
         expect(answer.parameters.find((slot) => slot.name === "alpha")).toMatchObject({ adaptable: false, default: 0.05 });
         expect(answer.parameters.find((slot) => slot.name === "lfc_shrink")?.enum).toEqual(["apeglm", "ashr", "none"]);

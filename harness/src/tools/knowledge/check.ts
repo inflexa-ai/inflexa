@@ -11,14 +11,17 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeUnavailable } from "./client.js";
+import type { CheckResponse, KnowledgeClient, KnowledgeRejected, KnowledgeSnapshotMismatch, KnowledgeUnavailable } from "./client.js";
+import type { SnapshotPin } from "./pin.js";
 import { SituationFieldsSchema, toSituation } from "./situation.js";
 
 export interface KnowledgeCheckDeps {
     readonly client: KnowledgeClient;
+    /** The release the plan pinned on its first recommend answer. The check sends it, thus another release refuses the call. */
+    readonly pin?: SnapshotPin;
 }
 
-export type KnowledgeCheckOutput = CheckResponse | KnowledgeUnavailable | KnowledgeRejected;
+export type KnowledgeCheckOutput = CheckResponse | KnowledgeUnavailable | KnowledgeRejected | KnowledgeSnapshotMismatch;
 
 /** The checks one plan generation may run. Two is a draft and one revision; the third is slack. */
 export const CHECK_CALL_LIMIT = 3;
@@ -84,7 +87,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
             "The answer lists `violations` (a forbidden method, or an inferential test on a design that a flag limits) and `warnings` (a method outside the set the rules name, a parameter that differs from a sourced default, or a required parameter that the step does not state), each with the rule id and the permitted alternatives. " +
             "Revise a violated step once, then submit. A warning is advice: keep the step when the data gives a reason, and state the reason in the step. `ok: true` means no finding on the assessed steps. " +
             "`not_assessed` lists the steps that no rule covers; the check neither passed nor failed them, so submit them as drafted. " +
-            "`match: unavailable` means the service did not answer; submit the draft as it is. " +
+            "`match: unavailable` means the service did not answer, and `match: snapshot_mismatch` means the service moved to another release than the one your recommend answer came from; in both cases submit the draft as it is. " +
             `The host accepts ${CHECK_CALL_LIMIT} checks per plan; after that the tool refuses and you submit with the findings you have.`,
         inputSchema: SituationFieldsSchema.extend({
             steps: z.array(DraftedStepSchema).min(1).describe("The drafted method steps, one entry per step type."),
@@ -101,7 +104,7 @@ export function createKnowledgeCheckTool(deps: KnowledgeCheckDeps) {
                 });
             }
             const { steps, ...fields } = input;
-            const answer = await deps.client.check(toSituation(fields), steps);
+            const answer = await deps.client.check(toSituation(fields), steps, deps.pin?.get());
             return ok(answer);
         },
     });
