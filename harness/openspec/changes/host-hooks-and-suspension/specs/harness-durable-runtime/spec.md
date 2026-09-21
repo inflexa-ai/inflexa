@@ -206,8 +206,9 @@ The harness MUST throw an exception only at these places:
 `unwrapOrThrow` MUST be the one bridge from a `Result` to a throw. A failure that must fail a step MUST cross the
 DBOS boundary as a throw, as the workspace-root-resolution spec also states. Then DBOS records the step as failed.
 
-The harness MUST catch an exception only at an API boundary, at a client boundary, or at the dispatch catch of the
-loop. An API boundary is an entry point
+The harness MUST catch an exception only at a DBOS boundary, an API boundary, a client boundary, or the dispatch
+catch of the loop. A DBOS boundary is a workflow body that gets the throw of a failed step or a failed child workflow.
+Then the body runs its failure path. An API boundary is an entry point
 where a caller outside the harness gets the outcome of a call. A client boundary is a thin wrapper around a call to
 code outside the harness, for example the `pg` driver or a third-party SDK. The wrapper changes the throw into an
 `err`.
