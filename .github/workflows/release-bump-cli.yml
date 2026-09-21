@@ -1,0 +1,43 @@
+name: "Release: cli"
+
+# Releases the inflexa binaries on their own, with no pull request. Pick a
+# version, and release-bump.yml pushes the bump to main as the release bot and
+# blocks until release.yml has published the GitHub release.
+#
+# This ships whatever @inflexa-ai/harness and @inflexa-ai/prov-kernel pins
+# cli/package.json already carries on main. A caret on a 0.x range never crosses
+# the minor, so a harness that was published without a matching pin bump is NOT
+# in this binary. To move a pin and ship it in one run, use "Release: all".
+#
+# The version field is typed, not picked from a list: workflow_dispatch resolves
+# an input default at parse time, so no default can carry the version that is
+# live right now. An empty field therefore means "do nothing", and the run
+# summary reports what main actually carries.
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "cli target version, bare MAJOR.MINOR.PATCH. Current: the version field of cli/package.json on main. Empty does nothing."
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+# One release at a time across all four dispatchable workflows. Two runs pushing
+# bumps to main at once would cancel each other's checks on main, and the
+# release gates that wait on those checks would then fail.
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
+jobs:
+  cli:
+    uses: ./.github/workflows/release-bump.yml
+    permissions:
+      contents: read
+      actions: write
+    secrets: inherit
+    with:
+      component: cli
+      version: ${{ inputs.cli_version }}

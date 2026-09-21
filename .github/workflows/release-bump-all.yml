@@ -1,0 +1,95 @@
+name: "Release: all"
+
+# The full release, with no pull request. Give a target version for each
+# component you want to ship, and the run walks them in dependency order:
+# prov-kernel, then harness, then cli. Each step pushes its bump to main as the
+# release bot and blocks until the package is on npm (or, for the cli, until the
+# GitHub release is live), so the next step only ever builds against something
+# that is really published.
+#
+# Leave a field empty to leave that component alone. Releasing only the cli is a
+# valid run, and so is releasing only the harness — the jobs below skip on an
+# empty version rather than failing, and a skipped step never blocks the next.
+#
+# A version field is typed, not picked from a list: workflow_dispatch resolves
+# an input default at parse time, so no default can carry the version that is
+# live right now. The run summary reports what main actually carries for each
+# component, and a version below main's is a hard error, never a silent no-op.
+on:
+  workflow_dispatch:
+    inputs:
+      prov_kernel_version:
+        description: "prov-kernel target version, bare MAJOR.MINOR.PATCH. Current: the version field of prov-kernel/package.json on main. Empty skips it."
+        required: false
+        default: ""
+        type: string
+      harness_version:
+        description: "harness target version, bare MAJOR.MINOR.PATCH. Current: the version field of harness/package.json on main. Empty skips it."
+        required: false
+        default: ""
+        type: string
+      cli_version:
+        description: "cli target version, bare MAJOR.MINOR.PATCH. Current: the version field of cli/package.json on main. Empty skips it."
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+# One release at a time across all four dispatchable workflows. Two runs pushing
+# bumps to main at once would cancel each other's checks on main, and the
+# release gates that wait on those checks would then fail.
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
+jobs:
+  prov-kernel:
+    uses: ./.github/workflows/release-bump.yml
+    permissions:
+      contents: read
+      actions: write
+    secrets: inherit
+    with:
+      component: prov-kernel
+      version: ${{ inputs.prov_kernel_version }}
+
+  harness:
+    # The harness does not depend on prov-kernel: harness/package.json names no
+    # @inflexa-ai/prov-kernel. This ordering is a serialization, not a
+    # dependency. test.yml and lint.yml cancel in-progress runs per ref, so a
+    # second bump commit landing on main while the first commit's checks are
+    # still running cancels them — and the release workflow that waits on those
+    # checks then refuses to ship. One bump on main at a time is what keeps
+    # every release gate satisfiable.
+    needs: [prov-kernel]
+    # An empty version skips a job, and a skipped step must not stop the run.
+    if: ${{ !cancelled() && needs.prov-kernel.result != 'failure' }}
+    uses: ./.github/workflows/release-bump.yml
+    permissions:
+      contents: read
+      actions: write
+    secrets: inherit
+    with:
+      component: harness
+      version: ${{ inputs.harness_version }}
+
+  cli:
+    # A real dependency this time: cli installs both siblings from npm, and
+    # release.yml installs them with a frozen lockfile. Both must be on the
+    # registry before the pins below can resolve.
+    needs: [prov-kernel, harness]
+    if: ${{ !cancelled() && needs.prov-kernel.result != 'failure' && needs.harness.result != 'failure' }}
+    uses: ./.github/workflows/release-bump.yml
+    permissions:
+      contents: read
+      actions: write
+    secrets: inherit
+    with:
+      component: cli
+      version: ${{ inputs.cli_version }}
+      # The versions this run just shipped, so the binary bundles them. Each is
+      # empty when its component is not part of the run, and an empty pin leaves
+      # the existing one in cli/package.json untouched.
+      harness_pin: ${{ inputs.harness_version }}
+      prov_kernel_pin: ${{ inputs.prov_kernel_version }}

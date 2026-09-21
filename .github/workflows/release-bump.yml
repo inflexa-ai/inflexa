@@ -1,0 +1,386 @@
+name: Release Bump
+
+# The engine behind the four dispatchable release workflows. It takes one
+# component and one target version, writes the version bump to main as the
+# release bot, and blocks until the existing release workflow for that component
+# has actually published.
+#
+# Why a bot commit instead of a pull request: release-prep.yml opens a bump PR
+# and a human merges it, which is correct but slow — the release waits on a
+# review round-trip before anything ships. This path pushes the same one-line
+# bump straight to main through the GitHub App that already bypasses the main
+# ruleset (citation-sync.yml pushes the same way, for the same reason), so a
+# release starts the moment the operator clicks Run workflow.
+#
+# Nothing here weakens the release gate. The bump commit runs main's test and
+# lint like any other commit, and release.yml, release-harness.yml, and
+# release-prov-kernel.yml each refuse to ship until that commit's own checks
+# report success. Only the human round-trip is removed.
+#
+# This workflow publishes nothing itself. It moves a version field, and the
+# existing per-component release workflow reacts to that push exactly as it does
+# to a merged bump PR. That keeps npm trusted publishing bound to the workflow
+# filenames npmjs.com already trusts — renaming or replacing those files would
+# break the binding, so they stay untouched.
+on:
+  workflow_call:
+    inputs:
+      component:
+        description: cli, harness, or prov-kernel
+        required: true
+        type: string
+      version:
+        description: Target version, or empty to leave this component alone
+        required: true
+        type: string
+      harness_pin:
+        description: >-
+          Point cli's @inflexa-ai/harness dependency at this version before the
+          bump. Read only when component is cli. Empty leaves the pin alone.
+        required: false
+        default: ""
+        type: string
+      prov_kernel_pin:
+        description: >-
+          Point cli's @inflexa-ai/prov-kernel dependency at this version before
+          the bump. Read only when component is cli. Empty leaves the pin alone.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    # An empty version is how a caller says "this component is not part of the
+    # run". The four dispatchable workflows pass their input through unchanged,
+    # so the skip decision lives here once instead of in each of them.
+    if: inputs.version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gh run list reads the release run this job triggers; gh workflow run
+      # dispatches it on the heal path below.
+      actions: write
+    steps:
+      - name: Resolve the component
+        id: c
+        env:
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          # One table, read by every step below: where the manifest lives, which
+          # existing workflow reacts to the bump, and what "published" means for
+          # this component. Each deadline covers that workflow's own 30-minute
+          # wait for the commit's checks, plus its build and publish.
+          case "$COMPONENT" in
+            cli)
+              # The cli ships binaries and a GitHub release. @inflexa-ai/inflexa
+              # reaches npm afterwards, through the release-npm.yml run that
+              # release.yml dispatches, and that dispatch is deliberately
+              # decoupled so a channel failure never taints the release. So the
+              # GitHub release, not the npm package, is the signal here — an
+              # empty package name selects it.
+              {
+                echo "dir=cli"
+                echo "workflow=release.yml"
+                echo "package="
+                echo "deadline_minutes=90"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            harness)
+              {
+                echo "dir=harness"
+                echo "workflow=release-harness.yml"
+                echo "package=@inflexa-ai/harness"
+                echo "deadline_minutes=60"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            prov-kernel)
+              {
+                echo "dir=prov-kernel"
+                echo "workflow=release-prov-kernel.yml"
+                echo "package=@inflexa-ai/prov-kernel"
+                echo "deadline_minutes=60"
+              } >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::unknown component '$COMPONENT' (expected cli, harness, or prov-kernel)"
+              exit 1
+              ;;
+          esac
+
+      # The same org-owned app citation-sync.yml and homebrew.yml use. It is a
+      # bypass actor on the main ruleset, which the default GITHUB_TOKEN cannot
+      # be: main requires status checks, a directly-pushed commit has none, and
+      # GitHub Actions cannot be a bypass actor without a dedicated app.
+      - name: Mint a repo-scoped token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: inflexa-ai
+          repositories: inflexa
+
+      # ref: main, not the dispatching ref — a release always ships main's tip,
+      # and the push below targets main regardless of where the run started.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Plan the release
+        id: plan
+        env:
+          COMPONENT: ${{ inputs.component }}
+          DIR: ${{ steps.c.outputs.dir }}
+          PACKAGE: ${{ steps.c.outputs.package }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Strict MAJOR.MINOR.PATCH, with no prerelease and no build metadata.
+          # Every version this repo has shipped has that shape, and holding the
+          # pattern there is what lets the comparison below be a plain numeric
+          # compare instead of a semver precedence implementation. A prerelease
+          # still releases through Release Prep and a bump pull request.
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$VERSION' is not a bare MAJOR.MINOR.PATCH version. A prerelease or a build-metadata version goes through Release Prep and a bump pull request."
+            exit 1
+          fi
+
+          current=$(jq -r .version "$DIR/package.json")
+          if [ -z "$current" ] || [ "$current" = "null" ]; then
+            echo "::error::$DIR/package.json has no version field"
+            exit 1
+          fi
+
+          # Field-by-field numeric compare of the target against main. The
+          # pattern above rejects a leading zero, so every field is a plain
+          # decimal integer and no base prefix can creep in.
+          IFS=. read -r want_major want_minor want_patch <<<"$VERSION"
+          IFS=. read -r have_major have_minor have_patch <<<"$current"
+          cmp=eq
+          for pair in "$want_major:$have_major" "$want_minor:$have_minor" "$want_patch:$have_patch"; do
+            if [ "${pair%%:*}" -lt "${pair##*:}" ]; then cmp=lt; break; fi
+            if [ "${pair%%:*}" -gt "${pair##*:}" ]; then cmp=gt; break; fi
+          done
+
+          if [ "$cmp" = lt ]; then
+            echo "::error::$COMPONENT is at $current on main and this run asked for $VERSION. A release never moves a version backwards. The current version is the version field of $DIR/package.json on main."
+            exit 1
+          fi
+
+          if [ -n "$PACKAGE" ]; then
+            published=$(npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1 && echo true || echo false)
+          else
+            # A draft release carries no tag and can be a half-uploaded
+            # straggler that release.yml deletes on its next run, so only a
+            # live release counts as published.
+            draft=$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)
+            published=$([ "$draft" = "false" ] && echo true || echo false)
+          fi
+
+          if [ "$published" = true ]; then
+            action=done
+          elif [ "$cmp" = gt ]; then
+            action=bump
+          else
+            # main already carries the target version but it never shipped — an
+            # earlier attempt died between the push and the publish. Re-running
+            # the existing release workflow heals that without a second commit:
+            # all three gate on the registry (or on tag existence) themselves,
+            # so a re-run is idempotent.
+            action=dispatch
+          fi
+
+          # The wait step matches release runs by creation time rather than by
+          # head sha, because a rebase before the push can move the sha out from
+          # under it. One minute of slack absorbs any clock skew between this
+          # runner and the timestamps GitHub stamps on a run.
+          {
+            echo "action=$action"
+            echo "current=$current"
+            echo "since=$(date -u -d '60 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### $COMPONENT"
+            echo
+            echo "| on main | requested | action |"
+            echo "| --- | --- | --- |"
+            echo "| $current | $VERSION | $action |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Only the cli commit regenerates a lockfile; the other two move a version
+      # field that no lockfile tracks.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.plan.outputs.action == 'bump' && inputs.component == 'cli'
+        with:
+          bun-version-file: .bun-version
+
+      - name: Bump the version and push to main
+        if: steps.plan.outputs.action == 'bump'
+        env:
+          COMPONENT: ${{ inputs.component }}
+          DIR: ${{ steps.c.outputs.dir }}
+          VERSION: ${{ inputs.version }}
+          HARNESS_PIN: ${{ inputs.harness_pin }}
+          PROV_KERNEL_PIN: ${{ inputs.prov_kernel_pin }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          paths=("$DIR/package.json")
+          body=""
+
+          if [ "$COMPONENT" = cli ]; then
+            # cli installs its siblings from npm, and a caret on a 0.x range
+            # never crosses the minor — so a harness release that this run just
+            # published is invisible to the cli until the pin moves with it.
+            # An empty pin means the caller is not releasing that sibling, and
+            # the existing pin stands.
+            for entry in "@inflexa-ai/harness:$HARNESS_PIN" "@inflexa-ai/prov-kernel:$PROV_KERNEL_PIN"; do
+              name=${entry%:*}
+              pin=${entry##*:}
+              [ -n "$pin" ] || continue
+              # Keep whatever range operator the manifest already carries. A
+              # switch between a caret and an exact pin is a dependency policy
+              # decision, and it does not belong in a release step. npm pkg
+              # splits its key path on dots, and neither package name has one.
+              spec=$(jq -r --arg n "$name" '.dependencies[$n] // ""' cli/package.json)
+              if [ -z "$spec" ]; then
+                echo "::error::cli/package.json has no $name dependency, so there is no pin to move."
+                exit 1
+              fi
+              (cd cli && npm pkg set "dependencies.$name=${spec%%[0-9]*}$pin")
+              body="$body The cli now uses $name $pin."
+            done
+          fi
+
+          # npm version rewrites the version field in place and preserves the
+          # file's indentation.
+          (cd "$DIR" && npm version "$VERSION" --no-git-tag-version)
+
+          if [ -n "$body" ]; then
+            # release.yml installs cli with --frozen-lockfile, so a pin the
+            # lockfile does not know about fails the release right at the
+            # install. bun re-resolves only the specs the manifest changed and
+            # leaves every still-satisfied entry on its locked version, so this
+            # does not smuggle unrelated upgrades into a release commit — the
+            # diffstat below makes a surprise visible in the log. A cli release
+            # that moves no pin needs no install, and touching the lockfile
+            # there would be pure churn.
+            (cd cli && bun install)
+            paths+=(cli/bun.lock)
+          fi
+
+          if [ "$COMPONENT" = cli ]; then
+            # Same commit as the bump, so the tag release.yml cuts already
+            # carries matching citation metadata and citation-sync.yml finds
+            # nothing to push. A second commit from that workflow would restart
+            # CI on main and cancel the very checks the release gate waits on.
+            .github/citation/sync.sh
+            paths+=(CITATION.cff)
+          fi
+
+          git --no-pager diff --stat -- "${paths[@]}"
+
+          # Attribute the commit to the app's bot user; the numeric id in the
+          # noreply address is what makes GitHub link the bot identity. -s keeps
+          # the Signed-off-by trailer matching the author, as every commit in
+          # this repo carries, so dco.yml needs no bot allowlist.
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add "${paths[@]}"
+
+          # No [skip ci] marker here, unlike citation-sync.yml's push: the
+          # release workflow for this component refuses to ship until THIS
+          # commit's own test and lint runs report success. Suppressing CI would
+          # strand the release until its check wait times out.
+          message="chore($COMPONENT): bump the version to $VERSION"
+          if [ -n "$body" ]; then
+            message="$message"$'\n\n'"The release of the cli installs from npm with a frozen lockfile.$body"
+          fi
+          git commit -s -m "$message"
+
+          # Absorb anything that landed on main since the checkout. A push that
+          # still loses the race fails the run, and the version stays unshipped,
+          # so a plain re-run of this workflow heals it.
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Re-run the release workflow for the version already on main
+        if: steps.plan.outputs.action == 'dispatch'
+        env:
+          WORKFLOW: ${{ steps.c.outputs.workflow }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run "$WORKFLOW" --ref main
+
+      - name: Wait for the release to publish
+        if: steps.plan.outputs.action != 'done'
+        env:
+          COMPONENT: ${{ inputs.component }}
+          PACKAGE: ${{ steps.c.outputs.package }}
+          VERSION: ${{ inputs.version }}
+          WORKFLOW: ${{ steps.c.outputs.workflow }}
+          DEADLINE_MINUTES: ${{ steps.c.outputs.deadline_minutes }}
+          SINCE: ${{ steps.plan.outputs.since }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published() {
+            if [ -n "$PACKAGE" ]; then
+              npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1
+            else
+              [ "$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)" = "false" ]
+            fi
+          }
+
+          deadline=$(( $(date +%s) + DEADLINE_MINUTES * 60 ))
+          # Once the release run reports success the artifact is either on the
+          # registry or it never will be. A short grace absorbs registry
+          # propagation; past that, more polling would only burn the deadline on
+          # a run that has already finished.
+          grace=6
+
+          while :; do
+            if published; then
+              echo "$COMPONENT $VERSION is published"
+              break
+            fi
+
+            # A transient API failure reads the same as "no run reported yet" —
+            # poll again rather than kill a release that is in flight, with the
+            # deadline below as the backstop against a real outage.
+            if ! runs=$(gh run list --workflow "$WORKFLOW" --branch main --limit 20 \
+              --json createdAt,status,conclusion,url); then
+              echo "::warning::the run list API call failed — still waiting"
+              runs="[]"
+            fi
+            run=$(jq -c --arg since "$SINCE" \
+              '[.[] | select(.createdAt >= $since)] | sort_by(.createdAt) | last // {}' <<<"$runs")
+            conclusion=$(jq -r '.conclusion // ""' <<<"$run")
+            url=$(jq -r '.url // "the Actions tab"' <<<"$run")
+
+            case "$conclusion" in
+              "") ;;
+              success)
+                grace=$((grace - 1))
+                if [ "$grace" -le 0 ]; then
+                  echo "::error::$WORKFLOW finished but $COMPONENT $VERSION is still not published — $url"
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "::error::$WORKFLOW concluded '$conclusion' — $url"
+                exit 1
+                ;;
+            esac
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::timed out after $DEADLINE_MINUTES minutes waiting for $COMPONENT $VERSION — $url"
+              exit 1
+            fi
+            echo "waiting for $COMPONENT $VERSION..."
+            sleep 30
+          done

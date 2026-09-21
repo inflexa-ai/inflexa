@@ -1,0 +1,38 @@
+name: "Release: prov-kernel"
+
+# Releases @inflexa-ai/prov-kernel on its own, with no pull request. Pick a
+# version, and release-bump.yml pushes the bump to main as the release bot and
+# blocks until release-prov-kernel.yml has the version on npm.
+#
+# The version field is typed, not picked from a list: workflow_dispatch resolves
+# an input default at parse time, so no default can carry the version that is
+# live right now. An empty field therefore means "do nothing", and the run
+# summary reports what main actually carries.
+on:
+  workflow_dispatch:
+    inputs:
+      prov_kernel_version:
+        description: "prov-kernel target version, bare MAJOR.MINOR.PATCH. Current: the version field of prov-kernel/package.json on main. Empty does nothing."
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+# One release at a time across all four dispatchable workflows. Two runs pushing
+# bumps to main at once would cancel each other's checks on main, and the
+# release gates that wait on those checks would then fail.
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
+jobs:
+  prov-kernel:
+    uses: ./.github/workflows/release-bump.yml
+    permissions:
+      contents: read
+      actions: write
+    secrets: inherit
+    with:
+      component: prov-kernel
+      version: ${{ inputs.prov_kernel_version }}

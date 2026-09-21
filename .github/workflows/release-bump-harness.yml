@@ -1,0 +1,41 @@
+name: "Release: harness"
+
+# Releases @inflexa-ai/harness on its own, with no pull request. Pick a version,
+# and release-bump.yml pushes the bump to main as the release bot and blocks
+# until release-harness.yml has the version on npm.
+#
+# This does not move cli's @inflexa-ai/harness pin. A cli that ships the harness
+# released here is a two-component release, which is what "Release: all" does.
+#
+# The version field is typed, not picked from a list: workflow_dispatch resolves
+# an input default at parse time, so no default can carry the version that is
+# live right now. An empty field therefore means "do nothing", and the run
+# summary reports what main actually carries.
+on:
+  workflow_dispatch:
+    inputs:
+      harness_version:
+        description: "harness target version, bare MAJOR.MINOR.PATCH. Current: the version field of harness/package.json on main. Empty does nothing."
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+# One release at a time across all four dispatchable workflows. Two runs pushing
+# bumps to main at once would cancel each other's checks on main, and the
+# release gates that wait on those checks would then fail.
+concurrency:
+  group: release-bump
+  cancel-in-progress: false
+
+jobs:
+  harness:
+    uses: ./.github/workflows/release-bump.yml
+    permissions:
+      contents: read
+      actions: write
+    secrets: inherit
+    with:
+      component: harness
+      version: ${{ inputs.harness_version }}
