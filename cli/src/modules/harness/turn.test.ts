@@ -137,6 +137,7 @@ function runWith(opts: {
     signal: AbortSignal;
     usageRecorder?: UsageRecorder;
     agents?: RunChatTurnArgs["agents"];
+    readAuthor?: ChatTurnSeams["readAuthor"];
 }): Promise<TurnOutcome> {
     return runChatTurn(
         {
@@ -154,7 +155,9 @@ function runWith(opts: {
             threadId: THREAD_ID,
             userInput: USER_INPUT,
         },
-        { prepare: opts.prepare, run: opts.run },
+        // The default is the signed-out branch, thus every case that predates the author keeps its
+        // meaning: an assertion on the whole append payload still sees no `author` key.
+        { prepare: opts.prepare, run: opts.run, readAuthor: opts.readAuthor ?? (() => null) },
     );
 }
 
@@ -616,5 +619,101 @@ describe("healTailOrphan", () => {
 
         expect((await healTailOrphan(pool, THREAD_ID, { history: () => history }))._unsafeUnwrap()).toEqual({ kind: "empty-thread" });
         expect(retracts()).toBe(0);
+    });
+});
+
+describe("the author of a chat turn", () => {
+    const AUTHOR = "ada@example.com";
+    const signal = (): AbortSignal => new AbortController().signal;
+
+    test("a signed-in identity rides onto the append", async () => {
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runOk, history, signal: signal(), readAuthor: () => AUTHOR });
+        expect(appended[0]?.turn.author).toBe(AUTHOR);
+    });
+
+    test("a signed-out identity carries NO author key — an absent sender is absent, never empty", async () => {
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runOk, history, signal: signal(), readAuthor: () => null });
+        // The turn MUST still have been persisted. Without this, the `in` check below reads an
+        // empty object and passes, thus an engine that made the append conditional on a present
+        // author — and so dropped every signed-out turn — would stay green.
+        expect(appended).toHaveLength(1);
+        // Key presence, not value: an `author: undefined` would typecheck and would reach the store
+        // as a field that a consumer's own `in` check reads as present.
+        expect("author" in (appended[0]?.turn ?? {})).toBe(false);
+    });
+
+    test("an interrupted turn keeps the author of its partial append", async () => {
+        const { history, appended } = recordingHistory();
+        const outcome = await runWith({
+            prepare: prepareOk,
+            run: runResolvesAbortedWithPartial,
+            history,
+            signal: signal(),
+            readAuthor: () => AUTHOR,
+        });
+        expect(outcome.kind).toBe("aborted");
+        expect(appended[0]?.turn.author).toBe(AUTHOR);
+    });
+
+    test("a turn whose loop threw still stamps the author onto the lone user message", async () => {
+        const { history, appended } = recordingHistory();
+        const outcome = await runWith({
+            prepare: prepareOk,
+            run: () => Promise.reject(new Error("runAgent exploded")),
+            history,
+            signal: signal(),
+            readAuthor: () => AUTHOR,
+        });
+        expect(outcome.kind).toBe("failed");
+        expect(appended[0]?.turn.modelMessages).toEqual([userMessage]);
+        expect(appended[0]?.turn.author).toBe(AUTHOR);
+    });
+
+    // The guard of the engine, and not of the identity read: a caller that hands back an empty name
+    // must not put a sender with no name into the store.
+    test("an empty email carries no author key", async () => {
+        const { history, appended } = recordingHistory();
+        await runWith({ prepare: prepareOk, run: runOk, history, signal: signal(), readAuthor: () => "" });
+        // The turn MUST still have been persisted. Without this, the `in` check below reads an
+        // empty object and passes, thus an engine that made the append conditional on a present
+        // author — and so dropped every turn with no author — would stay green.
+        expect(appended).toHaveLength(1);
+        expect("author" in (appended[0]?.turn ?? {})).toBe(false);
+    });
+
+    test("each turn reads the identity again, so a sign-in between two turns reaches the second", async () => {
+        const { history, appended } = recordingHistory();
+        const authors = ["first@example.com", "second@example.com"];
+        let call = 0;
+        // A read that one constant memoized, or that the engine hoisted out of the turn, would stamp
+        // the first email twice and fail here.
+        const readAuthor = (): string | null => authors[call++] ?? null;
+        await runWith({ prepare: prepareOk, run: runOk, history, signal: signal(), readAuthor });
+        await runWith({ prepare: prepareOk, run: runOk, history, signal: signal(), readAuthor });
+        expect(appended.map((a) => a.turn.author)).toEqual(authors);
+    });
+
+    test("a sign-out DURING the turn does not erase the author of that turn", async () => {
+        const { history, appended } = recordingHistory();
+        let signedIn = true;
+        // The identity drops while the turn is in flight. `prepare` is the earliest injected point
+        // after the read is meant to have happened, so flipping it here is what separates a read at
+        // the top of the turn from one at `prepare`, below it, or at the append.
+        const prepareThenSignOut: ChatTurnSeams["prepare"] = (deps, params) => {
+            signedIn = false;
+            return prepareOk(deps, params);
+        };
+        await runWith({
+            prepare: prepareThenSignOut,
+            run: runOk,
+            history,
+            signal: signal(),
+            readAuthor: () => (signedIn ? AUTHOR : null),
+        });
+        // The author is who SENT the message, thus the person who wrote it survives their own
+        // sign-out. An engine that read any later than the top of the turn stamps nothing here.
+        expect(appended[0]?.turn.author).toBe(AUTHOR);
     });
 });

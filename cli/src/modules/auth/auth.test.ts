@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import {
     audienceInvalidReason,
@@ -10,7 +12,8 @@ import {
     type AuthError,
     type StoredAuth,
 } from "./auth.ts";
-import { decodeIdTokenClaims } from "./whoami.ts";
+import { currentUserEmail, decodeIdTokenClaims } from "./whoami.ts";
+import { env } from "../../lib/env.ts";
 
 /** A JWT whose payload segment encodes `payloadJson`; header + signature are placeholders. */
 function jwtWithPayload(payloadJson: string): string {
@@ -198,5 +201,50 @@ describe("tokenWireToStoredAuth", () => {
             },
             (msg) => expect(msg).toContain("no refresh token"),
         );
+    });
+});
+
+describe("currentUserEmail", () => {
+    /** Put a session on disk where `loadAuth` reads it, inside the sandbox of the test preload. */
+    function writeStoredSession(auth: StoredAuth): void {
+        mkdirSync(dirname(env.authPath), { recursive: true });
+        writeFileSync(env.authPath, JSON.stringify(auth));
+    }
+
+    // The suite shares one process, thus a file that survives a failing case would make a later
+    // read of the identity see a session that the later case never asked for.
+    afterEach(() => rmSync(env.authPath, { force: true }));
+
+    test("gives null with no stored session", () => {
+        expect(currentUserEmail()).toBeNull();
+    });
+
+    test("gives the email claim of the stored token", () => {
+        writeStoredSession(storedAuth({ idToken: jwtWithPayload(JSON.stringify({ sub: "auth0|1", email: "ada@example.com" })) }));
+        expect(currentUserEmail()).toBe("ada@example.com");
+    });
+
+    test("gives null when the token carries no email claim", () => {
+        writeStoredSession(storedAuth({ idToken: jwtWithPayload(JSON.stringify({ sub: "auth0|1", name: "Ada" })) }));
+        expect(currentUserEmail()).toBeNull();
+    });
+
+    test("gives null when the token does not decode", () => {
+        writeStoredSession(storedAuth({ idToken: "no-dots-here" }));
+        expect(currentUserEmail()).toBeNull();
+    });
+
+    // An empty name identifies nobody, thus it must read as an absence and never as a sender.
+    test("gives null when the email claim is empty", () => {
+        writeStoredSession(storedAuth({ idToken: jwtWithPayload(JSON.stringify({ email: "" })) }));
+        expect(currentUserEmail()).toBeNull();
+    });
+
+    // One error channel carries each failure of `loadAuth`, thus this case covers the unreadable
+    // file and the refused schema together.
+    test("gives null when the schema refuses the stored file", () => {
+        mkdirSync(dirname(env.authPath), { recursive: true });
+        writeFileSync(env.authPath, "{ not json");
+        expect(currentUserEmail()).toBeNull();
     });
 });

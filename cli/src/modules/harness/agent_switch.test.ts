@@ -335,7 +335,8 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 threadId: "t-1",
                 userInput: "?",
             },
-            { prepare: prepareOk, run: streamingRun },
+            // No identity: this case is about the model switch, thus the turn stamps no author.
+            { prepare: prepareOk, run: streamingRun, readAuthor: () => null },
         );
 
         // The stream ran to completion — every chunk delivered, none dropped.

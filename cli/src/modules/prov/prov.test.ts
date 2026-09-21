@@ -1,5 +1,10 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Buffer } from "node:buffer";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { ProvDocument } from "@inflexa-ai/tsprov";
+
+import { env } from "../../lib/env.ts";
 
 import { freshDb } from "../../test_support/db.ts";
 import { db } from "../../db/primary.ts";
@@ -25,7 +30,7 @@ import type {
 import { applyProvEvent, computeChainHash, computePayloadDigest, verifyHexDigest, verifyProvenance, verifyPayload } from "@inflexa-ai/prov-kernel";
 import { provModel, provSubject, serializeProvenance } from "./document.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
-import { initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "./prov.ts";
+import { currentUserActor, initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "./prov.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
 
@@ -1290,5 +1295,36 @@ describe("resolveAnalysisForProv (ambiguity-aware analysis resolution)", () => {
     test("a unique name resolves with no ambiguity failure", () => {
         insertAnalysis(mkAnalysis("id-solo", "solo", "solo", 100))._unsafeUnwrap();
         expect(resolveAnalysisForProv("solo")._unsafeUnwrap().id).toBe("id-solo");
+    });
+});
+
+describe("currentUserActor", () => {
+    // The sandbox of the preload gives an empty XDG config dir, thus a case controls the whole
+    // identity read by writing (or not writing) this one file.
+    function writeStoredSession(claims: Record<string, unknown>): void {
+        const idToken = `header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.signature`;
+        mkdirSync(dirname(env.authPath), { recursive: true });
+        writeFileSync(
+            env.authPath,
+            JSON.stringify({
+                accessToken: "access",
+                refreshToken: "refresh",
+                idToken,
+                expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+            }),
+        );
+    }
+
+    // The suite shares one process, thus a file that survives a failing case would make a later
+    // read of the identity see a session that the later case never asked for.
+    afterEach(() => rmSync(env.authPath, { force: true }));
+
+    test("a stored session with an email gives the user actor keyed by that email", () => {
+        writeStoredSession({ sub: "auth0|1", email: "ada@example.com", name: "Ada" });
+        expect(currentUserActor()).toEqual({ kind: "user", id: "ada@example.com", email: "ada@example.com" });
+    });
+
+    test("no stored session gives the anonymous actor", () => {
+        expect(currentUserActor()).toEqual({ kind: "anonymous" });
     });
 });

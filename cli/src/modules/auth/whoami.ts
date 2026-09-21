@@ -38,6 +38,27 @@ function printIdentity(auth: StoredAuth): void {
 }
 
 /**
+ * The email of the signed-in identity, or `null` when the cli cannot name a person.
+ *
+ * The single answer to "who is the user" for the cli: the provenance recorder attributes a user
+ * action to this value, and the chat turn engine stamps it as the author of a message. One rule
+ * keeps a transcript and a provenance document on the same person.
+ *
+ * Absence rides the ok channel, because a signed-out cli is a normal condition and not a fault.
+ * Every failure of the read collapses to `null`: no stored session, an unreadable file, a file that
+ * the schema refuses, a token that does not decode, and a token with no email claim. An empty claim
+ * is `null` too, because an empty name identifies nobody.
+ */
+export function currentUserEmail(): string | null {
+    return loadAuth()
+        .map((auth) => decodeIdTokenClaims(auth.idToken)?.email)
+        .match(
+            (email) => email || null,
+            () => null,
+        );
+}
+
+/**
  * Local decode only: the token came straight from Auth0 over TLS at login, so
  * whoami trusts it without signature verification (that is the API server's
  * job) and without any network round-trip.
