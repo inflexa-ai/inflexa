@@ -319,6 +319,10 @@ export type { ProviderError } from "./providers/errors.js";
 // host. A map from the host replaces `DEFAULT_SUSPEND_ON`, which holds `402`.
 export { DEFAULT_SUSPEND_ON } from "./providers/errors.js";
 export type { SuspendOn } from "./providers/errors.js";
+// The suspension of work. A host reads the suspend reason of a failed chat turn
+// with `suspensionOfFailure`, by the kind of the error, never by its text.
+export { suspensionOfFailure } from "./workflows/suspension.js";
+export type { Suspension } from "./workflows/suspension.js";
 // `createStreamingChat` wraps a `ChatProvider` as a streaming `AgentChat` (the
 // type `runAgent`'s `provider` option takes): its `chat` drives the provider's
 // `chatStream` and forwards each text delta to `onText`, so a same-process host
@@ -604,10 +608,10 @@ export type { ResolveSandboxLabels, SandboxLabels, SandboxSpec } from "./sandbox
 export type { SpawnSession } from "./auth/types.js";
 // The throw of the client seam. An embedder matches the class and reads the
 // typed variant on `error`, instead of a string match on the message.
-// `createSandbox` gives each failure as an `err`, and `keepLabelsRefusal`
-// keeps a refusal of the label hook as a value and throws each other failure.
-export { describeSandboxError, keepLabelsRefusal, SandboxFailure } from "./sandbox/sandbox-error.js";
-export type { LabelsRefused, SandboxError } from "./sandbox/sandbox-error.js";
+// `createSandbox` gives each failure as an `err`, and `keepSuspendingRefusal`
+// keeps a refusal of the label hook with the suspend flag as a value and throws each other failure.
+export { describeSandboxError, keepSuspendingRefusal, SandboxFailure } from "./sandbox/sandbox-error.js";
+export type { SandboxError, SuspendingRefusal } from "./sandbox/sandbox-error.js";
 // Package-store seams. `FarmSource` is a required backend config field: the
 // embedder names where the farm of an analysis comes from. `ExtendAnalysisFarm`
 // is the optional link seam behind the `link_packages` tool.

@@ -18,7 +18,7 @@ const originalRule = neverthrowPlugin.rules["must-use-result"];
 // src/lib/result.ts, house rule 3, and src/loop/run-step.ts `resultStep`).
 // The same holds for the two hook helpers of src/lib/hooks.ts: `passGate(...)`
 // forwards the Result of a gate as its own Result, and `deliverNotice(...)`
-// consumes the Result of a notice and logs its err. `keepLabelsRefusal(...)`
+// consumes the Result of a notice and logs its err. `keepSuspendingRefusal(...)`
 // (src/sandbox/sandbox-error.ts) forwards the refusal of a spawn as its own
 // Result and throws each other failure through `unwrapOrThrow`.
 // The upstream rule only recognizes member-method consumers
@@ -27,7 +27,7 @@ const originalRule = neverthrowPlugin.rules["must-use-result"];
 // `RESULT_CONSUMERS` is reserved by convention for its src/lib helper,
 // so a shadowing non-consuming function of the same name would be missed;
 // that trade-off is accepted to keep this patch parser-independent.
-const RESULT_CONSUMERS = new Set(["unwrapOrThrow", "passGate", "deliverNotice", "keepLabelsRefusal"]);
+const RESULT_CONSUMERS = new Set(["unwrapOrThrow", "passGate", "deliverNotice", "keepSuspendingRefusal"]);
 // A Result consumed by a directly-chained `._unsafeUnwrapErr()` IS handled: the
 // plugin's handledMethods list carries `_unsafeUnwrap` but not its err twin, so
 // `fn()._unsafeUnwrapErr()` — the standard test idiom for asserting an expected

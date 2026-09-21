@@ -9,9 +9,6 @@
  *  2. `createSandbox`       — provision the sandbox; persist its handle.
  *  3. `runAgent`            — the harness agent loop. Every LLM and tool
  *                             call inside is its own durableStep.
- *                             Catches `isBudgetExceeded` and self-cancels
- *                             via `DBOS.cancelWorkflow(self)` to CANCELLED
- *                             (resumable, not ERROR).
  *  4. `generateFileMetadata`— post-step LLM call (chunked, slice-to-length).
  *  5. `generateStepSummary` — post-step LLM call producing `output/summary.md`.
  *  6. `reconcile + register`— write artifact manifest entries to cortex_artifacts.
@@ -22,9 +19,12 @@
  * 10. `mark-terminal`       — write the final status, emit `data-step-activity`
  *                             onto the parent's DBOS stream.
  *
- * The parent owns sibling lifecycle: fail-fast and 402-cascade live on the
- * parent (`executeAnalysis`). This child only owns its own teardown and
- * its own self-cancel on 402.
+ * The parent owns sibling lifecycle: the halt cascade of a suspension lives
+ * on the parent (`executeAnalysis`). This child owns its own teardown and its
+ * own suspension (workflow-suspension spec): a `suspend` error of the agent
+ * loop, or a refusal with the suspend flag of the label gate or the register
+ * gate. The child records the reason on its row, sends the typed suspension on
+ * `CHILD_SUSPENDED_TOPIC`, and self-cancels to CANCELLED (resumable, not ERROR).
  */
 
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
@@ -43,7 +43,6 @@ import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
-import { findSuspendError } from "../providers/errors.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
@@ -68,9 +67,10 @@ import {
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
-import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
+import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { createBlockerHolder, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
+import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "./suspension.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
 
@@ -101,9 +101,9 @@ export interface SandboxStepInput {
     readonly prompt: string;
     /**
      * DBOS workflow id of the parent (`executeAnalysis`). The child uses
-     * this to address the parent for the budget-exceeded side-channel
-     * (`DBOS.send(parent, …, "child-budget-exceeded")`) — the parent's
-     * scheduler-loop classifier relies on it to disambiguate a budget-induced
+     * this to address the parent for its typed suspension
+     * (`DBOS.send(parent, …, CHILD_SUSPENDED_TOPIC)`) — the parent's
+     * scheduler-loop classifier relies on it to disambiguate a suspension
      * self-cancel from an operator-driven sibling cancel (CANCELLED is the
      * same terminal state for both).
      */
@@ -148,21 +148,20 @@ export const CAPPED_OUT_EMPTY_REASON = "The step hit its iteration cap with no o
 export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
 
 /**
- * DBOS message topic the child uses to notify the parent that it is
- * about to self-cancel because of a 402 budget-exceeded error. The
- * notification fires BEFORE `DBOS.cancelWorkflow(self)` so the parent's
- * concurrent recv accumulator records the child id before the child's
- * terminal state lands. Without it the parent observes
- * `DBOSWorkflowCancelledError` from `getResult` — a generic message that
- * `isBudgetExceeded` does NOT match — and misclassifies the failure as
- * fail-fast, skipping the 402 pause cascade.
+ * DBOS message topic the child uses to tell the parent that it suspends. The
+ * message goes BEFORE `DBOS.cancelWorkflow(self)`, thus the parent's recv
+ * accumulator records the child before the child's terminal state lands.
+ * Without it the parent observes only `DBOSWorkflowCancelledError` from
+ * `getResult`, and it cannot tell a suspension from a cancel.
  */
-export const BUDGET_EXCEEDED_TOPIC = "child-budget-exceeded";
+export const CHILD_SUSPENDED_TOPIC = "child-suspended";
 
-export interface BudgetExceededNotification {
+/** The typed suspension of a child. The parent reads its kind, and it carries the reason unread. */
+export interface ChildSuspended {
+    readonly kind: "suspended";
     readonly childWorkflowId: string;
     readonly stepId: string;
-    readonly error: string;
+    readonly reason: string;
 }
 
 export interface SandboxStepResult {
@@ -423,6 +422,33 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         { name: "mark-running" },
     );
 
+    // The suspension of the step (workflow-suspension spec). The child records
+    // the reason on its row, sends the typed suspension to the parent, and
+    // self-cancels to CANCELLED, which `resumeWorkflow` reads. The sandbox, if
+    // one stands, stays up for the resume. The steps run only on this path, and
+    // a replay takes the same path from the same checkpoints.
+    const suspendStep = async (suspension: Suspension): Promise<never> => {
+        const durationMs = (await DBOS.now()) - startedAt;
+        await DBOS.runStep(
+            async () => {
+                unwrapOrThrow(
+                    await updateStepExecution(deps.pool, input.runId, input.stepId, {
+                        status: "canceled",
+                        durationMs,
+                        error: suspension.reason,
+                        attempts: 1,
+                        lastErrorClass: suspension.reason,
+                    }),
+                );
+                recordStepCompleted({ agentId: input.agentId, status: "canceled", durationMs });
+            },
+            { name: "mark-suspended" },
+        );
+        const message: ChildSuspended = { kind: "suspended", childWorkflowId, stepId: input.stepId, reason: suspension.reason };
+        await DBOS.runStep(() => DBOS.send(input.parentWorkflowId, message, CHILD_SUSPENDED_TOPIC), { name: "notify-parent-suspended" });
+        return cancelSelf("self-cancel-suspended");
+    };
+
     // Stamp the sandbox agent's id into provenance so loop events carry
     // `source.agentId === input.agentId` (the parent's RunSession still reads
     // "conversation-agent"). `run-agent.ts` builds source from
@@ -443,18 +469,19 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // identity. The handle (secret included) is cached so recovery picks the
     // same machine back up without re-provisioning. The ids of the sandbox come
     // from the step session, and the client calls the label hook of the host
-    // inside this step. A refusal of that hook is the checkpointed `err`; each
-    // other spawn failure fails the step inside it.
+    // inside this step. A refusal of that hook with the suspend flag is the
+    // checkpointed `err`; each other spawn failure fails the step inside it.
     const sandboxSpec: SandboxSpec = {
         childWorkflowId,
         image: input.image,
         extraEnv: input.extraEnv,
         resources: input.resources,
     };
-    const spawned = await DBOS.runStep(async () => keepLabelsRefusal(await deps.sandboxClient.createSandbox(session, sandboxSpec, identity)), {
+    const spawned = await DBOS.runStep(async () => keepSuspendingRefusal(await deps.sandboxClient.createSandbox(session, sandboxSpec, identity)), {
         name: "sandbox.create",
     });
-    const sandbox = unwrapOrThrow(spawned.mapErr((refusal) => new SandboxFailure(refusal)));
+    if (spawned.isErr()) return suspendStep(suspensionOfSpawnRefusal(spawned.error));
+    const sandbox = spawned.value;
 
     // Recovery path: re-check `isAlive` on the persisted ref before continuing.
     // A classified-dead sandbox triggers a fresh `createSandbox` (task 4.6).
@@ -657,57 +684,10 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         hitMaxSteps = agentResult.finish.cappedOut;
         stepUsage = agentResult.finish.usage;
     } catch (err) {
-        if (findSuspendError(err) !== undefined) {
-            // Notify the parent BEFORE self-cancel — DBOSWorkflowCancelledError
-            // surfaced by `getResult` carries a generic message that
-            // `isBudgetExceeded` cannot match, so without this side-channel the
-            // parent classifier falls through to fail-fast and the 402 pause
-            // cascade never fires. Wrapped in `DBOS.runStep` for replay
-            // idempotency (DBOS persists the send under (workflowID, function_id),
-            // a recovered child does not re-send). Failure to send is logged but
-            // swallowed: the worst case is the parent misclassifies the cancel
-            // as fail-fast, which is the pre-fix behaviour and still safe.
-            const errMsg = err instanceof Error ? err.message : String(err);
-            const notification: BudgetExceededNotification = {
-                childWorkflowId,
-                stepId: input.stepId,
-                error: errMsg,
-            };
-            try {
-                await DBOS.runStep(() => DBOS.send(input.parentWorkflowId, notification, BUDGET_EXCEEDED_TOPIC), { name: "notify-parent-budget-exceeded" });
-            } catch (sendErr) {
-                logger.warn("notify-parent-budget-exceeded failed (non-fatal)", {
-                    ...logger.errorFields(sendErr),
-                });
-            }
-
-            // Self-cancel to CANCELLED so the parent's `getResult` observes the
-            // cancellation and triggers the 402 pause cascade. ERROR is NOT
-            // resumable (NOTES #3); CANCELLED is what `resumeWorkflow` reads.
-            // The subsequent runStep flips the cortex_step_executions row to
-            // canceled and raises `DBOSWorkflowCancelledError` — nothing past
-            // that line executes. The parent's classifier reads the budget
-            // notification from the side-channel set populated above and
-            // observes the cancel terminal state via `getResult`.
-            await DBOS.cancelWorkflow(childWorkflowId);
-            const durationMs = (await DBOS.now()) - startedAt;
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(
-                        await updateStepExecution(deps.pool, input.runId, input.stepId, {
-                            status: "canceled",
-                            durationMs,
-                            error: "budget_exceeded",
-                            attempts: 1,
-                            lastErrorClass: "budget_exceeded",
-                        }),
-                    );
-                },
-                { name: "mark-canceled" },
-            );
-            // Unreachable — the runStep above raises DBOSWorkflowCancelledError.
-            throw new Error("unreachable: mark-canceled did not raise", { cause: err });
-        }
+        // A `suspend` error of a model request of the loop suspends the step. The
+        // parent reads the typed message, not this throw.
+        const suspension = suspensionOfFailure(err);
+        if (suspension !== undefined) return suspendStep(suspension);
 
         // Non-resumable failure — tear down, mark failed (scrubbed), re-raise so
         // the parent's `getResult` sees ERROR and the fail-fast cascade fires.
@@ -885,6 +865,9 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     }
     await syncStepArtifacts();
     if (registered.isErr()) {
+        // A refusal of the register gate with the suspend flag suspends the step in place of the failure.
+        const refused = registered.error.kind === "refused" ? suspensionOfRefusal(registered.error.refusal) : undefined;
+        if (refused !== undefined) return suspendStep(refused);
         throw await failStep("lineage_attestation", new Error(describeStepRegistrationFailure(registered.error)));
     }
     const reconciledManifest = registered.value;

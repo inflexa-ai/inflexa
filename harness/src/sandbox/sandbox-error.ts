@@ -27,8 +27,9 @@
  *
  * `createSandbox` of the public `SandboxClient` gives each `SandboxError` as
  * an `err` value, because a refusal of the label hook must reach the spawn path
- * as a value. A spawn path splits the result with `keepLabelsRefusal`: the
- * refusal stays a value, and each other failure throws as a `SandboxFailure`.
+ * as a value. A spawn path splits the result with `keepSuspendingRefusal`: a
+ * refusal with the suspend flag stays a value, and each other failure throws
+ * as a `SandboxFailure`.
  * Each other op keeps a `Promise<T>` signature. `create-sandbox.ts` is the
  * composition seam: it builds the backend ops, maps each `err` of such an op to
  * a `SandboxFailure`, and `unwrapOrThrow`s it, so the seam throws the described
@@ -249,19 +250,24 @@ export class SandboxFailure extends Error {
     }
 }
 
-/** The refusal of the label hook: the one spawn failure that a spawn path reads as a value. */
-export type LabelsRefused = Extract<SandboxError, { readonly type: "labels_refused" }>;
+/** A refusal of the label hook with the suspend flag: the one spawn failure that a spawn path reads as a value. */
+export type SuspendingRefusal = Extract<SandboxError, { readonly type: "labels_refused" }> & { readonly suspend: true };
+
+function isSuspendingRefusal(e: SandboxError): e is SuspendingRefusal {
+    return e.type === "labels_refused" && e.suspend;
+}
 
 /**
  * Split the result of a spawn at a DBOS boundary. A refusal of the label hook
- * stays a value, thus the spawn path reads a suspension with no `catch`. Each
- * other failure throws as a `SandboxFailure` with its full description, thus
- * DBOS records the step or the workflow as failed. Call it inside the step of
- * the spawn, before the checkpoint: the cause of a backend failure does not
- * survive the serialization of a `Result`.
+ * with the suspend flag stays a value, thus the spawn path suspends with no
+ * `catch`. Each other failure, a refusal without the flag included, throws as
+ * a `SandboxFailure` with its full description, thus DBOS records the step or
+ * the workflow as failed. Call it inside the step of the spawn, before the
+ * checkpoint: the cause of a backend failure does not survive the
+ * serialization of a `Result`.
  */
-export function keepLabelsRefusal(result: Result<SandboxRef, SandboxError>): Result<SandboxRef, LabelsRefused> {
-    if (result.isErr() && result.error.type === "labels_refused") return err(result.error);
+export function keepSuspendingRefusal(result: Result<SandboxRef, SandboxError>): Result<SandboxRef, SuspendingRefusal> {
+    if (result.isErr() && isSuspendingRefusal(result.error)) return err(result.error);
     return ok(unwrapOrThrow(result.mapErr((e) => new SandboxFailure(e))));
 }
 

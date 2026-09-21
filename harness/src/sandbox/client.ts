@@ -67,7 +67,7 @@ export interface SandboxClient {
      * tree and before it calls a backend (sandbox-labels spec). Each failure is
      * an `err` value, the refusal of the label hook (`labels_refused`)
      * included, and nothing throws: a spawn path splits the result with
-     * `keepLabelsRefusal`.
+     * `keepSuspendingRefusal`.
      */
     createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
 

@@ -23,7 +23,7 @@ function getInstruments(): Instruments {
         const meter = metrics.getMeter("cortex.workflow");
         instruments = {
             cancelledChildren: meter.createCounter("cortex.workflow.parent.cancelled_children", {
-                description: "Children cancelled by the parent's fail-fast or pause cascade",
+                description: "Children cancelled by the parent's fail-fast or suspension cascade",
             }),
         };
     }
@@ -33,10 +33,11 @@ function getInstruments(): Instruments {
 /**
  * Record one child cancellation. The parent calls this once per
  * `DBOS.cancelWorkflow(childWorkflowId)` in the cascade (fail-fast OR
- * pause). `cause` distinguishes the two so dashboards can split the
- * counter.
+ * suspension). `cause` is `fail_fast`, `external_cancel`, or the reason of
+ * the host for a suspension, carried unread, so dashboards can split the
+ * counter by the reason that the host gave.
  */
-export function recordCancelledChild(args: { readonly cause: "fail_fast" | "budget_exceeded" | "external_cancel" }): void {
+export function recordCancelledChild(args: { readonly cause: string }): void {
     getInstruments().cancelledChildren.add(1, { cause: args.cause });
 }
 

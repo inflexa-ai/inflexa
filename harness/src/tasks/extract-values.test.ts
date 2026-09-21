@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { err, ok } from "neverthrow";
 
 import type { ExtractionRequest } from "../report-model/production-resolver.js";
 import type { ExecResult } from "../sandbox/types.js";
@@ -146,22 +147,30 @@ describe("createExtractionArm", () => {
         let received: readonly ExtractionRequest[] | undefined;
         const arm = createExtractionArm(async (requests) => {
             received = requests;
-            return {
+            return ok({
                 "data/a.csv": { rows: [{ gene: "TP53", value: 4 }] },
                 "data/b.parquet": { error: { type: "read-fault", message: "boom" } },
-            };
+            });
         });
 
         const requests: ExtractionRequest[] = [
             { path: "data/a.csv", hash: "h1", format: "csv" },
             { path: "data/b.parquet", hash: "h2", format: "parquet" },
         ];
-        const map = await arm.extract(requests);
+        const map = (await arm.extract(requests))._unsafeUnwrap();
 
         // One extract call makes one run with every request in it.
         expect(received).toEqual(requests);
         expect(map.get("data/a.csv")).toEqual({ rows: [{ gene: "TP53", value: 4 }] });
         expect(map.has("data/b.parquet")).toBe(false);
+    });
+
+    it("gives the suspension of the pass as its err", async () => {
+        const arm = createExtractionArm(async () => err({ kind: "suspended" as const, reason: "quota_exhausted" }));
+        expect((await arm.extract([{ path: "data/a.csv", hash: "h1", format: "csv" }]))._unsafeUnwrapErr()).toEqual({
+            kind: "suspended",
+            reason: "quota_exhausted",
+        });
     });
 
     it("rejects when the runner faults", async () => {

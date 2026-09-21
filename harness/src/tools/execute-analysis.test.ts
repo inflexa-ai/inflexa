@@ -386,6 +386,33 @@ describe("createExecuteAnalysisTool plan mode", () => {
         expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("failed") && q.values.includes("mint refused"))).toBe(true);
     });
 
+    it("cancels the reserved run and marks the analysis suspended when the gate refuses with the suspend flag", async () => {
+        setEnv();
+        const { pool, queries } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const suspendingAuthorizer: RunAuthorizer = {
+            authorize: () => errAsync({ reason: "no_funds", suspend: true }),
+            revoke: () => okAsync(undefined),
+            revokeByJti: () => okAsync(undefined),
+        };
+        const tool = createExecuteAnalysisTool({
+            ...utilityDeps,
+            pool,
+            runLauncher: fakeLauncher().launcher,
+            runAuthorizer: suspendingAuthorizer,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("workflow must not start after a refused authorization");
+            },
+        });
+
+        const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("no_funds"), retryable: false });
+        expect(queries.some((q) => q.text.includes("SET status") && q.values.includes("canceled") && q.values.includes("no_funds"))).toBe(true);
+        expect(queries.some((q) => /SET status = 'suspended_insufficient_funds'/.test(q.text))).toBe(true);
+    });
+
     it("launches the run through the RunLauncher and returns the reserved runId", async () => {
         setEnv();
         const { pool } = fakePool({

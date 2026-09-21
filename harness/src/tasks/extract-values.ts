@@ -13,6 +13,7 @@
  */
 
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { err, ok, type Result } from "neverthrow";
 import { randomUUID } from "node:crypto";
 
 import { forStep, type AuthContext, type RunSession } from "../auth/types.js";
@@ -26,7 +27,10 @@ import type { ExtractionArm, ExtractionArtifact, ExtractionRequest } from "../re
 import type { SandboxClient } from "../sandbox/client.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
-import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
+import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
+import { suspendAnalysis } from "../state/analyses.js";
+import type { Querier } from "../state/db.js";
+import { suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { ExecEmit, ExecResult, SubmitExecBody } from "../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
 
@@ -62,6 +66,8 @@ export interface ExtractValuesDeps {
     readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
     readonly runAuthorizer: RunAuthorizer;
+    /** The app pool, for the mark of the analysis when the pass suspends. */
+    readonly pool: Querier;
 }
 
 /**
@@ -135,8 +141,11 @@ export function parseExtractionOutput(result: ExecResult): ExtractValuesResult {
  * The body, extracted so a test drives it without a registered workflow. It creates the ephemeral
  * container, submits one exec, awaits the result durably, and gives the value map back. It revokes the run
  * authorization on every terminal path, and it tears the container down on both paths.
+ *
+ * A chat turn awaits this workflow, thus a suspension is the `err` of the result, and the workflow does not
+ * cancel (workflow-suspension spec). The body marks the analysis as suspended before it returns the `err`.
  */
-export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, deps: ExtractValuesDeps): Promise<ExtractValuesResult> {
+export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, deps: ExtractValuesDeps): Promise<Result<ExtractValuesResult, Suspension>> {
     const logger = (deps.logger ?? createNoopLogger()).named("extract-values").with({ analysisId: input.analysisId });
     const { analysisId, runSession, requests, ownsMandate = true } = input; // oss-core-managed-ok
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
@@ -149,16 +158,22 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
 
         // The container mounts the analysis tree read-only. The extraction pass only reads, thus it needs
         // no writable step mount. The sandbox takes its ids from the session of the pass, and the client
-        // calls the label hook of the host with it. A refusal of that hook is a value.
-        const sandbox = unwrapOrThrow(
-            keepLabelsRefusal(
-                await deps.sandboxClient.createSandbox(
-                    forStep(runSession, EXTRACT_VALUES_STEP_LITERAL),
-                    { childWorkflowId: workflowId, resources: EXTRACTION_RESOURCES, readOnly: true },
-                    mintSandboxIdentity(EXTRACT_VALUES_RUN_LITERAL),
-                ),
-            ).mapErr((refusal) => new SandboxFailure(refusal)),
+        // calls the label hook of the host with it. A refusal of that hook with the suspend flag is a value; each other spawn failure throws.
+        const spawned = keepSuspendingRefusal(
+            await deps.sandboxClient.createSandbox(
+                forStep(runSession, EXTRACT_VALUES_STEP_LITERAL),
+                { childWorkflowId: workflowId, resources: EXTRACTION_RESOURCES, readOnly: true },
+                mintSandboxIdentity(EXTRACT_VALUES_RUN_LITERAL),
+            ),
         );
+        if (spawned.isErr()) {
+            const suspension = suspensionOfSpawnRefusal(spawned.error);
+            logger.warn("extraction suspended", { reason: suspension.reason });
+            await revoke("extract-values-suspended");
+            unwrapOrThrow(await suspendAnalysis(deps.pool, analysisId));
+            return err(suspension);
+        }
+        const sandbox = spawned.value;
 
         try {
             // A checkpointed clock, not `Date.now()`: the await gates on this absolute deadline, and a
@@ -168,7 +183,7 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
             const result = await deps.sandboxClient.awaitExec(sandbox, executionId, noopEmit, deadlineAbs);
             const map = parseExtractionOutput(result);
             await revoke("extract-values-completed");
-            return map;
+            return ok(map);
         } finally {
             try {
                 await deps.sandboxClient.teardown(sandbox);
@@ -187,7 +202,9 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
  * Register the extraction workflow with DBOS. It gives back the registered callable, thus a trigger
  * dispatches with `DBOS.startWorkflow`.
  */
-export function registerExtractValuesWorkflow(deps: ExtractValuesDeps): (input: ExtractValuesWorkflowInput) => Promise<ExtractValuesResult> {
+export function registerExtractValuesWorkflow(
+    deps: ExtractValuesDeps,
+): (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>> {
     return DBOS.registerWorkflow((input: ExtractValuesWorkflowInput) => runExtractValuesBody(input, deps), { name: "extract-values" });
 }
 
@@ -202,7 +219,7 @@ export function extractValuesWorkflowId(analysisId: string, nonce: string): stri
  */
 export interface ExtractValuesTriggerDeps {
     readonly runAuthorizer: RunAuthorizer;
-    readonly workflow: (input: ExtractValuesWorkflowInput) => Promise<ExtractValuesResult>;
+    readonly workflow: (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>>;
 }
 
 /** The identity and the requests for one extraction pass. */
@@ -214,10 +231,14 @@ export interface ExtractValuesTriggerParams {
 
 /**
  * The async edge. It authorizes through the `RunAuthorizer`, starts the workflow, and awaits the outcome.
- * The body owns the revoke, thus the trigger holds no lifecycle. A workflow fault rejects the returned
- * promise.
+ * The body owns the revoke, thus the trigger holds no lifecycle. A workflow fault and a refused
+ * authorization reject the returned promise. A suspension is the `err` of the result: of the workflow, or of
+ * an authorization that the host refused with the suspend flag.
  */
-export async function triggerExtractValues(deps: ExtractValuesTriggerDeps, params: ExtractValuesTriggerParams): Promise<ExtractValuesResult> {
+export async function triggerExtractValues(
+    deps: ExtractValuesTriggerDeps,
+    params: ExtractValuesTriggerParams,
+): Promise<Result<ExtractValuesResult, Suspension>> {
     const { auth, analysisId, requests } = params;
     const authorized = await passGate(
         "RunAuthorizer.authorize",
@@ -228,16 +249,20 @@ export async function triggerExtractValues(deps: ExtractValuesTriggerDeps, param
             frame: { runId: EXTRACT_VALUES_RUN_LITERAL, stepId: EXTRACT_VALUES_STEP_LITERAL },
         }),
     );
-    if (authorized.isErr()) throw new Error(`the extraction was not authorized: ${authorized.error.reason}`);
+    if (authorized.isErr()) {
+        const suspension = suspensionOfRefusal(authorized.error);
+        if (suspension !== undefined) return err(suspension);
+        throw new Error(`the extraction was not authorized: ${authorized.error.reason}`);
+    }
     const { runSession, ownsMandate } = authorized.value; // oss-core-managed-ok
     const handle = (await DBOS.startWorkflow(deps.workflow, {
         workflowID: extractValuesWorkflowId(analysisId, randomUUID()),
-    })({ analysisId, runSession, requests: [...requests], ownsMandate })) as WorkflowHandle<ExtractValuesResult>; // oss-core-managed-ok
+    })({ analysisId, runSession, requests: [...requests], ownsMandate })) as WorkflowHandle<Result<ExtractValuesResult, Suspension>>; // oss-core-managed-ok
     return handle.getResult();
 }
 
-/** Runs one extraction pass for the bound analysis, and gives the raw value map back. */
-export type ExtractionRunner = (requests: readonly ExtractionRequest[]) => Promise<ExtractValuesResult>;
+/** Runs one extraction pass for the bound analysis, and gives the raw value map back, or the suspension. */
+export type ExtractionRunner = (requests: readonly ExtractionRequest[]) => Promise<Result<ExtractValuesResult, Suspension>>;
 
 /**
  * Bind the trigger to one analysis and one auth context. The result runs one pass with every request in it.
@@ -265,12 +290,12 @@ export function extractionArtifactsFromResult(result: ExtractValuesResult): Map<
 /**
  * Make the extraction arm over a runner. One `extract` call makes one run with every request in it, and it
  * gives the value map. A run fault rejects the promise, and the resolver turns the rejection into a failed
- * reference.
+ * reference. A suspension is the `err`, and the resolver reports its reason on each reference.
  */
 export function createExtractionArm(run: ExtractionRunner): ExtractionArm {
     return {
         async extract(requests) {
-            return extractionArtifactsFromResult(await run(requests));
+            return (await run(requests)).map(extractionArtifactsFromResult);
         },
     };
 }

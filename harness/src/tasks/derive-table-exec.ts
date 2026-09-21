@@ -20,6 +20,7 @@
  */
 
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { err, ok, type Result } from "neverthrow";
 
 import { forStep } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -27,7 +28,10 @@ import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
-import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
+import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
+import { suspendAnalysis } from "../state/analyses.js";
+import type { Querier } from "../state/db.js";
+import { suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { ExecEmit, ExecResult } from "../sandbox/types.js";
 import {
     buildDerivationExec,
@@ -44,6 +48,8 @@ const noopEmit: ExecEmit = () => {};
 /** The construction-time deps of the body. The registration closes over them, thus the trigger holds none. */
 export interface DeriveTableExecDeps {
     readonly sandboxClient: SandboxClient;
+    /** The app pool, for the mark of the analysis when the derivation suspends. */
+    readonly pool: Querier;
     /**
      * The checkpointed clock of the deadline. It defaults to `DBOS.now()`, which a replay reads again from
      * the checkpoint. A test injects a fixed clock, thus it drives this body with no launched runtime.
@@ -55,10 +61,11 @@ export interface DeriveTableExecDeps {
 /**
  * The body, exported so a test drives it without a registered workflow.
  *
- * A fault of any seam call throws. The tool reads a rejection as one short detail, thus the caller needs no
- * result type here.
+ * A fault of any seam call throws. The tool reads a rejection as one short detail. A chat turn awaits this
+ * workflow, thus a suspension is the `err` of the result, and the workflow does not cancel
+ * (workflow-suspension spec). The body marks the analysis as suspended before it returns the `err`.
  */
-export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: DeriveTableExecDeps): Promise<ExecResult> {
+export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: DeriveTableExecDeps): Promise<Result<ExecResult, Suspension>> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table-exec").with({ analysisId: input.analysisId });
     const workflowId = DBOS.workflowID ?? deriveTableExecWorkflowId(input.executionId);
     // One workflow submits one exec, thus the function id is a constant. The three segments are what a
@@ -66,16 +73,21 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
     const execId = `${workflowId}:${DERIVE_STEP_LITERAL}:fn-0`;
 
     // The sandbox takes its ids from the session that the tool authorized, and the client calls the label
-    // hook of the host with it. A refusal of that hook is a value.
-    const sandbox = unwrapOrThrow(
-        keepLabelsRefusal(
-            await deps.sandboxClient.createSandbox(
-                forStep(input.runSession, DERIVE_STEP_LITERAL),
-                { childWorkflowId: workflowId, resources: DERIVATION_RESOURCES, writableTail: input.writableTail },
-                mintSandboxIdentity(DERIVE_RUN_LITERAL),
-            ),
-        ).mapErr((refusal) => new SandboxFailure(refusal)),
+    // hook of the host with it. A refusal of that hook with the suspend flag is a value; each other spawn failure throws.
+    const spawned = keepSuspendingRefusal(
+        await deps.sandboxClient.createSandbox(
+            forStep(input.runSession, DERIVE_STEP_LITERAL),
+            { childWorkflowId: workflowId, resources: DERIVATION_RESOURCES, writableTail: input.writableTail },
+            mintSandboxIdentity(DERIVE_RUN_LITERAL),
+        ),
     );
+    if (spawned.isErr()) {
+        const suspension = suspensionOfSpawnRefusal(spawned.error);
+        logger.warn("derivation suspended", { reason: suspension.reason });
+        unwrapOrThrow(await suspendAnalysis(deps.pool, input.analysisId));
+        return err(suspension);
+    }
+    const sandbox = spawned.value;
 
     try {
         // A checkpointed clock, not `Date.now()`: the await gates on this absolute deadline, and a
@@ -91,7 +103,7 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
                 output: input.output,
             }),
         );
-        return await deps.sandboxClient.awaitExec(sandbox, execId, noopEmit, deadline);
+        return ok(await deps.sandboxClient.awaitExec(sandbox, execId, noopEmit, deadline));
     } finally {
         try {
             await deps.sandboxClient.teardown(sandbox);
@@ -105,7 +117,7 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
  * Register the derivation workflow with DBOS. It gives back the registered callable, thus a trigger
  * dispatches with `DBOS.startWorkflow`.
  */
-export function registerDeriveTableExecWorkflow(deps: DeriveTableExecDeps): (input: DeriveTableExecInput) => Promise<ExecResult> {
+export function registerDeriveTableExecWorkflow(deps: DeriveTableExecDeps): (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>> {
     return DBOS.registerWorkflow((input: DeriveTableExecInput) => runDeriveTableExecBody(input, deps), { name: "derive-table-exec" });
 }
 
@@ -123,11 +135,14 @@ export function deriveTableExecWorkflowId(executionId: string): string {
  * The async edge. It starts the registered workflow and it awaits the terminal result.
  *
  * The tool authorizes the derivation before this call and it revokes after, thus this edge holds no
- * lifecycle of its own. A workflow fault rejects the returned promise.
+ * lifecycle of its own. A workflow fault rejects the returned promise, and a suspension is the `err`.
  */
-export async function triggerDeriveTableExec(workflow: (input: DeriveTableExecInput) => Promise<ExecResult>, input: DeriveTableExecInput): Promise<ExecResult> {
+export async function triggerDeriveTableExec(
+    workflow: (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>,
+    input: DeriveTableExecInput,
+): Promise<Result<ExecResult, Suspension>> {
     const handle = (await DBOS.startWorkflow(workflow, {
         workflowID: deriveTableExecWorkflowId(input.executionId),
-    })(input)) as WorkflowHandle<ExecResult>;
+    })(input)) as WorkflowHandle<Result<ExecResult, Suspension>>;
     return handle.getResult();
 }

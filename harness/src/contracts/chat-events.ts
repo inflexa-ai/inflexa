@@ -134,7 +134,10 @@ export interface ChatErrorEvent {
     type: "error";
     /** Human-readable, scrubbed error message. */
     message: string;
-    /** Machine-readable failure code, e.g. `"budget_exceeded"`. */
+    /**
+     * Machine-readable failure code. For a turn that a `suspend` error failed, it
+     * is the suspend reason of the host, carried unread (`suspensionOfFailure`).
+     */
     reason?: string;
     source: EventSource;
 }

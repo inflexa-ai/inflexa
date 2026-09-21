@@ -6,6 +6,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { ok, err } from "neverthrow";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -96,7 +97,7 @@ function stubArm(rowsByPath: Record<string, Row[]>): { arm: ExtractionArm; batch
                     out.set(request.path, { rows });
                 }
             }
-            return out;
+            return ok(out);
         },
     };
     return { arm, batches };
@@ -234,6 +235,18 @@ describe("production resolver, the fall-through", () => {
 
         expect(result._unsafeUnwrap()).toEqual({ type: "scalar", value: "0.8" });
         expect(batches.length).toBe(1);
+    });
+
+    test("a suspended pass reports the reason of the host on the reference", async () => {
+        const hash = await writeArtifact("odd-suspended.csv", "gene;pvalue;score\nBRCA1;0.01;0.9\nTP53;0.02;0,8\n");
+        const arm: ExtractionArm = { extract: async () => err({ kind: "suspended", reason: "quota_exhausted" }) };
+        const resolver = createProductionResolver({ workspaceRoot: root, analysisId: ANALYSIS, extractionArm: arm });
+        const reference = valueRef("odd-suspended.csv", hash, "score", "gene", "TP53");
+
+        const failure = (await resolver.resolve(reference, snapshotOf([{ path: "odd-suspended.csv", hash }])))._unsafeUnwrapErr();
+
+        expect(failure.reason).toBe("extraction-unavailable");
+        expect(failure.detail).toContain("quota_exhausted");
     });
 
     test("the same odd dialect fails extraction-unavailable when no arm is wired", async () => {

@@ -31,23 +31,28 @@
  *     - await child results via `getResult` (these are themselves cached
  *       in DBOS, so parent recovery does NOT re-run completed children)
  *  3. Failure isolation
- *     - a child settling `failed`/`blocked` (or throwing for a non-budget
- *       cause) dooms only its transitive dependents: they can never become
- *       dependency-satisfied, are marked `skipped` on the dag-state part, and
- *       are never dispatched. In-flight siblings and independent ready steps
- *       continue; the loop drains and the run finalises (typically `partial`).
+ *     - a child settling `failed`/`blocked` (or throwing for a cause that is
+ *       not a suspension) dooms only its transitive dependents: they can never
+ *       become dependency-satisfied, are marked `skipped` on the dag-state
+ *       part, and are never dispatched. In-flight siblings and independent
+ *       ready steps continue; the loop drains and the run finalises (typically
+ *       `partial`).
  *     - the halt cascade (cancel in-flight via
  *       `Promise.allSettled(handles.map(h => DBOS.cancelWorkflow(h.workflowID)))`,
- *       stop scheduling) survives only for the budget paths: a
- *       `budget_exceeded` settlement and the `neverFits` plan-validation guard.
- *  4. Pause cascade (402)
- *     - on a child cancelling itself with `budget_exceeded`: cancel siblings
- *       then self-cancel the parent to `CANCELLED` (NOT `ERROR` — ERROR
- *       isn't resumable; NOTES #3)
+ *       stop scheduling) survives only for a suspension of a child and the
+ *       `neverFits` plan-validation guard.
+ *  4. Suspension cascade (workflow-suspension spec)
+ *     - a child that suspends sends a typed message on `CHILD_SUSPENDED_TOPIC`
+ *       and cancels itself. The parent reads the kind of the message, never a
+ *       reason string: it cancels the siblings, then self-cancels to
+ *       `CANCELLED` (NOT `ERROR` — ERROR isn't resumable; NOTES #3)
+ *     - a refusal of the `RunCharge.open` gate with the suspend flag suspends
+ *       the run before any step starts
  *     - the analysis flips to `suspended_insufficient_funds` in
  *       `collectAndComplete`. The paused parent lands in `CANCELLED`, a
- *       durably reschedulable state; re-driving it after a top-up is a
- *       future enhancement, not yet wired here.
+ *       durably reschedulable state; re-driving it is a future enhancement,
+ *       not yet wired here. The reason of the host rides to the run row, the
+ *       charge close, the metric, and the terminal part, unread.
  *  5. `synthesizeFindings` (single sequential block, no sandbox)
  *  6. `collectAndComplete` (terminal — runs on ALL paths)
  *     - determine final status from completed/cancelled/failed counts
@@ -95,7 +100,6 @@ import {
     updateStepExecution,
 } from "../state/index.js";
 import type { StepExecutionRow, SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
-import { findSuspendError } from "../providers/errors.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
@@ -111,7 +115,8 @@ import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
 import { recordCancelledChild } from "./metrics.js";
-import { BUDGET_EXCEEDED_TOPIC, type BudgetExceededNotification, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
+import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
+import { cancelSelf, suspensionOfRefusal, type Suspension } from "./suspension.js";
 
 /** Registered child sandbox-step callable the parent's child-dispatch closes over. */
 type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -695,7 +700,9 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     }
     if (init.kind === "charge-refused") {
         // The charge gate refused the run, thus no step starts. The terminal block
-        // still writes the terminal state, with the reason of the host.
+        // still writes the terminal state, with the reason of the host: a failed
+        // run, or a suspended one when the host set the suspend flag.
+        const suspension = suspensionOfRefusal(init.refusal) ?? null;
         const refusedAtMs = await DBOS.now();
         const refused = await collectAndComplete({
             input,
@@ -705,14 +712,15 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             completed: new Set(),
             failed: new Set(),
             canceled: new Set(),
-            budgetExceeded: false,
+            suspension,
             failureReason: init.refusal.reason,
-            forceFailed: true,
+            forceFailed: suspension === null,
             findings: [],
             synthesisOutcome: null,
             deps,
         });
         observeRunGuarded(deps, buildRunObservation({ input, runId, status: refused.status, stepStates: new Map() }));
+        if (suspension !== null) return cancelSelf("self-cancel-suspended");
         return refused;
     }
 
@@ -893,7 +901,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         completed: final.completed,
         failed: final.failed,
         canceled: final.canceled,
-        budgetExceeded: final.budgetExceeded,
+        suspension: final.suspension,
         ...(final.usage ? { usage: final.usage } : {}),
         failureReason: synthesisError
             ? synthesisError instanceof Error
@@ -908,20 +916,14 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
 
     // Terminal snapshot, fired here rather than inside `collectAndComplete` because this is the
     // first point where BOTH the derived final status and the scheduler's final step map are in
-    // hand. It precedes the budget self-cancel below on purpose: that branch raises out of the
-    // body, so an observer placed after it would never see a budget-paused run's last state.
+    // hand. It precedes the suspension self-cancel below on purpose: that branch raises out of the
+    // body, so an observer placed after it would never see a suspended run's last state.
     observeRunGuarded(deps, buildRunObservation({ input, runId, status: result.status, stepStates: final.stepStates }));
 
-    // Synthesis failure takes priority over the budget-exceeded cascade: a run
-    // whose synthesis threw is definitively failed (ERROR), not a resumable
-    // budget pause. Only self-cancel when synthesis succeeded.
-    if (final.budgetExceeded && synthesisError === null) {
-        await DBOS.cancelWorkflow(DBOS.workflowID!);
-        await DBOS.runStep(async () => undefined, {
-            name: "self-cancel-budget-exceeded",
-        });
-        // Unreachable — the runStep above raises DBOSWorkflowCancelledError.
-    }
+    // Synthesis failure takes priority over the suspension cascade: a run whose
+    // synthesis threw is definitively failed (ERROR), not a resumable
+    // suspension. Only self-cancel when synthesis succeeded.
+    if (final.suspension !== null && synthesisError === null) return cancelSelf("self-cancel-suspended");
 
     // Re-throw after the terminal block so the workflow record goes to ERROR.
     if (synthesisError !== null) throw synthesisError;
@@ -1010,7 +1012,8 @@ interface SchedulerLoopOutcome {
     readonly completed: Set<string>;
     readonly failed: Set<string>;
     readonly canceled: Set<string>;
-    readonly budgetExceeded: boolean;
+    /** The first suspension of a child, or null when no child suspended. */
+    readonly suspension: Suspension | null;
     readonly failureReason: string | null;
     /**
      * The scheduler's final per-step state, handed back so the terminal run observation is built
@@ -1034,7 +1037,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const canceled = new Set<string>();
     const inFlight = new Map<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>();
 
-    const budgetExceededChildIds = new Set<string>();
+    // The typed suspension of each child that sent one, by child workflow id. The
+    // parent reads the kind of the message; the reason rides unread.
+    const childSuspensions = new Map<string, ChildSuspended>();
 
     // Run-level usage aggregate, folded from the children's own durable results.
     // `getResult` IS the replay-safe source: a recovered parent reads back the
@@ -1043,7 +1048,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     // no result and therefore contributes nothing — same rule as its duration.
     const runUsage: AgentRunUsage = {};
 
-    // Child workflow ids the parent itself cancelled (budget / neverFits halt cascade). Their `getResult`
+    // Child workflow ids the parent itself cancelled (suspension / neverFits halt cascade). Their `getResult`
     // rejects with a DBOS cancellation error and lands in the settlement error branch — but the step was
     // CANCELED by us, not failed on its own merits. Keyed here (deterministic: `cancelInFlight` runs the
     // same way on a replay) so that branch records it as canceled everywhere, matching how a child that
@@ -1085,12 +1090,22 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         }
     };
 
-    // Halts scheduling entirely — reserved for the budget paths (a
-    // `budget_exceeded` settlement, the `neverFits` guard). An ordinary step
-    // failure does NOT set it: it dooms only that step's transitive dependents.
+    // Halts scheduling entirely — reserved for a suspension of a child and the
+    // `neverFits` guard. An ordinary step failure does NOT set it: it dooms
+    // only that step's transitive dependents.
     let halted = false;
-    let budgetExceeded = false;
+    let suspension: Suspension | null = null;
     let failureReason: string | null = null;
+
+    /** The first suspension halts the run with its reason; each one cancels what is still in flight. */
+    const haltForSuspension = async (child: ChildSuspended): Promise<void> => {
+        if (suspension === null) {
+            suspension = { kind: "suspended", reason: child.reason };
+            halted = true;
+            failureReason = child.reason;
+        }
+        await cancelInFlight(inFlight, child.reason, canceledByParent);
+    };
 
     const stepIndexById = new Map(input.steps.map((s, i) => [s.id, i] as const));
 
@@ -1242,9 +1257,9 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             settled = { childId, stepId: entry.stepId, kind: "error", err };
         }
 
-        await drainBudgetExceededNotifications(budgetExceededChildIds);
+        await drainChildSuspensions(childSuspensions);
 
-        const childWasBudgetExceeded = budgetExceededChildIds.has(settled.childId);
+        const childSuspension = childSuspensions.get(settled.childId);
 
         // Terminal step status + duration for the provenance emission below. Every
         // settlement branch assigns both, so the emission fires exactly once per
@@ -1267,13 +1282,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 await dispatchReady();
             } else if (r.status === "canceled") {
                 canceled.add(settled.stepId);
-                const isBudgetCancel = childWasBudgetExceeded || r.error === "budget_exceeded";
-                if (isBudgetCancel && !budgetExceeded) {
-                    budgetExceeded = true;
-                    halted = true;
-                    failureReason = "budget_exceeded";
-                    await cancelInFlight(inFlight, "budget_exceeded", canceledByParent);
-                }
+                if (childSuspension !== undefined) await haltForSuspension(childSuspension);
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
                     durationMs: r.durationMs ?? undefined,
@@ -1302,7 +1311,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 await dispatchReady();
             }
         } else if (canceledByParent.has(settled.childId)) {
-            // The child threw because the PARENT cancelled it (budget / neverFits halt cascade), not
+            // The child threw because the PARENT cancelled it (suspension / neverFits halt cascade), not
             // because it failed on its own — its `getResult` rejects with a DBOS cancellation error.
             // Record it as canceled, mirroring the graceful `{status:"canceled"}` branch above so the
             // `canceled` set, the terminal result, and the `step_completed` provenance all agree. No
@@ -1317,24 +1326,24 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             stepStatus = "canceled";
             stepDurationMs = undefined;
             await emitDagSnapshot();
+        } else if (childSuspension !== undefined) {
+            // The child suspended: it sent its typed suspension, then cancelled
+            // itself, thus `getResult` rejects with a DBOS cancellation. The
+            // suspension halts the run — the cascade is a decision of the host,
+            // not a DAG one — and it dooms no dependent: the resumed run needs them.
+            canceled.add(settled.stepId);
+            await haltForSuspension(childSuspension);
+            stepRuntime.set(settled.stepId, { status: "failed", error: childSuspension.reason });
+            stepStatus = "canceled";
+            stepDurationMs = undefined;
+            await emitDagSnapshot();
         } else {
-            // The child threw on its own (not a parent-driven cancel). A
-            // budget_exceeded throw still halts the run — the pause cascade is a
-            // money decision, not a DAG one. Any other throw is treated exactly
-            // like a step failure: dependents doomed, siblings continue.
+            // The child threw on its own (not a parent-driven cancel, not a
+            // suspension). A throw is treated exactly like a step failure:
+            // dependents doomed, siblings continue.
             failed.add(settled.stepId);
-            const isBudgetThrow = childWasBudgetExceeded || findSuspendError(settled.err) !== undefined;
-            if (isBudgetThrow) {
-                if (!budgetExceeded) {
-                    budgetExceeded = true;
-                    halted = true;
-                    failureReason = "budget_exceeded";
-                }
-                await cancelInFlight(inFlight, "budget_exceeded", canceledByParent);
-            } else {
-                failureReason ??= settled.err instanceof Error ? settled.err.message : String(settled.err);
-                markDependentsSkipped(settled.stepId);
-            }
+            failureReason ??= settled.err instanceof Error ? settled.err.message : String(settled.err);
+            markDependentsSkipped(settled.stepId);
             stepRuntime.set(settled.stepId, {
                 status: "failed",
                 error: settled.err instanceof Error ? settled.err.message : String(settled.err),
@@ -1343,7 +1352,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // A child that settled by throwing carries no durable duration.
             stepDurationMs = undefined;
             await emitDagSnapshot();
-            if (!isBudgetThrow) await dispatchReady();
+            await dispatchReady();
         }
 
         // One `step_completed` provenance emission per settled child — this
@@ -1368,30 +1377,36 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         );
     }
 
-    await drainBudgetExceededNotifications(budgetExceededChildIds);
+    await drainChildSuspensions(childSuspensions);
 
     return {
         completed,
         failed,
         canceled,
-        budgetExceeded,
+        suspension,
         failureReason,
         stepStates: stepRuntime,
         ...(hasReportedUsage(runUsage) ? { usage: { ...runUsage } } : {}),
     };
 }
 
-async function drainBudgetExceededNotifications(childIds: Set<string>): Promise<void> {
+/** Collect each typed suspension that a child sent, by child workflow id. The first one per child wins. */
+async function drainChildSuspensions(suspensions: Map<string, ChildSuspended>): Promise<void> {
     while (true) {
-        const msg = await DBOS.recv<BudgetExceededNotification>(BUDGET_EXCEEDED_TOPIC, 0);
+        const msg = await DBOS.recv<ChildSuspended>(CHILD_SUSPENDED_TOPIC, 0);
         if (!msg) return;
-        childIds.add(msg.childWorkflowId);
+        if (msg.kind === "suspended" && !suspensions.has(msg.childWorkflowId)) suspensions.set(msg.childWorkflowId, msg);
     }
 }
 
+/**
+ * Cancel each in-flight child. `cause` labels the metric of each cancel:
+ * `fail_fast` for the `neverFits` guard, or the reason of the host for a
+ * suspension, unread.
+ */
 async function cancelInFlight(
     inFlight: ReadonlyMap<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>,
-    cause: "fail_fast" | "budget_exceeded" | "external_cancel",
+    cause: string,
     canceledByParent: Set<string>,
 ): Promise<void> {
     const ids = [...inFlight.keys()];
@@ -1415,7 +1430,8 @@ interface CollectAndCompleteArgs {
     readonly completed: ReadonlySet<string>;
     readonly failed: ReadonlySet<string>;
     readonly canceled: ReadonlySet<string>;
-    readonly budgetExceeded: boolean;
+    /** The suspension of the run, with the reason of the host, or null when the run did not suspend. */
+    readonly suspension: Suspension | null;
     readonly failureReason: string | null;
     /**
      * The run's aggregate token usage for the run-completed card. Absent when no
@@ -1435,7 +1451,10 @@ interface CollectAndCompleteArgs {
 }
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
-    const { input, runId, workflowId, startedAtMs, completed, failed, canceled, budgetExceeded, failureReason, forceFailed, deps } = args;
+    const { input, runId, workflowId, startedAtMs, completed, failed, canceled, suspension, failureReason, forceFailed, deps } = args;
+    // The suspension branch: a forced failure (synthesis threw, or the charge gate
+    // failed the run) is terminal and never a resumable suspension.
+    const suspended = suspension !== null && !forceFailed ? suspension : null;
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis").with({ runId, analysisId: input.analysisId });
 
     const status = forceFailed
@@ -1445,7 +1464,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
               completed,
               failed,
               canceled,
-              budgetExceeded,
+              suspended: suspended !== null,
           });
 
     const chargeOutcome: RunChargeOutcome =
@@ -1453,15 +1472,15 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
             ? { kind: "ok" }
             : status === "failed"
               ? { kind: "error" }
-              : budgetExceeded
-                ? { kind: "suspended", reason: "budget_exceeded" }
+              : suspended !== null
+                ? { kind: "suspended", reason: suspended.reason }
                 : { kind: "canceled" };
     const revokeReason =
         status === "completed" || status === "partial"
             ? "workflow-completed"
             : status === "failed"
               ? "workflow-failed"
-              : budgetExceeded
+              : suspended !== null
                 ? "workflow-suspended"
                 : "workflow-canceled";
 
@@ -1493,7 +1512,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         await DBOS.runStep(
             async () => {
                 unwrapOrThrow(
-                    await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" && !budgetExceeded ? "external_cancel" : null)),
+                    await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" && suspended === null ? "external_cancel" : null)),
                 );
                 // The outcome metrics ride inside the step that persists the terminal status: DBOS
                 // caches the step, so a recovered body records nothing again. A step's own terminal
@@ -1541,10 +1560,10 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
 
     // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
     // paths. The gate is the BRANCH, not the written run status: the resumable
-    // 402 pause below also writes "canceled", yet its pending rows must survive
+    // suspension below also writes "canceled", yet its pending rows must survive
     // for the resumed workflow to execute. Log-don't-rollback, like every other
     // finalisation step here.
-    if (!(budgetExceeded && !forceFailed)) {
+    if (suspended === null) {
         try {
             await DBOS.runStep(
                 async () => {
@@ -1557,9 +1576,9 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         }
     }
 
-    // A forced failure (synthesis threw) is terminal, not a resumable budget
-    // pause — never suspend it, even when the budget was also exceeded.
-    if (budgetExceeded && !forceFailed) {
+    // The one function that marks the analysis as suspended, for each reason of
+    // the host. A forced failure never reaches this branch.
+    if (suspended !== null) {
         try {
             await DBOS.runStep(
                 async () => {
@@ -1628,8 +1647,8 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         await emitStreamPart({
             type: "data-run-failed",
             runId,
-            error: failureReason ?? (budgetExceeded ? "Run paused: insufficient budget" : "Run canceled before completion"),
-            ...(budgetExceeded ? { reason: "budget_exceeded" } : {}),
+            error: failureReason ?? (suspended !== null ? suspended.reason : "Run canceled before completion"),
+            ...(suspended !== null ? { reason: suspended.reason } : {}),
         });
     }
 
@@ -1654,10 +1673,10 @@ function deriveFinalStatus(args: {
     completed: ReadonlySet<string>;
     failed: ReadonlySet<string>;
     canceled: ReadonlySet<string>;
-    budgetExceeded: boolean;
+    suspended: boolean;
 }): Exclude<ExecuteAnalysisFinalStatus, "running"> {
-    const { totalSteps, completed, failed, canceled, budgetExceeded } = args;
-    if (budgetExceeded) return "canceled";
+    const { totalSteps, completed, failed, canceled, suspended } = args;
+    if (suspended) return "canceled";
     if (failed.size > 0) {
         return completed.size > 0 ? "partial" : "failed";
     }

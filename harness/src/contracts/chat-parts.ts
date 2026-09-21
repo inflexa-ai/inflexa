@@ -387,7 +387,7 @@ export interface RunFailedPart {
     runId: string;
     /** Scrubbed error message (no internal details). */
     error: string;
-    /** Machine-readable failure reason (e.g., "budget_exceeded"). */
+    /** The suspend reason of the host, carried unread; present only when the run suspended. */
     reason?: string;
 }
 

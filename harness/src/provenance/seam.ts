@@ -68,7 +68,7 @@ export type RunProvenanceEvent =
           runId: string;
           /**
            * The body's terminal status. Both boundary sites resolve it through `deriveFinalStatus`,
-           * which records a budget pause as `"canceled"` — so `"suspended_insufficient_funds"` (a
+           * which records a suspension as `"canceled"` — so `"suspended_insufficient_funds"` (a
            * `RunStatus` member) is never emitted here and is deliberately absent from this narrower
            * `ExecuteAnalysisFinalStatus`-minus-`"running"` set.
            */
