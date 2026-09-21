@@ -15,16 +15,18 @@
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
 
-import type { AuthContext, RunSession } from "../auth/types.js";
+import { forStep, type AuthContext, type RunSession } from "../auth/types.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
+import { unwrapOrThrow } from "../lib/result.js";
 import type { ExtractionArm, ExtractionArtifact, ExtractionRequest } from "../report-model/production-resolver.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
+import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
 import type { ExecEmit, ExecResult, SubmitExecBody } from "../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
 
@@ -146,17 +148,16 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
         const workflowId = DBOS.workflowID ?? `${EXTRACT_VALUES_RUN_LITERAL}:${executionId}`;
 
         // The container mounts the analysis tree read-only. The extraction pass only reads, thus it needs
-        // no writable step mount.
-        const sandbox = await deps.sandboxClient.createSandbox(
-            {
-                runId: EXTRACT_VALUES_RUN_LITERAL,
-                stepId: EXTRACT_VALUES_STEP_LITERAL,
-                analysisId,
-                childWorkflowId: workflowId,
-                resources: EXTRACTION_RESOURCES,
-                readOnly: true,
-            },
-            mintSandboxIdentity(EXTRACT_VALUES_RUN_LITERAL),
+        // no writable step mount. The sandbox takes its ids from the session of the pass, and the client
+        // calls the label hook of the host with it. A refusal of that hook is a value.
+        const sandbox = unwrapOrThrow(
+            keepLabelsRefusal(
+                await deps.sandboxClient.createSandbox(
+                    forStep(runSession, EXTRACT_VALUES_STEP_LITERAL),
+                    { childWorkflowId: workflowId, resources: EXTRACTION_RESOURCES, readOnly: true },
+                    mintSandboxIdentity(EXTRACT_VALUES_RUN_LITERAL),
+                ),
+            ).mapErr((refusal) => new SandboxFailure(refusal)),
         );
 
         try {

@@ -9,9 +9,8 @@
  *   - The `data-step-usage` run-event part: what the step's loop spent reaches
  *     the run stream once the loop completes, under the step's stable part id,
  *     and is absent entirely when the loop reported nothing.
- *   - The host's sandbox pod labels: what the `resolvePodLabels` seam returns is
- *     what the spawn carries, and a seam that is absent or that throws still
- *     spawns the step.
+ *   - The spawn of the step sandbox: the client gets the step session, thus the
+ *     sandbox takes its ids from it and the label hook of the client sees it.
  *
  * The usage tests drive `runSandboxStepBody` against a fake DBOS surface and a
  * fake deps bundle, the same shape `execute-analysis.test.ts` uses for the
@@ -29,12 +28,12 @@ import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat
 import { isReconciling, type CortexChatPartType } from "@inflexa-ai/harness/contracts/part-registry.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
-import type { RunSession } from "../auth/types.js";
+import type { RunSession, SpawnSession } from "../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../__tests__/setup/logger.js";
 import { classifyReadPath } from "../provenance/collector.js";
 import type { AgentChat, ChatResponse, ChatUsage, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
-import type { CreateSandboxMeta, SandboxRef } from "../sandbox/types.js";
+import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../execution/artifact-registry.js";
 import type { GateFailure } from "../lib/hooks.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
@@ -170,11 +169,11 @@ const SANDBOX_REF: SandboxRef = {
     callbackSecret: "base64:unused",
 };
 
-function makeSandboxClient(spawns: CreateSandboxMeta[] = []): SandboxClient {
+function makeSandboxClient(spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = []): SandboxClient {
     return {
-        createSandbox: async (meta: CreateSandboxMeta) => {
-            spawns.push(meta);
-            return SANDBOX_REF;
+        createSandbox: (session: SpawnSession, spec: SandboxSpec) => {
+            spawns.push({ session, spec });
+            return okAsync(SANDBOX_REF);
         },
         submitExec: async () => undefined,
         awaitExec: async () => {
@@ -373,64 +372,22 @@ describe("sandbox-step data-step-usage part", () => {
     });
 });
 
-// ── host-supplied sandbox pod labels ─────────────────────────────────
+// ── the spawn of the step sandbox ───────────────────────────────────
 
-describe("sandbox-step pod labels", () => {
-    /** Deps whose spawns are recorded, under the given `resolvePodLabels` seam. */
-    function podLabelDeps(resolvePodLabels?: SandboxStepDeps["resolvePodLabels"]): { deps: SandboxStepDeps; spawns: CreateSandboxMeta[] } {
-        const spawns: CreateSandboxMeta[] = [];
-        const deps: SandboxStepDeps = {
-            ...usageStepDeps(undefined),
-            sandboxClient: makeSandboxClient(spawns),
-            ...(resolvePodLabels ? { resolvePodLabels } : {}),
-        };
-        return { deps, spawns };
-    }
-
-    it("carries what the host resolved into the spawn, verbatim", async () => {
-        const labels = { "cortex/billing-context": "bc-1", "example.com/tenant": "acme" };
-        const { deps, spawns } = podLabelDeps(async () => labels);
+describe("sandbox-step spawn", () => {
+    it("spawns under the step session, thus the sandbox takes the ids of the step from it", async () => {
+        const spawns: Array<{ session: SpawnSession; spec: SandboxSpec }> = [];
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), sandboxClient: makeSandboxClient(spawns) };
 
         const result = await runSandboxStepBody(usageStepInput(), deps);
 
         expect(result.status).toBe("complete");
-        expect(spawns.length).toBe(1);
-        expect(spawns[0]!.podLabels).toEqual(labels);
-    });
-
-    it("resolves under the step's own session, so the labels name the step that spawns", async () => {
-        const seen: RunSession[] = [];
-        const { deps } = podLabelDeps(async (session) => {
-            seen.push(session);
-            return {};
-        });
-
-        await runSandboxStepBody(usageStepInput(), deps);
-
-        expect(seen.length).toBe(1);
-        expect(seen[0]!.provenance.agentId).toBe(USAGE_AGENT_ID);
-        expect(seen[0]!.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
-    });
-
-    it("spawns with no labels and completes when no seam is wired", async () => {
-        const { deps, spawns } = podLabelDeps();
-
-        const result = await runSandboxStepBody(usageStepInput(), deps);
-
-        expect(result.status).toBe("complete");
-        expect(spawns[0]!.podLabels).toBeUndefined();
-    });
-
-    it("spawns with no labels and completes when the seam throws", async () => {
-        // Attribution is never a gate on compute: the step runs unlabeled.
-        const { deps, spawns } = podLabelDeps(async () => {
-            throw new Error("upstream unreachable");
-        });
-
-        const result = await runSandboxStepBody(usageStepInput(), deps);
-
-        expect(result.status).toBe("complete");
-        expect(spawns[0]!.podLabels).toBeUndefined();
+        expect(spawns).toHaveLength(1);
+        expect(spawns[0]!.session.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
+        expect(spawns[0]!.session.scope.analysisId).toBe(ANALYSIS_ID);
+        expect(spawns[0]!.session.provenance.agentId).toBe(USAGE_AGENT_ID);
+        // The spec carries no id and no label: both come from the session and the client.
+        expect(Object.keys(spawns[0]!.spec).sort()).toEqual(["childWorkflowId", "extraEnv", "image", "resources"]);
     });
 });
 

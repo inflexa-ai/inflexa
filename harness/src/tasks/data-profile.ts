@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
-import { forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
+import { forStep, forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
@@ -43,6 +43,7 @@ import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
+import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
 import type { SandboxRef } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -136,13 +137,6 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /**
-     * Host-supplied labels for the profiler's sandbox pod, resolved under the
-     * profiling session. The map is opaque to the harness: it stamps each entry
-     * and interprets none of it. Absent in a wiring that attributes nothing —
-     * the pod then carries the harness's own labels only.
-     */
-    readonly resolvePodLabels?: (session: RunSession) => Promise<Record<string, string>>;
     /**
      * The farm-extension seam of the embedder. Bound, it rides into the
      * profiler agent deps, and the substrate attaches `link_packages`. Thus
@@ -594,28 +588,16 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // run panel's activity readout was built to remove.
         await activity.sandboxInit();
 
-        let podLabels: Record<string, string> | undefined;
-        if (deps.resolvePodLabels) {
-            try {
-                podLabels = await deps.resolvePodLabels(childSession);
-            } catch (err) {
-                logger.warn("pod-label resolution failed", logger.errorFields(err));
-            }
-            // A wired resolver that yields nothing is the one loud case: the host
-            // asked for attribution and the pod spawns without it.
-            if (!podLabels || Object.keys(podLabels).length === 0) logger.warn("sandbox spawned with no pod labels");
-        }
-
-        const sandbox = await deps.sandboxClient.createSandbox(
-            {
-                runId: DATA_PROFILE_RUN_LITERAL,
-                stepId: DATA_PROFILE_STEP_LITERAL,
-                analysisId,
-                childWorkflowId: workflowId,
-                resources: estimateDataProfileResources(stagedInputs),
-                podLabels,
-            },
-            mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
+        // The sandbox takes its ids from the profile session, and the client calls
+        // the label hook of the host with it. A refusal of that hook is a value.
+        const sandbox = unwrapOrThrow(
+            keepLabelsRefusal(
+                await deps.sandboxClient.createSandbox(
+                    forStep(runSession, DATA_PROFILE_STEP_LITERAL),
+                    { childWorkflowId: workflowId, resources: estimateDataProfileResources(stagedInputs) },
+                    mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
+                ),
+            ).mapErr((refusal) => new SandboxFailure(refusal)),
         );
 
         try {

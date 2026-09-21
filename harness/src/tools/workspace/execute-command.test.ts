@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import type { CreateSandboxMeta, ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
+import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { createExecuteCommandTool } from "./execute-command.js";
 import { EXEC_STREAM_BYTE_CAP } from "./result-bounds.js";
 
@@ -48,8 +49,8 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
         submits,
         awaits,
         toolchainSource: "store",
-        async createSandbox(_meta: CreateSandboxMeta) {
-            return makeSandboxRef();
+        createSandbox() {
+            return okAsync(makeSandboxRef());
         },
         async submitExec(ref: SandboxRef, body: SubmitExecBody) {
             submits.push({ ref, body });

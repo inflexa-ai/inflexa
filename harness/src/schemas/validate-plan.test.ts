@@ -82,6 +82,32 @@ describe("validatePlan", () => {
     });
 });
 
+describe("validatePlan — a step id is a valid label value", () => {
+    it("refuses a step id of 64 letters, and the message gives the rule", () => {
+        const result = validatePlan(plan([step({ id: "a".repeat(64) })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("not a valid label value") && e.includes("1 to 63 characters"))).toBe(true);
+    });
+
+    it("refuses a safe id that starts with a separator", () => {
+        const result = validatePlan(plan([step({ id: "_qc" })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("not a valid label value"))).toBe(true);
+        expect(result.errors.some((e) => e.includes("unsafe id"))).toBe(false);
+    });
+
+    it("refuses a safe id that ends with a separator", () => {
+        expect(validatePlan(plan([step({ id: "qc-" })])).valid).toBe(false);
+    });
+
+    it("accepts a step id of 63 characters with separators between two letters", () => {
+        const id = `a${"._-".repeat(20)}b`;
+        expect(id).toHaveLength(62);
+        const atLimit = `${id}c`;
+        expect(validatePlan(plan([step({ id: atLimit })]))).toEqual({ valid: true, errors: [] });
+    });
+});
+
 describe("validatePlan per-step resource ceiling", () => {
     const ceiling = { maxCpu: 4, maxMemoryGb: 8, maxGpuCount: 0 };
 

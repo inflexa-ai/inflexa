@@ -32,16 +32,19 @@ import { ResultAsync, err, ok } from "neverthrow";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { readFarmLock, resolveFarmSource } from "./farm.js";
-import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
+import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_WORKFLOW_KEY, SANDBOX_ID_LABEL } from "./labels.js";
+import { buildMountPlan, buildSessionSubPaths, mountCoordsOf } from "./mount-plan.js";
 import { threadLimitEnv } from "./thread-env.js";
+import type { SpawnSession } from "../auth/types.js";
 import type {
-    CreateSandboxMeta,
     FarmLocation,
     FarmSource,
     ManagedSandbox,
     SandboxIdentity,
+    SandboxLabels,
     SandboxLiveness,
     SandboxRef,
+    SandboxSpec,
     SandboxTransport,
     ToolchainSource,
 } from "./types.js";
@@ -68,35 +71,14 @@ const POD_POLL_INTERVAL_MS = 1_000;
  */
 const POD_READY_SLOW_MS = 60_000;
 
-const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
-const MANAGED_BY_VALUE = "cortex";
 /**
  * Annotation key of the owning DBOS workflow id. An annotation value has neither
  * a length cap nor a charset restriction, so the id round-trips verbatim and can
  * be handed back to `DBOS.getWorkflowStatus`. Deliberately not a label: nothing
- * selects on it, and a label value could not hold it (see {@link sanitizeLabelValue}).
+ * selects on it, and a DBOS workflow id can be longer than 63 characters and can
+ * hold `:`, thus it is not a valid label value.
  */
-const OWNER_WORKFLOW_ANNOTATION = "cortex/owner-workflow-id";
-const RUN_ID_LABEL = "cortex/run-id";
-const STEP_ID_LABEL = "cortex/step-id";
-const ANALYSIS_ID_LABEL = "cortex/analysis-id";
-
-/**
- * Coerce an arbitrary identifier into a valid K8s label value:
- * ≤63 chars, `[A-Za-z0-9._-]` only, starting and ending alphanumeric.
- * Without it one malformed value gets the whole Job rejected at admission.
- *
- * Lossy by construction: `:` becomes `-` and anything past 63 chars is dropped,
- * neither of which is recoverable. No label value may therefore be used as a
- * lookup key — see {@link OWNER_WORKFLOW_ANNOTATION}.
- */
-export function sanitizeLabelValue(value: string): string {
-    return value
-        .replace(/[^A-Za-z0-9._-]/g, "-")
-        .replace(/^[^A-Za-z0-9]+/, "")
-        .slice(0, 63)
-        .replace(/[^A-Za-z0-9]+$/, "");
-}
+const OWNER_WORKFLOW_ANNOTATION = OWNER_WORKFLOW_KEY;
 
 /** The owner workflow id recorded on a Job, or null if it records none. */
 function readOwnerWorkflowId(metadata: V1ObjectMeta | undefined): string | null {
@@ -168,7 +150,7 @@ export interface K8sClientConfig {
     /** Injected for tests. */
     batchApi?: BatchV1Api;
     coreApi?: CoreV1Api;
-    registerSandbox: (meta: CreateSandboxMeta, ref: SandboxRef) => Promise<void>;
+    registerSandbox: (session: SpawnSession, spec: SandboxSpec, ref: SandboxRef) => Promise<void>;
 }
 
 function deleteJobIgnoreMissing(batchApi: BatchV1Api, namespace: string, name: string): ResultAsync<void, SandboxError> {
@@ -239,7 +221,9 @@ function pvcSubPath(value: string, what: string): string {
 }
 
 function buildJobSpec(
-    meta: CreateSandboxMeta,
+    session: SpawnSession,
+    sandboxSpec: SandboxSpec,
+    hostLabels: SandboxLabels,
     config: K8sClientConfig,
     identity: SandboxIdentity,
     farm: FarmLocation | undefined,
@@ -251,7 +235,8 @@ function buildJobSpec(
     // caller runs that proof and hands the verdict in `libsMounted`. Without
     // the root, the proof duty stays whole on the farm resolver — see
     // {@link ResolveAnalysisFarm}.
-    const plan = buildMountPlan(meta, {
+    const coords = mountCoordsOf(session, sandboxSpec);
+    const plan = buildMountPlan(coords, {
         libs: libsMounted,
         refs: !!config.refStorePvc,
         toolchainSource: config.toolchainSource,
@@ -259,7 +244,7 @@ function buildJobSpec(
     });
 
     const transport = config.transport ?? "poll";
-    const spec = meta.resources;
+    const spec = sandboxSpec.resources;
     // Composed as one record, not as a list of `{name, value}`. A duplicate name
     // in the env of a container resolves at the kubelet, thus the later spread
     // must win here, not there.
@@ -272,7 +257,7 @@ function buildJobSpec(
         SANDBOX_CALLBACK_SECRET: identity.callbackSecret,
         ...threadLimitEnv(spec),
         ...plan.env,
-        ...(meta.extraEnv ?? {}),
+        ...(sandboxSpec.extraEnv ?? {}),
     }).map(([name, value]) => ({ name, value }));
 
     // requests == limits → Guaranteed QoS and a predictable OOM bound; also
@@ -290,7 +275,7 @@ function buildJobSpec(
     const volumeMounts: V1VolumeMount[] = [];
 
     if (config.sessionPvc) {
-        const subPaths = buildSessionSubPaths(meta, workspaceSubPathFor(config, meta.analysisId));
+        const subPaths = buildSessionSubPaths(coords, workspaceSubPathFor(config, session.scope.analysisId));
         volumes.push({
             name: SESSION_VOLUME_NAME,
             persistentVolumeClaim: { claimName: config.sessionPvc },
@@ -365,7 +350,7 @@ function buildJobSpec(
         containers: [
             {
                 name: "sandbox",
-                image: meta.image ?? config.image,
+                image: sandboxSpec.image ?? config.image,
                 imagePullPolicy: "IfNotPresent",
                 env,
                 resources,
@@ -397,14 +382,11 @@ function buildJobSpec(
     if (config.runtimeClassName) podSpec.runtimeClassName = config.runtimeClassName;
 
     // Pod-template placement is load-bearing: a cost reconciler allocates by pod
-    // labels, thus a Job-only label is invisible to it. The host labels stay
-    // opaque — every value passes through `sanitizeLabelValue`, because one
-    // malformed value makes the API server reject the whole Job at admission.
-    const attributionLabels: Record<string, string> = {
-        [ANALYSIS_ID_LABEL]: sanitizeLabelValue(meta.analysisId),
-        [RUN_ID_LABEL]: sanitizeLabelValue(meta.runId),
-        ...Object.fromEntries(Object.entries(meta.podLabels ?? {}).map(([key, value]) => [key, sanitizeLabelValue(value)])),
-    };
+    // labels, thus a Job-only label is invisible to it. The Job and the pod
+    // template carry the same set. The host labels merge first, thus a harness
+    // key wins a clash, and each value reaches the API server as it is: the API
+    // server does the check of a label value at admission (`labels.ts`).
+    const labels = mergeLabels(hostLabels, harnessLabels(session, sandboxId));
 
     return {
         apiVersion: "batch/v1",
@@ -413,26 +395,16 @@ function buildJobSpec(
             name: sandboxId,
             namespace: config.namespace,
             annotations: {
-                [OWNER_WORKFLOW_ANNOTATION]: meta.childWorkflowId,
+                [OWNER_WORKFLOW_ANNOTATION]: sandboxSpec.childWorkflowId,
             },
-            labels: {
-                [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
-                role: "sandbox",
-                "cortex/sandbox-id": sandboxId,
-                [STEP_ID_LABEL]: sanitizeLabelValue(meta.stepId),
-                ...attributionLabels,
-            },
+            labels,
         },
         spec: {
             backoffLimit: 0,
             ttlSecondsAfterFinished: 60,
             template: {
                 metadata: {
-                    labels: {
-                        role: "sandbox",
-                        "cortex/sandbox-id": sandboxId,
-                        ...attributionLabels,
-                    },
+                    labels,
                 },
                 spec: podSpec,
             },
@@ -491,7 +463,7 @@ export function waitForPodReady(
                     () =>
                         coreApi.listNamespacedPod({
                             namespace,
-                            labelSelector: `cortex/sandbox-id=${sandboxId}`,
+                            labelSelector: `${SANDBOX_ID_LABEL}=${sandboxId}`,
                         }),
                     createFailed,
                 );
@@ -544,7 +516,7 @@ function existingPodIsTerminal(coreApi: CoreV1Api, namespace: string, sandboxId:
         () =>
             coreApi.listNamespacedPod({
                 namespace,
-                labelSelector: `cortex/sandbox-id=${sandboxId}`,
+                labelSelector: `${SANDBOX_ID_LABEL}=${sandboxId}`,
             }),
         (status, cause) => ({
             type: "container_create_failed",
@@ -650,7 +622,7 @@ function createOrAdoptJob(
 }
 
 export function createK8sSandboxOps(config: K8sClientConfig): {
-    createSandbox(meta: CreateSandboxMeta, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
+    createSandbox(session: SpawnSession, spec: SandboxSpec, identity: SandboxIdentity, hostLabels: SandboxLabels): ResultAsync<SandboxRef, SandboxError>;
     teardown(ref: SandboxRef): ResultAsync<void, SandboxError>;
     teardownById(sandboxId: string): ResultAsync<void, SandboxError>;
     isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
@@ -660,17 +632,18 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
     const { batchApi, coreApi } = config.batchApi && config.coreApi ? { batchApi: config.batchApi, coreApi: config.coreApi } : buildKubeApi();
 
     return {
-        createSandbox(meta, identity) {
+        createSandbox(session, spec, identity, hostLabels) {
             return new ResultAsync(
                 (async () => {
                     const { sandboxId } = identity;
+                    const analysisId = session.scope.analysisId;
 
                     // Farm resolution comes before any cluster work: a resolver
                     // refusal and a resolver throw refuse the whole call, and no
                     // Job is made.
                     let farm: FarmLocation | undefined;
                     if (config.libStorePvc) {
-                        const resolved = await resolveFarmSource(config.farmSource, meta.analysisId, "k8s.createSandbox");
+                        const resolved = await resolveFarmSource(config.farmSource, analysisId, "k8s.createSandbox");
                         if (resolved.isErr()) return err(resolved.error);
                         farm = resolved.value;
                     }
@@ -695,7 +668,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                             return err({
                                 type: "farm_unusable",
                                 op: "k8s.createSandbox",
-                                analysisId: meta.analysisId,
+                                analysisId,
                                 farmPath: farm.farmPath,
                                 lockPath: lock.error.lockPath,
                                 lockError: lock.error.type,
@@ -712,9 +685,9 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                         }
                     }
 
-                    const job = buildJobSpec(meta, config, identity, farm, libsMounted);
+                    const job = buildJobSpec(session, spec, hostLabels, config, identity, farm, libsMounted);
 
-                    const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, meta.childWorkflowId, job);
+                    const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, spec.childWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);
 
                     // A Job whose pod never schedules (quota rejection, no nodes, spot
@@ -733,7 +706,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                             callbackSecret: identity.callbackSecret,
                         };
                         const registered = await trySandbox(
-                            () => config.registerSandbox(meta, ref),
+                            () => config.registerSandbox(session, spec, ref),
                             (status, cause) => ({
                                 type: "container_create_failed",
                                 op: "k8s.registerSandbox",
@@ -781,7 +754,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                         const labels = j.metadata?.labels ?? {};
                         const ts = j.metadata?.creationTimestamp;
                         return {
-                            sandboxId: labels["cortex/sandbox-id"] ?? j.metadata?.name ?? "",
+                            sandboxId: labels[SANDBOX_ID_LABEL] ?? j.metadata?.name ?? "",
                             ownerWorkflowId: readOwnerWorkflowId(j.metadata),
                             createdAtMs: ts ? new Date(ts).getTime() : null,
                         };
@@ -802,7 +775,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
             () =>
                 coreApi.listNamespacedPod({
                     namespace: config.namespace,
-                    labelSelector: `cortex/sandbox-id=${sandboxId}`,
+                    labelSelector: `${SANDBOX_ID_LABEL}=${sandboxId}`,
                 }),
             (status, cause) => ({
                 type: "liveness_failed",

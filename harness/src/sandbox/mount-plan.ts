@@ -28,8 +28,9 @@
  * (see {@link buildSessionSubPaths}).
  */
 
+import type { SpawnSession } from "../auth/types.js";
 import { assertSafeId, assertSafeTail } from "../workspace/paths.js";
-import type { ToolchainSource } from "./types.js";
+import type { SandboxSpec, ToolchainSource } from "./types.js";
 
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
@@ -72,6 +73,20 @@ export interface MountPlanCoords {
      * contradiction, and the builders refuse it.
      */
     writableTail?: string;
+}
+
+/**
+ * The mount coordinates of one spawn. The ids come from the session of the
+ * spawn, and the shape of the write mount comes from the spec.
+ */
+export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "readOnly" | "writableTail">): MountPlanCoords {
+    return {
+        analysisId: session.scope.analysisId,
+        runId: session.runFrame.runId,
+        stepId: session.runFrame.stepId,
+        ...(spec.readOnly !== undefined ? { readOnly: spec.readOnly } : {}),
+        ...(spec.writableTail !== undefined ? { writableTail: spec.writableTail } : {}),
+    };
 }
 
 export interface MountPlanStores {
