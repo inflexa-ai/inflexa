@@ -453,17 +453,21 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
 
 /**
  * The last `knowledge_recommend` answer of one invocation: the skeleton steps
- * by step id, and every claim id the answer returned, from the steps, their
- * alternatives, their disputed rules, the claim views, and the flags.
+ * by step id, every claim id the answer returned, from the steps, their
+ * alternatives, their disputed rules, the claim views, and the flags, and
+ * the snapshot digest the answer came from.
  */
 interface RecommendMemory {
     readonly steps: Map<string, SkeletonStep>;
     readonly claims: Set<string>;
+    /** The digest of the last answer; `undefined` before the first. */
+    digest?: string;
 }
 
 function rememberAnswer(memory: RecommendMemory, answer: KnowledgeRecommendAnswer): void {
     memory.steps.clear();
     memory.claims.clear();
+    memory.digest = answer.snapshot.digest;
     for (const step of answer.plan_skeleton) {
         memory.steps.set(step.id, step);
         for (const claim of step.grounding.claims) memory.claims.add(claim);
@@ -518,10 +522,17 @@ interface RepairedClaim {
  * answer holds one claim of the same rule: one snapshot holds one version of
  * a rule, thus the rule names the claim. A claim of a rule the answer does
  * not hold is an issue that rejects the plan, so the model cites a claim of
- * the answer or removes it. Returns the stamped steps, the restored steps,
- * the repaired claims, and the issues beside the new candidate. A candidate
- * that is not a plan-shaped object, or a plan with no answer, comes back as
- * it is.
+ * the answer or removes it.
+ *
+ * A step the skeleton does not hold, for example a robustness step the model
+ * adds under its own id, gets the digest stamped too when one of its claims
+ * is a claim of the answer: the claim vouches that the step consulted the
+ * answer, and the digest it typed is as prone to a miscopy as any other. A
+ * step with no claim of the answer stays as the model wrote it, because
+ * nothing of the answer vouches for it. Returns the stamped steps, the
+ * restored steps, the repaired claims, and the issues beside the new
+ * candidate. A candidate that is not a plan-shaped object, or a plan with no
+ * answer, comes back as it is.
  */
 function restoreSkeletonGrounding(
     candidate: unknown,
@@ -578,6 +589,12 @@ function restoreSkeletonGrounding(
                 return claim;
             });
             if (changed) next = { ...next, claims };
+        }
+        // The repaired claims are the ones compared, thus a step whose only claim was miscopied still gets the digest.
+        const vouched = Array.isArray(next.claims) && next.claims.some((claim) => typeof claim === "string" && memory.claims.has(claim));
+        if (source === undefined && vouched && memory.digest !== undefined && current.snapshot !== "none" && next.snapshot !== memory.digest) {
+            stamped.push(label);
+            next = { ...next, snapshot: memory.digest };
         }
         return next === current ? step : { ...step, grounding: next };
     });
@@ -698,7 +715,7 @@ function buildInnerTools(
 
             const attempt = ++trace.submitAttempts;
             const { candidate, stamped, restored, repaired, unknown } = restoreSkeletonGrounding(input.plan, memory);
-            if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of skeleton steps", { steps: stamped });
+            if (stamped.length > 0) logger.info("submit_plan stamped the snapshot digest of the answer on steps", { steps: stamped });
             if (restored.length > 0) logger.info("submit_plan restored the template of skeleton steps", { steps: restored });
             if (repaired.length > 0) logger.info("submit_plan repaired the claim ids of plan steps", { claims: repaired });
             const result = fullyValidate(candidate, resourcePolicy);

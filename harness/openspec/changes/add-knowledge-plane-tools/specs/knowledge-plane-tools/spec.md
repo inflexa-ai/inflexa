@@ -212,7 +212,7 @@ At dispatch the parent MUST intersect the `grounding.settings` of the step with 
 
 ### Requirement: The planner restores the template of a skeleton step
 
-The recommend tool MUST give each answer to the planner invocation that holds it. `submit_plan` MUST restore an absent `grounding.template` of a candidate step from the skeleton step with the same id. The restore applies only when the snapshot digest of the candidate step equals the snapshot of the skeleton. The restore MUST NOT change a step that carries a template, a step with a different snapshot, or a step the skeleton does not hold. The tool MUST log the ids of the restored steps.
+The recommend tool MUST give each answer to the planner invocation that holds it. `submit_plan` MUST restore an absent `grounding.template` of a candidate step from the skeleton step with the same id. The restore applies only when the snapshot digest of the candidate step equals the snapshot of the skeleton. The restore MUST NOT change a step that carries a template, a step with a different snapshot, or a step the skeleton does not hold. `submit_plan` MUST stamp the snapshot digest of the answer on a skeleton step, and on a step the skeleton does not hold when one of its claims is a claim of the answer. A step with no claim of the answer keeps the digest it carries. A step whose snapshot is `none` is never stamped. The tool MUST log the ids of the restored steps and of the stamped steps.
 
 #### Scenario: The model drops the template
 
@@ -225,6 +225,12 @@ The recommend tool MUST give each answer to the planner invocation that holds it
 - **GIVEN** the same answer
 - **WHEN** the planner submits a step with the same id and a snapshot of `none`
 - **THEN** the stored step carries no template
+
+#### Scenario: A step outside the skeleton cites a claim of the answer
+
+- **GIVEN** the same answer
+- **WHEN** the planner submits a robustness step under an id the skeleton does not hold, with a claim of the answer and a miscopied digest
+- **THEN** the stored step carries the digest of the answer, and a step with no claim of the answer keeps the digest it carried
 
 ### Requirement: A plan pins one release of the service
 
