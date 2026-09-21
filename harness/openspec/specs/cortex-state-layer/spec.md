@@ -14,8 +14,8 @@ migrations, serialized across replicas by a Postgres advisory lock so concurrent
 startups never race on DDL.
 
 This spec covers the two analysis-scoped tables the state layer owns:
-`cortex_analysis_state` (per-analysis singleton: status, billing identity,
-data-profile lifecycle) and `cortex_artifacts` (the cross-run file registry that
+`cortex_analysis_state` (per-analysis singleton: status and the data-profile
+lifecycle) and `cortex_artifacts` (the cross-run file registry that
 carries the two reconciliation keys — `artifact_id` from provenance registration
 and `file_id` from upload sync).
 
@@ -25,7 +25,7 @@ and `file_id` from upload sync).
 
 The `cortex_analysis_state` table SHALL store per-analysis singleton state with
 the columns: `analysis_id` (TEXT, PRIMARY KEY), `status` (TEXT, NOT NULL),
-`context` (TEXT, nullable), `billing_context` (JSONB, nullable),
+`context` (TEXT, nullable),
 `data_profile_status` (TEXT, **nullable**, default `'pending'`),
 `data_profile_error` (TEXT, nullable), `data_profile_started_at` (TEXT,
 nullable), `data_profile_completed_at` (TEXT, nullable), `data_profile_result`
@@ -33,8 +33,6 @@ nullable), `data_profile_completed_at` (TEXT, nullable), `data_profile_result`
 `seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT,
 NOT NULL), `updated_at` (TEXT, NOT NULL).
 
-`billing_context` SHALL hold the billing-attribution headers (`Record<string,
-string>`) as JSONB and is nullable — the OSS no-op billing path leaves it null.
 The `data_profile_status` column SHALL accept `'pending'`, `'running'`,
 `'completed'`, and `'failed'`; `'running'` covers both initial profiling and
 re-profiling, the distinction being made at the API layer by the presence of
@@ -82,20 +80,31 @@ The table SHALL NOT have a `user_id` column — user identity is derived from th
 ambient credential's JWT `sub` claim at request time (the legacy `user_id` column
 is dropped on startup).
 
+The table SHALL NOT have a `billing_context` column — billing attribution is
+resolved by the embedder at charge time, never persisted in the state layer
+(the legacy `billing_context` column is dropped on startup).
+
 #### Scenario: Analysis upserted without user_id column
 
 - **WHEN** an analysis is created via `upsertAnalysis(pool, resourceId, context,
-  billingContext, inputFileIds?)`
-- **THEN** a row is inserted with `status` `'active'`, `context` and
-  `billing_context` from the arguments, `data_profile_status` `'pending'`, and
-  `seed_input_file_ids` set from `inputFileIds` when supplied
+  inputFileIds?)`
+- **THEN** a row is inserted with `status` `'active'`, `context` from the
+  argument, `data_profile_status` `'pending'`, and `seed_input_file_ids` set
+  from `inputFileIds` when supplied
 - **AND** no `user_id` column exists on the table
 
 #### Scenario: Re-upsert replaces mutable fields
 
 - **WHEN** `upsertAnalysis` is called again for an existing analysis
-- **THEN** `context`, `billing_context`, and `updated_at` SHALL be replaced, and
+- **THEN** `context` and `updated_at` SHALL be replaced, and
   `seed_input_file_ids` SHALL be coalesced (kept when the new value is null)
+
+#### Scenario: Legacy billing_context column is dropped on startup
+
+- **WHEN** startup runs against a database whose `cortex_analysis_state` still
+  carries the legacy `billing_context` column
+- **THEN** the column SHALL be dropped idempotently (`DROP COLUMN IF EXISTS`),
+  and a database without it SHALL be unaffected
 
 #### Scenario: Data profile completed with input snapshot
 

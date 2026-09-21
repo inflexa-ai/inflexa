@@ -14,7 +14,7 @@
 ## 3. Spec
 
 - [x] 3.1 Modify the `cortex_analysis_state table schema` requirement: column gone, upsert scenarios lose the billing argument, startup-drop scenario added.
-- [ ] 3.2 On archive, update the capability's Purpose paragraph, which still lists "billing identity" among the table's contents.
+- [x] 3.2 On archive, update the capability's Purpose paragraph, which still lists "billing identity" among the table's contents.
 
 ## 4. Verification
 
