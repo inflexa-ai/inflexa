@@ -1,8 +1,8 @@
 ## 1. A `Result` survives a DBOS checkpoint
 
-- [ ] 1.1 Register the neverthrow `Ok` and `Err` classes with `DBOS.registerSerialization` before DBOS launches (D7)
-- [ ] 1.2 Add a test: a step that returns `err` gives the same `err` again on replay, with the methods of a `Result`
-- [ ] 1.3 Add a test: a workflow that returns `err` gives the `err` to the caller of `getResult()`
+- [x] 1.1 Register the neverthrow `Ok` and `Err` classes with `DBOS.registerSerialization` before DBOS launches (D7)
+- [x] 1.2 Add a test: a step that returns `err` gives the same `err` again on replay, with the methods of a `Result`
+- [x] 1.3 Add a test: a workflow that returns `err` gives the `err` to the caller of `getResult()`
 
 ## 2. The hook kinds
 

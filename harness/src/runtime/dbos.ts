@@ -18,6 +18,7 @@ import type { Pool } from "pg";
 
 import type { LogFields, Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
+import { errRecipe, okRecipe } from "./result-serialization.js";
 
 /**
  * Narrow config slice the DBOS bootstrap reads. Composition roots map their
@@ -179,13 +180,28 @@ export function dbosSdkConfig(config: DbosConfig, logger: Logger): DBOSConfig {
     };
 }
 
+let resultRecipesRegistered = false;
+
+/**
+ * Register the `Result` recipes (`./result-serialization.ts`) one time. DBOS
+ * refuses a registration after the launch, and the registry of SuperJSON is
+ * global to the process, thus a relaunch keeps the recipes.
+ */
+function registerResultSerialization(): void {
+    if (resultRecipesRegistered) return;
+    DBOS.registerSerialization(okRecipe);
+    DBOS.registerSerialization(errRecipe);
+    resultRecipesRegistered = true;
+}
+
 /**
  * Launch DBOS. Idempotent — a second call is a no-op so tests that drive
  * the harness twice (or accidentally double-import) don't re-launch.
  *
- * Order is load-bearing: `setConfig` must precede `launch`, and `launch`
- * must resolve before the HTTP listener accepts traffic (otherwise the
- * readiness probe could 200 against a runtime that can't own workflows).
+ * Order is load-bearing: `setConfig` and the `Result` recipes must precede
+ * `launch`, and `launch` must resolve before the HTTP listener accepts traffic
+ * (otherwise the readiness probe could 200 against a runtime that can't own
+ * workflows).
  */
 export async function launchDbos({ config, logger: injected }: { config: DbosConfig; logger: Logger }): Promise<void> {
     if (state.launched) return;
@@ -194,6 +210,7 @@ export async function launchDbos({ config, logger: injected }: { config: DbosCon
     const sdkConfig = dbosSdkConfig(config, logger);
 
     DBOS.setConfig(sdkConfig);
+    registerResultSerialization();
 
     const start = performance.now();
     await DBOS.launch();
