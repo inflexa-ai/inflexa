@@ -96,9 +96,17 @@ export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
  * rethrows a `ProviderError` inside a `ResultError`, with the value on
  * `.cause`, thus the walk reaches it. The walk reads the kind of the error and
  * never its message.
+ *
+ * A failed step that DBOS replays gives the error that DBOS recorded. That
+ * record keeps only the enumerable fields of a `ResultError`: `.value` stays,
+ * and the non-enumerable `.cause` does not. Thus the walk also reads `.value`.
  */
 export function findSuspendError(err: unknown): SuspendError | undefined {
-    return findInCauseChain(err, (link) => (isProviderError(link) && link.type === "suspend" ? link : undefined));
+    const asSuspend = (value: unknown): SuspendError | undefined => (isProviderError(value) && value.type === "suspend" ? value : undefined);
+    return findInCauseChain(
+        err,
+        (link) => asSuspend(link) ?? (typeof link === "object" && link !== null ? asSuspend((link as { value?: unknown }).value) : undefined),
+    );
 }
 
 /**
