@@ -19,7 +19,7 @@
  * branches on it.
  */
 
-import type { ResultAsync } from "neverthrow";
+import { err, ok, ResultAsync } from "neverthrow";
 
 import type { Logger } from "./logger.js";
 
@@ -52,9 +52,21 @@ export type GateRefusal =
 /**
  * Pass a gate. An `ok` is the value that the operation continues with, as the
  * host gives it. An `err` becomes the refusal that the operation ends on.
+ *
+ * The host can build its `Result` with its own copy of neverthrow. The helper
+ * gives the outcome again as a `Result` of the copy of the harness. Thus the
+ * checkpoint recipes (`runtime/result-serialization.ts`) recognize the class,
+ * and a replay reads the same outcome. A rejection of the host promise passes
+ * through with no change.
  */
 export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure>): ResultAsync<T, GateRefusal> {
-    return result.mapErr((failure): GateRefusal => ({ kind: failure.suspend ? "suspended" : "failed", gate, reason: failure.reason }));
+    return new ResultAsync(
+        Promise.resolve(result).then((settled) =>
+            settled.isOk()
+                ? ok(settled.value)
+                : err<T, GateRefusal>({ kind: settled.error.suspend ? "suspended" : "failed", gate, reason: settled.error.reason }),
+        ),
+    );
 }
 
 /**

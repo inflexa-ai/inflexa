@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ResultAsync, errAsync, okAsync } from "neverthrow";
+import { Err, Ok, ResultAsync, errAsync, okAsync } from "neverthrow";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { deliverNotice, passGate, type GateFailure, type NoticeFailure } from "./hooks.js";
@@ -27,6 +27,24 @@ describe("passGate", () => {
                 () => "err",
             ),
         ).rejects.toThrow("host defect");
+    });
+
+    it("gives the outcome of a gate from another copy of neverthrow as a Result of the harness copy", async () => {
+        // A structural stand-in for the `ResultAsync` of the neverthrow copy of an embedder: a
+        // thenable whose settled value has the methods of a `Result`, but not the class of the harness.
+        const foreign = <T>(settled: object): ResultAsync<T, GateFailure> =>
+            ({ then: (resolve: (value: unknown) => unknown) => resolve(settled) }) as unknown as ResultAsync<T, GateFailure>;
+
+        // eslint-disable-next-line neverthrow/must-use-result -- the outcome is the fixture: the assertion is about its class, which the checkpoint recipes key on
+        const opened = await passGate("RunCharge.open", foreign<number>({ isOk: () => true, value: 7 }));
+        // eslint-disable-next-line neverthrow/must-use-result -- the outcome is the fixture: the assertion is about its class, which the checkpoint recipes key on
+        const refused = await passGate("RunCharge.open", foreign<number>({ isOk: () => false, error: { reason: "r", suspend: true } }));
+
+        // The checkpoint recipes recognize only the classes of the harness copy.
+        expect(opened).toBeInstanceOf(Ok);
+        expect(opened._unsafeUnwrap()).toBe(7);
+        expect(refused).toBeInstanceOf(Err);
+        expect(refused._unsafeUnwrapErr()).toEqual({ kind: "suspended", gate: "RunCharge.open", reason: "r" });
     });
 });
 
