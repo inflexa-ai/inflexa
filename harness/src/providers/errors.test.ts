@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { classifyProviderError, isProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
+import { classifyProviderError, findSuspendError, isProviderError, RequestTimeoutError, toProviderError } from "./errors.js";
 
 /** Build a synthetic API error carrying an HTTP status, SDK-shaped. */
 function apiError(status: number): Error {
@@ -32,18 +32,30 @@ describe("classifyProviderError", () => {
         expect(classifyProviderError(wrapped)).toEqual({ kind: "auth", retryable: false });
     });
 
-    it("classifies a billing gateway 402 as a non-retryable budget error", () => {
+    it("classifies a 402 as a non-retryable suspend error with the reason of the default map", () => {
         expect(classifyProviderError(apiError(402))).toEqual({
-            kind: "budget",
+            kind: "suspend",
+            retryable: false,
+            reason: "payment_required",
+            status: 402,
+        });
+    });
+
+    it("classifies a 403 that the map does not hold as a non-retryable provider error", () => {
+        expect(classifyProviderError(apiError(403))).toEqual({
+            kind: "provider",
             retryable: false,
         });
     });
 
-    it("classifies a billing gateway 403 as a non-retryable tenant-blocked error", () => {
-        expect(classifyProviderError(apiError(403))).toEqual({
-            kind: "tenant-blocked",
-            retryable: false,
-        });
+    it("classifies a status of the map before each other status rule, with the reason of the host", () => {
+        const suspendOn = { 429: "quota_exhausted", 401: "seat_expired" };
+        expect(classifyProviderError(apiError(429), suspendOn)).toEqual({ kind: "suspend", retryable: false, reason: "quota_exhausted", status: 429 });
+        expect(classifyProviderError(apiError(401), suspendOn)).toEqual({ kind: "suspend", retryable: false, reason: "seat_expired", status: 401 });
+    });
+
+    it("replaces the default map with a map from the host", () => {
+        expect(classifyProviderError(apiError(402), { 429: "quota_exhausted" })).toEqual({ kind: "provider", retryable: false });
     });
 
     it("classifies 429 as a retryable provider error", () => {
@@ -89,9 +101,17 @@ describe("classifyProviderError", () => {
     it("reads a status nested on the cause chain", () => {
         const wrapped = new Error("wrapped", { cause: apiError(402) });
         expect(classifyProviderError(wrapped)).toEqual({
-            kind: "budget",
+            kind: "suspend",
             retryable: false,
+            reason: "payment_required",
+            status: 402,
         });
+    });
+
+    it("never classifies a suspension from the text of a message", () => {
+        const phrased = nonConformingApiError(400, "Bad Request", '{"error":"budget exceeded"}');
+        expect(classifyProviderError(phrased)).toEqual({ kind: "provider", retryable: false });
+        expect(findSuspendError(new Error("budget_exceeded"))).toBeUndefined();
     });
 });
 
@@ -273,12 +293,28 @@ describe("the provider arm's composed message", () => {
 describe("isProviderError", () => {
     it("accepts each ProviderError variant and rejects non-ProviderError values", () => {
         expect(isProviderError({ type: "provider", retryable: true, message: "x" })).toBe(true);
-        expect(isProviderError({ type: "budget", retryable: false, message: "x" })).toBe(true);
-        expect(isProviderError({ type: "tenant-blocked", retryable: false, message: "x" })).toBe(true);
+        expect(isProviderError({ type: "suspend", retryable: false, reason: "r", message: "x" })).toBe(true);
+        expect(isProviderError({ type: "auth", retryable: false, message: "x" })).toBe(true);
+        expect(isProviderError({ type: "budget", retryable: false, message: "x" })).toBe(false);
 
         expect(isProviderError(new Error("plain"))).toBe(false);
         expect(isProviderError(null)).toBe(false);
         expect(isProviderError("string")).toBe(false);
         expect(isProviderError({ type: "provider", message: "missing retryable" })).toBe(false);
+    });
+});
+
+describe("toProviderError — the suspend arm", () => {
+    it("composes the generic HTTP message and carries the reason and the status beside it", () => {
+        const failure = toProviderError(apiError(402), "analysis:abc");
+        expect(failure).toMatchObject({ type: "suspend", retryable: false, reason: "payment_required", status: 402 });
+        expect(failure.message).toBe("Provider call failed for analysis:abc (HTTP 402): HTTP 402");
+    });
+
+    it("finds a suspend error that a step boundary rethrew on the cause chain", () => {
+        const failure = toProviderError(apiError(402), "analysis:abc");
+        const rethrown = new Error(failure.message, { cause: failure });
+        expect(findSuspendError(rethrown)).toBe(failure as never);
+        expect(findSuspendError(new Error("x", { cause: toProviderError(apiError(403), "analysis:abc") }))).toBeUndefined();
     });
 });

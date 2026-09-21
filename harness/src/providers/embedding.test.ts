@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 
 import { createEmbeddingProvider } from "./embedding.js";
 import { makeSession } from "./__fixtures__/session.js";
 import type { FetchLike } from "./types.js";
 
-const billingMap: Record<string, string> = {
-    "X-Billing-Context": "billing-ctx-emb",
-    "X-Billing-Virtual-Key": "sk-billing-emb-key",
+const hostHeaders: Record<string, string> = {
+    "X-Attribution-Context": "ctx-emb",
+    "X-Attribution-Key": "key-emb",
 };
 
 interface FakeEmbedding {
@@ -51,7 +52,7 @@ describe("createEmbeddingProvider.embed", () => {
         const provider = createEmbeddingProvider({
             baseURL: "http://billing.test/openai",
             token: "test-token",
-            resolveBilling: async () => billingMap,
+            resolveRequestHeaders: () => okAsync(hostHeaders),
             fetch: fake.fetch,
         });
 
@@ -71,7 +72,7 @@ describe("createEmbeddingProvider.embed", () => {
         const provider = createEmbeddingProvider({
             baseURL: "http://billing.test/openai",
             token: "test-token",
-            resolveBilling: async () => billingMap,
+            resolveRequestHeaders: () => okAsync(hostHeaders),
             fetch: fake.fetch,
         });
 
@@ -88,11 +89,45 @@ describe("createEmbeddingProvider.embed", () => {
         const provider = createEmbeddingProvider({
             baseURL: "http://billing.test/openai",
             token: "test-token",
-            resolveBilling: async () => billingMap,
+            resolveRequestHeaders: () => okAsync(hostHeaders),
             fetch: fake.fetch,
         });
 
         expect((await provider.embed([], makeSession()))._unsafeUnwrap()).toEqual([]);
+        expect(() => fake.lastHeaders()).toThrow("fetch was never called");
+    });
+
+    it("adds the headers of the hook to the request as the hook gives them", async () => {
+        const fake = fakeEmbeddingFetch([{ object: "embedding", index: 0, embedding: [0.1] }]);
+        const provider = createEmbeddingProvider({
+            baseURL: "http://gateway.test/openai",
+            token: "test-token",
+            resolveRequestHeaders: () => okAsync(hostHeaders),
+            fetch: fake.fetch,
+        });
+
+        (await provider.embed(["alpha"], makeSession()))._unsafeUnwrap();
+
+        expect(fake.lastHeaders().get("x-attribution-context")).toBe("ctx-emb");
+        expect(fake.lastHeaders().get("x-attribution-key")).toBe("key-emb");
+    });
+
+    it("sends no request when the hook refuses, and gives the refusal as a provider error", async () => {
+        const fake = fakeEmbeddingFetch([{ object: "embedding", index: 0, embedding: [0.1] }]);
+        const refusing = (suspend: boolean) =>
+            createEmbeddingProvider({
+                baseURL: "http://gateway.test/openai",
+                token: "test-token",
+                resolveRequestHeaders: () => errAsync({ reason: "no_funds", suspend }),
+                fetch: fake.fetch,
+            });
+
+        expect((await refusing(false).embed(["alpha"], makeSession()))._unsafeUnwrapErr()).toMatchObject({ type: "provider", retryable: false });
+        expect((await refusing(true).embed(["alpha"], makeSession()))._unsafeUnwrapErr()).toMatchObject({
+            type: "suspend",
+            reason: "no_funds",
+            retryable: false,
+        });
         expect(() => fake.lastHeaders()).toThrow("fetch was never called");
     });
 });

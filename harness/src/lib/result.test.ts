@@ -3,7 +3,7 @@
  *
  * The load-bearing behavior is the Result→throw bridge: a structured error
  * must survive rethrow with its `cause` chain intact, because the downstream
- * classifiers (`classifyProviderError`, `isBudgetExceeded`) walk `.cause` for
+ * classifiers (`classifyProviderError`, `findSuspendError`) walk `.cause` for
  * a status / connection signal after a `Result` crosses a boundary.
  */
 
