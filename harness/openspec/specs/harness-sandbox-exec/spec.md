@@ -177,6 +177,13 @@ thread-pool variables at `1`, and the worker-count variables at `floor(cpu)`.
 The rationale and the exact variable set are in the docker-sandbox-provider
 spec ("The cpu quota is visible inside the container").
 
+#### Scenario: A Docker step sees its quota
+
+- **GIVEN** a step with the resources `{ cpu: 2 }` on the Docker backend
+- **WHEN** the client makes the sandbox
+- **THEN** a read-only file over `/sys/devices/system/cpu/online` describes 2 cores
+- **AND** the env has `OMP_NUM_THREADS=1` and `BIOCPARALLEL_WORKER_NUMBER=2`
+
 ### Requirement: submitExec is a DBOS step keyed on execId
 
 `submitExec(ref, body)` SHALL run as a DBOS step named
