@@ -23,8 +23,8 @@ are:
 - the sandbox submit and recv protocol
 - the memory
 - the storage layout
-- the five capability **seams** that the harness declares, plus the shared
-  `RunLauncher` seam.
+- the four capability **seams** and the two optional hooks that the harness
+  declares, plus the shared `RunLauncher` seam.
 
 An embedder gives its own composition root. It can also swap a local seam
 realization for a host-specific one.
@@ -41,10 +41,12 @@ CLI from this directory (`cd harness && openspec ...`).
 that an embedder faces:
 
 - `assembleCoreRuntime` and `createConversationAgent`
-- the five capability seams and their local adapters:
-  `RunAuthorizer`/`createLocalRunAuthorizer`, `ResolveBilling`/`createNoopBillingResolver`,
+- the four capability seams and their local adapters:
+  `RunAuthorizer`/`createLocalRunAuthorizer`,
   `ArtifactRegistry`/`createNoopArtifactRegistry`, `RunCharge`/`createNoopRunCharge`,
   `UsageRecorder`/`createNoopUsageRecorder`
+- the two optional hooks `ResolveRequestHeaders` and `ResolveSandboxLabels`, and
+  the failure types of a hook, `GateFailure` and `NoticeFailure`
 - `RunLauncher`/`createDbosRunLauncher`
 - the `Logger` seam and its realizations (`createConsoleLogger`,
   `createNoopLogger`, `defaultErrorFields`)
@@ -87,9 +89,8 @@ bun test                # Unit tests only — DB/DBOS suites need Postgres (see 
 **Composition**: `assembleCoreRuntime` is the single host-neutral assembly point.
 It registers the durable workflows with DBOS, and it builds the conversation agent
 over the registered callables. The local seam realizations have no dependencies,
-and `index.ts` exports them: `createLocalRunAuthorizer`,
-`createNoopBillingResolver`, `createNoopRunCharge`, `createNoopUsageRecorder`,
-`createNoopArtifactRegistry`, and `makeLocalAuth`.
+and `index.ts` exports them: `createLocalRunAuthorizer`, `createNoopRunCharge`,
+`createNoopUsageRecorder`, `createNoopArtifactRegistry`, and `makeLocalAuth`.
 An embedder constructs them, or its own realizations, and passes them into
 `assembleCoreRuntime` at its composition root. The local sandbox path makes an
 ephemeral Docker container for each analysis step. The session data, the package
@@ -97,8 +98,8 @@ store, and the ref store are host directories, bind-mounted into them.
 
 **LLM backend** is whatever the wired `ChatProvider` and `EmbeddingProvider` point
 at. An embedder supplies an AI SDK `LanguageModel` instance, or an endpoint, key,
-and model configuration (Anthropic or OpenAI-compatible). The local billing seam
-does nothing (`createNoopBillingResolver`), thus no attribution header is added.
+and model configuration (Anthropic or OpenAI-compatible). Without a
+`resolveRequestHeaders` hook, the provider adds no host header to a request.
 
 The sandbox client includes a Docker backend and a Kubernetes backend. The
 `SANDBOX_BACKEND` value (`docker` or `k8s`) selects the backend that the
@@ -190,7 +191,8 @@ harness only ever sees the interface, and it never branches on which realization
 is bound.**
 
 Each seam, its path, and its OSS realization are in [`CONTEXT.md`](CONTEXT.md),
-under `The five seams`.
+under `The four seams and the two hooks`. Each method of a seam, and each hook,
+is a gate or a notice (`src/lib/hooks.ts`), and its type shows its kind.
 
 ### Sandbox Architecture
 
@@ -332,8 +334,7 @@ is an embedder concern.
   the conversation agent over them. The local seam realizations that it can be
   wired with carry zero cloud deps, and `index.ts` re-exports them:
   `auth/local-run-authorizer.ts`, `auth/local-auth-context.ts`,
-  `billing/noop-resolver.ts`, `billing/noop-run-charge.ts`, and
-  `execution/noop-artifact-registry.ts`. Refer to
+  `billing/noop-run-charge.ts`, and `execution/noop-artifact-registry.ts`. Refer to
   [harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md).
 - **Workflow recovery**: there is no standing component. Each host supplies a
   stable `executorID`. Refer to [`CONTEXT.md`](CONTEXT.md), under
@@ -507,9 +508,35 @@ operator-facing recovery control, if there is one, belongs to the embedder.
 
 Failure is modeled as a `Result` or `ResultAsync` value (neverthrow). But the
 durability engine underneath speaks exceptions: **DBOS records a step as failed —
-and retries or fails fast — only on a thrown exception.** A `Result` err that
-crosses `DBOS.runStep` as a *return value* is durably cached as a successful step,
-and it replays as a success forever.
+and retries or fails fast — only on a thrown exception.**
+
+A step or a workflow can return a `Result` as its value. The harness registers a
+DBOS serialization recipe for `Ok` and for `Err`
+(`src/runtime/result-serialization.ts`), thus a replay gets the same `Result`,
+with its methods. DBOS records a step that returns an `err` as a success, and it
+does not retry that step. Thus the body must use the `err`.
+
+The harness throws an exception only at these places:
+
+- a step or a workflow that must fail
+- a step that DBOS must retry
+- the self-cancel of a suspension (`cancelSelf`, `src/workflows/suspension.ts`)
+- a tool `execute` body. The dispatch catch of the loop changes the throw into an
+  error tool result.
+
+The harness catches an exception only at these places:
+
+- a client boundary: a thin wrapper around a call to code outside the harness,
+  which changes the throw into an `err`
+- an API boundary: an entry point where a caller outside the harness gets the
+  outcome
+- a DBOS boundary: a workflow body that gets the throw of a failed step or a
+  failed child workflow. Then the body runs its failure path.
+- the dispatch catch of the loop.
+
+An exception from DBOS, for example `DBOSWorkflowCancelledError`, reaches DBOS with
+no change. A hook call has no `try` and no `catch` around it. `passGate` and
+`deliverNotice` (`src/lib/hooks.ts`) take its `Result`.
 
 The full house rules are at the top of `src/lib/result.ts`. There are two
 sanctioned bridges:
@@ -522,9 +549,10 @@ sanctioned bridges:
 - `resultStep` (`src/loop/run-step.ts`) — the composed seam that the agent loop
   uses (`runStep` plus `unwrapOrThrow`).
 
-The `must-use-result` lint rule is patched in `eslint.config.js` to recognize
-`unwrapOrThrow(...)` as a consumer of its Result. Do not rewrite a bridge site into
-an inline `.match` plus throw form. Do not add a per-site lint disable for it.
+The `must-use-result` lint rule is patched in `eslint.config.js`. It recognizes a
+`Result` that goes directly to `unwrapOrThrow`, `passGate`, `deliverNotice`, or
+`keepSuspendingRefusal` as consumed. Do not rewrite a bridge site into an inline
+`.match` plus throw form. Do not add a per-site lint disable for it.
 
 ## Code Comments
 

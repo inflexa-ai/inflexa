@@ -4,20 +4,31 @@
  * The agent loop and execution boundary model failure as values, not throws.
  * The house rules:
  *
- *  1. `try/catch` lives ONLY inside the thin wrappers at calls to code
- *     external to ours — a third-party SDK, the `pg` driver, `fs`, the DBOS
- *     runtime. Those wrappers turn a throw into an `err(DomainError)`.
- *     Everything above them flows `Result` / `ResultAsync`.
+ *  1. `try/catch` lives ONLY at a boundary:
+ *       - the thin wrappers at calls to code external to ours — a third-party
+ *         SDK, the `pg` driver, `fs`, the DBOS runtime. Those wrappers turn a
+ *         throw into an `err(DomainError)`.
+ *       - an API entry point, where a caller outside the harness gets the
+ *         outcome.
+ *       - a workflow body that gets the throw of a failed step or a failed
+ *         child workflow, and runs its failure path.
+ *       - the dispatch catch of the loop.
+ *     Everything else flows `Result` / `ResultAsync`. A host hook has no
+ *     `try/catch` around it: `passGate` / `deliverNotice` (`lib/hooks.ts`)
+ *     consume its `Result`.
  *  2. Absence is NOT an error. A "not found" stays in the ok channel as a
  *     data variant (`ok({ found: false })`), never an `err`. `err` is
  *     reserved for what used to be `throw`n — an unexpected upstream failure.
  *  3. A `Result` is unwrapped at exactly three edges, each speaking its own
  *     dialect of failure:
  *       - HTTP routes `.match(...)` a `Result` into a response.
- *       - The DBOS step boundary throws on `err` (`unwrapOrThrow` /
- *         `resultStep` in `loop/run-step.ts`): durability records a step as
- *         failed — and retries / fails fast — ONLY on a thrown exception, so
- *         an `err` crossing `DBOS.runStep` MUST become a throw.
+ *       - The DBOS step boundary throws on an `err` that must fail or retry
+ *         the step (`unwrapOrThrow` / `resultStep` in `loop/run-step.ts`):
+ *         durability records a step as failed — and retries / fails fast —
+ *         ONLY on a thrown exception. A step can also return a `Result` as
+ *         its value: `runtime/result-serialization.ts` keeps the `Ok` / `Err`
+ *         class across the checkpoint, DBOS records the step as a success,
+ *         and the body MUST use the `err`.
  *       - Tool dispatch maps `err` into an `is_error` `tool_result`
  *         (`loop/run-agent.ts`).
  *

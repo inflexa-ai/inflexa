@@ -35,7 +35,6 @@ import {
     createConfiguredAiSdkProvider,  // ChatProvider — any OpenAI-compatible endpoint
     createEmbeddingProvider,
     createLocalRunAuthorizer,       // RunAuthorizer    seam (local default)
-    createNoopBillingResolver,      // ResolveBilling   seam
     createNoopRunCharge,            // RunCharge        seam
     createNoopUsageRecorder,        // UsageRecorder    seam
     createNoopArtifactRegistry,     // ArtifactRegistry seam
@@ -49,7 +48,7 @@ import {
 } from "@inflexa-ai/harness";
 ```
 
-`assembleCoreRuntime` is the single composition point: it registers the durable workflows and builds the conversation agent over them. The harness declares **five capability seams** an embedder wires — `RunAuthorizer`, `ResolveBilling`, `ArtifactRegistry`, `RunCharge`, `UsageRecorder` — plus the **shared `RunLauncher`** (one host-neutral realization, `createDbosRunLauncher`). Local, dependency-free realizations of all five ship from the barrel; an embedder constructs them (or its own) and passes them in. The harness only ever sees the interface.
+`assembleCoreRuntime` is the single composition point: it registers the durable workflows and builds the conversation agent over them. The harness declares **four capability seams** an embedder wires — `RunAuthorizer`, `ArtifactRegistry`, `RunCharge`, `UsageRecorder` — plus the **shared `RunLauncher`** (one host-neutral realization, `createDbosRunLauncher`). Local, dependency-free realizations of all four ship from the barrel; an embedder constructs them (or its own) and passes them in. The harness only ever sees the interface. Two optional hooks go into the component that uses their values: `resolveRequestHeaders` into each provider, and `resolveSandboxLabels` into the sandbox client config.
 
 ## Logging
 

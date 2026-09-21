@@ -1,9 +1,8 @@
 /**
  * `UsageRecorder` — the per-call LLM usage-accounting seam.
  *
- * Sibling of `ResolveBilling` and `RunCharge`, and complementary to both:
- * `ResolveBilling` stamps attribution onto a wire call, `RunCharge` brackets a
- * run for managed billing, and `UsageRecorder` streams the fine-grained token
+ * Sibling of `RunCharge`, and complementary to it: `RunCharge` brackets a run
+ * for managed billing, and `UsageRecorder` streams the fine-grained token
  * telemetry every completed LLM call produces. The harness names no storage or
  * display technology — it emits records; the embedder decides where they land.
  *
