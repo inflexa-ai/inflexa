@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import {
     createListAvailablePackagesTool,
+    answerPackagesQuery,
     lockSections,
     queryPackages,
     readInventorySections,
@@ -14,6 +15,8 @@ import {
     type Section,
 } from "./list-available-packages.js";
 import type { FarmLock } from "../../sandbox/farm.js";
+import { resolvePackage } from "../../sandbox/image-packages.js";
+import { pythonIdentity, rIdentity } from "../../sandbox/package-identity.js";
 
 // The shape every source is normalized into before `queryPackages` sees it:
 // one section per language track, each holding the canonical package names.
@@ -576,6 +579,40 @@ describe("list_available_packages — reading the inventory", () => {
         expect(read.kind === "sections" ? read.sections.map((section) => section.title) : []).toEqual(["Python (pip)", "System tools (CLI)", "Node (npm)"]);
         expect(unreadable.kind).toBe("unavailable");
         expect(unreadable.kind === "unavailable" ? unreadable.reason : undefined).toContain("the dependency graph names 1 edge(s)");
+    });
+
+    // The planner resolves its submit over the sources of this read, thus the
+    // read carries the tracked rows and the base sets of the record it merged.
+    it("the inventory read carries its scope and the sources of its sections and its record", async () => {
+        const { farmLockFile, imagePackagesFile } = await makeStore(JSON.stringify({ ...IMAGE_RECORD, r_base: ["stats"], python_stdlib: ["json"] }));
+
+        const pool = await readInventorySections({
+            farmLockFile,
+            imagePackagesFile,
+            readPoolInventory: async () =>
+                ({
+                    kind: "sections",
+                    sections: [{ title: "Python (pip)", track: "python", packages: [{ name: "scikit-learn" }] }],
+                }) as const,
+        });
+        const farm = await readInventorySections({ farmLockFile, imagePackagesFile });
+
+        expect(pool.scope).toBe("pool");
+        expect(farm.scope).toBe("farm");
+        if (pool.kind !== "sections") throw new Error("expected sections");
+        expect(resolvePackage({ spelling: "scikit_learn" }, pool.sources)).toEqual({ kind: "pool", identity: pythonIdentity("scikit-learn") });
+        expect(resolvePackage({ spelling: "stats", track: "r" }, pool.sources)).toMatchObject({ kind: "image", identity: rIdentity("stats") });
+        // A system tool of the record is not a package of a track, thus a plan
+        // entry of its name resolves nothing.
+        expect(resolvePackage({ spelling: "samtools" }, pool.sources)).toEqual({ kind: "unknown" });
+    });
+
+    it("the unavailable note obeys the scope that the read carries", () => {
+        const pool = answerPackagesQuery({ kind: "unavailable", scope: "pool", reason: "no graph" }, {});
+        const farm = answerPackagesQuery({ kind: "unavailable", scope: "farm" }, {});
+
+        expect(pool.available === false ? pool.content : "").toContain("the package pool could not be read");
+        expect(farm.available === false ? farm.content : "").toMatch(/probe/i);
     });
 });
 

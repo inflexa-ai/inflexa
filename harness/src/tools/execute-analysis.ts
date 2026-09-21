@@ -174,7 +174,8 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     // collision's detail names the two pins and what needs each side — the
     // remedy is to drop or re-pin a DEPENDENT, so the refusal must name it.
     const missing = outcomes.filter((o) => o.kind === "absent").map((o) => (o.detail === undefined ? o.spelling : `${o.spelling} — ${o.detail}`));
-    // A collision names the two store directories AND the two prefixed forms.
+    // A collision names its two claims AND the two prefixed forms. A claim is a
+    // store directory, or a runtime of the image for a base package.
     // One spelling that both tracks hold is the common cause, and the prefix is
     // the remedy that a plan can write. `formatQuery` writes the two forms,
     // thus the refusal quotes the grammar that the plan reads.
@@ -187,9 +188,9 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
         .filter((o) => o.kind === "collision")
         .map(
             (o) =>
-                `${o.spelling} — two store directories claim it, ${o.storeDirs[0]} and ${o.storeDirs[1]}` +
+                `${o.spelling} — two sources claim it, ${o.storeDirs[0]} and ${o.storeDirs[1]}` +
                 `${o.detail === undefined ? "" : ` (${o.detail})`}` +
-                `; when the two directories are one spelling in two tracks, name the track in the plan, as ` +
+                `; when the two sources are one spelling in two tracks, name the track in the plan, as ` +
                 `${formatQuery({ spelling: o.spelling, track: "python" })} or ${formatQuery({ spelling: o.spelling, track: "r" })}`,
         );
     if (missing.length > 0 || collisions.length > 0) {

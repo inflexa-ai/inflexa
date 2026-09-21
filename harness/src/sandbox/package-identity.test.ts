@@ -6,8 +6,10 @@ import {
     identityAddress,
     identityKey,
     identityOf,
+    joinPoolIndexes,
     parseIdentityKey,
     parseQuery,
+    poolIndexOver,
     pythonIdentity,
     rIdentity,
     resolveQuery,
@@ -159,5 +161,36 @@ describe("package-identity — the resolution ladder", () => {
 
     it("the version of a query takes no part in the resolution", () => {
         expect(resolveQuery({ spelling: "decoupleR", version: "2.17.0" }, decoupler)).toEqual({ kind: "resolved", identity: rIdentity("decoupleR") });
+    });
+});
+
+describe("package-identity — two joined pool indexes", () => {
+    it("the joined index holds the identities of both", () => {
+        const joined = joinPoolIndexes(poolOf([pythonIdentity("scanpy")]), poolOf([rIdentity("stats")]));
+
+        expect(joined.has(pythonIdentity("scanpy"))).toBe(true);
+        expect(joined.has(rIdentity("stats"))).toBe(true);
+        expect(joined.has(pythonIdentity("stats"))).toBe(false);
+    });
+
+    it("one identity in two indexes suggests one time, not as a coin flip between two", () => {
+        const joined = joinPoolIndexes(poolOf([rIdentity("Seurat")]), poolOf([rIdentity("Seurat")]));
+
+        expect(resolveQuery({ spelling: "seurat" }, joined)).toEqual({ kind: "unknown", suggestion: rIdentity("Seurat") });
+    });
+
+    it("a spelling in two tracks of two indexes is ambiguous, the same as in one index", () => {
+        const joined = joinPoolIndexes(poolOf([pythonIdentity("grid")]), poolOf([rIdentity("grid")]));
+
+        expect(resolveQuery({ spelling: "grid" }, joined)).toEqual({ kind: "ambiguous", python: pythonIdentity("grid"), r: rIdentity("grid") });
+    });
+});
+
+describe("package-identity — a pool index over a list of identities", () => {
+    it("holds each identity of the list, and one identity listed two times suggests one time", () => {
+        const pool = poolIndexOver([rIdentity("Seurat"), rIdentity("Seurat"), pythonIdentity("scanpy")]);
+
+        expect(pool.has(pythonIdentity("scanpy"))).toBe(true);
+        expect(resolveQuery({ spelling: "seurat" }, pool)).toEqual({ kind: "unknown", suggestion: rIdentity("Seurat") });
     });
 });

@@ -3,6 +3,8 @@ import { describe, expect, it } from "bun:test";
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import { STEP_SUBDIRS } from "../workspace/paths.js";
 import type { AnalysisPlan, AnalysisStep } from "./workflow-state.js";
+import { ImagePackagesSchema, imageBaseOf, type PackageSources } from "../sandbox/image-packages.js";
+import { poolIndexOver, pythonIdentity, rIdentity } from "../sandbox/package-identity.js";
 import { validatePlan } from "./validate-plan.js";
 
 const AGENT = KNOWN_AGENT_IDS[0]!;
@@ -180,5 +182,83 @@ describe("validatePlan package entries", () => {
         const result = validatePlan(plan([step({ id: "T1S1", packages: [" bioc:fgsea"] })]));
         expect(result.valid).toBe(false);
         expect(result.errors.some((e) => e.includes("T1S1") && e.includes("bioc:fgsea"))).toBe(true);
+    });
+});
+
+describe("validatePlan package resolution against the pool", () => {
+    const SOURCES: PackageSources = {
+        pool: poolIndexOver([
+            pythonIdentity("igraph"),
+            rIdentity("igraph"),
+            pythonIdentity("scikit-learn"),
+            pythonIdentity("scanpy"),
+            rIdentity("Seurat"),
+            rIdentity("optparse"),
+        ]),
+        image: imageBaseOf(
+            ImagePackagesSchema.parse({
+                schema: 1,
+                image: { repository: "ghcr.io/inflexa-ai/sandbox-base", version: "local", arch: "amd64" },
+                runtimes: { python: "3.12.3", r: "4.6.0", node: "24.8.0" },
+                system_tools: [],
+                node: [],
+                r_base: ["stats"],
+                python_stdlib: ["json", "optparse"],
+            }),
+        ),
+    };
+
+    it("refuses a bare both-track name, naming the step and the two prefixed forms", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["igraph"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("T1S1") && e.includes("python:igraph") && e.includes("r:igraph"))).toBe(true);
+    });
+
+    it("refuses a name that the pool does not hold, naming the step and the entry", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["scanpy", "sklearn"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(false);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain("T1S1");
+        expect(result.errors[0]).toContain('"sklearn"');
+        expect(result.errors[0]).toContain("the pool does not hold");
+    });
+
+    it("refuses a folded R spelling with the spelling and the key of the suggestion", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["seurat"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes('"Seurat"') && e.includes("r:Seurat"))).toBe(true);
+    });
+
+    it("passes a base R package and a standard-library module", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["r:stats", "json"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(true);
+    });
+
+    it("passes the prefixed forms of a both-track name, and a pinned version that it does not read", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["python:igraph", "r:igraph", "scanpy==0.0.1"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(true);
+    });
+
+    it("refuses a pin of a base package that the image does not hold, naming the runtime version", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["r:stats==3.0.0"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("T1S1") && e.includes("r:stats==3.0.0") && e.includes("4.6.0"))).toBe(true);
+        expect(validatePlan(plan([step({ id: "T1S1", packages: ["r:stats==4.6.0"] })]), { packages: SOURCES }).valid).toBe(true);
+    });
+
+    it("passes a bare name that the pool resolves, although the image holds it in the other track", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["optparse"] })]), { packages: SOURCES });
+        expect(result.valid).toBe(true);
+    });
+
+    it("does not resolve without an index", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["sklearn", "igraph"] })]));
+        expect(result.valid).toBe(true);
+    });
+
+    it("reports a parse error once, and does not resolve the entry", () => {
+        const result = validatePlan(plan([step({ id: "T1S1", packages: ["bioc:fgsea"] })]), { packages: SOURCES });
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('"python:"');
     });
 });

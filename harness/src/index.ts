@@ -607,6 +607,7 @@ export {
     identityAddress,
     identityKey,
     identityOf,
+    joinPoolIndexes,
     parseIdentityKey,
     parseQuery,
     pythonIdentity,
@@ -619,8 +620,11 @@ export type { PackageIdentity, PackageQuery, ParseQueryError, PoolIndex, QueryRe
 export { FARM_LOCK_FILE, FarmLockSchema, readFarmLock, readFarmLockFile } from "./sandbox/farm.js";
 export type { FarmLock, FarmLockError } from "./sandbox/farm.js";
 // The image record: one file name at the root of the store. An embedder joins
-// it onto its own store root for `imagePackagesFile`.
-export { IMAGE_PACKAGES_FILE } from "./sandbox/image-packages.js";
+// it onto its own store root for `imagePackagesFile`. The link pass of an
+// embedder reads the record and resolves each query with `resolvePackage`, the
+// rule of the plan validation, thus the submit and the launch answer alike.
+export { EMPTY_IMAGE_BASE, IMAGE_PACKAGES_FILE, imageBaseOf, readImagePackagesFile, resolvePackage } from "./sandbox/image-packages.js";
+export type { ImageBase, ImagePackages, ImagePackagesError, PackageResolution, PackageSources } from "./sandbox/image-packages.js";
 // The pool-scope inventory seam: an embedder that binds `readPoolInventory`
 // builds these sections, and `list_available_packages` renders them.
 export type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "./config/environment-stores.js";

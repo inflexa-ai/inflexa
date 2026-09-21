@@ -84,14 +84,19 @@ export type FarmSource = { readonly kind: "fixed"; readonly location: FarmLocati
  * package that no repository holds.
  *
  * - `linked` — the pool held the package, and this call linked it.
- * - `present` — the farm linked it already.
+ * - `present` — the package is importable with no new link: the farm linked
+ *   it already, or the image holds it as a base package of a runtime (a base
+ *   R package, a Python standard-library module). `version` is the linked
+ *   version, or the runtime version for a package of the image.
  * - `absent` — the pool does not hold it. `acquisitionPossible` states that
  *   the host can acquire that ecosystem, or that it cannot. `detail`, when
  *   the realization gives one, classifies the miss in host terms — in
  *   flight, failed with a recorded reason, or never requested — and the
  *   launch refusal renders it beside the name.
- * - `collision` — the query resolves to two store directories: two
- *   versions of one distribution, or one spelling that both tracks hold. The
+ * - `collision` — the query resolves to two claims: two versions of one
+ *   distribution, or one spelling that both tracks hold. `storeDirs` holds
+ *   the two claims. A claim is a store directory of the pool, or a runtime
+ *   of the image for a track that only the image holds. The
  *   outcome is terminal for the query. `detail`, when the realization
  *   gives one, names the two pins and the packages that need each side —
  *   without it, a caller must guess which package pulls each pin, and a

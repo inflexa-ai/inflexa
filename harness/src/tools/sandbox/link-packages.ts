@@ -57,9 +57,9 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps) {
             "This tool links what the host already staged — it NEVER installs, downloads, or acquires anything. " +
             "Pass each module name verbatim, exactly as the import names it, optionally behind the track prefix `python:` or `r:` and optionally pinned as `name==version`. " +
             "One outcome comes back per request: `linked` (the pool held it, and it is importable now), " +
-            "`present` (the farm held it already), " +
+            "`present` (the farm held it already, or the image holds it as a base package of its runtime), " +
             "`absent` (the pool does not hold it — a real answer, and `acquisitionPossible` states whether the host can acquire that ecosystem; report the package as missing, do not retry), " +
-            "`collision` (the request resolves to two store directories; the `detail` names the two pins and the packages that need each), " +
+            "`collision` (the request resolves to two sources — a store directory, or a runtime of the image; the `detail` names the two pins and the packages that need each), " +
             "or `unavailable` (the link pass itself could not answer — the `reason` says why; it says nothing about the package's presence, so report the reason and do not re-request packages). " +
             "After a `collision` of one name that BOTH tracks hold, call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`. " +
             "A collision is terminal only after that second call also refuses, or when it names two versions of one distribution — then report it and continue without the package.",

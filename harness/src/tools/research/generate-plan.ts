@@ -38,7 +38,7 @@ import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
-import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
+import { answerPackagesQuery, createListAvailablePackagesTool, readInventorySections } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 import { searchGeoDatasetsTool } from "../bio/search-geo-datasets.js";
@@ -53,6 +53,7 @@ import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/res
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
+import type { PackageSources } from "../../sandbox/image-packages.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { LogFields, Logger } from "../../lib/logger.js";
@@ -439,9 +440,14 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
 
 /**
  * Full validation: Zod schema + semantic checks. The plan is valid only if
- * BOTH pass.
+ * BOTH pass. `packageSources` are the census sources of this invocation, and each
+ * package entry resolves against it when it is present.
  */
-function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
+function fullyValidate(
+    candidate: unknown,
+    resourcePolicy?: ResourcePolicy,
+    packageSources?: PackageSources,
+): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
     const parsed = PlannerPlanSchema.safeParse(candidate);
     if (!parsed.success) {
         return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
@@ -461,7 +467,7 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
             omicsType: parsed.data.omicsType,
             omicsSubtype: parsed.data.omicsSubtype,
         },
-        { perStepCeiling: resourcePolicy?.perStep },
+        { perStepCeiling: resourcePolicy?.perStep, ...(packageSources === undefined ? {} : { packages: packageSources }) },
     );
 
     if (!semantic.valid) {
@@ -501,6 +507,7 @@ function buildInnerTools(
     persistCtx: PersistContext,
     pool: Pool,
     resourcePolicy: ResourcePolicy | undefined,
+    packageSources: PackageSources | undefined,
     logger: Logger,
 ): InnerTools {
     const submitPlanTool = defineTool({
@@ -542,7 +549,7 @@ function buildInnerTools(
             }
 
             const attempt = ++trace.submitAttempts;
-            const result = fullyValidate(input.plan, resourcePolicy);
+            const result = fullyValidate(input.plan, resourcePolicy, packageSources);
             if (!result.valid) {
                 trace.rejectedAttempts++;
                 const rejection = toRejectionRecord(attempt, result.issues);
@@ -667,7 +674,11 @@ function inventoryContent(label: string, result: Awaited<ReturnType<Tool["execut
         logger.warn("planner grounding inventory lookup failed", { inventory: label, error: result.error.error });
         return `## ${label}\n\nInventory lookup failed: ${result.error.error}`;
     }
-    const value = result.value;
+    return inventoryBlock(label, result.value);
+}
+
+/** Render one inventory answer under its heading: its `content` where it carries one, the JSON otherwise. */
+function inventoryBlock(label: string, value: unknown): string {
     if (typeof value === "object" && value !== null && "content" in value && typeof value.content === "string") {
         return `## ${label}\n\n${value.content}`;
     }
@@ -1070,17 +1081,28 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // not optional planner lookups. Read both inventories host-side before
             // the loop and put their rendered content in the planner's seed.
             const listAvailableRefs = createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath });
-            const listAvailablePackages = createListAvailablePackagesTool({
-                ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
-                ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
-                ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
-            });
             // A path-separator query matches every reference path and selects the
             // tool's recursive leaf scan, so the seed contains usable file paths,
             // not only top-level directory summaries.
-            const [refsResult, packagesResult] = await Promise.all([listAvailableRefs.execute({ query: "/" }, ctx), listAvailablePackages.execute({}, ctx)]);
+            const [refsResult, packagesRead] = await Promise.all([
+                listAvailableRefs.execute({ query: "/" }, ctx),
+                readInventorySections({
+                    ...(deps.farmLockFile === undefined ? {} : { farmLockFile: deps.farmLockFile }),
+                    ...(deps.imagePackagesFile === undefined ? {} : { imagePackagesFile: deps.imagePackagesFile }),
+                    ...(deps.readPoolInventory === undefined ? {} : { readPoolInventory: deps.readPoolInventory }),
+                }),
+            ]);
             const refsBlock = inventoryContent("Available Reference Data", refsResult, logger);
-            const packagesBlock = inventoryContent("Available Packages", packagesResult, logger);
+            // The read never fails as a call — an unreadable inventory answers with
+            // its UNKNOWN note — thus the block needs no lookup-failed arm.
+            const packagesBlock = inventoryBlock("Available Packages", answerPackagesQuery(packagesRead, {}));
+            // The one census read gives the seed and the submit sources, thus the
+            // planner is refused only for what its seed showed. The sources exist
+            // for a pool-scope read only: the farm-lock fallback describes one
+            // farm, and the farm of a new analysis is empty, thus a resolution
+            // over it refuses each package. An unreadable pool gives no sources,
+            // because UNKNOWN must not refuse a package that the pool holds.
+            const packageSources = packagesRead.kind === "sections" && packagesRead.scope === "pool" ? packagesRead.sources : undefined;
             const groundingBlock = [refsBlock, packagesBlock].join("\n\n");
 
             const prompt = [
@@ -1130,7 +1152,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, logger);
+            const innerTools = buildInnerTools(holder, trace, persistCtx, deps.pool, deps.resourcePolicy, packageSources, logger);
             // Built here rather than at construction: a `describeCall` hook reads no
             // dep, thus the tool must stay constructible from an empty bag. The tool
             // definitions are identical across invocations, thus the request prefix

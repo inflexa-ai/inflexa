@@ -333,7 +333,7 @@ not missing until the pool has answered:
 - \`absent\` is a real answer: the pool does not hold the package. When
   \`acquisitionPossible\` is true, report the package as missing so the host can
   acquire it. Do not retry the link, and do not attempt an install.
-- \`collision\` means the request resolved to two store directories. When one
+- \`collision\` means the request resolved to two sources. When one
   name is held by both tracks, call \`link_packages\` again for that package
   with the prefixed form, \`python:<name>\` or \`r:<name>\`.
 - Drop the package only after that second call also refuses. A collision of two
