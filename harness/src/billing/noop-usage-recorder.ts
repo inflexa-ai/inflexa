@@ -1,3 +1,5 @@
+import { okAsync } from "neverthrow";
+
 import type { UsageRecorder } from "./usage-recorder.js";
 
 /**
@@ -7,6 +9,6 @@ import type { UsageRecorder } from "./usage-recorder.js";
  */
 export function createNoopUsageRecorder(): UsageRecorder {
     return {
-        record: () => {},
+        record: () => okAsync(undefined),
     };
 }

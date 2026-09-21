@@ -15,7 +15,10 @@
  * realization injected at the composition root.
  */
 
+import type { ResultAsync } from "neverthrow";
+
 import type { AuthContext, Provenance, RunFrame, RunSession, Scope } from "../auth/types.js";
+import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
 /**
  * Locates a run credential when no `RunAuthorization` exists: the persisted
@@ -51,10 +54,14 @@ export interface RunAuthorization {
  * Authorize durable work at the async edge. `authorize` produces the durable
  * `RunSession`; `revoke` releases a self-minted run credential on the terminal
  * path (a no-op for reused or local authorizations).
+ *
+ * `authorize` is a gate: a refusal is an `err`, and the work does not start.
+ * `revoke` and `revokeByJti` are notices: the work is complete, thus an `err`
+ * is logged and changes no outcome (see `lib/hooks.ts`).
  */
 export interface RunAuthorizer {
-    authorize(input: AuthorizeRunInput): Promise<RunAuthorization>;
-    revoke(authorization: RunAuthorization, reason: string): Promise<void>;
+    authorize(input: AuthorizeRunInput): ResultAsync<RunAuthorization, GateFailure>;
+    revoke(authorization: RunAuthorization, reason: string): ResultAsync<void, NoticeFailure>;
     /**
      * Out-of-band revocation for paths holding no `RunAuthorization`. Normal
      * terminal paths use `revoke(authorization, reason)` under the run
@@ -62,5 +69,5 @@ export interface RunAuthorizer {
      * credential's JWT was never persisted and only its jti survives on
      * `cortex_runs`. Local/OSS authorizers no-op — they mint no jti.
      */
-    revokeByJti(ref: RevokeByJtiRef, reason: string): Promise<void>;
+    revokeByJti(ref: RevokeByJtiRef, reason: string): ResultAsync<void, NoticeFailure>;
 }

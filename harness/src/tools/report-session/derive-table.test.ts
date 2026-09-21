@@ -20,7 +20,7 @@ import { dirname, join } from "node:path";
 
 import type { Scope } from "../../auth/types.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import type { RunAuthorization, RunAuthorizer } from "../../execution/run-authorizer.js";
+import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import type { DbError } from "../../lib/db-result.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import type { ReportSnapshot } from "../../report-model/reference-resolver.js";
@@ -223,14 +223,15 @@ function makeAuthorizer(): FakeAuthorizer {
     const frames: string[] = [];
     const revoked: string[] = [];
     const authorizer: RunAuthorizer = {
-        async authorize(input): Promise<RunAuthorization> {
+        authorize(input) {
             frames.push(`${input.frame.runId}/${input.frame.stepId}/${input.provenance.agentId}`);
             return local.authorize(input);
         },
-        async revoke(_authorization, reason): Promise<void> {
+        revoke(_authorization, reason) {
             revoked.push(reason);
+            return okAsync(undefined);
         },
-        async revokeByJti(): Promise<void> {},
+        revokeByJti: () => okAsync(undefined),
     };
     return { authorizer, frames, revoked };
 }

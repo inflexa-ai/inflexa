@@ -12,6 +12,7 @@
  */
 
 import { join } from "node:path";
+import { err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
@@ -21,6 +22,7 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
@@ -139,20 +141,32 @@ export async function generateStepSummaryAndWrite(
 }
 
 /**
+ * Why the registration of a step failed: the registry refused it as a gate, or
+ * it rejected terminal rows. `message` carries the per-file detail.
+ */
+export type StepRegistrationFailure = { readonly kind: "refused"; readonly refusal: GateRefusal } | { readonly kind: "rejected"; readonly message: string };
+
+/** The one line that names a registration failure, for the log and the thrown step failure. */
+export function describeStepRegistrationFailure(failure: StepRegistrationFailure): string {
+    return failure.kind === "refused" ? `the artifact registry refused the registration: ${failure.refusal.reason}` : failure.message;
+}
+
+/**
  * Reconcile the manifest against disk (drop phantoms, rehash) and register the
  * survivors with the local ledger + the injected `ArtifactRegistry`. Fail-fast
  * (see the artifact-manifest spec): `externalFailed` counts only the terminal
  * rejections — a rejected output whose bytes exist nowhere but the step tree,
  * plus anything rejected as a consequence of one — so a non-zero count means
- * real outputs went unregistered, and it throws with the per-file detail (the
- * OSS filesystem registry returns `externalFailed: 0`, so it never trips).
+ * real outputs went unregistered, and the `err` carries the per-file detail (the
+ * OSS filesystem registry returns `externalFailed: 0`, so it never trips). A
+ * refusal of the `register` gate is the other `err`.
  * Returns the reconciled manifest.
  */
 export async function reconcileAndRegisterStepArtifacts(
     deps: PostStepPipelineDeps,
     postCtx: PostStepContext,
     manifest: readonly ArtifactManifestEntry[],
-): Promise<readonly ArtifactManifestEntry[]> {
+): Promise<Result<readonly ArtifactManifestEntry[], StepRegistrationFailure>> {
     const { input, session, lineageCollector } = postCtx;
 
     const reconciled = await reconcileManifestWithDisk({
@@ -166,9 +180,9 @@ export async function reconcileAndRegisterStepArtifacts(
         ...(deps.logger ? { logger: deps.logger } : {}),
     });
 
-    if (reconciled.manifest.length === 0) return reconciled.manifest;
+    if (reconciled.manifest.length === 0) return ok(reconciled.manifest);
 
-    const reg = await registerStepArtifacts(
+    const registered = await registerStepArtifacts(
         deps.pool,
         deps.artifactRegistry,
         {
@@ -181,6 +195,8 @@ export async function reconcileAndRegisterStepArtifacts(
         session,
         deps.logger,
     );
+    if (registered.isErr()) return err({ kind: "refused", refusal: registered.error });
+    const reg = registered.value;
     if (reg.externalFailed > 0) {
         // The registry commits per leaf and per activity, so accepted and rejected
         // rows arriving together is ordinary and `externalRegistered` is what
@@ -196,7 +212,7 @@ export async function reconcileAndRegisterStepArtifacts(
             `${reg.externalFailed} terminal rejection(s), ${reg.externalRegistered}/${reg.localCount} local artifact(s) registered` +
             (noneRegistered ? " (nothing in this batch registered)" : "") +
             (detail ? `\n  ${detail}` : "");
-        // Logged as fields as well as thrown: the throw reaches `failStep` as one
+        // Logged as fields as well as returned: the failure reaches `failStep` as one
         // opaque string, so the per-path rejections are only queryable from here.
         // This is what distinguishes a registry rejection from the attestation
         // throws in `reconcileManifestWithDisk` when a step dies.
@@ -209,10 +225,10 @@ export async function reconcileAndRegisterStepArtifacts(
             noneRegistered,
             failures: reg.failureDetails,
         });
-        throw new Error(msg);
+        return err({ kind: "rejected", message: msg });
     }
 
-    return reconciled.manifest;
+    return ok(reconciled.manifest);
 }
 
 /**
@@ -275,7 +291,12 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
     let indexed = 0;
     let failed = 0;
     for (const entry of liveMetadata) {
-        const ok = await indexOne(`/${input.analysisId}/${entry.dbPath}`, entry.description, { text: entry.description, type: "output", ...entry.metadata, path: entry.dbPath });
+        const ok = await indexOne(`/${input.analysisId}/${entry.dbPath}`, entry.description, {
+            text: entry.description,
+            type: "output",
+            ...entry.metadata,
+            path: entry.dbPath,
+        });
         if (ok) indexed++;
         else failed++;
     }

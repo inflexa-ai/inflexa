@@ -18,6 +18,7 @@ import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_TOOL_USE_ID, passThroughSpan, stableSpan } from "../lib/otel-spans.js";
 import { ResultError } from "../lib/result.js";
@@ -144,8 +145,8 @@ export interface RunAgentOptions {
     readonly logger?: Logger;
     /**
      * Per-call LLM usage-accounting seam. Omitted falls back to the no-op
-     * recorder. Delivery is fire-and-forget by contract — the loop neither
-     * awaits `record` nor guards it, so a realization must not throw or block.
+     * recorder. `record` is a notice: the loop does not wait for its result,
+     * and it logs the reason of an `err` when the result arrives.
      */
     readonly usageRecorder?: UsageRecorder;
     /**
@@ -305,8 +306,10 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
      * reported nothing to account for, so it is folded (to no effect) and left
      * out of the ledger rather than entered as an all-absent record.
      *
-     * Delivery is bare — no `await`, no `try` — because the `UsageRecorder`
-     * contract forbids `record` to throw or block.
+     * `record` is a notice. The loop does not wait for its result, thus a
+     * recorder that blocks does not make the run slower. When the result
+     * arrives, the notice helper logs the reason of an `err`, and the run
+     * continues with no change.
      */
     const accountForCall = (reply: ChatResponse, stepName: string): void => {
         addChatUsage(usage, reply.usage);
@@ -314,17 +317,21 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 
         const reported = reply.usage;
         if (reported === undefined || !hasReportedUsage(reported)) return;
-        usageRecorder.record({
-            recordKey: recordKeyFor(session, opts.invocationId, stepName),
-            agentId: source.agentId,
-            callPath: source.callPath,
-            scope: session.scope,
-            ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
-            ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
-            ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
-            ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
-            usage: reported,
-        });
+        void deliverNotice(
+            log,
+            "UsageRecorder.record",
+            usageRecorder.record({
+                recordKey: recordKeyFor(session, opts.invocationId, stepName),
+                agentId: source.agentId,
+                callPath: source.callPath,
+                scope: session.scope,
+                ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
+                ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
+                ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
+                ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
+                usage: reported,
+            }),
+        );
     };
 
     /** The rollups this loop stamps on its finish — each absent when nothing reported. */

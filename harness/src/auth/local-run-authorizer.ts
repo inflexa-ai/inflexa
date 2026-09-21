@@ -8,12 +8,14 @@
  * inspects it (no `getAuth`).
  */
 
+import { okAsync } from "neverthrow";
+
 import type { RunSession } from "./types.js";
-import type { AuthorizeRunInput, RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import type { AuthorizeRunInput, RunAuthorizer } from "../execution/run-authorizer.js";
 
 export function createLocalRunAuthorizer(): RunAuthorizer {
     return {
-        async authorize({ auth, scope, provenance, frame }: AuthorizeRunInput): Promise<RunAuthorization> {
+        authorize({ auth, scope, provenance, frame }: AuthorizeRunInput) {
             const runSession: RunSession = {
                 identity: { user: "local" },
                 scope,
@@ -21,9 +23,9 @@ export function createLocalRunAuthorizer(): RunAuthorizer {
                 runFrame: frame,
                 auth,
             };
-            return { runSession, ownsMandate: false }; // oss-core-managed-ok
+            return okAsync({ runSession, ownsMandate: false }); // oss-core-managed-ok
         },
-        async revoke() {},
-        async revokeByJti() {},
+        revoke: () => okAsync(undefined),
+        revokeByJti: () => okAsync(undefined),
     };
 }

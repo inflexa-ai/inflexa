@@ -39,8 +39,9 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
-import type { RunAuthorization, RunAuthorizer } from "../../execution/run-authorizer.js";
+import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import { deliverNotice, passGate } from "../../lib/hooks.js";
 import { classifyWithinRoot, computeSha256, computeSha256File } from "../../lib/fs-helpers.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
 import type { ResourceSpec } from "../../config/resource-limits.js";
@@ -330,18 +331,20 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                 return ok({ outcome: "unavailable", detail: "the workspace root did not resolve, thus the derived table has no place to land" });
             }
 
-            let authorization: RunAuthorization;
-            try {
-                authorization = await runAuthorizer.authorize({
+            const authorized = await passGate(
+                "RunAuthorizer.authorize",
+                runAuthorizer.authorize({
                     auth: ctx.session.auth,
                     scope: { kind: "analysis", analysisId },
                     provenance: { agentId: DERIVE_AGENT_ID, callPath: [DERIVE_AGENT_ID] },
                     frame: { runId: DERIVE_RUN_LITERAL, stepId: DERIVE_STEP_LITERAL },
-                });
-            } catch (cause) {
-                logger.error("the derivation was not authorized", { threadId, analysisId, ...defaultErrorFields(cause) });
-                return ok({ outcome: "unavailable", detail: "the derivation was not authorized" });
+                }),
+            );
+            if (authorized.isErr()) {
+                logger.error("the derivation was not authorized", { threadId, analysisId, reason: authorized.error.reason });
+                return ok({ outcome: "unavailable", detail: `the derivation was not authorized: ${authorized.error.reason}` });
             }
+            const authorization = authorized.value;
 
             // The work sits inside the `try`, and the revoke sits in the `finally`. Thus the authorization
             // revokes on every terminal path, the thrown one included: a path builder refuses a hostile
@@ -376,13 +379,13 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                 }
                 return ok(result);
             } finally {
-                // A revoke fault changes no outcome of the call, thus it reaches the log alone. An absent
-                // result means that the work threw, and a throw is a failed derivation.
-                try {
-                    await runAuthorizer.revoke(authorization, result?.outcome === "derived" ? "derive-table-completed" : "derive-table-failed");
-                } catch (cause) {
-                    logger.warn("the derivation authorization did not revoke", { threadId, analysisId, ...defaultErrorFields(cause) });
-                }
+                // The revoke is a notice: its failure changes no outcome of the call, thus it reaches the log
+                // alone. An absent result means that the work threw, and a throw is a failed derivation.
+                await deliverNotice(
+                    logger.with({ threadId, analysisId }),
+                    "RunAuthorizer.revoke",
+                    runAuthorizer.revoke(authorization, result?.outcome === "derived" ? "derive-table-completed" : "derive-table-failed"),
+                );
             }
         },
     });

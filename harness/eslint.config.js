@@ -16,12 +16,16 @@ const originalRule = neverthrowPlugin.rules["must-use-result"];
 // failure protocol is an exception — above all the DBOS step edge, where
 // durability records a step as failed ONLY on a thrown exception (see
 // src/lib/result.ts, house rule 3, and src/loop/run-step.ts `resultStep`).
+// The same holds for the two hook helpers of src/lib/hooks.ts: `passGate(...)`
+// forwards the Result of a gate as its own Result, and `deliverNotice(...)`
+// consumes the Result of a notice and logs its err.
 // The upstream rule only recognizes member-method consumers
 // (.match/.unwrapOr/._unsafeUnwrap/...), so it false-flags every bridge call
-// site. Matching is by callee name, not import resolution — the name
-// `unwrapOrThrow` is reserved by convention for the src/lib/result.ts helper,
+// site. Matching is by callee name, not import resolution — each name in
+// `RESULT_CONSUMERS` is reserved by convention for its src/lib helper,
 // so a shadowing non-consuming function of the same name would be missed;
 // that trade-off is accepted to keep this patch parser-independent.
+const RESULT_CONSUMERS = new Set(["unwrapOrThrow", "passGate", "deliverNotice"]);
 // A Result consumed by a directly-chained `._unsafeUnwrapErr()` IS handled: the
 // plugin's handledMethods list carries `_unsafeUnwrap` but not its err twin, so
 // `fn()._unsafeUnwrapErr()` — the standard test idiom for asserting an expected
@@ -45,7 +49,7 @@ function isConsumedByUnwrapOrThrow(node) {
         if (
             parent.type === "CallExpression" &&
             parent.callee.type === "Identifier" &&
-            parent.callee.name === "unwrapOrThrow" &&
+            RESULT_CONSUMERS.has(parent.callee.name) &&
             parent.arguments.includes(current)
         ) {
             return true;

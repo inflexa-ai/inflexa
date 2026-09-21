@@ -1,4 +1,6 @@
-import type { ArtifactRegistry, ExternalRegistrationResult } from "./artifact-registry.js";
+import { okAsync } from "neverthrow";
+
+import type { ArtifactRegistry } from "./artifact-registry.js";
 
 /**
  * Local/OSS artifact-registration seam: `register` records nothing externally
@@ -11,9 +13,7 @@ import type { ArtifactRegistry, ExternalRegistrationResult } from "./artifact-re
  */
 export function createNoopArtifactRegistry(): ArtifactRegistry {
     return {
-        async register(): Promise<ExternalRegistrationResult> {
-            return { registered: [], failed: [], failedCount: 0 };
-        },
-        async sync(): Promise<void> {},
+        register: () => okAsync({ registered: [], failed: [], failedCount: 0 }),
+        sync: () => okAsync(undefined),
     };
 }

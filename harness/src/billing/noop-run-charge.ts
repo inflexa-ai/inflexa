@@ -1,3 +1,5 @@
+import { okAsync } from "neverthrow";
+
 import type { RunCharge } from "./run-charge.js";
 
 /**
@@ -6,7 +8,7 @@ import type { RunCharge } from "./run-charge.js";
  */
 export function createNoopRunCharge(): RunCharge {
     return {
-        open: async () => {},
-        close: async () => {},
+        open: () => okAsync(undefined),
+        close: () => okAsync(undefined),
     };
 }

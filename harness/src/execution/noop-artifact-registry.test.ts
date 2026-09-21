@@ -40,12 +40,12 @@ describe("createNoopArtifactRegistry", () => {
             session,
         );
 
-        expect(result).toEqual({ registered: [], failed: [], failedCount: 0 });
+        expect(result._unsafeUnwrap()).toEqual({ registered: [], failed: [], failedCount: 0 });
     });
 
-    test("sync resolves without effect", async () => {
+    test("sync gives ok without effect", async () => {
         const registry = createNoopArtifactRegistry();
 
-        await expect(registry.sync({ resourceId: "a1", runId: "run-001", stepId: "tmm" }, session)).resolves.toBeUndefined();
+        expect((await registry.sync({ resourceId: "a1", runId: "run-001", stepId: "tmm" }, session)).isOk()).toBe(true);
     });
 });

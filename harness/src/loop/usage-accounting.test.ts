@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage } from "../providers/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
@@ -37,6 +38,7 @@ function recordingRecorder(): { recorder: UsageRecorder; records: LlmUsageRecord
         recorder: {
             record: (record) => {
                 records.push(record);
+                return okAsync(undefined);
             },
         },
         records,
@@ -114,6 +116,21 @@ describe("runAgent usage records — one per completed call", () => {
         // 3 capped iterations + 1 forced wrap-up call.
         expect(records).toHaveLength(4);
         expect(records.every((r) => r.usage.inputTokens === 10)).toBe(true);
+    });
+
+    it("logs a recorder err at the error level, and the run finishes the same as with a recorder that succeeds", async () => {
+        const failing: UsageRecorder = { record: () => errAsync({ reason: "ledger offline" }) };
+        const log = createCapturingLogger();
+
+        const withFailure = await runAgent(agentDef([echoTool], 3), GO, makeSession(), opts(neverTerminates(usage(10, 2)), failing, { logger: log }));
+        const withSuccess = await runAgent(agentDef([echoTool], 3), GO, makeSession(), opts(neverTerminates(usage(10, 2)), recordingRecorder().recorder));
+        // The loop does not wait for a notice, thus its log lands on a later turn of the event loop.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(withFailure.finish).toEqual(withSuccess.finish);
+        const failures = log.records.filter((r) => r.level === "error" && r.fields.notice === "UsageRecorder.record");
+        expect(failures).toHaveLength(4);
+        expect(failures.every((r) => r.fields.reason === "ledger offline")).toBe(true);
     });
 
     it("carries the session attribution and both model ids on each record", async () => {

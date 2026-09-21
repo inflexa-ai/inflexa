@@ -15,9 +15,12 @@
  *     externally; the local `cortex_artifacts` ledger is the only record.
  */
 
+import type { ResultAsync } from "neverthrow";
+
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { ProvenanceCollector } from "../provenance/collector.js";
 import type { AgentSession } from "../auth/types.js";
+import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
 /** High-level input for registering one step's artifacts. */
 export interface ArtifactRegistrationInput {
@@ -81,12 +84,19 @@ export interface ArtifactRegistry {
      * Implementations MUST NOT touch the local `cortex_artifacts` ledger — that
      * is the harness's responsibility, applied around this call. The `session` carries
      * the run credential an adapter needs to address the external system.
+     *
+     * A gate (see `lib/hooks.ts`). A partial outcome is an `ok`, with the
+     * rejections in `failed`. An `err` fails the registration of the step, or
+     * suspends the step when the host asks.
      */
-    register(input: ArtifactRegistrationInput, session: AgentSession): Promise<ExternalRegistrationResult>;
+    register(input: ArtifactRegistrationInput, session: AgentSession): ResultAsync<ExternalRegistrationResult, GateFailure>;
     /**
      * Push a step's registered artifacts to permanent storage. A no-op when the
      * adapter's bytes already live locally; the managed adapter uploads them.
-     * Throws on a persistent failure so the caller's fail-fast boundary fires.
+     *
+     * A notice (see `lib/hooks.ts`): an `err` is logged and does not fail the
+     * step. The rows stay unsynced, thus a later sync of the step selects them
+     * again.
      */
-    sync(input: ArtifactSyncInput, session: AgentSession): Promise<void>;
+    sync(input: ArtifactSyncInput, session: AgentSession): ResultAsync<void, NoticeFailure>;
 }
