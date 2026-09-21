@@ -18,7 +18,7 @@
  * UPDATE wins); each winning attempt starts a workflow under a per-attempt id.
  */
 
-import { DBOS } from "@dbos-inc/dbos-sdk";
+import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
@@ -259,6 +259,8 @@ async function readSetHeaders(args: {
             emit: async () => {},
         });
     } catch (err) {
+        // A cancel from DBOS passes through with no change.
+        if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
         logger.warn("input-scan header readout failed (non-fatal)", logger.errorFields(err));
         return new Map();
     }
@@ -757,6 +759,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     runStep: durableStep,
                     resolved: () => accepted !== null,
                     usageRecorder: deps.usageRecorder,
+                    // A cancel from DBOS ends the loop, and the dispatch never turns it into a tool error.
+                    isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
                 },
                 {
                     tools: [submitProfileTool],
@@ -809,8 +813,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
-        // The self-cancel of a suspension passes through to DBOS with no change.
-        if (selfCancelled) throw err;
+        // A cancel from DBOS, the self-cancel of a suspension included, passes through with no change.
+        if (selfCancelled || err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
         // A `suspend` error of a model request of the profiler suspends the profile.
         const suspension = suspensionOfFailure(err);
         if (suspension !== undefined) return await suspendProfile(suspension);
