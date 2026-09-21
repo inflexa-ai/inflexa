@@ -11,7 +11,7 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { envelopeMessage, isInterruptedMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import type { ConversationUIMessage } from "./conversation-display-storage.js";
-import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
+import { __resetThreadHistoryMetricsForTest, conversationRecordTurn, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 import { createThreadStore } from "./thread-store.js";
 
 const THREAD = "analysis-thread-1";
@@ -1250,6 +1250,162 @@ describe("appendTurn turn duration", () => {
         const page = (await history.loadAll(THREAD))._unsafeUnwrap();
         expect(page.flat().map((m) => m.durationMs)).toEqual([undefined, DURATION_MS]);
         expect(page.flat().map((m) => m.usage)).toEqual([undefined, ROLLUP]);
+    });
+});
+
+// --- turn author ------------------------------------------------------------
+
+describe("appendTurn turn author", () => {
+    const AUTHOR = "dr.chen@lab.example";
+
+    /**
+     * Every row's stored author, oldest-first, as the column holds it. Asserted at
+     * the column rather than through `loadAll`, because "on this row and on NO
+     * other" is a storage fact: a read that folded the name onto a neighbour would
+     * satisfy a display-level assertion while the write placed it wrong.
+     */
+    async function storedAuthors(threadId = THREAD): Promise<(string | null)[]> {
+        const { rows } = await pool.query<{ author: string | null }>("SELECT author FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC", [threadId]);
+        return rows.map((r) => r.author);
+    }
+
+    function appendAuthored(threadId: string, modelMessages: readonly ModelMessage[], author: string): ResultAsync<void, DbError> {
+        return history.appendTurn(threadId, { modelMessages, displayMessages: [], author });
+    }
+
+    it("stores the author on the turn's user row and on no other", async () => {
+        const turn = [
+            userText("run the comparison"),
+            assistantToolUse("call-1", "run_pca", { k: 2 }),
+            userToolResult("call-1", "done"),
+            assistantText("here are the results"),
+        ];
+        (await appendAuthored(THREAD, turn, AUTHOR))._unsafeUnwrap();
+
+        expect(await storedAuthors()).toEqual([AUTHOR, null, null, null]);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat().map((m) => m.author)).toEqual([AUTHOR, undefined, undefined, undefined]);
+    });
+
+    it("stores no author when the caller supplies none", async () => {
+        (await append(THREAD, [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
+
+        expect(await storedAuthors()).toEqual([null, null]);
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        // Absent, not present-and-undefined: a consumer that spreads the row must
+        // not acquire an `author` key that overwrites one.
+        expect("author" in page.flat()[0]!).toBe(false);
+    });
+
+    it("leaves a mid-turn synthetic nudge without an author", async () => {
+        // The nudge carries the `user` role for the wire format, and nobody typed
+        // it. Attributing it to the person would put a name on words they never sent.
+        const turn = [
+            userText("run the search"),
+            assistantText("searching"),
+            syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
+            assistantText("here is the hit"),
+        ];
+        (await appendAuthored(THREAD, turn, AUTHOR))._unsafeUnwrap();
+
+        expect(await storedAuthors()).toEqual([AUTHOR, null, null, null]);
+    });
+
+    it("stores no author for a record append that supplies one", async () => {
+        // A record of out-of-band work opens on a synthetic row. It is not the
+        // message of a person, thus the genuine-user-start condition drops the name
+        // however a host spreads it onto the turn.
+        (await history.appendTurn(THREAD, { ...conversationRecordTurn("Run GSEA cross-species comparison completed."), author: AUTHOR }))._unsafeUnwrap();
+
+        expect(await storedAuthors()).toEqual([null]);
+    });
+
+    it("drops a NUL from the author rather than failing the append", async () => {
+        // The column is `text`, where a 0x00 byte fails the statement and takes the
+        // whole turn down with it. The envelope write already strips NUL, and this
+        // write obeys the same rule.
+        const appended = await appendAuthored(THREAD, [userText("question one"), assistantText("answer one")], `dr\u0000.chen@lab.example`);
+
+        expect(appended.isOk()).toBe(true);
+        expect(await storedAuthors()).toEqual(["dr.chen@lab.example", null]);
+    });
+
+    it("reads a row written before the column existed back as absent", async () => {
+        // The migration is additive with no backfill, thus a row that predates the
+        // column is indistinguishable from a turn appended with no sender. An INSERT
+        // that names neither the column nor a default is exactly that row.
+        await pool.query("INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ($1, 0, $2::json, 4)", [
+            THREAD,
+            JSON.stringify(envelopeMessage(userText("written before authors existed"))),
+        ]);
+
+        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
+        expect(page.flat()[0]!.author).toBeUndefined();
+        expect("author" in page.flat()[0]!).toBe(false);
+    });
+
+    it("leaves the model read untouched", async () => {
+        // The provider never sees the author, thus the window is byte-identical to
+        // the turn that was appended.
+        const turn = [userText("question one"), assistantText("answer one")];
+        (await appendAuthored(THREAD, turn, AUTHOR))._unsafeUnwrap();
+
+        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        expect(loaded).toEqual(turn);
+        expect(loaded.some((m) => "author" in m)).toBe(false);
+    });
+
+    it("keeps the author and the time out of the stored display projection", async () => {
+        // One fact, one durable copy. Both values ride the message row, the way the
+        // rollup does, thus a projection cannot disagree with the row it opened.
+        (
+            await history.appendTurn(THREAD, {
+                modelMessages: [userText("question one"), assistantText("answer one")],
+                displayMessages: [
+                    { id: "u-display", role: "user", parts: [{ type: "text", text: "question one" }] },
+                    { id: "a-display", role: "assistant", parts: [{ type: "text", text: "answer one" }] },
+                ],
+                author: AUTHOR,
+            })
+        )._unsafeUnwrap();
+
+        const { rows } = await pool.query<{ display_envelope: unknown }>("SELECT display_envelope FROM messages WHERE thread_id = $1 AND seq = 0", [THREAD]);
+        const serialized = JSON.stringify(rows[0]!.display_envelope);
+        expect(serialized).not.toContain("author");
+        expect(serialized).not.toContain("createdAt");
+    });
+
+    it("takes the author with it when the tail turn is retracted", async () => {
+        // Free by construction — the author is a column on the row — and pinned here
+        // so a later move to a side table cannot orphan the name of a sender behind
+        // a transcript that no longer holds the turn.
+        (await appendAuthored(THREAD, [userText("first question"), assistantText("first answer")], AUTHOR))._unsafeUnwrap();
+        (await appendAuthored(THREAD, [userText("second question"), assistantText("second answer")], "second.sender@lab.example"))._unsafeUnwrap();
+        expect(await storedAuthors()).toEqual([AUTHOR, null, "second.sender@lab.example", null]);
+
+        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+
+        expect(await storedAuthors()).toEqual([AUTHOR, null]);
+    });
+});
+
+// --- row creation time ------------------------------------------------------
+
+describe("loadAll row creation time", () => {
+    it("gives a Date on every row, one time for every row of an append", async () => {
+        // `NOW()` is the START time of the transaction, and one append writes every
+        // row of the turn in one transaction. Nothing here asserts an order between
+        // two appends: the store gives none, and `seq` is what orders rows.
+        const turn = [userText("run the comparison"), assistantToolUse("call-1", "run_pca", { k: 2 }), userToolResult("call-1", "done"), assistantText("done")];
+        const before = Date.now();
+        (await append(THREAD, turn))._unsafeUnwrap();
+
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
+        const times = rows.map((m) => m.createdAt);
+        expect(times.every((t) => t instanceof Date)).toBe(true);
+        expect(new Set(times.map((t) => t!.getTime())).size).toBe(1);
+        // A real clock reading, not a zero or an epoch default.
+        expect(times[0]!.getTime()).toBeGreaterThanOrEqual(before - 60_000);
     });
 });
 

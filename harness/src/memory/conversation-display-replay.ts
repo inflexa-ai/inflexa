@@ -27,7 +27,20 @@ export function storedMessagesToCortex(messages: readonly StoredMessage[]): Cort
     let append: CortexMessage[] | null = null;
     for (const row of messages) {
         if (row.displayEnvelope) {
-            append = conversationUIToCortexMessages(row.displayEnvelope.messages);
+            // The author and the creation time are facts about the ROW, the same as
+            // the rollup below, and the projection holds neither. Both ride the row
+            // that opens the append, and the author reaches the `user` messages
+            // alone, because `role` already names the sender of a reply. Spread
+            // conditionally: an absent value must leave no key, or a consumer that
+            // spreads the message acquires one that overwrites a real value. `Date`
+            // does not survive the JSON crossing typed, hence the ISO string here.
+            const createdAt = row.createdAt === undefined ? {} : { createdAt: row.createdAt.toISOString() };
+            const author = row.author === undefined ? {} : { author: row.author };
+            append = conversationUIToCortexMessages(row.displayEnvelope.messages).map((message) => ({
+                ...message,
+                ...createdAt,
+                ...(message.role === "user" ? author : {}),
+            }));
             out.push(...append);
         }
         // The reported rollup of the turn and its duration both ride the model row that

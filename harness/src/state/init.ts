@@ -274,6 +274,13 @@ CREATE INDEX IF NOT EXISTS idx_cortex_regulatory_chunks_metadata
 -- Nullable with no default: absent means that nobody measured the turn, and a
 -- zero would claim that a turn took no time. A row written before this column
 -- existed is absent for the same reason, thus the migration needs no backfill.
+--
+-- author names the identity that sent the user message of a turn, as the host
+-- knew it at the append site. It is written on the genuine-user-start row of an
+-- append only -- the row that carries display_envelope -- and never on an
+-- assistant, tool, or synthetic row. Nullable with no default and no backfill:
+-- absent means that no sender was recorded, which is the honest value both for a
+-- row that predates the column and for a turn appended without one.
 CREATE TABLE IF NOT EXISTS messages (
   thread_id     TEXT NOT NULL,
   seq           BIGINT NOT NULL,
@@ -286,6 +293,7 @@ CREATE TABLE IF NOT EXISTS messages (
   tokens        INTEGER NOT NULL,
   reported_usage JSONB,
   turn_duration_ms BIGINT,
+  author        TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, seq)
 );
@@ -560,6 +568,9 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // and every earlier message reads back with no duration — which is the
                 // honest value, because nobody measured those turns.
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS turn_duration_ms BIGINT",
+                // Who sent the user message of the turn (see the CREATE TABLE comment).
+                // Purely additive: nullable with no default, thus the column rewrites no row.
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS author TEXT",
                 // Demote an existing JSONB envelope column to JSON (see the CREATE
                 // TABLE comment). Type-guarded because ALTER ... TYPE rewrites the
                 // whole table and this runs at every boot; scoped to
