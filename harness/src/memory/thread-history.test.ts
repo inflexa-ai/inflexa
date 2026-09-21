@@ -1404,8 +1404,11 @@ describe("loadAll row creation time", () => {
         const times = rows.map((m) => m.createdAt);
         expect(times.every((t) => t instanceof Date)).toBe(true);
         expect(new Set(times.map((t) => t!.getTime())).size).toBe(1);
-        // A real clock reading, not a zero or an epoch default.
+        // `created_at` is the Postgres clock, and the test process runs on its own clock.
+        // The 60-second slack on each side absorbs that skew. The bounds still reject a
+        // zero, an epoch default, and a reading far in the future.
         expect(times[0]!.getTime()).toBeGreaterThanOrEqual(before - 60_000);
+        expect(times[0]!.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
     });
 });
 
