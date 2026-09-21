@@ -7,9 +7,15 @@
 `path` prefixed `runs/{runId}/{stepId}/`, `file_type` from the entry's inferred
 type — and upsert them; (2) call the injected `ArtifactRegistry.register(input,
 session)`; (3) write each returned external id back via `updateArtifactId` for
-paths the local upsert owns. It SHALL return `{ localCount, externalRegistered,
-externalFailed, failureDetails }`. When the artifacts array is empty it SHALL
-return all-zero counts immediately and SHALL NOT call the registry.
+paths the local upsert owns. If `register` gives `ok`, `registerStepArtifacts` MUST return
+`{ localCount, externalRegistered, externalFailed, failureDetails }` as an `ok` value. When the artifacts array is
+empty it SHALL return all-zero counts immediately and SHALL NOT call the registry.
+
+`ArtifactRegistry.register` MUST be a gate, as the host-hooks capability describes. It MUST return
+`ResultAsync<ExternalRegistrationResult, GateFailure>`, and it MUST give a failure as an `err`, never as a throw. A
+partial outcome MUST be an `ok` value, not an `err`. If `register` gives an `err`, `registerStepArtifacts` MUST write
+no external id, and it MUST return that `err` as its result. The upserted rows stay in the ledger with
+`artifact_id = NULL`. The step then records the failure with the reason of the host.
 
 The registry's outcome is partial by contract — it commits per leaf and per
 activity, with no batch-wide rollback — so `registered` and `failed` arriving
@@ -54,24 +60,32 @@ because one implementation chose not to log it.
 - **WHEN** `registerStepArtifacts` is called with an empty artifacts array
 - **THEN** it returns `{ localCount: 0, externalRegistered: 0, externalFailed: 0, failureDetails: [] }` and the registry is NOT called
 
+#### Scenario: A register err fails the registration
+
+- **GIVEN** a registry whose `register` gives `errAsync({ reason: "r", suspend: false })`
+- **WHEN** the harness calls `registerStepArtifacts` with 3 reconciled artifacts
+- **THEN** `cortex_artifacts` holds 3 rows with `artifact_id = NULL`
+- **AND** `registerStepArtifacts` returns an `err` that carries the reason `r`, and it does not throw
+
 ### Requirement: Integrity stages fail-fast; enrichment stages degrade
 
 `reconcileAndRegisterStepArtifacts` SHALL reconcile, then register, and the
-sandbox-step body SHALL then `ArtifactRegistry.sync` the step's artifacts. The
-sequence is fail-fast: a non-zero `externalFailed` SHALL throw with the per-file
-failure detail, and the sandbox-step body SHALL tear down the sandbox, mark the
-step failed, and re-raise so the parent's fail-fast cascade fires.
-
-Byte sync SHALL be attempted whatever registration returned, including when
-registration threw. Sync is defined over the rows registration accepted
-(`artifact_id IS NOT NULL AND file_id IS NULL`), so attempting it after a throw
-uploads exactly those rows and reaches nothing that was rejected — whereas
-skipping it leaves every accepted artifact registered and never uploaded,
-orphaned by the very throw raised to prevent orphaning. A registration error
-SHALL remain the surfaced cause: a sync failure that follows one SHALL be logged
-with its own detail and SHALL NOT replace the registration error the step fails
-on. The OSS `createNoopArtifactRegistry` returns `externalFailed: 0` and never
+sandbox-step body SHALL then `ArtifactRegistry.sync` the step's artifacts. Registration is fail-fast. A gate `err`
+from `register` or a non-zero `externalFailed` MUST fail the registration, with the reason of the host or the per-file
+failure detail. Then the sandbox-step body MUST remove the sandbox, mark the step failed, and throw, so that the
+fail-fast cascade of the parent starts. If the gate `err` has `suspend: true`, the step MUST suspend in place of the
+failure, as the `workflow-suspension` capability describes. The OSS `createNoopArtifactRegistry` returns `externalFailed: 0` and never
 trips this.
+
+The sandbox-step body MUST try the byte sync after each registration, also after a failed registration. Sync selects
+only the rows that registration accepted (`artifact_id IS NOT NULL AND file_id IS NULL`). Thus a sync after a failed
+registration uploads exactly those rows and reaches no rejected row. If the body does not do the sync, each accepted
+artifact stays registered but not uploaded. A registration failure MUST stay the cause that the step fails on.
+
+`ArtifactRegistry.sync` MUST be a notice, as the host-hooks capability describes. It MUST return
+`ResultAsync<void, NoticeFailure>`. If `sync` gives an `err`, the body MUST log the reason at the error level, and the
+outcome of the step MUST NOT change. A sync `err` MUST NOT replace a registration failure as the cause of the step
+failure. The rows stay unsynced, thus `queryUnsyncedStepArtifacts` selects them again at a later sync of the step.
 
 The enrichment stages — file-metadata generation, step-summary generation, and
 vector indexing — SHALL run under `safeRun`/`safeRunValue` so any single failure
@@ -91,7 +105,7 @@ only signal that degradation occurred.
 #### Scenario: An output rejection fails the step
 
 - **WHEN** `reconcileAndRegisterStepArtifacts` gets `externalFailed > 0` from registration
-- **THEN** it throws with the per-file detail and the step is marked failed
+- **THEN** the registration fails with the per-file detail, and the body marks the step failed
 
 #### Scenario: A rejection that orphans nothing does not fail the step
 
@@ -99,11 +113,38 @@ only signal that degradation occurred.
 - **WHEN** `reconcileAndRegisterStepArtifacts` runs
 - **THEN** `externalFailed` is `0`, the rejection is logged with its path and reason, and the step completes with its artifacts synced
 
-#### Scenario: Registered bytes sync even when registration throws
+#### Scenario: Registered bytes sync even when registration fails
 
-- **GIVEN** registration that accepted most of the step's artifacts and threw on a rejected output
-- **WHEN** the sandbox-step body handles the throw
-- **THEN** `ArtifactRegistry.sync` is still attempted, the accepted rows are uploaded, and the step fails with the registration error as its cause
+- **GIVEN** registration that accepted most of the step's artifacts and failed on a rejected output
+- **WHEN** the sandbox-step body gets the failure
+- **THEN** the body still tries `ArtifactRegistry.sync`, the sync uploads the accepted rows, and the step fails with the registration failure as its cause
+
+#### Scenario: A register err fails the step
+
+- **GIVEN** a registry whose `register` gives `errAsync({ reason: "r", suspend: false })`
+- **WHEN** the sandbox-step body registers the artifacts of the step
+- **THEN** the body still tries `ArtifactRegistry.sync`
+- **AND** the step fails with the reason `r` as its cause
+
+#### Scenario: A register err with suspend suspends the step
+
+- **GIVEN** a registry whose `register` gives `errAsync({ reason: "r", suspend: true })`
+- **WHEN** the sandbox-step body registers the artifacts of the step
+- **THEN** the step suspends with the reason `r`, and it does not fail
+
+#### Scenario: A sync err does not fail the step
+
+- **GIVEN** registration that accepted each output, and a `sync` that gives `errAsync({ reason: "s" })`
+- **WHEN** the sandbox-step body syncs the artifacts of the step
+- **THEN** the body logs the reason `s` at the error level, and the step completes
+- **AND** `queryUnsyncedStepArtifacts` still selects the accepted rows
+
+#### Scenario: A sync err keeps the registration failure as the cause
+
+- **GIVEN** registration that failed, and a `sync` that gives an `err`
+- **WHEN** the sandbox-step body gets the two failures
+- **THEN** the step fails with the registration failure as its cause
+- **AND** the body logs the reason of the sync `err` at the error level
 
 #### Scenario: A degraded enrichment stage does not fail the step
 
