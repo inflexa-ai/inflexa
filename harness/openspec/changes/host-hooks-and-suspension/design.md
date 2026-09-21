@@ -248,8 +248,9 @@ The rules of the harness:
   the self-cancel of a suspension. `unwrapOrThrow` stays the one bridge from a `Result` to a throw.
 - A tool `execute` body keeps its sanctioned bridge (`harness/CLAUDE.md`): it can throw through `unwrapOrThrow`, and
   the dispatch catch of the loop changes the throw into an error tool result.
-- The harness catches only at an API boundary, a client boundary, or the dispatch catch of the loop. An exception
-  from DBOS, for example `DBOSWorkflowCancelledError`, passes through.
+- The harness catches only at a DBOS boundary, an API boundary, a client boundary, or the dispatch catch of the loop.
+  A DBOS boundary is a workflow body that gets the throw of a failed step or a failed child, and that runs its failure
+  path. An exception from DBOS, for example `DBOSWorkflowCancelledError`, passes through.
 - The `try` and `catch` blocks around the hooks in `executeAnalysis` go (`src/workflows/execute-analysis.ts:1515-1560`).
 
 A failure that must fail a step still crosses the DBOS boundary as a throw, as the workspace-root-resolution spec

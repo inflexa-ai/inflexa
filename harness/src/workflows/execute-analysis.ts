@@ -68,6 +68,7 @@
  */
 
 import { DBOS, Error as DBOSErrors, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool } from "pg";
@@ -83,9 +84,9 @@ import { ATTR_INFLEXA_STEP_ID, stableSpan } from "../lib/otel-spans.js";
 import { recordRunCompleted, recordStepCompleted, stepOutcomeOf } from "../lib/metrics.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { CitationResolver } from "../citations/types.js";
+import { describeDbError, type DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
-    RunDedupCollisionError,
     countArtifactsForRun,
     insertStepExecution,
     loadDataProfileStatus,
@@ -99,7 +100,7 @@ import {
     updateRunStatus,
     updateStepExecution,
 } from "../state/index.js";
-import type { StepExecutionRow, SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
+import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.js";
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
@@ -335,6 +336,24 @@ export interface ExecuteAnalysisDeps {
 /** Emit a chat data part on the parent's DBOS stream. */
 function emitStreamPart(part: unknown): Promise<void> {
     return DBOS.writeStream("events", part);
+}
+
+/**
+ * Run one ledger write of the run as a named step. The write gives a failure as
+ * an `err`: the step logs it with its cause and checkpoints the failure as a
+ * value, thus a failed write rolls back no side effect that succeeded and
+ * never fails the run. A DBOS exception passes through with no change.
+ */
+async function ledgerStep(log: Logger, name: string, write: () => ResultAsync<unknown, DbError> | Promise<Result<unknown, DbError>>): Promise<void> {
+    await DBOS.runStep(
+        async (): Promise<Result<void, string>> => {
+            const written = await write();
+            if (written.isOk()) return ok(undefined);
+            log.error(`${name} failed`, { error: describeDbError(written.error), ...log.errorFields(written.error.cause) });
+            return err(describeDbError(written.error));
+        },
+        { name },
+    );
 }
 
 /**
@@ -815,28 +834,17 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         // Mark the seeded `synthesis` row running. The same upsert the DAG children
         // use: it stamps started_at, and it creates the row outright if a legacy
         // persisted input did not seed it. Log-don't-fail: a progress row must never fail an
-        // otherwise-healthy run. Cancellation still re-propagates — it is not a
-        // write failure, and swallowing it here would only defer it one operation.
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(
-                        await insertStepExecution(deps.pool, {
-                            runId,
-                            stepId: SYNTHESIS_STEP_ID,
-                            analysisId: input.analysisId,
-                            wave: synthesisWave,
-                            agentId: SYNTHESIS_AGENT_ID,
-                            childWorkflowId: null,
-                        }),
-                    );
-                },
-                { name: "mark-synthesis-running" },
-            );
-        } catch (err) {
-            if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-            logger.error("mark-synthesis-running failed", { runId, ...logger.errorFields(err) });
-        }
+        // otherwise-healthy run.
+        await ledgerStep(logger.with({ runId }), "mark-synthesis-running", () =>
+            insertStepExecution(deps.pool, {
+                runId,
+                stepId: SYNTHESIS_STEP_ID,
+                analysisId: input.analysisId,
+                wave: synthesisWave,
+                agentId: SYNTHESIS_AGENT_ID,
+                childWorkflowId: null,
+            }),
+        );
         try {
             const synthOut = await DBOS.runStep(
                 () =>
@@ -871,23 +879,16 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         // and the compiler narrows it — no guard needed. Log-don't-fail, like the
         // sibling finalisation writes.
         const rowOutcome = synthesisOutcome;
-        try {
-            const synthEndedAtMs = await DBOS.now();
-            const rowUpdate = synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs);
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, rowUpdate));
-                    // Recorded inside the step that writes the row, so a replayed body records nothing again.
-                    const outcome = stepOutcomeOf(rowUpdate.status);
-                    if (outcome !== undefined)
-                        recordStepCompleted({ agentId: SYNTHESIS_AGENT_ID, status: outcome, durationMs: synthEndedAtMs - synthStartedAtMs });
-                },
-                { name: "persist-synthesis-step" },
-            );
-        } catch (err) {
-            if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-            logger.error("persist-synthesis-step failed", { runId, ...logger.errorFields(err) });
-        }
+        const synthEndedAtMs = await DBOS.now();
+        const rowUpdate = synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs);
+        await ledgerStep(logger.with({ runId }), "persist-synthesis-step", async () => {
+            const written = await updateStepExecution(deps.pool, runId, SYNTHESIS_STEP_ID, rowUpdate);
+            // Recorded inside the step that writes the row, so a replayed body records nothing again.
+            const outcome = stepOutcomeOf(rowUpdate.status);
+            if (written.isOk() && outcome !== undefined)
+                recordStepCompleted({ agentId: SYNTHESIS_AGENT_ID, status: outcome, durationMs: synthEndedAtMs - synthStartedAtMs });
+            return written;
+        });
     }
 
     // (6) collectAndComplete — terminal block. Runs on EVERY path. When synthesis
@@ -955,17 +956,9 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
     // check that no other active run for the same plan won the race — the
     // partial-unique index would have rejected the insert if so, so this is
     // defense-in-depth only.
-    try {
-        const existing = unwrapOrThrow(await queryActiveRun(deps.pool, input.analysisId, input.planId));
-        if (existing && existing.runId !== runId) {
-            return { kind: "joined-existing", runId: existing.runId };
-        }
-    } catch (err) {
-        if (err instanceof RunDedupCollisionError) {
-            const existing = unwrapOrThrow(await queryActiveRun(deps.pool, input.analysisId, input.planId));
-            if (existing) return { kind: "joined-existing", runId: existing.runId };
-        }
-        throw err;
+    const existing = unwrapOrThrow(await queryActiveRun(deps.pool, input.analysisId, input.planId));
+    if (existing && existing.runId !== runId) {
+        return { kind: "joined-existing", runId: existing.runId };
     }
 
     await DBOS.runStep(
@@ -1508,36 +1501,30 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         input.runSession,
     );
 
-    try {
-        await DBOS.runStep(
-            async () => {
-                unwrapOrThrow(
-                    await updateRunStatus(deps.pool, runId, status, failureReason ?? (status === "canceled" && suspended === null ? "external_cancel" : null)),
-                );
-                // The outcome metrics ride inside the step that persists the terminal status: DBOS
-                // caches the step, so a recovered body records nothing again. A step's own terminal
-                // row already carried its metric; the residue counted here is every settled step
-                // without one — a child the cancel cut before `mark-canceled` (the cancel check runs
-                // before a step body), or one that died before `failStep`. The ledger read is kept
-                // apart from the status write: a failed read costs the metrics, never the write.
-                let stepRows: readonly StepExecutionRow[] = [];
-                try {
-                    stepRows = unwrapOrThrow(await queryStepsByRun(deps.pool, runId));
-                } catch (err) {
-                    logger.warn("run metrics: step ledger read failed, residual step outcomes skipped", logger.errorFields(err));
-                }
-                for (const row of stepRows) {
-                    if (row.completedAt !== null) continue;
-                    if (canceled.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "canceled" });
-                    else if (failed.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "failed" });
-                }
-                recordRunCompleted({ workflow: "analysis", status, durationMs: terminalAtMs - startedAtMs });
-            },
-            { name: "persist-final-status" },
+    await ledgerStep(logger.with({ status }), "persist-final-status", async () => {
+        const written = await updateRunStatus(
+            deps.pool,
+            runId,
+            status,
+            failureReason ?? (status === "canceled" && suspended === null ? "external_cancel" : null),
         );
-    } catch (err) {
-        logger.error("persist-final-status failed", { status, ...logger.errorFields(err) });
-    }
+        if (written.isErr()) return written;
+        // The outcome metrics ride inside the step that persists the terminal status: DBOS
+        // caches the step, so a recovered body records nothing again. A step's own terminal
+        // row already carried its metric; the residue counted here is every settled step
+        // without one — a child the cancel cut before `mark-canceled` (the cancel check runs
+        // before a step body), or one that died before `failStep`. The ledger read is kept
+        // apart from the status write: a failed read costs the metrics, never the write.
+        const stepRows = await queryStepsByRun(deps.pool, runId);
+        if (stepRows.isErr()) logger.warn("run metrics: step ledger read failed, residual step outcomes skipped", { error: describeDbError(stepRows.error) });
+        for (const row of stepRows.unwrapOr([])) {
+            if (row.completedAt !== null) continue;
+            if (canceled.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "canceled" });
+            else if (failed.has(row.stepId)) recordStepCompleted({ agentId: row.agentId, status: "failed" });
+        }
+        recordRunCompleted({ workflow: "analysis", status, durationMs: terminalAtMs - startedAtMs });
+        return written;
+    });
 
     // Record the run's synthesis outcome AFTER the status write — a reader that
     // sees a terminal status then also sees whether (and why) synthesis ran. A
@@ -1546,16 +1533,9 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // must not undo an otherwise-complete run.
     const outcome = args.synthesisOutcome;
     if (outcome !== null) {
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await setRunSynthesisOutcome(deps.pool, runId, outcome.status, outcome.reason));
-                },
-                { name: "persist-synthesis-outcome" },
-            );
-        } catch (err) {
-            logger.error("persist-synthesis-outcome failed", { synthesisStatus: outcome.status, ...logger.errorFields(err) });
-        }
+        await ledgerStep(logger.with({ synthesisStatus: outcome.status }), "persist-synthesis-outcome", () =>
+            setRunSynthesisOutcome(deps.pool, runId, outcome.status, outcome.reason),
+        );
     }
 
     // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
@@ -1564,31 +1544,13 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // for the resumed workflow to execute. Log-don't-rollback, like every other
     // finalisation step here.
     if (suspended === null) {
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await sweepPendingStepExecutions(deps.pool, runId));
-                },
-                { name: "sweep-pending-steps" },
-            );
-        } catch (err) {
-            logger.error("sweep-pending-steps failed", logger.errorFields(err));
-        }
+        await ledgerStep(logger, "sweep-pending-steps", () => sweepPendingStepExecutions(deps.pool, runId));
     }
 
     // The one function that marks the analysis as suspended, for each reason of
     // the host. A forced failure never reaches this branch.
     if (suspended !== null) {
-        try {
-            await DBOS.runStep(
-                async () => {
-                    unwrapOrThrow(await suspendAnalysisQuery(deps.pool, input.analysisId));
-                },
-                { name: "suspend-analysis" },
-            );
-        } catch (err) {
-            logger.error("suspend-analysis failed", logger.errorFields(err));
-        }
+        await ledgerStep(logger, "suspend-analysis", () => suspendAnalysisQuery(deps.pool, input.analysisId));
     }
 
     // A notice: a failed close is logged, and the terminal status stays.
@@ -1622,8 +1584,10 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.
     if (status === "completed" || status === "partial") {
-        const artifactCount = await DBOS.runStep(() => countArtifactsForRun(deps.pool, input.analysisId, runId), { name: "count-run-artifacts" }).catch(
-            () => 0,
+        // The count is a figure of the card: a failed read gives zero.
+        const artifactCount = await DBOS.runStep(
+            async () => await ResultAsync.fromPromise(countArtifactsForRun(deps.pool, input.analysisId, runId), () => "the artifact count failed").unwrapOr(0),
+            { name: "count-run-artifacts" },
         );
         await emitStreamPart({
             type: "data-run-completed",

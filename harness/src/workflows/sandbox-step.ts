@@ -878,12 +878,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         reconciledManifest,
     };
 
-    let stepOutputs: StepOutputs | undefined;
-    try {
-        stepOutputs = collectStepOutputs(postCtx, postArtifacts);
-    } catch (err) {
-        logger.warn("post-step.collect failed (non-fatal)", logger.errorFields(err));
-    }
+    const stepOutputs = collectStepOutputs(postCtx, postArtifacts);
 
     await emitActivity("indexing", "Indexing outputs for search");
     await safeRun(logger, () => vectorIndexStepOutputs(deps, postCtx, postArtifacts), "post-step.vector-index");

@@ -77,9 +77,9 @@
 
 ## 6. Remove the throws and the catches
 
-- [ ] 6.1 Remove the `try` and `catch` blocks around the hooks and the state writes in
+- [x] 6.1 Remove the `try` and `catch` blocks around the hooks and the state writes in
   `src/workflows/execute-analysis.ts`. Use the `Result` values of the steps
-- [ ] 6.2 Search `src/workflows/` and `src/tasks/` for each remaining `catch` and `throw`. Keep only the ones at a
+- [x] 6.2 Search `src/workflows/` and `src/tasks/` for each remaining `catch` and `throw`. Keep only the ones at a
   DBOS boundary, an API boundary, or a client boundary
 
 ## 7. The exports, the documents, and the archive
