@@ -358,15 +358,28 @@ class HeadersRefused extends Error {
     }
 }
 
+/**
+ * The state of the request headers hook in one call. A rejection of the hook is
+ * a defect of the host, and the harness does not catch it (host-hooks spec): the
+ * envelope never retries it, and the outer catch rethrows it unchanged. The hook
+ * call has no `catch`, thus this flag marks the rejection: it stays set when the
+ * hook call of the attempt did not settle as a value.
+ */
+export interface HookCall {
+    unsettled: boolean;
+}
+
 /** The headers of one attempt. A refusal of the hook throws `HeadersRefused`, and the attempt is not sent. */
-async function headersForAttempt(hook: ResolveRequestHeaders | undefined, session: AgentSession): Promise<Record<string, string>> {
+export async function headersForAttempt(hook: ResolveRequestHeaders | undefined, session: AgentSession, call: HookCall): Promise<Record<string, string>> {
+    call.unsettled = true;
     const resolved = await requestHeadersFor(hook, session);
+    call.unsettled = false;
     if (resolved.isErr()) throw new HeadersRefused(resolved.error);
     return { ...resolved.value } satisfies RequestHeaders;
 }
 
 /** The provider error of a call that failed: a refusal of the hook, or a classified wire failure. */
-function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): ProviderError {
+export function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): ProviderError {
     return e instanceof HeadersRefused ? headersRefusalError(e.refusal, workload) : toProviderError(e, workload, suspendOn);
 }
 
@@ -376,8 +389,8 @@ function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): Provider
  * without retrying and cancels its own backoff sleep when the signal fires, so
  * the retried closure adds no abort handling of its own. `shouldRetry` defers to
  * the harness retryability taxonomy under the `suspendOn` map of the provider —
- * thus a mapped status is never retried — and it never retries a refusal of the
- * request headers hook. A non-retried first failure is rethrown untouched,
+ * thus a mapped status is never retried — and it never retries a refusal or a
+ * rejection of the request headers hook. A non-retried first failure is rethrown untouched,
  * preserving the exact throwable the outer catch classifies. `createRetryError` carries the last real failure on `cause` so
  * that, once retries are exhausted, `toProviderError`'s status walk reaches the
  * true HTTP status instead of stopping at a synthetic wrapper. The attempt
@@ -388,21 +401,27 @@ function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): Provider
  * timeout. Without this guard the envelope would loop an expiry that the caller
  * itself declared.
  */
-function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn) {
+export function createRetry(signal: AbortSignal | undefined, logger: Logger, maxRetries: number, suspendOn: SuspendOn, hookCall: HookCall) {
     let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries,
         initialDelayInMs: RETRY_INITIAL_DELAY_MS,
         backoffFactor: RETRY_BACKOFF_FACTOR,
         abortSignal: signal,
-        shouldRetry: (e) => !(e instanceof HeadersRefused) && signal?.aborted !== true && classifyProviderError(e, suspendOn).retryable,
+        shouldRetry: (e) => !hookCall.unsettled && !(e instanceof HeadersRefused) && signal?.aborted !== true && classifyProviderError(e, suspendOn).retryable,
         getDelayInMs: ({ error, exponentialBackoffDelay }) => {
             const delayMs = computeRetryDelayMs(error, exponentialBackoffDelay);
             retryCount += 1;
             logger.debug("retrying provider call", { attempt: retryCount, delayMs, ...logger.errorFields(error) });
             return delayMs;
         },
-        createRetryError: ({ message, errors }) => new Error(message, { cause: errors[errors.length - 1] }),
+        createRetryError: ({ message, errors }) => {
+            const last = errors[errors.length - 1];
+            // A refusal of the hook on a later attempt ends the call as that refusal, with its
+            // suspend flag, and never as a wire failure whose message text the taxonomy reads.
+            // A rejection of the hook leaves the envelope unchanged.
+            return hookCall.unsettled || last instanceof HeadersRefused ? last : new Error(message, { cause: last });
+        },
     });
 }
 
@@ -688,13 +707,14 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
-            const retry = createRetry(signal, logger, maxRetries, suspendOn);
+            const hookCall: HookCall = { unsettled: false };
+            const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
             const capture = captureServedModelId(deps.model);
             try {
                 const collected = await retry(async () => {
                     // The hook runs before each attempt: a host header can be
                     // time-limited, and the retry window can last minutes.
-                    const headers = await headersForAttempt(deps.resolveRequestHeaders, session);
+                    const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
                     // The call streams on the wire and collapses below.
                     //
                     // A non-streaming turn sends no header until the model completes,
@@ -764,7 +784,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     }),
                 );
             } catch (e) {
-                if (isAbortError(e) || signal?.aborted) throw e;
+                if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
                 const failure = failureOf(e, workloadOf(session), suspendOn);
                 logFailure(session, failure, e);
                 return err(failure);
@@ -774,7 +794,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const retry = createRetry(signal, logger, maxRetries, suspendOn);
+        const hookCall: HookCall = { unsettled: false };
+        const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
         const capture = captureServedModelId(deps.model);
         try {
             // Retry covers only stream establishment: streamText defers wire errors
@@ -786,7 +807,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             // The request headers hook runs inside the closure, thus it runs
             // before each attempt.
             const opened = await retry(async () => {
-                const headers = await headersForAttempt(deps.resolveRequestHeaders, session);
+                const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
                 const result = streamText({
                     model: capture.model,
                     system: req.system,
@@ -880,7 +901,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             });
             yield { type: "done", response };
         } catch (e) {
-            if (isAbortError(e) || signal?.aborted) throw e;
+            if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
             const failure = failureOf(e, workloadOf(session), suspendOn);
             logFailure(session, failure, e);
             throw failure;

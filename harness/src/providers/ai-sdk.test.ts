@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { APICallError } from "@ai-sdk/provider";
-import { errAsync, okAsync } from "neverthrow";
+import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type {
     LanguageModelV4,
     LanguageModelV4CallOptions,
@@ -22,6 +22,7 @@ import {
 } from "./ai-sdk.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { LogFields, Logger } from "../lib/logger.js";
+import type { GateFailure } from "../lib/hooks.js";
 import { isProviderError } from "./errors.js";
 import type { ChatRequest } from "./types.js";
 
@@ -1150,6 +1151,61 @@ describe("createAiSdkProvider request headers hook", () => {
         expect(failure).toMatchObject({ type: "provider", retryable: false });
         expect(failure.message).toContain("second refused");
     }, 10_000);
+
+    it("keeps the suspend flag and the reason when the hook refuses a later attempt", async () => {
+        let wireCalls = 0;
+        let hookCalls = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                wireCalls += 1;
+                throw apiError503();
+            }),
+            resolveRequestHeaders: () => {
+                hookCalls += 1;
+                // The reason holds a word that the wire taxonomy matches in a message. The
+                // harness must not read it: the refusal keeps its own kind.
+                return hookCalls === 1 ? okAsync({}) : errAsync({ reason: "terminated_by_host", suspend: true });
+            },
+        });
+
+        const failure = (await provider.chat(request, makeSession()))._unsafeUnwrapErr();
+
+        expect(wireCalls).toBe(1);
+        expect(hookCalls).toBe(2);
+        expect(failure).toMatchObject({ type: "suspend", reason: "terminated_by_host", retryable: false });
+    }, 10_000);
+
+    it("passes a rejected hook promise through with no change, and never retries it", async () => {
+        let wireCalls = 0;
+        let hookCalls = 0;
+        // The text of a connection failure, which the wire taxonomy would retry.
+        const rejection = new TypeError("fetch failed");
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                wireCalls += 1;
+                return okResult();
+            }),
+            resolveRequestHeaders: () => {
+                hookCalls += 1;
+                return new ResultAsync<Record<string, string>, GateFailure>(Promise.reject(rejection));
+            },
+        });
+
+        const outcome = await provider
+            .chat(request, makeSession())
+            .match(
+                () => "ok",
+                () => "err",
+            )
+            .then(
+                (settled) => settled,
+                (thrown: unknown) => thrown,
+            );
+
+        expect(outcome).toBe(rejection);
+        expect(hookCalls).toBe(1);
+        expect(wireCalls).toBe(0);
+    });
 
     it("fails a stream at once on a hook err without opening the stream", async () => {
         let streamCalls = 0;
