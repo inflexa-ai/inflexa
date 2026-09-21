@@ -304,6 +304,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
             deadlineMs: step.deadlineMs,
             defaultCwd: sandboxWorkingDir,
             ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}` } : {}),
+            ...(mutator ? { workspaceFilesystem: workspaceFs, mutator } : {}),
         }),
         ...mutateTools,
         createReadFileTool(workspaceFs, hostWorkingDir),

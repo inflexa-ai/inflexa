@@ -8,21 +8,14 @@ import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createWorkspaceMutator } from "../workspace/mutator.js";
 import { GroundingSchema } from "../../schemas/workflow-state.js";
 import { stepWritePrefix } from "../../workspace/paths.js";
-import {
-    fakeKnowledgeClient,
-    limitAnswer,
-    notAssessedCheckAnswer,
-    recommendAnswer,
-    renderAnswer,
-    SNAPSHOT,
-    substitutionAnswer,
-} from "./__fixtures__/fake-client.js";
+import { fakeKnowledgeClient, limitAnswer, notAssessedCheckAnswer, recommendAnswer, SNAPSHOT, substitutionAnswer } from "./__fixtures__/fake-client.js";
 import { CHECK_CALL_LIMIT, createKnowledgeCheckTool } from "./check.js";
 import { joinEnvironment } from "./environment.js";
-import { createKnowledgeTools } from "./index.js";
+import { createKnowledgeTools, knowledgeToolDefinitionHash } from "./index.js";
 import { createKnowledgeRecommendTool } from "./recommend.js";
 import { buildPlanSkeleton } from "./skeleton.js";
-import { createKnowledgeTemplateTool, decisionRecordPath } from "./template.js";
+import { decisionRecordPath } from "../workspace/decision-record.js";
+import { createKnowledgeTemplateTool } from "./template.js";
 
 const SITUATION = {
     question: "differential_expression" as const,
@@ -365,6 +358,37 @@ describe("knowledge_recommend — the environment and the skeleton", () => {
     });
 });
 
+describe("the release pin of one plan", () => {
+    it("the first recommend answer pins the release, and every later call of the two tools carries it", async () => {
+        const fake = fakeKnowledgeClient();
+        const [recommend, check] = createKnowledgeTools({ client: fake.client });
+        const { ctx } = makeToolContext();
+        await recommend!.execute(SITUATION, ctx);
+        expect(fake.calls.recommend[0]?.expected_snapshot).toBeUndefined();
+        await recommend!.execute(SITUATION, ctx);
+        expect(fake.calls.recommend[1]?.expected_snapshot).toBe(SNAPSHOT.digest);
+        await check!.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx);
+        expect(fake.calls.check[0]?.expected_snapshot).toBe(SNAPSHOT.digest);
+    });
+
+    it("a check before any answer carries no pin, and a mismatch answer passes through as data", async () => {
+        const mismatch = { match: "snapshot_mismatch" as const, message: "another release", expected: "sha256:aa", served: SNAPSHOT };
+        const fake = fakeKnowledgeClient({ check: mismatch });
+        const [, check] = createKnowledgeTools({ client: fake.client });
+        const { ctx } = makeToolContext();
+        const out = (await check!.execute({ ...SITUATION, steps: [{ step_type: "differential_expression", method: "DESeq2 Wald" }] }, ctx))._unsafeUnwrap();
+        expect(fake.calls.check[0]?.expected_snapshot).toBeUndefined();
+        expect(out).toEqual(mismatch);
+        expect(check!.describeResult?.({ ...SITUATION, steps: [] }, out)).toBe("snapshot_mismatch");
+    });
+
+    it("the tool definition hash is stable and names the three tools", () => {
+        const first = knowledgeToolDefinitionHash();
+        expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+        expect(knowledgeToolDefinitionHash()).toBe(first);
+    });
+});
+
 describe("knowledge_check", () => {
     it("sends the situation and the drafted steps and returns the findings", async () => {
         const { client, calls } = fakeKnowledgeClient({
@@ -475,8 +499,11 @@ describe("knowledge_template", () => {
         expect(out.decision_record_path).toBe(`/${ANALYSIS}/runs/run-1/T1S1/output/decision_record_tpl-deseq2-two-group.json`);
         expect(out.run_with).toBe("Rscript scripts/tpl-deseq2-two-group.R");
         expect(out.environment_match).toBe("exact");
+        // The count path is a local slot: the service answered with its marker, and the tool bound the value here.
         const script = await readFile(join(workingDir, "scripts", "tpl-deseq2-two-group.R"), "utf8");
-        expect(script).toBe(renderAnswer().script);
+        expect(script).toBe('COUNTS <- "/analysis-001/data/inputs/f1/counts.csv"  # [adaptable: counts_path]\nmessage("hello")\n');
+        expect(out.local_slots).toEqual(["counts_path"]);
+        expect(out.written_sha256).toMatch(/^sha256:[a-f0-9]{64}$/);
         const record = JSON.parse(await readFile(join(workingDir, decisionRecordPath("tpl-deseq2-two-group.R")), "utf8"));
         expect(record.template).toEqual({
             id: "tpl-deseq2-two-group",
@@ -485,6 +512,59 @@ describe("knowledge_template", () => {
             method: { id: "M-0001", label: "Count-model Wald test with effect shrinkage" },
         });
         expect(record.script_path).toBe(out.script_path);
+        expect(record.written_sha256).toBe(out.written_sha256);
+        expect(record.slots).toEqual([
+            { name: "counts_path", value: "/analysis-001/data/inputs/f1/counts.csv", source: "caller", adaptable: true, lines: [1] },
+        ]);
+    });
+
+    it("never sends a local value to the service, with or without a binding", async () => {
+        const sentinel = "/analysis-001/data/inputs/SENTINEL-7f3a9c/counts.csv";
+        const { tool, calls } = build();
+        const { ctx } = makeToolContext();
+        const out = (
+            await tool.execute(
+                { template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: sentinel, condition_column: "SENTINEL_column", lfc_shrink: "ashr" } },
+                ctx,
+            )
+        )._unsafeUnwrap();
+        expect(out).toMatchObject({ status: "ok" });
+        // Without a binding the tool reads the contract for the local slots, then sends the rest only.
+        expect(calls.contract).toEqual([{ template: "tpl-deseq2-two-group@1.0.0" }]);
+        expect(calls.render).toHaveLength(1);
+        expect(calls.render[0]?.slots).toEqual({ lfc_shrink: "ashr" });
+        expect(JSON.stringify(calls)).not.toContain("SENTINEL");
+    });
+
+    it("refuses a local value the contract refuses on this machine, before the render and before any write", async () => {
+        const { tool, workingDir, calls } = build();
+        const { ctx } = makeToolContext();
+        const out = (await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: 42 } }, ctx))._unsafeUnwrap();
+        expect(out).toMatchObject({ match: "rejected", issues: [{ slot: "counts_path", reason: "a non-empty string is required" }] });
+        expect(calls.render).toHaveLength(0);
+        expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
+    });
+
+    it("refuses a column name where the situation takes a role", () => {
+        const [recommend] = createKnowledgeTools({ client: fakeKnowledgeClient().client });
+        expect(recommend!.inputSchema.safeParse({ ...SITUATION, blocking_factor: "donor_id" }).success).toBe(false);
+        expect(
+            recommend!.inputSchema.safeParse({ ...SITUATION, blocking_factor: "individual", covariates: ["sex", "clinical"], continuous_predictor: null })
+                .success,
+        ).toBe(true);
+        expect(recommend!.inputSchema.safeParse({ ...SITUATION, covariates: ["age_years"] }).success).toBe(false);
+    });
+
+    it("passes a snapshot mismatch through as data, and writes nothing", async () => {
+        const mismatch = { match: "snapshot_mismatch" as const, message: "another release", expected: "sha256:aa", served: SNAPSHOT };
+        const { tool, workingDir } = build({ render: mismatch });
+        const { ctx } = makeToolContext();
+        const out = (
+            await tool.execute({ template: "tpl-deseq2-two-group@1.0.0", slots: { counts_path: "/analysis-001/data/inputs/f1/counts.csv" } }, ctx)
+        )._unsafeUnwrap();
+        expect(out).toEqual(mismatch);
+        expect(tool.describeResult?.({ template: "tpl-x", slots: {} }, out)).toBe("snapshot_mismatch");
+        expect(await Bun.file(join(workingDir, "scripts", "tpl-deseq2-two-group.R")).exists()).toBe(false);
     });
 
     it("sends the installed versions of both records when the host names them, and none otherwise", async () => {
