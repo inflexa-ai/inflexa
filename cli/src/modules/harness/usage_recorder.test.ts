@@ -1,36 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { err, ok, type Result } from "neverthrow";
-import type { LlmUsageRecord, LogFields, Logger } from "@inflexa-ai/harness";
+import type { LlmUsageRecord } from "@inflexa-ai/harness";
 
 import type { DbError } from "../../db/errors.ts";
 import type { LlmUsageEntry } from "../../db/primary_mutation.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
-
-/** One captured log record — level, message, and the structured fields, which is where the identifiers ride. */
-type LogRecord = { level: "debug" | "info" | "warn" | "error"; msg: string; fields: LogFields };
-
-/**
- * A capturing realization of the harness `Logger` seam. `named`/`with` return the same collector so a
- * namespaced child (which the recorder builds) still reports into the one list the test asserts on.
- */
-function capturingLogger(): { logger: Logger; records: LogRecord[] } {
-    const records: LogRecord[] = [];
-    const emit =
-        (level: LogRecord["level"]) =>
-        (msg: string, fields?: LogFields): void => {
-            records.push({ level, msg, fields: fields ?? {} });
-        };
-    const logger: Logger = {
-        debug: emit("debug"),
-        info: emit("info"),
-        warn: emit("warn"),
-        error: emit("error"),
-        with: () => logger,
-        named: () => logger,
-        errorFields: (e) => ({ err: e }),
-    };
-    return { logger, records };
-}
 
 /**
  * A capturing ledger write. Passing a `DbError` makes every write fail, so the same rig drives the
@@ -65,62 +39,60 @@ function record(overrides: Partial<LlmUsageRecord> = {}): LlmUsageRecord {
     };
 }
 
-describe("createUsageRecorder — the harness seam's two contract terms", () => {
-    test("a failing write throws nothing, returns nothing, and reports at warn", () => {
-        const { logger, records } = capturingLogger();
+describe("createUsageRecorder — the notice contract", () => {
+    test("a failing write throws nothing and gives its reason as the err of the notice", async () => {
         const { upsert, entries } = capturingUpsert({ type: "mutation_failed", op: "upsertLlmUsage", cause: new Error("disk is gone") });
-        const recorder = createUsageRecorder({ logger, upsert });
+        const recorder = createUsageRecorder({ upsert });
 
-        // The agent loop delivers bare — no await, no try — so an escaping error here would fail a turn
-        // that otherwise succeeded. The assertion is that the call is inert, not merely that it survives.
-        const returned = recorder.record(record());
+        // The agent loop delivers the notice bare — no await, no try — so an escaping error here would
+        // fail a turn that otherwise succeeded. The failure must come back as a value the harness logs.
+        const reason = await recorder.record(record()).match(
+            () => "no failure",
+            (failure) => failure.reason,
+        );
 
-        expect(returned).toBeUndefined();
         expect(entries).toHaveLength(1);
-        expect(records).toHaveLength(1);
-        expect(records[0]?.level).toBe("warn");
-        expect(records[0]?.fields).toMatchObject({ recordKey: "rec-1", error: "mutation_failed" });
+        expect(reason).toContain("rec-1");
+        expect(reason).toContain("mutation_failed");
     });
 
-    test("a synchronous throw from the write is swallowed and reported, not propagated", () => {
-        const { logger, records } = capturingLogger();
+    test("a synchronous throw from the write comes back as the err of the notice, not a throw", async () => {
         const recorder = createUsageRecorder({
-            logger,
             upsert: () => {
                 throw new Error("bun:sqlite refused the bind");
             },
         });
 
-        expect(() => recorder.record(record())).not.toThrow();
-        expect(records).toHaveLength(1);
-        expect(records[0]?.level).toBe("warn");
+        const reason = await recorder.record(record()).match(
+            () => "no failure",
+            (failure) => failure.reason,
+        );
+
+        expect(reason).toContain("bun:sqlite refused the bind");
     });
 
-    test("a successful write logs nothing — the ledger is silent on the hot path", () => {
-        const { logger, records } = capturingLogger();
+    test("a successful write gives ok", async () => {
         const { upsert } = capturingUpsert();
 
-        createUsageRecorder({ logger, upsert }).record(record());
-
-        expect(records).toEqual([]);
+        expect((await createUsageRecorder({ upsert }).record(record())).isOk()).toBe(true);
     });
 });
 
 describe("createUsageRecorder — scope maps totally", () => {
-    test("the analysis variant contributes its id and its thread", () => {
-        const { logger } = capturingLogger();
+    test("the analysis variant contributes its id and its thread", async () => {
         const { upsert, entries } = capturingUpsert();
 
-        createUsageRecorder({ logger, upsert }).record(record({ scope: { kind: "analysis", analysisId: "ana-7", threadId: "thr-9" } }));
+        expect((await createUsageRecorder({ upsert }).record(record({ scope: { kind: "analysis", analysisId: "ana-7", threadId: "thr-9" } }))).isOk()).toBe(
+            true,
+        );
 
         expect(entries[0]).toMatchObject({ scopeKind: "analysis", scopeId: "ana-7", threadId: "thr-9" });
     });
 
-    test("an analysis scope with no thread omits the column rather than defaulting it", () => {
-        const { logger } = capturingLogger();
+    test("an analysis scope with no thread omits the column rather than defaulting it", async () => {
         const { upsert, entries } = capturingUpsert();
 
-        createUsageRecorder({ logger, upsert }).record(record({ scope: { kind: "analysis", analysisId: "ana-7" } }));
+        expect((await createUsageRecorder({ upsert }).record(record({ scope: { kind: "analysis", analysisId: "ana-7" } }))).isOk()).toBe(true);
 
         expect(entries[0]).toMatchObject({ scopeKind: "analysis", scopeId: "ana-7" });
         expect(Object.hasOwn(entries[0] ?? {}, "threadId")).toBe(false);
@@ -128,14 +100,15 @@ describe("createUsageRecorder — scope maps totally", () => {
 });
 
 describe("createUsageRecorder — the row it builds", () => {
-    test("stamps arrival time, joins the call path, and passes the reported quantities through", () => {
-        const { logger } = capturingLogger();
+    test("stamps arrival time, joins the call path, and passes the reported quantities through", async () => {
         const { upsert, entries } = capturingUpsert();
         const before = Date.now();
 
-        createUsageRecorder({ logger, upsert }).record(
+        const written = await createUsageRecorder({ upsert }).record(
             record({ callPath: ["tui-chat", "planner", "literature-reviewer"], usage: { inputTokens: 100, cacheReadInputTokens: 0 } }),
         );
+
+        expect(written.isOk()).toBe(true);
 
         const entry = entries[0];
         expect(entry?.callPath).toBe("tui-chat>planner>literature-reviewer");
@@ -146,13 +119,14 @@ describe("createUsageRecorder — the row it builds", () => {
         expect(entry?.usage).toEqual({ inputTokens: 100, cacheReadInputTokens: 0 });
     });
 
-    test("omits every optional the record did not carry", () => {
-        const { logger } = capturingLogger();
+    test("omits every optional the record did not carry", async () => {
         const { upsert, entries } = capturingUpsert();
 
-        createUsageRecorder({ logger, upsert }).record(
+        const written = await createUsageRecorder({ upsert }).record(
             record({ requestedModelId: undefined, servedModelId: undefined, scope: { kind: "analysis", analysisId: "ana-1" } }),
         );
+
+        expect(written.isOk()).toBe(true);
 
         const entry = entries[0] ?? ({} as LlmUsageEntry);
         for (const key of ["threadId", "runId", "stepId", "requestedModelId", "servedModelId"]) {
@@ -160,11 +134,10 @@ describe("createUsageRecorder — the row it builds", () => {
         }
     });
 
-    test("a run-framed record carries its run and step alongside the analysis", () => {
-        const { logger } = capturingLogger();
+    test("a run-framed record carries its run and step alongside the analysis", async () => {
         const { upsert, entries } = capturingUpsert();
 
-        createUsageRecorder({ logger, upsert }).record(record({ runId: "run-1", stepId: "step-a" }));
+        expect((await createUsageRecorder({ upsert }).record(record({ runId: "run-1", stepId: "step-a" }))).isOk()).toBe(true);
 
         expect(entries[0]).toMatchObject({ scopeKind: "analysis", scopeId: "ana-1", runId: "run-1", stepId: "step-a" });
     });

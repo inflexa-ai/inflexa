@@ -196,15 +196,16 @@ function recordingSeams(calls: string[]): BootSeams {
                         }),
                         sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
                         dataProfile: async () => {},
-                        extractValues: async () => ({}),
-                        deriveTableExec: async () => ({
-                            execId: "",
-                            exitCode: 0,
-                            stdout: "",
-                            stderr: "",
-                            durationMs: 0,
-                            timedOut: false,
-                        }),
+                        extractValues: async () => ok({}),
+                        deriveTableExec: async () =>
+                            ok({
+                                execId: "",
+                                exitCode: 0,
+                                stdout: "",
+                                stderr: "",
+                                durationMs: 0,
+                                timedOut: false,
+                            }),
                     },
                     // `CoreRuntime` requires the resolver `assembleCoreRuntime` builds; the
                     // real (pure, network-lazy) constructor stands in here, matching how this

@@ -1,5 +1,5 @@
-import type { Result } from "neverthrow";
-import type { LlmUsageRecord, Logger, Scope, UsageRecorder } from "@inflexa-ai/harness";
+import { err, Result, ResultAsync } from "neverthrow";
+import type { LlmUsageRecord, NoticeFailure, Scope, UsageRecorder } from "@inflexa-ai/harness";
 
 import type { DbError } from "../../db/errors.ts";
 import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts";
@@ -9,13 +9,14 @@ import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts
 // embedder decides where they land — so this module is the ONLY place a harness usage record crosses
 // into the cli's ledger vocabulary.
 //
-// Two contract terms from the seam shape everything here, and both are load-bearing rather than
-// stylistic. `record` MUST NOT throw: the agent loop delivers bare — no `await`, no `try` — so an
-// escaping error would surface inside the loop body and fail a turn that had otherwise succeeded, over
-// a bookkeeping row. And `record` MUST NOT block: it is called at LLM-call cadence from the loop's hot
-// path, which is why the write is a single-row insert against a local WAL file rather than anything
-// buffered or asynchronous (an async writer would trade guaranteed durability for microseconds, and be
-// the only async store in the cli).
+// `record` is a notice of the harness: it reports a failure as the `err` of its `ResultAsync`, and the
+// harness logs that reason and lets the run continue. Two contract terms shape everything here, and both
+// are load-bearing rather than stylistic. `record` MUST NOT throw: the agent loop delivers the notice
+// bare — no `await`, no `try` — so a throw that escapes before the `ResultAsync` exists would fail a
+// turn that had otherwise succeeded, over a bookkeeping row. And `record` MUST NOT block: it runs
+// synchronously at LLM-call cadence on the loop's hot path, which is why the write is a single-row insert
+// against a local WAL file rather than anything buffered or asynchronous (an async writer would trade
+// guaranteed durability for microseconds, and be the only async store in the cli).
 //
 // The harness also guarantees key stability but NOT at-most-once delivery — a replayed durable workflow
 // body re-fires `record` with a byte-identical `recordKey` — which the storage layer absorbs by
@@ -90,14 +91,8 @@ function toEntry(call: LlmUsageRecord, recordedAt: number, scope: ScopeColumns):
 /** What {@link createUsageRecorder} needs from the world around it. */
 export type UsageRecorderDeps = {
     /**
-     * Diagnostics sink. The harness's own `Logger` seam rather than a pino handle, because this is a
-     * harness seam realization and the seam's contract says a recorder owns its error handling on the
-     * injected logger — the composition root already holds the pino-backed realization to pass.
-     */
-    readonly logger: Logger;
-    /**
-     * The ledger write. Defaults to {@link upsertLlmUsage}; injectable so the swallow-and-log path can
-     * be driven from a test without breaking a real database to provoke it.
+     * The ledger write. Defaults to {@link upsertLlmUsage}; injectable so the failure path can be
+     * driven from a test without breaking a real database to provoke it.
      */
     readonly upsert?: (entry: LlmUsageEntry) => Result<void, DbError>;
 };
@@ -108,38 +103,36 @@ export type UsageRecorderDeps = {
  * Constructed ONCE per booted runtime at the composition root and stamped by `assembleCoreRuntime`
  * onto the conversation agent and every registered workflow, so one runtime reports to one ledger.
  *
- * `record` is total and silent: it returns `void` (never a promise), consumes the write's `Result`
- * itself, and reports a fault at `warn` before discarding it. Swallowing is the contract, not laziness
- * — the seam is precisely the boundary where "a usage-ledger fault must never fail a turn" is
- * realized, which is why the `Result` dies here instead of propagating.
+ * `record` is total: an unknown scope variant, a failed write, and a throw from below each come back
+ * as the `err` of the notice, with a reason, and never as a throw. The recorder logs nothing itself —
+ * the harness logs the reason of a failed notice, which is where "a usage-ledger fault must never fail
+ * a turn" is realized.
  */
-export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
+export function createUsageRecorder(deps: UsageRecorderDeps = {}): UsageRecorder {
     const upsert = deps.upsert ?? upsertLlmUsage;
-    const log = deps.logger.named("usage");
+
+    // The one sanctioned bridge from a throw in this module. The write already returns a `Result`, but
+    // `record` may not throw for ANY input, and a synchronous throw from anywhere below (a bind
+    // rejecting an unexpected value, a connection failing to open) would otherwise escape into the
+    // agent loop. The mapper reads nothing off the record, so it cannot itself throw.
+    const write = Result.fromThrowable(
+        (call: LlmUsageRecord): Result<void, NoticeFailure> => {
+            const scope = scopeColumns(call.scope);
+            if (scope === null) {
+                // Statically `never`, so the cast only names what actually arrived at runtime —
+                // the whole point of the report is to say which unknown variant was dropped.
+                return err({ reason: `usage record dropped: unhandled scope variant ${(call.scope as { kind: string }).kind}` });
+            }
+            return upsert(toEntry(call, Date.now(), scope)).mapErr((error): NoticeFailure => ({
+                reason: `usage ledger write failed for ${call.recordKey}: ${error.type}`,
+            }));
+        },
+        (cause): NoticeFailure => ({ reason: `usage ledger write threw: ${cause instanceof Error ? cause.message : "a non-Error value"}` }),
+    );
 
     return {
-        record(call: LlmUsageRecord): void {
-            // The one sanctioned swallowing `try`/`catch` in this module. It does not bridge a throw
-            // into a `Result` (the write already returns one) — it exists because `record` may not
-            // throw for ANY input, and a synchronous throw from anywhere below (a bind rejecting an
-            // unexpected value, a connection failing to open) would otherwise escape into the agent
-            // loop. The catch reads nothing off `call`, so it cannot itself throw; the record key is
-            // dropped from the diagnostic deliberately to keep that guarantee unconditional.
-            try {
-                const scope = scopeColumns(call.scope);
-                if (scope === null) {
-                    // Statically `never`, so the cast only names what actually arrived at runtime —
-                    // the whole point of the report is to say which unknown variant was dropped.
-                    log.warn("usage record dropped: unhandled scope variant", { scopeKind: (call.scope as { kind: string }).kind });
-                    return;
-                }
-                upsert(toEntry(call, Date.now(), scope)).match(
-                    () => {},
-                    (error) => log.warn("usage ledger write failed", { recordKey: call.recordKey, error: error.type }),
-                );
-            } catch (cause) {
-                log.warn("usage ledger write threw", log.errorFields(cause));
-            }
+        record(call: LlmUsageRecord): ResultAsync<void, NoticeFailure> {
+            return new ResultAsync(Promise.resolve(write(call).andThen((written) => written)));
         },
     };
 }

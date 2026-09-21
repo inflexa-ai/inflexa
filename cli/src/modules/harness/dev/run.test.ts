@@ -99,14 +99,15 @@ type Recorder = {
  * no authorize/launch call. `activeRuns` is the successive `queryActiveRun`
  * returns (pre-check, then collision recovery); `insertThrows` models the
  * partial-unique collision (the real `insertRun` rejects, caught identically to a
- * sync throw); `insertErr` models a plain driver failure.
+ * sync throw); `insertErr` models a plain driver failure; `authorizeRefusal` is
+ * the reason of a refusal of the authorize gate.
  */
 function makeSeams(
     behavior: {
         activeRuns?: (CortexRunRow | null)[];
         insertThrows?: unknown;
         insertErr?: boolean;
-        authorizeThrows?: unknown;
+        authorizeRefusal?: string;
         launchThrows?: unknown;
     } = {},
 ): { seams: RunTriggerSeams; rec: Recorder } {
@@ -128,15 +129,16 @@ function makeSeams(
             return okAsync(undefined);
         },
         runAuthorizer: {
-            authorize: async () => {
+            authorize: () => {
                 rec.authorize++;
-                if (behavior.authorizeThrows !== undefined) throw behavior.authorizeThrows;
-                return { runSession: RUN_SESSION, ownsMandate: true };
+                if (behavior.authorizeRefusal !== undefined) return errAsync({ reason: behavior.authorizeRefusal, suspend: false });
+                return okAsync({ runSession: RUN_SESSION, ownsMandate: true });
             },
-            revoke: async () => {
+            revoke: () => {
                 rec.revoke++;
+                return okAsync(undefined);
             },
-            revokeByJti: async () => {},
+            revokeByJti: () => okAsync(undefined),
         },
         launch: async (input, runId) => {
             rec.launch++;
@@ -198,8 +200,8 @@ describe("triggerAnalysisRun — reservation", () => {
 });
 
 describe("triggerAnalysisRun — post-reserve failures release the slot", () => {
-    test("authorization failure marks the reserved row failed and does not launch", async () => {
-        const { seams, rec } = makeSeams({ authorizeThrows: new Error("mint refused") });
+    test("an authorization refusal marks the reserved row failed and does not launch", async () => {
+        const { seams, rec } = makeSeams({ authorizeRefusal: "mint refused" });
 
         const e = (await triggerAnalysisRun(seams, PARAMS))._unsafeUnwrapErr();
 

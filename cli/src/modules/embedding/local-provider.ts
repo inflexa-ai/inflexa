@@ -35,7 +35,7 @@
  * normalization — vectors are passed through as the store-ready unit vectors.
  *
  * The `session` argument is forwarded to the harness client but drives no local
- * behavior: the local provider does no billing (noop resolver) and needs no
+ * behavior: the local provider wires no request headers hook and needs no
  * identity — it is a pure function of (model, text).
  */
 
@@ -44,7 +44,7 @@ import { createServer } from "node:net";
 import type { Subprocess } from "bun";
 import { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 
-import { createEmbeddingProvider, createNoopBillingResolver } from "@inflexa-ai/harness";
+import { createEmbeddingProvider } from "@inflexa-ai/harness";
 import type { AgentSession, EmbeddingProvider, ProviderError } from "@inflexa-ai/harness";
 
 import { onShutdown } from "../../lib/shutdown.ts";
@@ -1030,13 +1030,12 @@ function ensureReady(modelPath: string, dimensions: number): Promise<Result<Read
                 }
                 // The sidecar is just another loopback OpenAI endpoint, so the local
                 // provider IS the harness OpenAI-shaped client pointed at it — no bespoke
-                // wire code. Local mode does no billing attribution, hence the noop resolver.
+                // wire code. Local mode does no attribution, thus it wires no request headers hook.
                 const provider = createEmbeddingProvider({
                     baseURL: handle.baseURL,
                     token: handle.key,
                     model: LOCAL_EMBEDDING_MODEL,
                     dimensions,
-                    resolveBilling: createNoopBillingResolver(),
                 });
                 return ok({ handle, provider });
             }),

@@ -7,7 +7,6 @@ import {
     createConfiguredAiSdkProvider,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
-    createNoopBillingResolver,
     createPool,
     createSandboxClient,
     createWorkspaceFilesystem,
@@ -315,9 +314,9 @@ const PROBE_TIMEOUT_MS = 15_000;
  * runtime (same process), so the cost is not wasted.
  */
 async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Result<void, EmbeddingProbeError>> {
-    // A minimal local session: the probe is identity-less work and the wired
-    // billing resolver is the noop one, but the seam (correctly) refuses calls
-    // without a session.
+    // A minimal local session: the probe is identity-less work and no request
+    // headers hook is wired, but the provider (correctly) refuses calls without
+    // a session.
     const probeSession: AgentSession = {
         identity: { user: "local" },
         scope: { kind: "analysis", analysisId: "embedding-boot-probe" },
@@ -821,8 +820,6 @@ async function bootHarnessRuntimeOnce(
             sslMode: "disable",
         });
 
-        const resolveBilling = createNoopBillingResolver();
-
         // The workspace-root seam realization (workspace-root-resolution spec):
         // analysis id → `<anchorPath>/.inflexa/analyses/<slug>`, derived from DB
         // state on every call so a DBOS-recovered workflow in a fresh process (or
@@ -910,8 +907,7 @@ async function bootHarnessRuntimeOnce(
         // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
         // inside one tool call — indistinguishable, without these records, from a model
         // thinking hard about a hard question.
-        const buildProvider = (agentModel: string): ChatProvider =>
-            createConfiguredAiSdkProvider({ resolveBilling, config: providerConfigFor(agentModel), logger });
+        const buildProvider = (agentModel: string): ChatProvider => createConfiguredAiSdkProvider({ config: providerConfigFor(agentModel), logger });
         // Coincident role models share one INNER instance. Each role still gets
         // its own swappable handle below, so switching one never repoints another.
         const providerByModel = new Map<string, ChatProvider>();
@@ -1023,7 +1019,7 @@ async function bootHarnessRuntimeOnce(
         // there is one such loop — the chat turn (`runChatTurn` in `turn.ts`), which reaches it through
         // {@link HarnessRuntime.usageRecorder} below. An omission there is silent by construction: the
         // turn succeeds, the live figure still renders from the finish rollup, and nothing is written.
-        const usageRecorder = createUsageRecorder({ logger });
+        const usageRecorder = createUsageRecorder();
 
         // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
         // name and injected as STABLE delegating handles into the run-engine deps bundles below. The

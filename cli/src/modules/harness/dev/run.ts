@@ -243,23 +243,22 @@ export async function triggerAnalysisRun(
     }
 
     // (3) Authorize the run. The row exists, so the authorizer's persisted handle
-    // lands. On failure, mark the reserved row `failed` — releasing the slot so a
+    // lands. On a refusal, mark the reserved row `failed` — releasing the slot so a
     // retry can re-run — and surface it.
-    let authorization: RunAuthorization;
-    try {
-        authorization = await seams.runAuthorizer.authorize({
-            auth,
-            scope: { kind: "analysis", analysisId },
-            provenance: RUN_LAUNCH_PROVENANCE,
-            frame: { runId },
-        });
-    } catch (cause) {
+    const authorized = await seams.runAuthorizer.authorize({
+        auth,
+        scope: { kind: "analysis", analysisId },
+        provenance: RUN_LAUNCH_PROVENANCE,
+        frame: { runId },
+    });
+    if (authorized.isErr()) {
         await seams.updateRunStatus(runId, "failed", "run authorization failed").match(
             () => {},
             () => {},
         );
-        return err({ type: "authorize_failed", runId, cause });
+        return err({ type: "authorize_failed", runId, cause: authorized.error });
     }
+    const authorization = authorized.value;
 
     // (4)+(5) Build the workflow input and launch under `workflowId = runId`. Any
     // throw here — the defensive resources guard or the launcher — compensates:
@@ -269,11 +268,13 @@ export async function triggerAnalysisRun(
         const input = buildExecuteAnalysisInput(params, seams, authorization);
         await seams.launch(input, runId);
     } catch (cause) {
-        await seams.runAuthorizer.revoke(authorization, "workflow-start-failed").catch(() => {
-            // Best-effort revoke on the failure path; the local authorizer's revoke
-            // is a no-op anyway, and a revoke that itself fails must not mask the
-            // launch failure we are about to report.
-        });
+        // Best-effort revoke on the failure path; the local authorizer's revoke
+        // is a no-op anyway, and a revoke that itself fails must not mask the
+        // launch failure we are about to report.
+        await seams.runAuthorizer.revoke(authorization, "workflow-start-failed").match(
+            () => {},
+            () => {},
+        );
         await seams.updateRunStatus(runId, "failed", "workflow start failed").match(
             () => {},
             () => {},
