@@ -40,6 +40,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { RunSession } from "../../auth/types.js";
+import type { Suspension } from "../../workflows/suspension.js";
 import type { RunAuthorizer } from "../../execution/run-authorizer.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { deliverNotice, passGate } from "../../lib/hooks.js";
@@ -84,6 +85,7 @@ export type DeriveTableResult =
     | { outcome: "absent-input"; path: string; detail: string }
     | { outcome: "repeated-name"; outputPath: string; detail: string }
     | { outcome: "exec-failed"; detail: string }
+    | { outcome: "suspended"; reason: string; detail: string }
     | { outcome: "no-output"; detail: string }
     | { outcome: "derived"; path: string; hash: string; scriptHash: string; sources: DerivationSource[]; columns?: string[] };
 
@@ -224,9 +226,10 @@ export interface DeriveTableExecInput {
  *
  * The composition realizes it over a registered workflow, thus the container lives inside a workflow body
  * and the await is legal under each transport. A fault of the sandbox rejects the promise, and the tool
- * turns that rejection into one short detail.
+ * turns that rejection into one short detail. A suspension of the derivation is the `err`, and the tool
+ * reports its reason.
  */
-export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<ExecResult>;
+export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
 
 /**
  * Make the derivation tool over the session-state gateway, the derivation ledger, and the sandbox rails.
@@ -347,8 +350,11 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
                 }),
             );
             if (authorized.isErr()) {
-                logger.error("the derivation was not authorized", { threadId, analysisId, reason: authorized.error.reason });
-                return ok({ outcome: "unavailable", detail: `the derivation was not authorized: ${authorized.error.reason}` });
+                const { kind, reason } = authorized.error;
+                logger.error("the derivation was not authorized", { threadId, analysisId, reason, suspend: kind === "suspended" });
+                if (kind === "suspended")
+                    return ok({ outcome: "suspended", reason, detail: `the analysis is suspended (${reason}), thus the derivation did not run` });
+                return ok({ outcome: "unavailable", detail: `the derivation was not authorized: ${reason}` });
             }
             const authorization = authorized.value;
 
@@ -457,13 +463,17 @@ async function derive(args: {
         output: toSandboxPath(args.root, args.analysisId, absolute),
     };
 
-    let executed: ExecResult;
+    let ran: Result<ExecResult, Suspension>;
     try {
-        executed = await args.runDerivation(execInput);
+        ran = await args.runDerivation(execInput);
     } catch (cause) {
         args.logger.error("the derivation exec did not complete", { threadId: args.threadId, ...defaultErrorFields(cause) });
         return { outcome: "exec-failed", detail: "the derivation exec did not complete" };
     }
+    if (ran.isErr()) {
+        return { outcome: "suspended", reason: ran.error.reason, detail: `the analysis is suspended (${ran.error.reason}), thus the derivation did not run` };
+    }
+    const executed = ran.value;
     const failure = describeExecFailure(executed);
     if (failure !== undefined) {
         return { outcome: "exec-failed", detail: failure };

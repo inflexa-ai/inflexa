@@ -47,12 +47,13 @@ export function loadAnalysisStatus(pool: Querier, resourceId: string): ResultAsy
 }
 
 /**
- * Suspend an analysis due to a 402 `budget_exceeded` error.
+ * Mark an analysis as suspended. The one function of each suspension of a
+ * workflow (workflow-suspension spec), for each reason of the host.
  * Idempotent — no-op if already suspended.
  *
- * The only cause of suspension today is budget exhaustion; no reason is
- * persisted. If a second cause arises, add a column rather than a param so
- * history is queryable.
+ * `suspended_insufficient_funds` is the name of the one suspended state, for
+ * each reason, thus no reason is persisted and no data migration is necessary.
+ * A chat turn never calls it: a host resumes the analysis on the next message.
  */
 export function suspendAnalysis(pool: Querier, analysisId: string): ResultAsync<void, DbError> {
     return tryMutation("analyses.suspendAnalysis", async () => {

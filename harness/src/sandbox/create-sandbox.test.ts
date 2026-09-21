@@ -21,7 +21,7 @@ import * as k8sClient from "./k8s-client.js";
 import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { STEP_SUBDIRS, type MountPlanCoords } from "./mount-plan.js";
-import { describeSandboxError, keepLabelsRefusal, SandboxFailure, type SandboxError } from "./sandbox-error.js";
+import { describeSandboxError, keepSuspendingRefusal, SandboxFailure, type SandboxError } from "./sandbox-error.js";
 import type { FarmSource, SandboxLabels, SandboxLiveness, SandboxSpec } from "./types.js";
 import type { SpawnSession } from "../auth/types.js";
 import { splitSpawn } from "./__fixtures__/spawn.js";
@@ -342,7 +342,7 @@ describe("createSandboxClient — a spawn failure is a value", () => {
 
             let thrown: unknown;
             try {
-                keepLabelsRefusal(err(failed))._unsafeUnwrap();
+                keepSuspendingRefusal(err(failed))._unsafeUnwrap();
             } catch (e) {
                 thrown = e;
             }
@@ -437,7 +437,7 @@ describe("createSandboxClient — the label hook", () => {
         expect(calls).toEqual([]);
         await expect(stat(join(root, "runs", "run-1", "step-a"))).rejects.toThrow();
         // The split keeps the refusal as a value, thus a spawn path reads a suspension with no catch.
-        expect(keepLabelsRefusal(err(refusal))._unsafeUnwrapErr()).toMatchObject({ type: "labels_refused", suspend: true });
+        expect(keepSuspendingRefusal(err(refusal))._unsafeUnwrapErr()).toMatchObject({ type: "labels_refused", suspend: true });
     });
 });
 

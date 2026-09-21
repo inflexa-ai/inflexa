@@ -28,7 +28,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { join } from "node:path";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
@@ -39,7 +39,8 @@ import type { RunChargeOutcome } from "../billing/run-charge.js";
 import { runExecuteAnalysisBody, synthesisRowUpdate } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunObservation } from "./execute-analysis.js";
 import type { RunProvenanceEvent } from "../provenance/seam.js";
-import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
+import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
+import { __resetWorkflowMetricsForTest } from "./metrics.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
@@ -85,6 +86,8 @@ interface FakeDbosState {
     /** Monotonic fake clock (ms); `DBOS.now()` reads it then advances by `FAKE_CLOCK_STEP_MS`. */
     nowMs: number;
     workflowIdCounter: number;
+    /** Typed suspensions that children sent, drained by the parent's `DBOS.recv(CHILD_SUSPENDED_TOPIC, 0)`. */
+    childMessages: ChildSuspended[];
 }
 
 let dbosState: FakeDbosState;
@@ -162,10 +165,10 @@ async function mockDbos(): Promise<void> {
         return handles[0];
     });
 
-    // `DBOS.recv` — the budget-exceeded side-channel drains via `recv(topic, 0)`;
-    // these body-level tests inject no notifications, so an empty channel
-    // (`null`) lets `drainBudgetExceededNotifications` return immediately.
-    (dbos.DBOS.recv as unknown) = mock(async () => null);
+    // `DBOS.recv` — the suspension side-channel drains via `recv(topic, 0)`. A
+    // test that suspends a child queues its typed message; an empty channel
+    // (`null`) lets `drainChildSuspensions` return immediately.
+    (dbos.DBOS.recv as unknown) = mock(async (topic: string) => (topic === CHILD_SUSPENDED_TOPIC ? (dbosState.childMessages.shift() ?? null) : null));
 
     // `DBOS.now()` — a checkpointed clock in the real engine; here a deterministic
     // monotonic fake so every emitted provenance `atMs`/`durationMs` is
@@ -201,6 +204,7 @@ beforeEach(async () => {
         resultOnStep: new Map(),
         nowMs: FAKE_CLOCK_BASE_MS,
         workflowIdCounter: 0,
+        childMessages: [],
     };
     await mockDbos();
 });
@@ -233,7 +237,20 @@ function makeFakePool(rowByText: Record<string, unknown[]> = {}): FakePool {
     return { queries, query: query as unknown as Pool["query"] };
 }
 
-/** Suspend-analysis writes the body issues in-line on the 402 pause path. */
+/**
+ * Make the step at `index` of the plan suspend the way a real child does: it
+ * sends its typed suspension, then cancels itself, thus its `getResult`
+ * rejects with a DBOS cancellation. The parent's own self-cancel raises a
+ * cancellation too, as the real engine does at the next step.
+ */
+function suspendChild(stepId: string, index: number, reason: string): SandboxStepResult | Error {
+    const childWorkflowId = `run-test-${index}`;
+    dbosState.childMessages.push({ kind: "suspended", childWorkflowId, stepId, reason });
+    dbosState.throwErrorOnStep.set("self-cancel-suspended", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
+    return new DBOSErrors.DBOSWorkflowCancelledError(childWorkflowId);
+}
+
+/** Suspend-analysis writes the body issues in-line on the suspension path. */
 function suspendWrites(pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> {
     return pool.queries.filter((q) => /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i.test(q.text));
 }
@@ -885,44 +902,80 @@ describe("executeAnalysis body", () => {
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
     });
 
-    it("10.11 budget-exceeded path closes charge with budget_exceeded + revokes workflow-suspended + suspends analysis", async () => {
+    it("10.11 a suspended child: the charge closes with the reason, the revoke is workflow-suspended, the analysis is marked, and the parent self-cancels", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", suspendChild("A", 0, "payment_required")]]),
+        });
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
+        expect(suspendWrites(pool).length).toBe(1);
+        // The run row is canceled with the reason of the host as its error.
+        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        expect(statusWrite?.values).toContain("canceled");
+        expect(statusWrite?.values).toContain("payment_required");
+        // The terminal failed part carries the reason of the host, unread.
+        const failedPart = [...record.emittedParts].reverse().find((p) => p.type === "data-run-failed");
+        expect(failedPart?.reason).toBe("payment_required");
+    });
+
+    it("a suspension cancels the in-flight siblings, and the metric of each cancel carries the reason of the host", async () => {
+        const capture = captureMetrics();
+        __resetWorkflowMetricsForTest();
+        try {
+            const pool = makeFakePool();
+            const { deps, record } = makeDeps({
+                pool,
+                childResults: new Map<string, SandboxStepResult | Error>([
+                    ["A", suspendChild("A", 0, "quota_exhausted")],
+                    ["B", new DBOSErrors.DBOSWorkflowCancelledError("run-test-1")],
+                ]),
+            });
+
+            await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+            expect(dbosState.cancelled.has("run-test-1")).toBe(true);
+            expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "quota_exhausted" } }]);
+            expect(await capture.sums("cortex.workflow.parent.cancelled_children")).toEqual([[{ cause: "quota_exhausted" }, 1]]);
+        } finally {
+            await capture.dispose();
+            __resetWorkflowMetricsForTest();
+        }
+    });
+
+    it("a child that fails with the text budget_exceeded and sends no typed suspension is a failed step", async () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
-                [
-                    "A",
-                    {
-                        status: "canceled",
-                        durationMs: 1,
-                        finishReason: null,
-                        error: "budget_exceeded",
-                    },
-                ],
+                ["A", new Error("budget_exceeded")],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
             ]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
-        expect(result.status).toBe("canceled");
-        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "budget_exceeded" } }]);
-        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
-        expect(suspendWrites(pool).length).toBe(1);
-        // Terminal failed part carries `reason: "budget_exceeded"`.
-        const failedPart = [...record.emittedParts].reverse().find((p) => p.type === "data-run-failed");
-        expect(failedPart?.reason).toBe("budget_exceeded");
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }], undefined, false), deps);
+
+        expect(result.status).toBe("partial");
+        expect(result.failedSteps).toEqual(["A"]);
+        expect(result.completedSteps).toEqual(["B"]);
+        expect(suspendWrites(pool)).toEqual([]);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "ok" } }]);
     });
 
-    it("synthesis failure outranks budget-exceeded: status failed, not suspended, re-throws", async () => {
-        // A completes (so synthesis runs); B depends on A and budget-cancels, so
-        // both `completed.size > 0` and `budgetExceeded` hold. A synthesis throw
-        // must win: the run fails (charge=error, mandate=workflow-failed), is NOT
-        // suspended as a resumable budget pause, and the workflow re-throws.
+    it("synthesis failure outranks a suspension: status failed, not suspended, re-throws", async () => {
+        // A completes (so synthesis runs); B depends on A and suspends. A
+        // synthesis throw must win: the run fails (charge=error,
+        // mandate=workflow-failed), is NOT suspended, and the workflow re-throws.
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
-                ["B", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
+                ["B", suspendChild("B", 1, "payment_required")],
             ]),
         });
         dbosState.throwOnStep.set("synthesize-findings", "synth boom");
@@ -932,6 +985,38 @@ describe("executeAnalysis body", () => {
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "error" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
         expect(suspendWrites(pool)).toEqual([]);
+    });
+
+    it("a refused charge fails the run before a step starts, with the reason of the host", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({ pool, childResults: new Map() });
+        const refusing: ExecuteAnalysisDeps = { ...deps, runCharge: { ...deps.runCharge, open: () => errAsync({ reason: "charge_refused", suspend: false }) } };
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), refusing);
+
+        expect(result.status).toBe("failed");
+        expect(dbosState.childInputs).toEqual([]);
+        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        expect(statusWrite?.values).toContain("failed");
+        expect(statusWrite?.values).toContain("charge_refused");
+        expect(suspendWrites(pool)).toEqual([]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
+    });
+
+    it("a refused charge with the suspend flag suspends the run before a step starts", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({ pool, childResults: new Map() });
+        const refusing: ExecuteAnalysisDeps = { ...deps, runCharge: { ...deps.runCharge, open: () => errAsync({ reason: "no_funds", suspend: true }) } };
+        dbosState.throwErrorOnStep.set("self-cancel-suspended", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }]), refusing)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+        expect(dbosState.childInputs).toEqual([]);
+        expect(suspendWrites(pool).length).toBe(1);
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "no_funds" } }]);
+        const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
+        expect(statusWrite?.values).toContain("canceled");
+        expect(statusWrite?.values).toContain("no_funds");
     });
 
     // ── Synthesis outcome persisted to the run ledger ──────────────────
@@ -1203,25 +1288,26 @@ describe("executeAnalysis body", () => {
         expect(sweepWrites(pool).length).toBe(1);
     });
 
-    it("budget pause: the synthesis row is already terminal and the sweep does not run", async () => {
+    it("a suspension: the synthesis row is already terminal and the sweep does not run", async () => {
         const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
                 ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
-                ["B", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
+                ["B", suspendChild("B", 1, "payment_required")],
             ]),
         });
         dbosState.resultOnStep.set("synthesize-findings", { findings: [], synthesisStatus: "produced", synthesisReason: null });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toBeInstanceOf(
+            DBOSErrors.DBOSWorkflowCancelledError,
+        );
 
-        expect(result.status).toBe("canceled");
         const updates = synthesisStepUpdates(pool);
         expect(updates.length).toBe(1);
         expect(updates[0]!.values?.[0]).toBe("completed");
-        // The resumable pause preserves pending DAG rows — no sweep — and the
-        // synthesis row needs none: it reached its terminal before the pause.
+        // The resumable suspension preserves pending DAG rows — no sweep — and the
+        // synthesis row needs none: it reached its terminal before the suspension.
         expect(sweepWrites(pool)).toEqual([]);
     });
 
@@ -1270,20 +1356,21 @@ describe("executeAnalysis body", () => {
         expect(sweeps[0]!.values?.[0]).toBe("run-test");
     });
 
-    it("the 402 pause preserves pending rows (no sweep)", async () => {
+    it("a suspension preserves pending rows (no sweep), and dooms no dependent", async () => {
         const pool = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
-        const { deps } = makeDeps({
+        const { deps, record } = makeDeps({
             pool,
-            childResults: new Map<string, SandboxStepResult | Error>([
-                ["A", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
-            ]),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", suspendChild("A", 0, "payment_required")]]),
         });
 
-        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
-        expect(result.status).toBe("canceled");
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toBeInstanceOf(
+            DBOSErrors.DBOSWorkflowCancelledError,
+        );
         expect(suspendWrites(pool).length).toBe(1);
+        const dag = [...record.emittedParts].reverse().find((p) => p.type === "data-dag-state") as { steps: Array<{ id: string; status: string }> };
+        expect(dag.steps.find((step) => step.id === "B")?.status).toBe("pending");
 
         const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
         expect(sweeps).toEqual([]);

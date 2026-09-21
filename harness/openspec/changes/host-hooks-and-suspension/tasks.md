@@ -55,25 +55,25 @@
 
 ## 5. The suspension
 
-- [ ] 5.1 Make one function mark the analysis as suspended for each workflow suspension, with the literal
+- [x] 5.1 Make one function mark the analysis as suspended for each workflow suspension, with the literal
   `suspended_insufficient_funds`
-- [ ] 5.2 In `src/workflows/sandbox-step.ts`, on a `suspend` error or a gate `err` with `suspend`, record the reason.
+- [x] 5.2 In `src/workflows/sandbox-step.ts`, on a `suspend` error or a gate `err` with `suspend`, record the reason.
   Send the typed suspension on the topic `child-suspended`, then cancel the workflow
-- [ ] 5.3 In `src/workflows/execute-analysis.ts`, read the kind of the child message, not a reason string. Cancel the
+- [x] 5.3 In `src/workflows/execute-analysis.ts`, read the kind of the child message, not a reason string. Cancel the
   sibling steps. Carry the reason to the failure reason of the run and to `RunCharge.close`
-- [ ] 5.4 In `src/tasks/data-profile.ts`, suspend on a `suspend` error or a gate `err` with `suspend`. Set the
+- [x] 5.4 In `src/tasks/data-profile.ts`, suspend on a `suspend` error or a gate `err` with `suspend`. Set the
   profile row to `failed` with the reason, then end in `CANCELLED`
-- [ ] 5.5 In `src/tools/execute-analysis.ts`, on an `authorize` `err`, start no workflow. Set the run row to
+- [x] 5.5 In `src/tools/execute-analysis.ts`, on an `authorize` `err`, start no workflow. Set the run row to
   `failed`, or to `canceled` with a mark on the analysis when `suspend` is true
-- [ ] 5.6 In `src/workflows/execute-analysis.ts`, on a `RunCharge.open` `err`, start no step. End the run as
+- [x] 5.6 In `src/workflows/execute-analysis.ts`, on a `RunCharge.open` `err`, start no step. End the run as
   `failed`, or suspend it when `suspend` is true
-- [ ] 5.7 In `src/tasks/derive-table-exec.ts` and `src/tasks/extract-values.ts`, return
+- [x] 5.7 In `src/tasks/derive-table-exec.ts` and `src/tasks/extract-values.ts`, return
   `err({ kind: "suspended", reason })`. Make the awaiting tools report the reason
-- [ ] 5.8 Make a `suspend` error in a chat turn fail the turn with the reason, with no mark on the analysis
-- [ ] 5.9 Give the reason to the `cause` label in `src/workflows/metrics.ts` and to the failure code of the chat event
-- [ ] 5.10 Add a test of a run suspension from a model error, and a test of a run suspension from a gate `err`
-- [ ] 5.11 Add a test of a profile suspension, and a test of an awaited workflow that returns the suspension
-- [ ] 5.12 Add a test of a chat turn with a `suspend` error
+- [x] 5.8 Make a `suspend` error in a chat turn fail the turn with the reason, with no mark on the analysis
+- [x] 5.9 Give the reason to the `cause` label in `src/workflows/metrics.ts` and to the failure code of the chat event
+- [x] 5.10 Add a test of a run suspension from a model error, and a test of a run suspension from a gate `err`
+- [x] 5.11 Add a test of a profile suspension, and a test of an awaited workflow that returns the suspension
+- [x] 5.12 Add a test of a chat turn with a `suspend` error
 
 ## 6. Remove the throws and the catches
 

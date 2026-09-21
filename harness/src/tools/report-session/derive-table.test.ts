@@ -28,6 +28,7 @@ import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecResult, SandboxRef, SandboxSpec, SubmitExecBody } from "../../sandbox/types.js";
 import type { SpawnSession } from "../../auth/types.js";
 import type { TestSpawn } from "../../sandbox/__fixtures__/spawn.js";
+import type { Querier } from "../../state/db.js";
 import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
 import { workflowIdFromExec } from "../../sandbox/exec-id.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
@@ -169,6 +170,8 @@ function makeSandbox(args: {
     readonly reply?: ExecResult;
     readonly throws?: boolean;
     readonly write?: (outputHostPath: string) => Promise<void>;
+    /** A refusal of the label hook that the client gives in place of a sandbox. */
+    readonly refuse?: { readonly reason: string; readonly suspend: boolean };
 }): FakeSandbox {
     const creates: TestSpawn[] = [];
     const submits: SubmitExecBody[] = [];
@@ -177,6 +180,7 @@ function makeSandbox(args: {
     const client = {
         toolchainSource: "store" as const,
         createSandbox(session: SpawnSession, spec: SandboxSpec) {
+            if (args.refuse !== undefined) return errAsync({ type: "labels_refused" as const, op: "createSandbox", ...args.refuse });
             // Recorded as one literal: the ids of the session beside the spec.
             creates.push({ analysisId: session.scope.analysisId, runId: session.runFrame.runId, stepId: session.runFrame.stepId, ...spec });
             return okAsync(ref);
@@ -265,6 +269,8 @@ function makeTool(args: {
     sandbox?: FakeSandbox;
     provenance?: ProvenanceSeam;
     logger?: Logger;
+    /** The pool of the exec body, for the mark of a suspended analysis. */
+    pool?: Querier;
 }) {
     const gateway = makeFakeGateway();
     gateway.seed("t1", args.snapshot ?? pinnedSnapshot());
@@ -278,7 +284,8 @@ function makeTool(args: {
         derivations: ledger,
         // The composition realizes the runner over a registered workflow. The test drives the same body,
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
-        runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
+        runDerivation: (input) =>
+            runDeriveTableExecBody(input, { sandboxClient: sandbox.client, pool: args.pool ?? unusedPool, now: () => Promise.resolve(0) }),
         runAuthorizer: auth.authorizer,
         ...(args.provenance ? { provenance: args.provenance } : {}),
         ...(args.logger ? { logger: args.logger } : {}),
@@ -292,6 +299,63 @@ async function derive(tool: ReturnType<typeof makeTool>["tool"], input: { script
         await tool.execute({ script: input.script ?? SCRIPT, inputs: input.inputs ?? [PINNED_PATH], output: input.output ?? "yield.csv" }, ctxForThread("t1"))
     )._unsafeUnwrap();
 }
+
+/** A pool for the paths that write nothing: each call is a defect of the test. */
+const unusedPool = {
+    query: async () => {
+        throw new Error("the exec body writes to the pool only when it suspends");
+    },
+} as unknown as Querier;
+
+describe("a suspended derivation", () => {
+    it("returns the suspension as the value of the workflow, reports the reason, and marks the analysis", async () => {
+        const root = await makeRoot();
+        const statements: string[] = [];
+        const pool = {
+            query: async (query: { text: string }) => {
+                statements.push(query.text);
+                return { rows: [], rowCount: 0 };
+            },
+        } as unknown as Querier;
+        const sandbox = makeSandbox({ root, refuse: { reason: "account_frozen", suspend: true } });
+        const { tool, auth } = makeTool({ root, sandbox, pool });
+
+        const result = await derive(tool, {});
+
+        expect(result).toMatchObject({ outcome: "suspended", reason: "account_frozen" });
+        expect(result.outcome === "suspended" ? result.detail : "").toContain("account_frozen");
+        expect(statements.some((sql) => /SET status = 'suspended_insufficient_funds'/.test(sql))).toBe(true);
+        // The tool still revokes the authorization on its terminal path.
+        expect(auth.revoked).toEqual(["derive-table-failed"]);
+    });
+
+    it("reports the reason of an authorization that the host refused with the suspend flag", async () => {
+        const root = await makeRoot();
+        const sandbox = makeSandbox({ root, write: writesTable() });
+        const tool = createDeriveTableTool({
+            gateway: (() => {
+                const gateway = makeFakeGateway();
+                gateway.seed("t1", pinnedSnapshot());
+                return gateway;
+            })(),
+            resolveWorkspaceRoot: () => root,
+            derivations: makeLedger(),
+            runDerivation: () => {
+                throw new Error("a refused authorization starts no derivation");
+            },
+            runAuthorizer: {
+                authorize: () => errAsync({ reason: "no_funds", suspend: true }),
+                revoke: () => okAsync(undefined),
+                revokeByJti: () => okAsync(undefined),
+            },
+        });
+
+        const result = await derive(tool, {});
+
+        expect(result).toMatchObject({ outcome: "suspended", reason: "no_funds" });
+        expect(sandbox.creates).toEqual([]);
+    });
+});
 
 describe("the derived table", () => {
     it("lands under the derived directory of the session, and the record pins the chain", async () => {

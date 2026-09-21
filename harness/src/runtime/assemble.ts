@@ -30,6 +30,7 @@ import type { DomainError } from "../lib/result.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
+import type { Suspension } from "../workflows/suspension.js";
 import { registerDataProfileWorkflow, type DataProfileDeps, type DataProfileWorkflowInput } from "../tasks/data-profile.js";
 import {
     bindExtractionTrigger,
@@ -78,8 +79,8 @@ export interface RegisteredWorkflows {
     readonly executeAnalysis: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     readonly sandboxStep: SandboxStepCallable;
     readonly dataProfile: (input: DataProfileWorkflowInput) => Promise<void>;
-    readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<ExtractValuesResult>;
-    readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<ExecResult>;
+    readonly extractValues: (input: ExtractValuesWorkflowInput) => Promise<Result<ExtractValuesResult, Suspension>>;
+    readonly deriveTableExec: (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
 }
 
 /**
@@ -315,12 +316,14 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const extractValues = registerExtractValuesWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
         runAuthorizer: wf.dataProfile.runAuthorizer,
+        pool: wf.dataProfile.pool,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
     // A session derivation runs its container here and not in the turn. The await of an exec is a
     // workflow-body call under the callback transport, thus the tool starts this workflow and awaits it.
     const deriveTableExec = registerDeriveTableExecWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
+        pool: wf.dataProfile.pool,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
 

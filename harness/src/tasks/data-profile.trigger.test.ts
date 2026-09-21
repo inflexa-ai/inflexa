@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
@@ -74,9 +75,9 @@ function parkedDispatchDeps(pool: Pool): DataProfileTriggerDeps {
     return {
         pool,
         runAuthorizer: {
-            authorize: () => new Promise(() => {}),
-            async revoke() {},
-            async revokeByJti() {},
+            authorize: () => new ResultAsync(new Promise(() => {})),
+            revoke: () => okAsync(undefined),
+            revokeByJti: () => okAsync(undefined),
         },
         workflow: async () => {},
     };
@@ -337,6 +338,79 @@ describe("triggerDataProfile seed-first guard", () => {
 // manifest. A manifest recovered from before `StagedInput.mtimeMs` existed lacks that
 // field; the signature digests it as absent rather than dropping the comparand, so an
 // added or resized file is still detected. Pure — no DB, no container.
+describe("triggerDataProfile — a refused authorization", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_trigger_refused");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    function refusingDeps(suspend: boolean): DataProfileTriggerDeps {
+        return {
+            pool,
+            runAuthorizer: {
+                authorize: () => errAsync({ reason: "no_funds", suspend }),
+                revoke: () => okAsync(undefined),
+                revokeByJti: () => okAsync(undefined),
+            },
+            workflow: () => {
+                throw new Error("workflow must not be launched after a refused authorization");
+            },
+        };
+    }
+
+    /** The fire-and-forget dispatch settles after the trigger returns, thus the test waits for the row. */
+    async function settledStatus(analysisId: string): Promise<string | null> {
+        const deadline = Date.now() + 5_000;
+        let status = await rawStatus(pool, analysisId);
+        while (status === "running" && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            status = await rawStatus(pool, analysisId);
+        }
+        return status;
+    }
+
+    async function analysisStatus(analysisId: string): Promise<string | null> {
+        const res = await pool.query<{ status: string }>({ text: "SELECT status FROM cortex_analysis_state WHERE analysis_id = $1", values: [analysisId] });
+        return res.rows[0]?.status ?? null;
+    }
+
+    it("starts no workflow, fails the claimed row with the reason of the host, and leaves the analysis active", async () => {
+        await seedAnalysis(pool, "a-refused", "pending");
+        await setSeed(pool, "a-refused", ["file-aaa"]);
+
+        expect(await triggerDataProfile(refusingDeps(false), { auth: makeLocalAuth(), analysisId: "a-refused", stagedInputs: [stagedInput("file-aaa")] })).toBe(
+            "started",
+        );
+
+        expect(await settledStatus("a-refused")).toBe("failed");
+        const status = (await loadDataProfileStatus(pool, "a-refused"))._unsafeUnwrap();
+        expect(status?.error).toBe("no_funds");
+        expect(await analysisStatus("a-refused")).toBe("active");
+    });
+
+    it("with the suspend flag, it also marks the analysis as suspended", async () => {
+        await seedAnalysis(pool, "a-suspended", "pending");
+        await setSeed(pool, "a-suspended", ["file-aaa"]);
+
+        await triggerDataProfile(refusingDeps(true), { auth: makeLocalAuth(), analysisId: "a-suspended", stagedInputs: [stagedInput("file-aaa")] });
+
+        expect(await settledStatus("a-suspended")).toBe("failed");
+        const deadline = Date.now() + 5_000;
+        while ((await analysisStatus("a-suspended")) !== "suspended_insufficient_funds" && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(await analysisStatus("a-suspended")).toBe("suspended_insufficient_funds");
+    });
+});
+
 describe("computeInputSignature over a recovered legacy manifest", () => {
     it("still produces a comparand when an entry lacks mtimeMs", () => {
         const sig = computeInputSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);

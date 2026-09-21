@@ -34,6 +34,7 @@ import type {
     UnresolvedReason,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
+import type { Suspension } from "../workflows/suspension.js";
 import { allWithConcurrency } from "../lib/async-utils.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath } from "../workspace/paths.js";
@@ -84,13 +85,14 @@ export interface ExtractionArtifact {
 /**
  * The out-of-process read arm. One `extract` call covers every fall-through artifact of one document
  * pass. The result maps each requested path to its rows. A path that the arm could not read is absent
- * from the map, and the reference at that path fails as `unreadable-artifact`.
+ * from the map, and the reference at that path fails as `unreadable-artifact`. A suspension of the pass is
+ * the `err`, and each reference of the batch reports its reason.
  *
  * The arm is a seam, thus a test stubs it. While no realization is wired, a fall-through reference fails
  * with `extraction-unavailable`, and the detail names the absent arm.
  */
 export interface ExtractionArm {
-    extract(requests: readonly ExtractionRequest[]): Promise<ReadonlyMap<string, ExtractionArtifact>>;
+    extract(requests: readonly ExtractionRequest[]): Promise<Result<ReadonlyMap<string, ExtractionArtifact>, Suspension>>;
 }
 
 /**
@@ -589,9 +591,9 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
         }
         return out;
     }
-    let answers: ReadonlyMap<string, ExtractionArtifact>;
+    let answered: Result<ReadonlyMap<string, ExtractionArtifact>, Suspension>;
     try {
-        answers = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash, format: request.format })));
+        answered = await arm.extract(requests.map((request) => ({ path: request.path, hash: request.hash, format: request.format })));
     } catch {
         // The arm speaks the throw protocol for a genuine infrastructure fault. This boundary turns the
         // throw into a value, thus each reference on the batch reads a failure as data.
@@ -600,6 +602,17 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
         }
         return out;
     }
+    if (answered.isErr()) {
+        // The pass suspended: the reason of the host reaches each reference of the batch, unread.
+        for (const request of requests) {
+            out.set(request.path, {
+                kind: "unavailable",
+                detail: `the analysis is suspended (${answered.error.reason}), thus the file at ${request.path} was not read`,
+            });
+        }
+        return out;
+    }
+    const answers = answered.value;
     for (const request of requests) {
         const answer = answers.get(request.path);
         out.set(

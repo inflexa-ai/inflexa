@@ -43,7 +43,8 @@ import { createDetailResolver } from "../tools/detail-resolver.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
-import { keepLabelsRefusal, SandboxFailure } from "../sandbox/sandbox-error.js";
+import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
+import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { SandboxRef } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -72,6 +73,7 @@ import {
     loadDataProfileStatus,
     loadSeedInputFileIds,
     recordDataProfileWorkflowId,
+    suspendAnalysis,
     tryRerunDataProfile,
     tryStartDataProfile,
     upsertArtifacts,
@@ -445,6 +447,23 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     // The revoke is a notice: a failure is logged, and the terminal outcome of the profile stays.
     const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
+    // The suspension of the profile (workflow-suspension spec). The profile is a
+    // durable owner: the row fails with the reason of the host, because the
+    // profile ledger has no suspended state and the retry path takes a `failed`
+    // row again. The analysis is marked as suspended, and the workflow ends in
+    // CANCELLED. A body driven outside a workflow has nothing to cancel.
+    let selfCancelled = false;
+    const suspendProfile = async (suspension: Suspension): Promise<void> => {
+        logger.warn("profile suspended", { reason: suspension.reason });
+        settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, suspension.reason)), "failed");
+        await revoke("data-profile-suspended");
+        unwrapOrThrow(await suspendAnalysis(deps.pool, analysisId));
+        await activity.failed(suspension.reason);
+        if (DBOS.workflowID === undefined) return;
+        selfCancelled = true;
+        await cancelSelf("self-cancel-suspended");
+    };
+
     // The profile's activity channel. `DBOS.writeStream` is body-only, so the write is bound here
     // while every phase and phrase lives in the emitter — the phrases are the observable contract of
     // this capability, and a body that composed its own strings is a body they can drift from.
@@ -589,16 +608,17 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         await activity.sandboxInit();
 
         // The sandbox takes its ids from the profile session, and the client calls
-        // the label hook of the host with it. A refusal of that hook is a value.
-        const sandbox = unwrapOrThrow(
-            keepLabelsRefusal(
-                await deps.sandboxClient.createSandbox(
-                    forStep(runSession, DATA_PROFILE_STEP_LITERAL),
-                    { childWorkflowId: workflowId, resources: estimateDataProfileResources(stagedInputs) },
-                    mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
-                ),
-            ).mapErr((refusal) => new SandboxFailure(refusal)),
+        // the label hook of the host with it. A refusal of that hook with the
+        // suspend flag is a value; each other spawn failure throws.
+        const spawned = keepSuspendingRefusal(
+            await deps.sandboxClient.createSandbox(
+                forStep(runSession, DATA_PROFILE_STEP_LITERAL),
+                { childWorkflowId: workflowId, resources: estimateDataProfileResources(stagedInputs) },
+                mintSandboxIdentity(DATA_PROFILE_RUN_LITERAL),
+            ),
         );
+        if (spawned.isErr()) return await suspendProfile(suspensionOfSpawnRefusal(spawned.error));
+        const sandbox = spawned.value;
 
         try {
             // Checkpointed clock, not `Date.now()`: `awaitExec` gates on this absolute
@@ -789,6 +809,11 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
+        // The self-cancel of a suspension passes through to DBOS with no change.
+        if (selfCancelled) throw err;
+        // A `suspend` error of a model request of the profiler suspends the profile.
+        const suspension = suspensionOfFailure(err);
+        if (suspension !== undefined) return await suspendProfile(suspension);
         logger.error("profile failed", logger.errorFields(err));
         const reason = profileFailureReason(err);
         settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, reason)), "failed");
@@ -1032,12 +1057,17 @@ async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: 
 
 /**
  * Settle a claimed profile whose authorization the host refused. No workflow
- * exists, thus the row fails with the reason of the host.
+ * exists, thus the row fails with the reason of the host. A refusal with the
+ * suspend flag also marks the analysis as suspended; there is no workflow to
+ * cancel.
  */
 async function refuseClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, refusal: GateRefusal): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
-    logger.error("the profile was not authorized", { phase, reason: refusal.reason });
+    logger.error("the profile was not authorized", { phase, reason: refusal.reason, suspend: refusal.kind === "suspended" });
     await failClaimedProfile(deps, analysisId, phase, refusal.reason);
+    if (suspensionOfRefusal(refusal) === undefined) return;
+    const marked = await suspendAnalysis(deps.pool, analysisId);
+    if (marked.isErr()) logger.error("the analysis was not marked as suspended", { phase, err: marked.error });
 }
 
 /** Fail the `running` row of a profile that never got a workflow. */

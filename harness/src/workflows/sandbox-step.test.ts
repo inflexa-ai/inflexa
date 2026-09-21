@@ -22,6 +22,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, ok, okAsync } from "neverthrow";
+import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
@@ -86,6 +87,10 @@ interface FakeDbosState {
     emittedParts: Array<Record<string, unknown>>;
     /** Monotonic fake clock (ms); `DBOS.now()` reads it then advances. */
     nowMs: number;
+    /** Messages captured from `DBOS.send`, in send order. */
+    sent: Array<{ destination: string; message: unknown; topic: string | undefined }>;
+    /** Workflow ids captured from `DBOS.cancelWorkflow`. */
+    cancelled: Array<string | undefined>;
 }
 
 let dbosState: FakeDbosState;
@@ -104,11 +109,25 @@ async function mockDbos(): Promise<void> {
         runStep: dbos.DBOS.runStep,
         writeStream: dbos.DBOS.writeStream,
         now: dbos.DBOS.now,
+        send: dbos.DBOS.send,
+        cancelWorkflow: dbos.DBOS.cancelWorkflow,
     };
 
     // Every `DBOS.runStep` runs its body inline — the body under test only needs
-    // the steps to execute, not to be cached.
-    (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>) => fn());
+    // the steps to execute, not to be cached. The self-cancel of a suspension
+    // raises the cancellation at its step, as the real engine does.
+    (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+        if (config?.name === "self-cancel-suspended") throw new DBOSErrors.DBOSWorkflowCancelledError("child");
+        return fn();
+    });
+
+    (dbos.DBOS.send as unknown) = mock(async (destination: string, message: unknown, topic?: string) => {
+        dbosState.sent.push({ destination, message, topic });
+    });
+
+    (dbos.DBOS.cancelWorkflow as unknown) = mock(async (workflowId: string | undefined) => {
+        dbosState.cancelled.push(workflowId);
+    });
 
     (dbos.DBOS.writeStream as unknown) = mock(async (_name: string, part: unknown) => {
         dbosState.emittedParts.push(part as Record<string, unknown>);
@@ -130,7 +149,7 @@ async function mockDbos(): Promise<void> {
 let workspaceRoot: string;
 
 beforeEach(async () => {
-    dbosState = { emittedParts: [], nowMs: FAKE_CLOCK_BASE_MS };
+    dbosState = { emittedParts: [], nowMs: FAKE_CLOCK_BASE_MS, sent: [], cancelled: [] };
     workspaceRoot = await mkdtemp(join(tmpdir(), "cortex-sandbox-step-usage-"));
     await mockDbos();
 });
@@ -388,6 +407,85 @@ describe("sandbox-step spawn", () => {
         expect(spawns[0]!.session.provenance.agentId).toBe(USAGE_AGENT_ID);
         // The spec carries no id and no label: both come from the session and the client.
         expect(Object.keys(spawns[0]!.spec).sort()).toEqual(["childWorkflowId", "extraEnv", "image", "resources"]);
+    });
+});
+
+// ── suspension ────────────────────────────────────────────────────────
+
+describe("sandbox-step suspension", () => {
+    /** A pool that records each statement, so the ledger write of a suspension is assertable. */
+    function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
+        const statements: Array<{ text: string; values: readonly unknown[] }> = [];
+        const pool = {
+            query: async (arg: unknown, params?: unknown[]) => {
+                const text = typeof arg === "string" ? arg : ((arg as { text?: string }).text ?? "");
+                const values = typeof arg === "object" && arg !== null && "values" in arg ? ((arg as { values?: unknown[] }).values ?? []) : (params ?? []);
+                statements.push({ text, values });
+                return { rows: [], rowCount: 0 };
+            },
+        } as unknown as Pool;
+        return { pool, statements };
+    }
+
+    const CHILD_ID = `${USAGE_RUN_ID}-${USAGE_STEP_ID}`;
+
+    function expectSuspended(statements: Array<{ text: string; values: readonly unknown[] }>, reason: string): void {
+        const marked = statements.filter((q) => /UPDATE\s+cortex_step_executions/i.test(q.text) && q.values.includes("canceled"));
+        expect(marked).toHaveLength(1);
+        // The error and the last error class of the row both carry the reason of the host.
+        expect(marked[0]!.values.filter((v) => v === reason)).toHaveLength(2);
+        expect(dbosState.sent).toEqual([
+            { destination: "parent-wf", message: { kind: "suspended", childWorkflowId: CHILD_ID, stepId: USAGE_STEP_ID, reason }, topic: "child-suspended" },
+        ]);
+        expect(dbosState.cancelled).toHaveLength(1);
+    }
+
+    it("a suspend error of the model marks the row with the reason, sends the typed suspension, and self-cancels", async () => {
+        const { pool, statements } = statementPool();
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            pool,
+            provider: {
+                capabilities: { toolCalling: true },
+                chat: () =>
+                    errAsync({ type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Provider call failed (HTTP 402)" }),
+            },
+        };
+
+        await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+        expectSuspended(statements, "payment_required");
+    });
+
+    it("a refused spawn with the suspend flag suspends the step before any sandbox exists", async () => {
+        const { pool, statements } = statementPool();
+        const teardowns: string[] = [];
+        const refusing = {
+            ...makeSandboxClient(),
+            createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "account_frozen", suspend: true }),
+            teardown: async (ref: SandboxRef) => {
+                teardowns.push(ref.sandboxId);
+            },
+        } as unknown as SandboxClient;
+
+        await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), pool, sandboxClient: refusing })).rejects.toBeInstanceOf(
+            DBOSErrors.DBOSWorkflowCancelledError,
+        );
+
+        expectSuspended(statements, "account_frozen");
+        expect(teardowns).toEqual([]);
+    });
+
+    it("a refused spawn without the suspend flag fails the step and sends no suspension", async () => {
+        const refusing = {
+            ...makeSandboxClient(),
+            createSandbox: () => errAsync({ type: "labels_refused" as const, op: "createSandbox", reason: "labels_unavailable", suspend: false }),
+        } as unknown as SandboxClient;
+
+        await expect(runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), sandboxClient: refusing })).rejects.toThrow("labels_unavailable");
+
+        expect(dbosState.sent).toEqual([]);
+        expect(dbosState.cancelled).toEqual([]);
     });
 });
 

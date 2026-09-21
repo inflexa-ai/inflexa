@@ -24,7 +24,7 @@ import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-i
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state.js";
 import { validatePlan } from "../schemas/validate-plan.js";
-import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, updateRunStatus, upsertPlan } from "../state/index.js";
+import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, reserveRunById, suspendAnalysis, updateRunStatus, upsertPlan } from "../state/index.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-hoc-router.js";
 import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
@@ -456,8 +456,18 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             );
             if (authorized.isErr()) {
                 // The refusal ends the run before a workflow exists, thus the
-                // reserved row must not stay `running`.
-                const { reason } = authorized.error;
+                // reserved row must not stay `running`. With the suspend flag the
+                // run is canceled and the analysis is suspended, for any reason of
+                // the host; without it the run fails.
+                const { kind, reason } = authorized.error;
+                if (kind === "suspended") {
+                    await updateRunStatus(deps.pool, runId, "canceled", reason).match(
+                        () => {},
+                        () => {},
+                    );
+                    unwrapOrThrow(await suspendAnalysis(deps.pool, analysisId));
+                    return err({ error: `The analysis is suspended: ${reason}`, retryable: false });
+                }
                 await updateRunStatus(deps.pool, runId, "failed", reason).match(
                     () => {},
                     () => {},
