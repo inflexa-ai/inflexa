@@ -83,6 +83,20 @@ export interface StoredMessage {
      * reported no quantity still reads back with the duration that it took.
      */
     readonly durationMs?: number;
+    /**
+     * Who sent the user message of the append this row OPENED — present only on a
+     * genuine-user-start row of a turn appended with one. A row written before the
+     * column existed carries none, because no sender was ever recorded for it.
+     */
+    readonly author?: string;
+    /**
+     * When the store wrote this row: the START time of the append transaction,
+     * thus every row of one append holds the same value, and `seq` alone orders
+     * rows. The read sets it on every row, because the column is `NOT NULL`. It is
+     * optional because a fake or a fixture builds a `StoredMessage` with no row
+     * behind it.
+     */
+    readonly createdAt?: Date;
 }
 
 /**
@@ -115,6 +129,16 @@ export interface ConversationTurn {
      * reported no quantity still keeps the duration that it took.
      */
     readonly turnDurationMs?: number;
+    /**
+     * Who sent the user message of this turn — the identity the host holds at the
+     * append site. Stored on the FIRST row of the append, and only when that row
+     * is a genuine user start: that row also carries the display projection, thus
+     * the write and the transcript replay read one row under one rule. A record
+     * append opens on a synthetic row, so it stores no author however a caller
+     * spreads one in. The value is NUL-stripped on the way in, the same as the
+     * envelope, because a `text` parameter carrying 0x00 fails the statement.
+     */
+    readonly author?: string;
 }
 
 /**
@@ -410,7 +434,7 @@ export const EVICTION_BLOCK_TURNS = 4;
  */
 export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory {
     function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
-        const { modelMessages: messages, displayMessages, turnUsage, turnDurationMs } = turn;
+        const { modelMessages: messages, displayMessages, turnUsage, turnDurationMs, author } = turn;
         if (messages.length === 0) return okVoid();
         // The display projection rides the append's FIRST row, so one SELECT of a
         // thread's rows yields every envelope in order with no join and no grouping.
@@ -434,6 +458,13 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
         // the turn. -1 (a turn that persisted no reply — an abort before any output)
         // matches no index below, so nothing is written and the append still succeeds.
         const lastAssistantRow = messages.reduce((last, m, i) => (m.role === "assistant" ? i : last), -1);
+        // The author rides the row the display projection rides, and only when that
+        // row is a message a person actually sent — an assistant row, a tool row,
+        // and the synthetic opening row of a record append are not. NUL is dropped
+        // rather than refused: a 0x00 byte in a `text` parameter fails the
+        // statement, and one byte in a label would roll the whole turn back.
+        const turnAuthor = author === undefined ? null : stripNulCharacters(author);
+        const authorRow = messages[0] !== undefined && isGenuineUserStart(messages[0]) ? 0 : -1;
         return withTransaction(pool, "thread-history.appendTurn", (client) =>
             // Serialize concurrent appends on this thread — without the lock, two
             // transactions can both read the same MAX(seq) and collide on the
@@ -461,14 +492,15 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                                         // `message_envelope::json`, never `::jsonb`; `display_envelope` and
                                         // `reported_usage::jsonb`, never `::json` — see the column comments
                                         // in the state-init DDL.
-                                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, reported_usage, turn_duration_ms)
-                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6::jsonb, $7)
+                                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, reported_usage, turn_duration_ms, author)
+                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6::jsonb, $7, $8)
                      ON CONFLICT (thread_id, seq) DO UPDATE
                        SET message_envelope = EXCLUDED.message_envelope,
                            display_envelope = EXCLUDED.display_envelope,
                            tokens = EXCLUDED.tokens,
                            reported_usage = EXCLUDED.reported_usage,
-                           turn_duration_ms = EXCLUDED.turn_duration_ms`,
+                           turn_duration_ms = EXCLUDED.turn_duration_ms,
+                           author = EXCLUDED.author`,
                                         [
                                             threadId,
                                             startSeq + i,
@@ -477,6 +509,7 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                                             countTokens(message.content),
                                             i === lastAssistantRow ? rollup : null,
                                             i === lastAssistantRow ? duration : null,
+                                            i === authorRow ? turnAuthor : null,
                                         ],
                                     ),
                                 ).map(() => undefined),
@@ -638,12 +671,16 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
             // says so. `Number` makes the crossing in one place — the way every
             // other read of a bigint column in this module does.
             turn_duration_ms: string | null;
+            author: string | null;
+            // The driver hands a `TIMESTAMPTZ` back as a `Date`, and the column is
+            // NOT NULL, thus every row of this read holds a time.
+            created_at: Date;
         }>(
             // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
             // `seq::text AS seq` output alias (Postgres resolves an unqualified
             // ORDER BY name to the output column), sorting the bigint as text:
             // "10" before "2". The qualified name forces the bigint column.
-            `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage, turn_duration_ms::text AS turn_duration_ms
+            `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage, turn_duration_ms::text AS turn_duration_ms, author, created_at
          FROM messages WHERE thread_id = $1
          ORDER BY messages.seq ASC`,
             [threadId],
@@ -651,7 +688,9 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
 
         // Spread rather than `usage: r.reported_usage ?? undefined`, so a row with
         // no rollup carries no `usage` KEY at all — absent, not present-and-undefined.
-        // The duration obeys the same rule, and it reads from its own column.
+        // The duration and the author obey the same rule, each from its own column.
+        // The creation time is unconditional: its column is NOT NULL, thus it has no
+        // absence to represent.
         const stored: StoredMessage[] = await Promise.all(
             rows.map(async (r) => {
                 const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
@@ -664,6 +703,8 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                     ...(displayEnvelope ? { displayEnvelope } : {}),
                     ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
                     ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
+                    ...(r.author === null ? {} : { author: r.author }),
+                    createdAt: r.created_at,
                 };
             }),
         );

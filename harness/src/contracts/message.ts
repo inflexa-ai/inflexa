@@ -79,4 +79,19 @@ export interface CortexMessage {
      * zero is a figure, thus it stays a value and it never reads as an absence.
      */
     durationMs?: number;
+    /**
+     * Who sent this message — the identity the host named at the append site.
+     * Carried on a `user` message only: `role` already names the sender of a
+     * reply, and the harness holds no per-turn model name at the store boundary.
+     * Absent means that nothing recorded a sender.
+     */
+    author?: string;
+    /**
+     * When the store wrote this message: the START time of the append
+     * transaction, thus every message of one append carries the same value and
+     * no order holds between two appends. An ISO 8601 string rather than a
+     * `Date`, because the wire shape is JSON. Absent means that no stored row
+     * backs the message — a live surface builds one before anything is written.
+     */
+    createdAt?: string;
 }

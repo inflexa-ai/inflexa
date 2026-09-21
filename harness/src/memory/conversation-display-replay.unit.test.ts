@@ -176,6 +176,94 @@ describe("recorded conversation display replay", () => {
         expect("usage" in replay[1]!).toBe(false);
     });
 
+    it("folds the author and the creation time of the opening row onto the append", () => {
+        const user = { role: "user" as const, content: "q" };
+        const assistant = { role: "assistant" as const, content: "a" };
+        const createdAt = new Date("2026-02-03T10:15:30.000Z");
+        const replay = storedMessagesToCortex([
+            {
+                seq: 0,
+                envelope: envelopeMessage(user),
+                message: user,
+                author: "dr.chen@lab.example",
+                createdAt,
+                displayEnvelope: envelopeDisplayMessages([
+                    { id: "u", role: "user", parts: [{ type: "text", text: "q" }] },
+                    { id: "a", role: "assistant", parts: [{ type: "text", text: "a" }] },
+                ]),
+            },
+            { seq: 1, envelope: envelopeMessage(assistant), message: assistant, createdAt },
+        ]);
+
+        // Every message of the append carries the time, because every row of the
+        // append shares it. The author rides the user message alone.
+        expect(replay.map((m) => m.createdAt)).toEqual(["2026-02-03T10:15:30.000Z", "2026-02-03T10:15:30.000Z"]);
+        expect(replay[0]!.author).toBe("dr.chen@lab.example");
+        expect("author" in replay[1]!).toBe(false);
+    });
+
+    it("replays a turn stored without an author with no author key", () => {
+        const user = { role: "user" as const, content: "q" };
+        const createdAt = new Date("2026-02-03T10:15:30.000Z");
+        const replay = storedMessagesToCortex([
+            {
+                seq: 0,
+                envelope: envelopeMessage(user),
+                message: user,
+                createdAt,
+                displayEnvelope: envelopeDisplayMessages([
+                    { id: "u", role: "user", parts: [{ type: "text", text: "q" }] },
+                    { id: "a", role: "assistant", parts: [{ type: "text", text: "a" }] },
+                ]),
+            },
+        ]);
+
+        // Absent, not present-and-undefined: a consumer that spreads the message
+        // must not acquire an `author` key that overwrites one.
+        expect(replay.every((m) => !("author" in m))).toBe(true);
+        expect(replay.map((m) => m.createdAt)).toEqual(["2026-02-03T10:15:30.000Z", "2026-02-03T10:15:30.000Z"]);
+    });
+
+    it("replays a row that carries no time with no createdAt key", () => {
+        const user = { role: "user" as const, content: "q" };
+        const replay = storedMessagesToCortex([
+            {
+                seq: 0,
+                envelope: envelopeMessage(user),
+                message: user,
+                displayEnvelope: envelopeDisplayMessages([{ id: "u", role: "user", parts: [{ type: "text", text: "q" }] }]),
+            },
+        ]);
+
+        expect("createdAt" in replay[0]!).toBe(false);
+    });
+
+    it("keeps the author and the time out of the display projection it reads", () => {
+        // One fact, one durable copy: the two values ride the message row, and the
+        // replay writes neither back into the projection. A projection that carried
+        // a second copy could disagree with the row.
+        const user = { role: "user" as const, content: "q" };
+        const displayEnvelope = envelopeDisplayMessages([
+            { id: "u", role: "user", parts: [{ type: "text", text: "q" }] },
+            { id: "a", role: "assistant", parts: [{ type: "text", text: "a" }] },
+        ]);
+
+        storedMessagesToCortex([
+            {
+                seq: 0,
+                envelope: envelopeMessage(user),
+                message: user,
+                author: "dr.chen@lab.example",
+                createdAt: new Date("2026-02-03T10:15:30.000Z"),
+                displayEnvelope,
+            },
+        ]);
+
+        const serialized = JSON.stringify(displayEnvelope);
+        expect(serialized).not.toContain("author");
+        expect(serialized).not.toContain("createdAt");
+    });
+
     it("skips a row with no stored projection rather than reconstructing one", () => {
         const model = { role: "user" as const, content: "written before display was persisted" };
         expect(storedMessagesToCortex([{ seq: 0, envelope: envelopeMessage(model), message: model }])).toEqual([]);
