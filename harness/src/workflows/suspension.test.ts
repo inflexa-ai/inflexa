@@ -40,6 +40,16 @@ describe("a chat turn with a suspend error", () => {
     it("finds no suspension in a failure whose message only names a budget", () => {
         expect(suspensionOfFailure(new Error("budget exceeded"))).toBeUndefined();
     });
+
+    it("finds the suspension of a failed step that DBOS replays", () => {
+        // DBOS records a step error with its enumerable fields only: the `value` of a
+        // `ResultError` stays, and its non-enumerable `cause` does not.
+        const replayed = Object.assign(new Error("Provider call failed (HTTP 402)"), {
+            value: { type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Provider call failed (HTTP 402)" },
+        });
+
+        expect(suspensionOfFailure(replayed)).toEqual({ kind: "suspended", reason: "payment_required" });
+    });
 });
 
 describe("the suspension of a refusal", () => {
