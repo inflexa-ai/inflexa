@@ -313,6 +313,10 @@ Beyond the counters, the loop SHALL deliver each LLM call to the injected `Usage
 
 These two cache counters are what make prompt caching observable at all. The hit rate for an agent type is `cache_read_tokens / input_tokens` (the harness's `inputTokens` being the total billed prefix, cache reads included), and a flat-zero read counter against a non-zero write counter is the runtime symptom of a defeated cache — either a shifting prefix or an endpoint that ignores cache directives outright.
 
+The loop MUST deliver each record through the notice helper of the host-hooks capability. The loop MUST NOT wait for
+the result of `UsageRecorder.record`. When the result is an `err`, the loop MUST log the reason at the error level
+through its `Logger`. The `err` MUST NOT change the outcome of the run.
+
 #### Scenario: A cached run records reads and writes separately
 
 - **GIVEN** a multi-iteration run whose provider reports cache creation on the first call and cache reads on the rest
@@ -330,6 +334,13 @@ These two cache counters are what make prompt caching observable at all. The hit
 - **GIVEN** a run of several LLM calls ending in a forced wrap-up
 - **WHEN** the run completes
 - **THEN** the injected `UsageRecorder` SHALL have received one attributed record per call, the wrap-up call included
+
+#### Scenario: A recorder err does not change the run
+
+- **GIVEN** a run whose `UsageRecorder` gives an `err` for each record
+- **WHEN** the run completes
+- **THEN** the loop logs the reason of each `err` at the error level
+- **AND** the run has the same finish reason and the same usage rollups as a run whose recorder succeeds
 
 ### Requirement: The loop reports its own lifecycle through an injected Logger
 
