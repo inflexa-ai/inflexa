@@ -136,6 +136,18 @@ function planStep(id: string, dependsOn: readonly string[] = [], grounding?: Ana
 
 const TEMPLATE_REF = "tpl-deseq2-two-group@1.0.0";
 
+/** The part of every binding that comes from the grounding and the contract, not from the settings. */
+const BINDING_BASE = {
+    template: TEMPLATE_REF,
+    step: "T1S2",
+    claims: ["R-0001@e7d0"],
+    snapshot: "sha256:71ac",
+    local: contractAnswer().parameters.filter((slot) => slot.local === true),
+    adaptable: contractAnswer()
+        .parameters.filter((slot) => slot.adaptable)
+        .map((slot) => slot.name),
+};
+
 /** A grounding on the two-group template with the settings of the procedure: one adaptable slot, one pinned slot, one name no slot carries. */
 function grounded(settings: NonNullable<AnalysisStep["grounding"]>["settings"], template: string | null = TEMPLATE_REF): AnalysisStep["grounding"] {
     return {
@@ -401,10 +413,12 @@ describe("composeStepSeed template contract", () => {
         expect(seed.prompt).toContain("`alpha` = 0.05 (differential_expression): pinned by the template at the same value");
         expect(seed.prompt).toContain('`inference` = "none" (enrichment): no slot of the template carries it');
         expect(seed.templateBinding).toEqual({
-            template: TEMPLATE_REF,
+            ...BINDING_BASE,
             slots: { lfc_shrink: "apeglm" },
             sources: { lfc_shrink: "doi:10.1093/bioinformatics/bty895" },
         });
+        // The local slots are marked in the section, thus the agent knows which values never leave the machine.
+        expect(seed.prompt).toContain("- `counts_path` (string; local; required)");
     });
 
     it("reports a plan value that differs from a pinned slot as a conflict, and binds it nowhere", async () => {
@@ -420,7 +434,7 @@ describe("composeStepSeed template contract", () => {
 
         expect(seed.prompt).toContain("`alpha` = 0.01 (differential_expression): the template pins `alpha` at 0.05, and the plan value cannot be sent");
         expect(seed.prompt).not.toContain("Bound by the plan");
-        expect(seed.templateBinding).toEqual({ template: TEMPLATE_REF, slots: {}, sources: {} });
+        expect(seed.templateBinding).toEqual({ ...BINDING_BASE, slots: {}, sources: {} });
     });
 
     it("binds the first value when two procedure steps set the same slot, and reports a later different value", async () => {
@@ -475,7 +489,7 @@ describe("composeStepSeed template contract", () => {
             '`min_samples` = "smallest_group_size" (filter_low_counts): a policy of the plan, not a value of the `min_samples` slot (integer)',
         );
         expect(seed.templateBinding).toEqual({
-            template: TEMPLATE_REF,
+            ...BINDING_BASE,
             slots: { min_count: 10 },
             sources: { min_count: "doi:10.12688/f1000research.7035.1" },
         });

@@ -286,6 +286,8 @@ function versionOfRef(ref: string): string | undefined {
  */
 function renderSlot(slot: TemplateParameter): string {
     const facts: string[] = [slot.type];
+    // A local slot is bound on this machine: the agent sends it as any other slot, and the value never leaves.
+    if (slot.local) facts.push("local");
     if (slot.default !== undefined) {
         facts.push(`default ${slotValue(slot.default)}${slot.default_source ? ` [${slot.default_source}]` : ""}`);
     } else {

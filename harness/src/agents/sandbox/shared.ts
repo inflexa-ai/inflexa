@@ -327,6 +327,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): { tools
             defaultCwd: sandboxWorkingDir,
             markExecActive,
             ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}` } : {}),
+            ...(mutator ? { workspaceFilesystem: workspaceFs, mutator } : {}),
         }),
         ...mutateTools,
         createReadFileTool(workspaceFs, hostWorkingDir),
