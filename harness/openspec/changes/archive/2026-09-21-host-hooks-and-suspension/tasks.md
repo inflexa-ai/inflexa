@@ -87,7 +87,7 @@
 - [x] 7.1 Update `src/index.ts`: export the new hook types and remove the billing names
 - [x] 7.2 Update `CLAUDE.md` and `CONTEXT.md` of the harness where they name the billing seam or the `402` cascade.
   In the house rules of `CLAUDE.md`, add the `Result` recipe of D7 and the throw rule
-- [ ] 7.3 After the archive, update the Purpose sections that name `ResolveBilling` or the `402` pause:
+- [x] 7.3 After the archive, update the Purpose sections that name `ResolveBilling` or the `402` pause:
   `harness-providers`, `harness-session-model`, and `workflow-failure-lifecycle`. A delta cannot change a Purpose
   section
 - [x] 7.4 Before the archive, archive the change `drop-analysis-billing-context`, which modifies the same requirement
@@ -106,6 +106,6 @@ The `cli` jobs of CI link the working-copy harness. Thus the CLI must change in 
 
 ## 9. Verification
 
-- [ ] 9.1 Run `tsc -p tsconfig.json` in `harness/`
-- [ ] 9.2 Run `bun test` in `harness/`
-- [ ] 9.3 Run `bun run format:file` on each changed file in `harness/src/`
+- [x] 9.1 Run `tsc -p tsconfig.json` in `harness/`
+- [x] 9.2 Run `bun test` in `harness/`
+- [x] 9.3 Run `bun run format:file` on each changed file in `harness/src/`

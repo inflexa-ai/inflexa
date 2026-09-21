@@ -103,7 +103,7 @@ shipped.
 
 #### Scenario: Upsert on re-execution
 
-- **WHEN** `insertStepExecution` is called for an existing `(run_id, step_id)` (e.g. a resumed child after a 402 pause)
+- **WHEN** a caller runs `insertStepExecution` for a `(run_id, step_id)` that already has a row (for example, a child that resumes after a suspension)
 - **THEN** the row is updated with the new `wave`, `agent_id`, `status`, `started_at`, `child_workflow_id`, and `completed_at`/`duration_ms`/`error` reset to NULL
 
 #### Scenario: updateStepExecution writes a blocker reason
@@ -141,10 +141,15 @@ live. The partial index `idx_cortex_step_exec_active_sandbox` SHALL support the
 watchdog enumerating active sandboxes via `status='running' AND sandbox_ref IS NOT
 NULL`.
 
+The sandbox client MUST write `sandbox_ref` and `exec_id` in `createSandbox(session, spec, identity)`. The client MUST
+select the row from the session. The run id is `session.runFrame.runId`, and the step id is
+`session.runFrame.stepId`. The spec holds no run id and no step id.
+
 #### Scenario: createSandbox populates the registry row
 
-- **WHEN** the sandbox-step child's `createSandbox` durableStep runs
-- **THEN** the row's `sandbox_ref` and `exec_id` are set and `status` is `"running"`
+- **WHEN** the sandbox-step child runs `createSandbox(session, spec, identity)` in its durable step, with its step session
+- **THEN** the client writes `sandbox_ref` and `exec_id` on the row of `session.runFrame.runId` and `session.runFrame.stepId`
+- **AND** the `status` of that row is `"running"`
 
 #### Scenario: teardown clears the registry row
 

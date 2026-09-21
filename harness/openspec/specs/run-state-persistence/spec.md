@@ -28,9 +28,8 @@ NOT NULL), `started_at` (TEXT, NOT NULL), `completed_at` (TEXT, nullable),
 `error` (TEXT, nullable), `parts` (JSONB, nullable — vestigial), `mandate_jti`
 (TEXT, nullable), `mandate_expires_at` (TEXT, nullable), and `plan_id` (TEXT,
 nullable — planned-run dedup and internal-plan reference, FK to
-`cortex_plans`). There SHALL be NO `attempt_count` column: it was the
-parent-workflow resume counter for an `executeAnalysis` resume-after-402 entry
-point that was never built, and is removed.
+`cortex_plans`). There MUST be no `attempt_count` column. It was the resume counter of the parent workflow, for an
+`executeAnalysis` entry point that resumes a run after a suspension. That entry point does not exist.
 
 Indexes SHALL exist on `(analysis_id)` and `(thread_id)`. A partial-unique index
 `idx_cortex_runs_active_plan` SHALL exist on `(analysis_id, plan_id) WHERE status

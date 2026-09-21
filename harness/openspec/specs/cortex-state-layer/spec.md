@@ -159,12 +159,12 @@ resolved by the embedder at charge time, never persisted in the state layer
 - **THEN** `workflowId` SHALL be null and the read SHALL otherwise succeed
   unchanged
 
-#### Scenario: Suspend and resume on budget exhaustion
+#### Scenario: Suspend and resume for each reason of the host
 
-- **WHEN** `suspendAnalysis` runs after a budget-exceeded error
-- **THEN** `status` SHALL become `'suspended_insufficient_funds'` (idempotent),
-  and `resumeAnalysis` SHALL transition it back to `'active'` only from that
-  suspended state
+- **WHEN** `suspendAnalysis` runs for a suspension, with any reason of the host
+- **THEN** `status` becomes `'suspended_insufficient_funds'`, and a second call has no effect
+- **AND** `resumeAnalysis` changes `status` back to `'active'` only from that suspended state
+- **AND** the row does not store the reason
 
 ### Requirement: cortex_artifacts table schema
 
