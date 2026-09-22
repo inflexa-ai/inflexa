@@ -48,6 +48,8 @@
  *       `CANCELLED` (NOT `ERROR` — ERROR isn't resumable; NOTES #3)
  *     - a refusal of the `RunCharge.open` gate with the suspend flag suspends
  *       the run before any step starts
+ *     - a `suspend` error of a synthesis model request suspends the run in
+ *       place of the synthesis failure
  *     - the analysis flips to `suspended_insufficient_funds` in
  *       `collectAndComplete`. The paused parent lands in `CANCELLED`, a
  *       durably reschedulable state; re-driving it is a future enhancement,
@@ -117,7 +119,7 @@ import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
 import { recordCancelledChild } from "./metrics.js";
 import { CHILD_SUSPENDED_TOPIC, type ChildSuspended, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
-import { cancelSelf, suspensionOfRefusal, type Suspension } from "./suspension.js";
+import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, type Suspension } from "./suspension.js";
 
 /** Registered child sandbox-step callable the parent's child-dispatch closes over. */
 type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxStepResult>;
@@ -586,10 +588,13 @@ async function collectUpstreamHandoffs(args: {
  * its reason in `blockedReason` — an honest agent-declared blocker, not an
  * error — and a failure carries the same reason string
  * `persist-synthesis-outcome` writes to `cortex_runs.synthesis_reason`, so the
- * two ledgers cannot disagree about why synthesis died. Exported for the
- * projection tests (the `buildChildInput` pattern).
+ * two ledgers cannot disagree about why synthesis died. A suspension is not an
+ * outcome: the row is canceled with the reason of the host, as the row of a
+ * suspended step. Exported for the projection tests (the `buildChildInput`
+ * pattern).
  */
-export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: string | null }, durationMs: number): UpdateStepExecutionInput {
+export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: string | null } | Suspension, durationMs: number): UpdateStepExecutionInput {
+    if ("kind" in outcome) return { status: "canceled", durationMs, error: outcome.reason };
     switch (outcome.status) {
         case "produced":
             return { status: "completed", durationMs };
@@ -822,10 +827,14 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // still run the terminal block (close charge + revoke run authorization), and re-throw
     // after so the workflow record goes to ERROR.
     let synthesisError: unknown = null;
+    // A `suspend` error of a synthesis model request. The run is a durable owner,
+    // thus it suspends in place of a failure, the same as for a step.
+    let synthesisSuspension: Suspension | null = null;
     let synthesisFindings: readonly RunFinding[] = [];
     // Null when synthesis never ran (disabled or no completed steps): the ledger
     // columns stay NULL — "unknown", not a recorded skip — and the seeded
-    // `synthesis` row (if any) stays `pending` for the terminal sweep.
+    // `synthesis` row (if any) stays `pending` for the terminal sweep. Also null
+    // when synthesis suspended: a resume of the run gives the outcome.
     let synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null = null;
     if (synthesisEnabled && final.completed.size > 0) {
         // Bracketing clock reads for the row's duration_ms — checkpointed, so a
@@ -845,6 +854,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 childWorkflowId: null,
             }),
         );
+        // The terminal state of the `synthesis` row: the outcome, or the suspension.
+        let rowOutcome: { status: SynthesisStatus; reason: string | null } | Suspension;
         try {
             const synthOut = await DBOS.runStep(
                 () =>
@@ -859,6 +870,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             );
             synthesisFindings = synthOut.findings;
             synthesisOutcome = { status: synthOut.synthesisStatus, reason: synthOut.synthesisReason };
+            rowOutcome = synthesisOutcome;
         } catch (err) {
             // Cancellation is not a synthesis outcome: re-propagate unchanged (the
             // sandbox-step rule), so a cancelled workflow is never recorded as a
@@ -868,17 +880,22 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             // stays consistent — the pre-existing cancelled-mid-flight wedge shape
             // `inflexa run` already detects via its DBOS-status cross-check.
             if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-            synthesisError = err;
-            synthesisOutcome = { status: "failed", reason: err instanceof Error ? err.message : String(err) };
-            logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
+            const suspended = suspensionOfFailure(err);
+            if (suspended !== undefined) {
+                synthesisSuspension = suspended;
+                rowOutcome = suspended;
+                logger.warn("synthesizeFindings suspended — suspending the run", { runId, reason: suspended.reason });
+            } else {
+                synthesisError = err;
+                synthesisOutcome = { status: "failed", reason: err instanceof Error ? err.message : String(err) };
+                rowOutcome = synthesisOutcome;
+                logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
+            }
         }
         // Terminal stamp for the `synthesis` row — deliberately BEFORE
         // `collectAndComplete` writes the run row's terminal status, so no reader
-        // can observe a terminal run beside a still-`running` synthesis row. Both
-        // branches above set `synthesisOutcome` (or threw), so it is non-null here
-        // and the compiler narrows it — no guard needed. Log-don't-fail, like the
-        // sibling finalisation writes.
-        const rowOutcome = synthesisOutcome;
+        // can observe a terminal run beside a still-`running` synthesis row.
+        // Log-don't-fail, like the sibling finalisation writes.
         const synthEndedAtMs = await DBOS.now();
         const rowUpdate = synthesisRowUpdate(rowOutcome, synthEndedAtMs - synthStartedAtMs);
         await ledgerStep(logger.with({ runId }), "persist-synthesis-step", async () => {
@@ -894,6 +911,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // (6) collectAndComplete — terminal block. Runs on EVERY path. When synthesis
     // failed, force a failed terminal status so the charge/run-authorization close correctly
     // and the run row + stream report the failure before we re-throw.
+    // The first suspension of the run: of a step, or else of the synthesis.
+    const suspension = final.suspension ?? synthesisSuspension;
     const result = await collectAndComplete({
         input,
         runId,
@@ -902,13 +921,15 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         completed: final.completed,
         failed: final.failed,
         canceled: final.canceled,
-        suspension: final.suspension,
+        suspension,
         ...(final.usage ? { usage: final.usage } : {}),
         failureReason: synthesisError
             ? synthesisError instanceof Error
                 ? `synthesis-failed: ${synthesisError.message}`
                 : "synthesis-failed"
-            : final.failureReason,
+            : final.suspension === null && synthesisSuspension !== null
+              ? synthesisSuspension.reason
+              : final.failureReason,
         forceFailed: synthesisError !== null,
         findings: synthesisFindings,
         synthesisOutcome,
@@ -923,8 +944,8 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
 
     // Synthesis failure takes priority over the suspension cascade: a run whose
     // synthesis threw is definitively failed (ERROR), not a resumable
-    // suspension. Only self-cancel when synthesis succeeded.
-    if (final.suspension !== null && synthesisError === null) return cancelSelf("self-cancel-suspended");
+    // suspension. Only self-cancel when synthesis did not throw a failure.
+    if (suspension !== null && synthesisError === null) return cancelSelf("self-cancel-suspended");
 
     // Re-throw after the terminal block so the workflow record goes to ERROR.
     if (synthesisError !== null) throw synthesisError;

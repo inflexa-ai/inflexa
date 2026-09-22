@@ -250,6 +250,16 @@ function suspendChild(stepId: string, index: number, reason: string): SandboxSte
     return new DBOSErrors.DBOSWorkflowCancelledError(childWorkflowId);
 }
 
+/**
+ * The throw of a synthesis step whose model request failed with a `suspend`
+ * error. The `value` of a `ResultError` carries it, and a DBOS replay keeps it.
+ */
+function synthesisSuspendError(reason: string): Error {
+    return Object.assign(new Error("Provider call failed (HTTP 402)"), {
+        value: { type: "suspend", retryable: false, reason, status: 402, message: "Provider call failed (HTTP 402)" },
+    });
+}
+
 /** Suspend-analysis writes the body issues in-line on the suspension path. */
 function suspendWrites(pool: FakePool): Array<{ text: string; values?: readonly unknown[] }> {
     return pool.queries.filter((q) => /UPDATE\s+cortex_analysis_state\s+SET\s+status\s*=\s*'suspended_insufficient_funds'/i.test(q.text));
@@ -1311,6 +1321,53 @@ describe("executeAnalysis body", () => {
         expect(sweepWrites(pool)).toEqual([]);
     });
 
+    it("a suspend error of the synthesis suspends the run, cancels the synthesis row with the reason, and records no outcome", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+        dbosState.throwErrorOnStep.set("synthesize-findings", synthesisSuspendError("payment_required"));
+        dbosState.throwErrorOnStep.set("self-cancel-suspended", new DBOSErrors.DBOSWorkflowCancelledError("run-test"));
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }]), deps)).rejects.toBeInstanceOf(DBOSErrors.DBOSWorkflowCancelledError);
+
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
+        expect(suspendWrites(pool).length).toBe(1);
+        const runWrites = runStatusWrites(pool);
+        expect(runWrites.length).toBe(1);
+        expect(runWrites[0]!.values).toContain("canceled");
+        expect(runWrites[0]!.values).toContain("payment_required");
+        const updates = synthesisStepUpdates(pool);
+        expect(updates.length).toBe(1);
+        const [status, , , error] = updates[0]!.values ?? [];
+        expect(status).toBe("canceled");
+        expect(error).toBe("payment_required");
+        // A resume of the run gives the outcome: the synthesis columns stay NULL.
+        expect(synthesisWrites(pool)).toEqual([]);
+    });
+
+    it("a suspend error of the synthesis after a suspended step keeps the suspension of the step", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", suspendChild("B", 1, "quota_exhausted")],
+            ]),
+        });
+        dbosState.throwErrorOnStep.set("synthesize-findings", synthesisSuspendError("payment_required"));
+
+        await expect(runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps)).rejects.toBeInstanceOf(
+            DBOSErrors.DBOSWorkflowCancelledError,
+        );
+
+        expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "quota_exhausted" } }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
+        expect(suspendWrites(pool).length).toBe(1);
+    });
+
     // ── Pending seed + terminal sweep ──────────────────────────────────
 
     it("seeds every plan step as pending at run start", async () => {
@@ -1715,6 +1772,14 @@ describe("synthesisRowUpdate", () => {
 
     it("maps failed → failed, carrying the reason in error (not blocked_reason)", () => {
         expect(synthesisRowUpdate({ status: "failed", reason: "synth boom" }, 7)).toEqual({ status: "failed", durationMs: 7, error: "synth boom" });
+    });
+
+    it("maps a suspension → canceled, carrying the reason of the host in error, as the row of a suspended step", () => {
+        expect(synthesisRowUpdate({ kind: "suspended", reason: "payment_required" }, 7)).toEqual({
+            status: "canceled",
+            durationMs: 7,
+            error: "payment_required",
+        });
     });
 });
 
