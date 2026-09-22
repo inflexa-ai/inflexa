@@ -90,7 +90,6 @@ const SANDBOX_USER = "1000:1000";
 const SANDBOX_ROOT_USER = "0:0";
 const HEALTH_POLL_MS = 250;
 
-/** A Docker label value has no limit, thus the owner workflow id is a label here, verbatim. */
 const OWNER_WORKFLOW_LABEL = OWNER_WORKFLOW_KEY;
 
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
@@ -490,8 +489,6 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         Env: env,
                         User: pollMode ? SANDBOX_ROOT_USER : SANDBOX_USER,
                         WorkingDir: plan.workingDir,
-                        // The host labels merge first, thus a harness key wins a clash; the
-                        // owner workflow id is a harness key here too (`labels.ts`).
                         Labels: mergeLabels(hostLabels, { ...harnessLabels(session, sandboxId), [OWNER_WORKFLOW_LABEL]: spec.childWorkflowId }),
                         ExposedPorts: { [`${SANDBOX_SERVER_PORT}/tcp`]: {} },
                         HostConfig: {

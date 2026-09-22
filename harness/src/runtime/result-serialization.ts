@@ -18,13 +18,10 @@
 import type { SerializationRecipe } from "@dbos-inc/dbos-sdk";
 import { Err, Ok, err, ok } from "neverthrow";
 
-/** JSON data: the form in which each recipe gives a value to SuperJSON. */
 export type Json = string | number | boolean | null | undefined | Json[] | { [key: string]: Json };
 
-/** The encoded form of an `Ok`. The key is absent when the value is `undefined`. */
 export type EncodedOk = { value?: Json };
 
-/** The encoded form of an `Err`. The key is absent when the error is `undefined`. */
 export type EncodedErr = { error?: Json };
 
 /**

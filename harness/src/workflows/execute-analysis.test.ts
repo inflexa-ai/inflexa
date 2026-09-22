@@ -924,7 +924,6 @@ describe("executeAnalysis body", () => {
         expect(record.chargeCloseCalls).toEqual([{ outcome: { kind: "suspended", reason: "payment_required" } }]);
         expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-suspended" }]);
         expect(suspendWrites(pool).length).toBe(1);
-        // The run row is canceled with the reason of the host as its error.
         const statusWrite = pool.queries.find((q) => /UPDATE\s+cortex_runs\s+SET\s+status/i.test(q.text));
         expect(statusWrite?.values).toContain("canceled");
         expect(statusWrite?.values).toContain("payment_required");
@@ -1344,7 +1343,6 @@ describe("executeAnalysis body", () => {
         const [status, , , error] = updates[0]!.values ?? [];
         expect(status).toBe("canceled");
         expect(error).toBe("payment_required");
-        // A resume of the run gives the outcome: the synthesis columns stay NULL.
         expect(synthesisWrites(pool)).toEqual([]);
     });
 

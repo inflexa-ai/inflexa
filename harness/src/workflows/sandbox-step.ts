@@ -124,8 +124,7 @@ export interface SandboxStepInput {
     readonly timeoutSeconds?: number;
     /**
      * Durable `RunSession` derived by the parent via `forStep`. Carries the
-     * run-authorization credential, identity, scope, and `runFrame = { runId, stepId }`,
-     * thus it is the `SpawnSession` of the sandbox of the step.
+     * run-authorization credential, identity, scope, and `runFrame = { runId, stepId }`.
      * DBOS replay reconstructs it on resume — the body never reads the JWT
      * from `cortex_runs`.
      */
@@ -156,7 +155,6 @@ export type SandboxStepStatus = "complete" | "failed" | "canceled" | "blocked";
  */
 export const CHILD_SUSPENDED_TOPIC = "child-suspended";
 
-/** The typed suspension of a child. The parent reads its kind, and it carries the reason unread. */
 export interface ChildSuspended {
     readonly kind: "suspended";
     readonly childWorkflowId: string;
@@ -422,11 +420,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         { name: "mark-running" },
     );
 
-    // The suspension of the step (workflow-suspension spec). The child records
-    // the reason on its row, sends the typed suspension to the parent, and
-    // self-cancels to CANCELLED, which `resumeWorkflow` reads. The sandbox, if
-    // one stands, stays up for the resume. The steps run only on this path, and
-    // a replay takes the same path from the same checkpoints.
+    // The sandbox, if one stands, stays up for the resume. The steps run only on
+    // this path, and a replay takes the same path from the same checkpoints.
     const suspendStep = async (suspension: Suspension): Promise<never> => {
         const durationMs = (await DBOS.now()) - startedAt;
         await DBOS.runStep(
@@ -467,10 +462,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     // (2b) sandbox.create — spawn (or adopt) the machine under the minted
     // identity. The handle (secret included) is cached so recovery picks the
-    // same machine back up without re-provisioning. The ids of the sandbox come
-    // from the step session, and the client calls the label hook of the host
-    // inside this step. A refusal of that hook with the suspend flag is the
-    // checkpointed `err`; each other spawn failure fails the step inside it.
+    // same machine back up without re-provisioning.
     const sandboxSpec: SandboxSpec = {
         childWorkflowId,
         image: input.image,
@@ -684,8 +676,6 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         hitMaxSteps = agentResult.finish.cappedOut;
         stepUsage = agentResult.finish.usage;
     } catch (err) {
-        // A `suspend` error of a model request of the loop suspends the step. The
-        // parent reads the typed message, not this throw.
         const suspension = suspensionOfFailure(err);
         if (suspension !== undefined) return suspendStep(suspension);
 
@@ -839,9 +829,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // A bare call, deliberately not `DBOS.runStep`-wrapped: it is reachable from
     // two arms below, and a checkpointed step reached from a conditional arm
     // would shift the body's function-ID sequence between the two paths (see the
-    // harness-durable-runtime spec). The sync is a notice: its failure is logged,
-    // it never fails the step, and it never displaces a registration failure as
-    // the cause of one.
+    // harness-durable-runtime spec). The sync is a notice: it never displaces a
+    // registration failure as the cause of one.
     const syncStepArtifacts = (): Promise<boolean> =>
         deliverNotice(
             logger.named("post-step.sync"),
@@ -865,7 +854,6 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     }
     await syncStepArtifacts();
     if (registered.isErr()) {
-        // A refusal of the register gate with the suspend flag suspends the step in place of the failure.
         const refused = registered.error.kind === "refused" ? suspensionOfRefusal(registered.error.refusal) : undefined;
         if (refused !== undefined) return suspendStep(refused);
         throw await failStep("lineage_attestation", new Error(describeStepRegistrationFailure(registered.error)));

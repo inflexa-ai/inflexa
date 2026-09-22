@@ -1,9 +1,6 @@
 /**
- * The suspension of the data profile (data-profile-init spec). The profile is a
- * durable owner: a refused spawn with the suspend flag fails the profile row
- * with the reason of the host, revokes the run authorization, marks the
- * analysis as suspended, and emits the terminal `failed` activity with the same
- * reason. Driven outside a workflow, the body has nothing to cancel.
+ * The suspension of the data profile (data-profile-init spec). Driven outside a
+ * workflow, the body has nothing to cancel.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -37,7 +34,6 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
-/** A pool that records each statement and answers each with an empty rowset. */
 function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
     const statements: Array<{ text: string; values: readonly unknown[] }> = [];
     const pool = {

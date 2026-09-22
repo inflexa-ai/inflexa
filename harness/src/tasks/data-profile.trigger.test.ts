@@ -334,10 +334,6 @@ describe("triggerDataProfile seed-first guard", () => {
     });
 });
 
-// The workflow body builds the completed profile's drift comparand from the staged
-// manifest. A manifest recovered from before `StagedInput.mtimeMs` existed lacks that
-// field; the signature digests it as absent rather than dropping the comparand, so an
-// added or resized file is still detected. Pure — no DB, no container.
 describe("triggerDataProfile — a refused authorization", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
@@ -411,6 +407,10 @@ describe("triggerDataProfile — a refused authorization", () => {
     });
 });
 
+// The workflow body builds the completed profile's drift comparand from the staged
+// manifest. A manifest recovered from before `StagedInput.mtimeMs` existed lacks that
+// field; the signature digests it as absent rather than dropping the comparand, so an
+// added or resized file is still detected. Pure — no DB, no container.
 describe("computeInputSignature over a recovered legacy manifest", () => {
     it("still produces a comparand when an entry lacks mtimeMs", () => {
         const sig = computeInputSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);

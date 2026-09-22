@@ -42,8 +42,8 @@ export interface ArtifactRegistrationResult {
  * delegates external provenance registration to the injected `ArtifactRegistry`
  * and applies any returned external ids back onto the local rows.
  *
- * `register` is a gate. Its refusal is the `err` of this function, and no
- * external id is written: the upserted rows keep `artifact_id = NULL`.
+ * A refusal of `register` writes no external id: the upserted rows keep
+ * `artifact_id = NULL`.
  */
 export async function registerStepArtifacts(
     db: Pool | PoolClient,

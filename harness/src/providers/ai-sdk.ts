@@ -76,12 +76,7 @@ function routeSdkWarningsTo(logger: Logger): void {
     };
 }
 
-/**
- * The two policies of the host that each provider takes: the request headers
- * hook, and the map from an HTTP status to a suspend reason. Both are optional.
- * With no hook the provider adds no headers, and with no map it uses
- * {@link DEFAULT_SUSPEND_ON}.
- */
+/** With no `suspendOn`, a provider uses {@link DEFAULT_SUSPEND_ON}. */
 export interface ProviderHostPolicy {
     readonly resolveRequestHeaders?: ResolveRequestHeaders;
     readonly suspendOn?: SuspendOn;
@@ -347,9 +342,7 @@ export function computeRetryDelayMs(error: unknown, exponentialBackoffDelay: num
 
 /**
  * A refusal of the request headers hook inside the retry envelope. The envelope
- * speaks exceptions, thus the refusal crosses it as this throw. The hook is not
- * the model wire, thus the envelope never retries it, and the outer catch turns
- * it back into the provider error of the refusal.
+ * speaks exceptions, thus the refusal crosses it as this throw.
  */
 class HeadersRefused extends Error {
     constructor(readonly refusal: GateRefusal) {
@@ -359,17 +352,17 @@ class HeadersRefused extends Error {
 }
 
 /**
- * The state of the request headers hook in one call. A rejection of the hook is
- * a defect of the host, and the harness does not catch it (host-hooks spec): the
- * envelope never retries it, and the outer catch rethrows it unchanged. The hook
- * call has no `catch`, thus this flag marks the rejection: it stays set when the
- * hook call of the attempt did not settle as a value.
+ * A rejection of the request headers hook is a defect of the host, and the
+ * harness does not catch it (host-hooks spec): the envelope never retries it,
+ * and the outer catch rethrows it unchanged. The hook call has no `catch`, thus
+ * this flag marks the rejection: it stays set when the hook call of the attempt
+ * did not settle as a value.
  */
 export interface HookCall {
     unsettled: boolean;
 }
 
-/** The headers of one attempt. A refusal of the hook throws `HeadersRefused`, and the attempt is not sent. */
+/** A refusal of the hook throws `HeadersRefused`. */
 export async function headersForAttempt(hook: ResolveRequestHeaders | undefined, session: AgentSession, call: HookCall): Promise<Record<string, string>> {
     call.unsettled = true;
     const resolved = await requestHeadersFor(hook, session);
@@ -378,7 +371,6 @@ export async function headersForAttempt(hook: ResolveRequestHeaders | undefined,
     return { ...resolved.value } satisfies RequestHeaders;
 }
 
-/** The provider error of a call that failed: a refusal of the hook, or a classified wire failure. */
 export function failureOf(e: unknown, workload: string, suspendOn: SuspendOn): ProviderError {
     return e instanceof HeadersRefused ? headersRefusalError(e.refusal, workload) : toProviderError(e, workload, suspendOn);
 }
@@ -804,8 +796,6 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             // live with a first delta in hand, or it finished without yielding any
             // text — and a delta is only ever yielded OUTSIDE the closure, so a
             // retried attempt can never re-emit a delta the consumer already saw.
-            // The request headers hook runs inside the closure, thus it runs
-            // before each attempt.
             const opened = await retry(async () => {
                 const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
                 const result = streamText({
@@ -992,7 +982,6 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
     });
 }
 
-/** The host policy of a config, with each absent member left absent. */
 export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
     return {
         ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),

@@ -341,10 +341,8 @@ function emitStreamPart(part: unknown): Promise<void> {
 }
 
 /**
- * Run one ledger write of the run as a named step. The write gives a failure as
- * an `err`: the step logs it with its cause and checkpoints the failure as a
- * value, thus a failed write rolls back no side effect that succeeded and
- * never fails the run. A DBOS exception passes through with no change.
+ * A failed write rolls back no side effect that succeeded and never fails the
+ * run. A DBOS exception passes through with no change.
  */
 async function ledgerStep(log: Logger, name: string, write: () => ResultAsync<unknown, DbError> | Promise<Result<unknown, DbError>>): Promise<void> {
     await DBOS.runStep(
@@ -589,9 +587,8 @@ async function collectUpstreamHandoffs(args: {
  * error — and a failure carries the same reason string
  * `persist-synthesis-outcome` writes to `cortex_runs.synthesis_reason`, so the
  * two ledgers cannot disagree about why synthesis died. A suspension is not an
- * outcome: the row is canceled with the reason of the host, as the row of a
- * suspended step. Exported for the projection tests (the `buildChildInput`
- * pattern).
+ * outcome: the row is canceled, as the row of a suspended step. Exported for
+ * the projection tests (the `buildChildInput` pattern).
  */
 export function synthesisRowUpdate(outcome: { status: SynthesisStatus; reason: string | null } | Suspension, durationMs: number): UpdateStepExecutionInput {
     if ("kind" in outcome) return { status: "canceled", durationMs, error: outcome.reason };
@@ -723,9 +720,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         };
     }
     if (init.kind === "charge-refused") {
-        // The charge gate refused the run, thus no step starts. The terminal block
-        // still writes the terminal state, with the reason of the host: a failed
-        // run, or a suspended one when the host set the suspend flag.
         const suspension = suspensionOfRefusal(init.refusal) ?? null;
         const refusedAtMs = await DBOS.now();
         const refused = await collectAndComplete({
@@ -827,8 +821,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // still run the terminal block (close charge + revoke run authorization), and re-throw
     // after so the workflow record goes to ERROR.
     let synthesisError: unknown = null;
-    // A `suspend` error of a synthesis model request. The run is a durable owner,
-    // thus it suspends in place of a failure, the same as for a step.
     let synthesisSuspension: Suspension | null = null;
     let synthesisFindings: readonly RunFinding[] = [];
     // Null when synthesis never ran (disabled or no completed steps): the ledger
@@ -854,7 +846,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 childWorkflowId: null,
             }),
         );
-        // The terminal state of the `synthesis` row: the outcome, or the suspension.
         let rowOutcome: { status: SynthesisStatus; reason: string | null } | Suspension;
         try {
             const synthOut = await DBOS.runStep(
@@ -911,7 +902,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // (6) collectAndComplete — terminal block. Runs on EVERY path. When synthesis
     // failed, force a failed terminal status so the charge/run-authorization close correctly
     // and the run row + stream report the failure before we re-throw.
-    // The first suspension of the run: of a step, or else of the synthesis.
     const suspension = final.suspension ?? synthesisSuspension;
     const result = await collectAndComplete({
         input,
@@ -964,7 +954,6 @@ interface ValidateAndInitJoinedExisting {
     readonly runId: string;
 }
 
-/** The `RunCharge.open` gate refused the run. */
 interface ValidateAndInitChargeRefused {
     readonly kind: "charge-refused";
     readonly refusal: GateRefusal;
@@ -994,7 +983,6 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
         { name: "init-run-filesystem" },
     );
 
-    // A gate: the checkpoint holds the `Result`, thus a replay reads the same refusal.
     const opened = await DBOS.runStep(
         async () =>
             await passGate(
@@ -1026,7 +1014,6 @@ interface SchedulerLoopOutcome {
     readonly completed: Set<string>;
     readonly failed: Set<string>;
     readonly canceled: Set<string>;
-    /** The first suspension of a child, or null when no child suspended. */
     readonly suspension: Suspension | null;
     readonly failureReason: string | null;
     /**
@@ -1051,8 +1038,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const canceled = new Set<string>();
     const inFlight = new Map<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>();
 
-    // The typed suspension of each child that sent one, by child workflow id. The
-    // parent reads the kind of the message; the reason rides unread.
     const childSuspensions = new Map<string, ChildSuspended>();
 
     // Run-level usage aggregate, folded from the children's own durable results.
@@ -1111,7 +1096,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     let suspension: Suspension | null = null;
     let failureReason: string | null = null;
 
-    /** The first suspension halts the run with its reason; each one cancels what is still in flight. */
     const haltForSuspension = async (child: ChildSuspended): Promise<void> => {
         if (suspension === null) {
             suspension = { kind: "suspended", reason: child.reason };
@@ -1404,7 +1388,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     };
 }
 
-/** Collect each typed suspension that a child sent, by child workflow id. The first one per child wins. */
 async function drainChildSuspensions(suspensions: Map<string, ChildSuspended>): Promise<void> {
     while (true) {
         const msg = await DBOS.recv<ChildSuspended>(CHILD_SUSPENDED_TOPIC, 0);
@@ -1413,11 +1396,6 @@ async function drainChildSuspensions(suspensions: Map<string, ChildSuspended>): 
     }
 }
 
-/**
- * Cancel each in-flight child. `cause` labels the metric of each cancel:
- * `fail_fast` for the `neverFits` guard, or the reason of the host for a
- * suspension, unread.
- */
 async function cancelInFlight(
     inFlight: ReadonlyMap<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>,
     cause: string,
@@ -1444,7 +1422,6 @@ interface CollectAndCompleteArgs {
     readonly completed: ReadonlySet<string>;
     readonly failed: ReadonlySet<string>;
     readonly canceled: ReadonlySet<string>;
-    /** The suspension of the run, with the reason of the host, or null when the run did not suspend. */
     readonly suspension: Suspension | null;
     readonly failureReason: string | null;
     /**
@@ -1466,8 +1443,7 @@ interface CollectAndCompleteArgs {
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
     const { input, runId, workflowId, startedAtMs, completed, failed, canceled, suspension, failureReason, forceFailed, deps } = args;
-    // The suspension branch: a forced failure (synthesis threw, or the charge gate
-    // failed the run) is terminal and never a resumable suspension.
+    // A forced failure is terminal and never a resumable suspension.
     const suspended = suspension !== null && !forceFailed ? suspension : null;
     const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis").with({ runId, analysisId: input.analysisId });
 
@@ -1568,13 +1544,10 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         await ledgerStep(logger, "sweep-pending-steps", () => sweepPendingStepExecutions(deps.pool, runId));
     }
 
-    // The one function that marks the analysis as suspended, for each reason of
-    // the host. A forced failure never reaches this branch.
     if (suspended !== null) {
         await ledgerStep(logger, "suspend-analysis", () => suspendAnalysisQuery(deps.pool, input.analysisId));
     }
 
-    // A notice: a failed close is logged, and the terminal status stays.
     await DBOS.runStep(
         () =>
             deliverNotice(
@@ -1605,7 +1578,6 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.
     if (status === "completed" || status === "partial") {
-        // The count is a figure of the card: a failed read gives zero.
         const artifactCount = await DBOS.runStep(
             async () => await ResultAsync.fromPromise(countArtifactsForRun(deps.pool, input.analysisId, runId), () => "the artifact count failed").unwrapOr(0),
             { name: "count-run-artifacts" },

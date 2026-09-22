@@ -40,7 +40,6 @@ describe("passGate", () => {
         // eslint-disable-next-line neverthrow/must-use-result -- the outcome is the fixture: the assertion is about its class, which the checkpoint recipes key on
         const refused = await passGate("RunCharge.open", foreign<number>({ isOk: () => false, error: { reason: "r", suspend: true } }));
 
-        // The checkpoint recipes recognize only the classes of the harness copy.
         expect(opened).toBeInstanceOf(Ok);
         expect(opened._unsafeUnwrap()).toBe(7);
         expect(refused).toBeInstanceOf(Err);

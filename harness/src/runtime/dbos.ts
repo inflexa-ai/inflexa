@@ -183,9 +183,8 @@ export function dbosSdkConfig(config: DbosConfig, logger: Logger): DBOSConfig {
 let resultRecipesRegistered = false;
 
 /**
- * Register the `Result` recipes (`./result-serialization.ts`) one time. DBOS
- * refuses a registration after the launch, and the registry of SuperJSON is
- * global to the process, thus a relaunch keeps the recipes.
+ * DBOS refuses a registration after the launch, and the registry of SuperJSON
+ * is global to the process, thus a relaunch keeps the recipes.
  */
 function registerResultSerialization(): void {
     if (resultRecipesRegistered) return;

@@ -144,7 +144,6 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
     const logger = (deps.logger ?? createNoopLogger()).named("extract-values").with({ analysisId: input.analysisId });
     const { analysisId, runSession, requests, ownsMandate = true } = input; // oss-core-managed-ok
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
-    // The revoke is a notice: a failure is logged, and the outcome of the pass stays.
     const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
     try {
@@ -152,8 +151,7 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
         const workflowId = DBOS.workflowID ?? `${EXTRACT_VALUES_RUN_LITERAL}:${executionId}`;
 
         // The container mounts the analysis tree read-only. The extraction pass only reads, thus it needs
-        // no writable step mount. The sandbox takes its ids from the session of the pass, and the client
-        // calls the label hook of the host with it. A refusal of that hook with the suspend flag is a value; each other spawn failure throws.
+        // no writable step mount.
         const spawned = keepSuspendingRefusal(
             await deps.sandboxClient.createSandbox(
                 forStep(runSession, EXTRACT_VALUES_STEP_LITERAL),

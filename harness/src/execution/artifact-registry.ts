@@ -85,9 +85,7 @@ export interface ArtifactRegistry {
      * is the harness's responsibility, applied around this call. The `session` carries
      * the run credential an adapter needs to address the external system.
      *
-     * A gate (see `lib/hooks.ts`). A partial outcome is an `ok`, with the
-     * rejections in `failed`. An `err` fails the registration of the step, or
-     * suspends the step when the host asks.
+     * A partial outcome is an `ok`, with the rejections in `failed`.
      */
     register(input: ArtifactRegistrationInput, session: AgentSession): ResultAsync<ExternalRegistrationResult, GateFailure>;
     /**

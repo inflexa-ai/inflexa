@@ -23,41 +23,29 @@ import { err, ok, ResultAsync } from "neverthrow";
 
 import type { Logger } from "./logger.js";
 
-/** The failure of a gate. */
 export interface GateFailure {
     readonly reason: string;
     /** True when the host asks the harness to suspend the work in place of a failure. */
     readonly suspend: boolean;
 }
 
-/** The failure of a notice. */
 export interface NoticeFailure {
     readonly reason: string;
 }
 
-/** Each gate of the harness, by the name that a refusal and a log record carry. */
 export type GateName = "RunAuthorizer.authorize" | "RunCharge.open" | "ArtifactRegistry.register" | "resolveRequestHeaders" | "resolveSandboxLabels";
 
-/** Each notice of the harness, by the name that a log record carries. */
 export type NoticeName = "RunAuthorizer.revoke" | "RunAuthorizer.revokeByJti" | "RunCharge.close" | "ArtifactRegistry.sync" | "UsageRecorder.record";
 
-/**
- * A gate that refused, as the operation sees it. The flag `suspend` of the
- * host selects the kind: the operation suspends in place of a failure.
- */
 export type GateRefusal =
     | { readonly kind: "failed"; readonly gate: GateName; readonly reason: string }
     | { readonly kind: "suspended"; readonly gate: GateName; readonly reason: string };
 
 /**
- * Pass a gate. An `ok` is the value that the operation continues with, as the
- * host gives it. An `err` becomes the refusal that the operation ends on.
- *
  * The host can build its `Result` with its own copy of neverthrow. The helper
  * gives the outcome again as a `Result` of the copy of the harness. Thus the
  * checkpoint recipes (`runtime/result-serialization.ts`) recognize the class,
- * and a replay reads the same outcome. A rejection of the host promise passes
- * through with no change.
+ * and a replay reads the same outcome.
  */
 export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure>): ResultAsync<T, GateRefusal> {
     return new ResultAsync(
@@ -69,11 +57,6 @@ export function passGate<T>(gate: GateName, result: ResultAsync<T, GateFailure>)
     );
 }
 
-/**
- * Deliver a notice. The work is complete, thus an `err` does not change the
- * outcome of the operation: the helper logs the reason at the error level.
- * Resolves `true` when the notice succeeded, for a caller that reports it.
- */
 export async function deliverNotice(log: Logger, notice: NoticeName, result: ResultAsync<void, NoticeFailure>): Promise<boolean> {
     const delivered = await result;
     if (delivered.isOk()) return true;

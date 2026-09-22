@@ -436,7 +436,6 @@ describe("createSandboxClient — the label hook", () => {
         expect(refusal).toEqual({ type: "labels_refused", op: "createSandbox", reason: "no_funds", suspend: true });
         expect(calls).toEqual([]);
         await expect(stat(join(root, "runs", "run-1", "step-a"))).rejects.toThrow();
-        // The split keeps the refusal as a value, thus a spawn path reads a suspension with no catch.
         expect(keepSuspendingRefusal(err(refusal))._unsafeUnwrapErr()).toMatchObject({ type: "labels_refused", suspend: true });
     });
 });

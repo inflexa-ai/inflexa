@@ -307,9 +307,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
      * out of the ledger rather than entered as an all-absent record.
      *
      * `record` is a notice. The loop does not wait for its result, thus a
-     * recorder that blocks does not make the run slower. When the result
-     * arrives, the notice helper logs the reason of an `err`, and the run
-     * continues with no change.
+     * recorder that blocks does not make the run slower.
      */
     const accountForCall = (reply: ChatResponse, stepName: string): void => {
         addChatUsage(usage, reply.usage);

@@ -24,7 +24,7 @@ const originalRule = neverthrowPlugin.rules["must-use-result"];
 // The upstream rule only recognizes member-method consumers
 // (.match/.unwrapOr/._unsafeUnwrap/...), so it false-flags every bridge call
 // site. Matching is by callee name, not import resolution — each name in
-// `RESULT_CONSUMERS` is reserved by convention for its src/lib helper,
+// `RESULT_CONSUMERS` is reserved by convention for its helper,
 // so a shadowing non-consuming function of the same name would be missed;
 // that trade-off is accepted to keep this patch parser-independent.
 const RESULT_CONSUMERS = new Set(["unwrapOrThrow", "passGate", "deliverNotice", "keepSuspendingRefusal"]);

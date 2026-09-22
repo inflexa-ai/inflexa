@@ -22,31 +22,27 @@ import type { GateRefusal } from "../lib/hooks.js";
 import { findSuspendError } from "../providers/errors.js";
 import type { SuspendingRefusal } from "../sandbox/sandbox-error.js";
 
-/** A suspension, with the reason of the host. Plain data, thus it crosses a DBOS checkpoint as it is. */
+/** Plain data, thus it crosses a DBOS checkpoint as it is. */
 export interface Suspension {
     readonly kind: "suspended";
     readonly reason: string;
 }
 
-/** The suspension of a failure that carries a `suspend` provider error on its cause chain. */
 export function suspensionOfFailure(err: unknown): Suspension | undefined {
     const found = findSuspendError(err);
     return found === undefined ? undefined : { kind: "suspended", reason: found.reason };
 }
 
-/** The suspension of a gate refusal with the suspend flag. A refusal without the flag fails the operation. */
 export function suspensionOfRefusal(refusal: GateRefusal): Suspension | undefined {
     return refusal.kind === "suspended" ? { kind: "suspended", reason: refusal.reason } : undefined;
 }
 
-/** The suspension of a spawn that the label hook refused with the suspend flag. */
 export function suspensionOfSpawnRefusal(refusal: SuspendingRefusal): Suspension {
     return { kind: "suspended", reason: refusal.reason };
 }
 
 /**
- * End the calling workflow in the DBOS state `CANCELLED`. The cancel lands at
- * the next DBOS operation, thus the named step raises
+ * The cancel lands at the next DBOS operation, thus the named step raises
  * `DBOSWorkflowCancelledError` and nothing after it runs.
  */
 export async function cancelSelf(stepName: string): Promise<never> {

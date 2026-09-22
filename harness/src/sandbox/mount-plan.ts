@@ -75,10 +75,6 @@ export interface MountPlanCoords {
     writableTail?: string;
 }
 
-/**
- * The mount coordinates of one spawn. The ids come from the session of the
- * spawn, and the shape of the write mount comes from the spec.
- */
 export function mountCoordsOf(session: SpawnSession, spec: Pick<SandboxSpec, "readOnly" | "writableTail">): MountPlanCoords {
     return {
         analysisId: session.scope.analysisId,
