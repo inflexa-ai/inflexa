@@ -163,6 +163,9 @@ mapped onto the existing step-status vocabulary:
 - a thrown synthesis → `failed`, with `error` carrying the same reason string
   persisted to `cortex_runs.synthesis_reason` (no new information exposure
   beyond the run row's existing treatment)
+- a synthesis that fails with a `suspend` error → `canceled`, with `error` = the
+  reason of the host, the same as the row of a suspended step. A suspension is
+  not an outcome, thus the `cortex_runs` synthesis columns stay NULL.
 
 This gives every ledger reader (TUI sidebar, `inflexa run`, `inspect_run`) the
 synthesis phase and its terminal shape through the read path they already use;
@@ -189,6 +192,13 @@ whether `synthesis.json` exists.
 - **THEN** the `synthesis` row is `failed` with `error` = the synthesis failure
   reason, stamped before the run row reports `failed` — a reader watching the
   ledger sees which phase died
+
+#### Scenario: A suspended synthesis cancels the row
+
+- **GIVEN** a model request of the synthesis fails with a `suspend` error
+- **WHEN** the run finalizes
+- **THEN** the `synthesis` row is `canceled` with `error` = the reason of the host
+- **AND** the `cortex_runs` synthesis columns stay NULL
 
 ### Requirement: inspect_run surfaces the synthesis row without a per-step summary path
 

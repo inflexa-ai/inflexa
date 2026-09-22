@@ -101,8 +101,10 @@ masking the workflow error.
 ### Requirement: An insufficient-budget pause is suspended and made resumable
 
 If the run suspends and synthesis did not fail, `collectAndComplete` MUST suspend
-the run, and it MUST NOT fail it. The `workflow-suspension` capability gives the
-causes of a suspension. For example, a host can suspend a run when an account has
+the run, and it MUST NOT fail it. A run suspends when a step suspends, or when a
+model request of the synthesis fails with a `suspend` error. If both occur, the
+reason of the step is the reason of the run. The `workflow-suspension` capability
+gives the causes of a suspension. For example, a host can suspend a run when an account has
 no funds. Each suspension carries a reason from the host, and the harness does not
 read that reason.
 
@@ -139,6 +141,19 @@ stays `suspended_insufficient_funds` and is not re-driven.
 - **THEN** `collectAndComplete` takes the suspension branch, as for any other reason
 - **AND** the run row, the charge close, and the `data-run-failed` part carry `"quota_reached"` with no change
 
+#### Scenario: A synthesis suspension suspends the analysis
+
+- **GIVEN** each step completed, and a model request of the synthesis fails with a `suspend` error
+- **WHEN** `collectAndComplete` runs
+- **THEN** the run row reaches `"canceled"` with the reason of the host, and the analysis row reaches `"suspended_insufficient_funds"`
+- **AND** `collectAndComplete` closes the running charge with the outcome `{ kind: "suspended", reason }`, and the parent self-cancels to `CANCELLED`
+
+#### Scenario: The reason of a suspended step comes first
+
+- **GIVEN** a child step suspends with one reason, and then the synthesis fails with a `suspend` error with a different reason
+- **WHEN** `collectAndComplete` runs
+- **THEN** the run suspends with the reason of the step
+
 ### Requirement: A synthesis failure forces a failed terminal status
 
 When the parent's `synthesizeFindings` step throws, the body MUST pass
@@ -149,6 +164,10 @@ close the charge with the outcome `{ kind: "error" }`, and it MUST revoke the ru
 authorization. The body MUST then re-throw the synthesis error, thus the DBOS
 workflow record goes to `ERROR`.
 
+A `suspend` error of the synthesis is not a synthesis failure, and this rule does
+not apply to it. Such an error suspends the run, as the requirement about the
+insufficient-budget pause gives.
+
 #### Scenario: Synthesis throws after steps completed
 
 - **WHEN** `synthesizeFindings` throws and at least one step had completed
@@ -156,7 +175,7 @@ workflow record goes to `ERROR`.
 
 #### Scenario: Synthesis failure beats a concurrent suspension
 
-- **GIVEN** a child step suspended the run AND synthesis also threw
+- **GIVEN** a child step suspended the run AND synthesis also threw an error with no `suspend` error
 - **WHEN** `collectAndComplete` runs with `forceFailed: true`
 - **THEN** the run is `"failed"` (not suspended) and the parent does not self-cancel for resumption
 
@@ -177,7 +196,9 @@ The write SHALL be its own concern within finalisation (log-don't-rollback like
 the other terminal writes): a `setRunSynthesisOutcome` failure SHALL be logged
 without rolling back the run-status write or the other finalisation steps. When
 synthesis did not run for the run (disabled, or no step completed), the synthesis
-columns SHALL be left NULL (unknown).
+columns SHALL be left NULL (unknown). A suspension is not an outcome of the
+synthesis. Thus, when the synthesis suspends, the synthesis columns MUST also stay
+NULL.
 
 #### Scenario: A produced synthesis is recorded on a completed run
 
@@ -198,6 +219,11 @@ columns SHALL be left NULL (unknown).
 
 - **WHEN** synthesis is skipped entirely because no step completed (or synthesis is disabled)
 - **THEN** the run's `synthesis_status` and `synthesis_reason` remain NULL
+
+#### Scenario: A suspended synthesis leaves the columns unknown
+
+- **WHEN** a model request of the synthesis fails with a `suspend` error
+- **THEN** the run's `synthesis_status` and `synthesis_reason` remain NULL, and the run suspends
 
 ### Requirement: collectAndComplete is the single finalisation hook
 
