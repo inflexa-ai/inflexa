@@ -757,8 +757,10 @@ The mechanism of the suspension and the resume:
   `ERROR`, because `ERROR` is terminal in DBOS v4 and it cannot resume. A child
   sends a typed suspension on the topic `child-suspended` before it cancels
   itself. Then the parent cancels the in-flight siblings.
-- The harness marks the analysis as suspended with `suspendAnalysis`
-  (`state/analyses.ts`). It carries the reason of the host and never reads it.
+- A suspension of an analysis run or of a data profile marks the analysis as
+  suspended with `suspendAnalysis` (`state/analyses.ts`). A workflow with a live
+  caller does not mark it. The harness carries the reason of the host and never
+  reads it.
 - On resume, `prepareExecuteAnalysisResume` atomically increases
   `cortex_runs.attempt_count`. Then the caller calls `DBOS.resumeWorkflow(wfId)`.
   The parent body replays, reads the increased `attempt` again, and opens the

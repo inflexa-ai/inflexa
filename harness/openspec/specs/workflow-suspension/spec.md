@@ -79,13 +79,15 @@ the result after that turn. When such a workflow suspends, it MUST NOT cancel. I
 
 ### Requirement: One function marks the analysis as suspended
 
-For each suspension of a workflow, the harness MUST mark the analysis as suspended through one function. A durable
-owner and a workflow with a live caller MUST use the same function. The function MUST set the status of the analysis
-to `suspended_insufficient_funds` for each reason. This literal is the name of the one suspended state. Thus no data
-migration is necessary.
+For each suspension of an analysis run or of a data profile, the harness MUST mark the analysis as suspended through
+one function. The function MUST set the status of the analysis to `suspended_insufficient_funds` for each reason. This
+literal is the name of the one suspended state. Thus no data migration is necessary.
+
+A workflow with a live caller MUST NOT mark the analysis. The tool that awaits the workflow reports the suspension to
+the conversation agent, and the agent selects the next step.
 
 A chat turn is not a workflow. If a model request of a chat turn fails with a `suspend` error, the turn MUST fail with
-the reason. The turn MUST NOT mark the analysis, because a host can resume the analysis on the next chat message.
+the reason. The turn MUST NOT mark the analysis.
 
 #### Scenario: A suspension of an analysis run marks the analysis
 
@@ -93,11 +95,11 @@ the reason. The turn MUST NOT mark the analysis, because a host can resume the a
 - **WHEN** the run ends
 - **THEN** the status of the analysis is `suspended_insufficient_funds`
 
-#### Scenario: A suspension of a workflow with a live caller marks the analysis
+#### Scenario: A suspension of a workflow with a live caller does not mark the analysis
 
-- **GIVEN** a chat turn whose tool awaits `extract-values`
+- **GIVEN** an analysis with the status `active`, and a chat turn whose tool awaits `extract-values`
 - **WHEN** the workflow suspends with the reason `quota_exhausted`
-- **THEN** the status of the analysis is `suspended_insufficient_funds`
+- **THEN** the tool reports the reason `quota_exhausted`, and the status of the analysis does not change
 
 #### Scenario: The status literal does not change with the reason
 

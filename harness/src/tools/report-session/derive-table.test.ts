@@ -28,7 +28,6 @@ import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecResult, SandboxRef, SandboxSpec, SubmitExecBody } from "../../sandbox/types.js";
 import type { SpawnSession } from "../../auth/types.js";
 import type { TestSpawn } from "../../sandbox/__fixtures__/spawn.js";
-import type { Querier } from "../../state/db.js";
 import { runDeriveTableExecBody } from "../../tasks/derive-table-exec.js";
 import { workflowIdFromExec } from "../../sandbox/exec-id.js";
 import type { AppendDerivationOutcome, DerivationRecord } from "../../state/report-session-state.js";
@@ -269,8 +268,6 @@ function makeTool(args: {
     sandbox?: FakeSandbox;
     provenance?: ProvenanceSeam;
     logger?: Logger;
-    /** The pool of the exec body, for the mark of a suspended analysis. */
-    pool?: Querier;
 }) {
     const gateway = makeFakeGateway();
     gateway.seed("t1", args.snapshot ?? pinnedSnapshot());
@@ -284,8 +281,7 @@ function makeTool(args: {
         derivations: ledger,
         // The composition realizes the runner over a registered workflow. The test drives the same body,
         // with a fixed clock, thus the seam calls under test are the seam calls in production.
-        runDerivation: (input) =>
-            runDeriveTableExecBody(input, { sandboxClient: sandbox.client, pool: args.pool ?? unusedPool, now: () => Promise.resolve(0) }),
+        runDerivation: (input) => runDeriveTableExecBody(input, { sandboxClient: sandbox.client, now: () => Promise.resolve(0) }),
         runAuthorizer: auth.authorizer,
         ...(args.provenance ? { provenance: args.provenance } : {}),
         ...(args.logger ? { logger: args.logger } : {}),
@@ -300,31 +296,17 @@ async function derive(tool: ReturnType<typeof makeTool>["tool"], input: { script
     )._unsafeUnwrap();
 }
 
-/** A pool for the paths that write nothing: each call is a defect of the test. */
-const unusedPool = {
-    query: async () => {
-        throw new Error("the exec body writes to the pool only when it suspends");
-    },
-} as unknown as Querier;
-
 describe("a suspended derivation", () => {
-    it("returns the suspension as the value of the workflow, reports the reason, and marks the analysis", async () => {
+    it("returns the suspension as the value of the workflow, and reports the reason", async () => {
         const root = await makeRoot();
-        const statements: string[] = [];
-        const pool = {
-            query: async (query: { text: string }) => {
-                statements.push(query.text);
-                return { rows: [], rowCount: 0 };
-            },
-        } as unknown as Querier;
         const sandbox = makeSandbox({ root, refuse: { reason: "account_frozen", suspend: true } });
-        const { tool, auth } = makeTool({ root, sandbox, pool });
+        const { tool, auth } = makeTool({ root, sandbox });
 
         const result = await derive(tool, {});
 
+        // The conversation agent reads the suspension here. The body has no pool, thus it cannot mark the analysis.
         expect(result).toMatchObject({ outcome: "suspended", reason: "account_frozen" });
         expect(result.outcome === "suspended" ? result.detail : "").toContain("account_frozen");
-        expect(statements.some((sql) => /SET status = 'suspended_insufficient_funds'/.test(sql))).toBe(true);
         // The tool still revokes the authorization on its terminal path.
         expect(auth.revoked).toEqual(["derive-table-failed"]);
     });

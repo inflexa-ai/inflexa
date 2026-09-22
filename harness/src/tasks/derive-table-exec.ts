@@ -25,12 +25,9 @@ import { err, ok, type Result } from "neverthrow";
 import { forStep } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { unwrapOrThrow } from "../lib/result.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
-import { suspendAnalysis } from "../state/analyses.js";
-import type { Querier } from "../state/db.js";
 import { suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { ExecEmit, ExecResult } from "../sandbox/types.js";
 import {
@@ -48,8 +45,6 @@ const noopEmit: ExecEmit = () => {};
 /** The construction-time deps of the body. The registration closes over them, thus the trigger holds none. */
 export interface DeriveTableExecDeps {
     readonly sandboxClient: SandboxClient;
-    /** The app pool, for the mark of the analysis when the derivation suspends. */
-    readonly pool: Querier;
     /**
      * The checkpointed clock of the deadline. It defaults to `DBOS.now()`, which a replay reads again from
      * the checkpoint. A test injects a fixed clock, thus it drives this body with no launched runtime.
@@ -63,7 +58,8 @@ export interface DeriveTableExecDeps {
  *
  * A fault of any seam call throws. The tool reads a rejection as one short detail. A chat turn awaits this
  * workflow, thus a suspension is the `err` of the result, and the workflow does not cancel
- * (workflow-suspension spec). The body marks the analysis as suspended before it returns the `err`.
+ * (workflow-suspension spec). The body does not mark the analysis: the tool reports the suspension to the
+ * conversation agent.
  */
 export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: DeriveTableExecDeps): Promise<Result<ExecResult, Suspension>> {
     const logger = (deps.logger ?? createNoopLogger()).named("derive-table-exec").with({ analysisId: input.analysisId });
@@ -84,7 +80,6 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
     if (spawned.isErr()) {
         const suspension = suspensionOfSpawnRefusal(spawned.error);
         logger.warn("derivation suspended", { reason: suspension.reason });
-        unwrapOrThrow(await suspendAnalysis(deps.pool, input.analysisId));
         return err(suspension);
     }
     const sandbox = spawned.value;
