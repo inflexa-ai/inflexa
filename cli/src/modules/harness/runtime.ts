@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { ok, err, type Result } from "neverthrow";
+import { ok, err, ResultAsync, type Result } from "neverthrow";
 import {
     bootHarness,
     createAskGateway,
@@ -1072,7 +1072,7 @@ async function bootHarnessRuntimeOnce(
             // reads, thus a step reaches a package that the plan did not name. It
             // acquires nothing: this call runs in the harness host process, and an
             // acquisition is a host action behind its own approval.
-            extendAnalysisFarm: (id, queries) => linkPackagesIntoFarm(env.packageStoreDir, id, queries),
+            extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
             bioKeys: cfg.bioKeys,
         };
 
@@ -1110,7 +1110,7 @@ async function bootHarnessRuntimeOnce(
                 // emptiest, and `link_packages` is how it reads an input whose
                 // reader the farm does not hold yet. The link runs without an
                 // ask — the analysis consent covered the store at setup.
-                extendAnalysisFarm: (id, queries) => linkPackagesIntoFarm(env.packageStoreDir, id, queries),
+                extendAnalysisFarm: (id, queries) => ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)),
             },
         };
         // The conversation agent's dep surface minus the three fields
@@ -1158,15 +1158,15 @@ async function bootHarnessRuntimeOnce(
             // spec puts the exact command on this wrapper. A host row beats the
             // resolution: an acquisition that already runs is the true state, and
             // a spelling suggestion under it would send the agent sideways.
-            extendAnalysisFarm: async (id, queries) => {
-                const outcomes = await linkPackagesIntoFarm(env.packageStoreDir, id, queries);
+            extendAnalysisFarm: (id, queries) =>
                 // The seam answers one outcome for each query, in the order of
                 // the queries, thus the index pairs them.
-                return outcomes.map((outcome, index) => {
-                    const query = queries[index];
-                    return query === undefined ? outcome : withPoolMissRemedy(outcome, query);
-                });
-            },
+                ResultAsync.fromSafePromise(linkPackagesIntoFarm(env.packageStoreDir, id, queries)).map((outcomes) =>
+                    outcomes.map((outcome, index) => {
+                        const query = queries[index];
+                        return query === undefined ? outcome : withPoolMissRemedy(outcome, query);
+                    }),
+                ),
             chrome: {},
             // Host-supplied conversation tools: drive the local `inflexa` CLI as a subprocess
             // (run_inflexa), see candidate files in the launch folder (list_launch_dir), and add/remove
