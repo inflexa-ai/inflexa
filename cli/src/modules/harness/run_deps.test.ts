@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { okAsync } from "neverthrow";
 import { join } from "node:path";
 import {
     createAnthropicProvider,
@@ -67,7 +68,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         refStorePath: "/tmp/refs",
         farmLockFile: null,
         imagePackagesFile: "/tmp/store/image-packages.json",
-        extendAnalysisFarm: async () => [],
+        extendAnalysisFarm: () => okAsync([]),
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
 }
