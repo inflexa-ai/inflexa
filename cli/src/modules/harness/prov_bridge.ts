@@ -326,16 +326,16 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
         return { registered, failed, failedCount: failed.length };
     };
     return {
-        // A gate: a throw from below (a bus subscriber, the QName mint) comes back as a refusal with its
-        // reason, never as a throw into the harness step. No suspend flag: a provenance fault fails the
-        // step, and it is no reason to pause the analysis.
+        // A throw from below (a bus subscriber, the QName mint) comes back as a refusal with its reason,
+        // never as a throw into the harness step. No suspend flag: a provenance fault fails the step, and
+        // it is no reason to pause the analysis.
         register: (input: ArtifactRegistrationInput): ResultAsync<ExternalRegistrationResult, GateFailure> =>
             ResultAsync.fromPromise(registerOnBus(input), (cause): GateFailure => ({
                 reason: `provenance registration threw: ${cause instanceof Error ? cause.message : "a non-Error value"}`,
                 suspend: false,
             })),
-        // A notice, and a no-op: the artifact bytes already live in the host workspace tree, so there is
-        // nothing to push to permanent storage (the managed adapter uploads them; the local host does not).
+        // No-op: the artifact bytes already live in the host workspace tree, so there is nothing to push
+        // to permanent storage (the managed adapter uploads them; the local host does not).
         sync: (): ResultAsync<void, NoticeFailure> => okAsync(undefined),
     };
 }

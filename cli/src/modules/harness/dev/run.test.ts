@@ -99,8 +99,7 @@ type Recorder = {
  * no authorize/launch call. `activeRuns` is the successive `queryActiveRun`
  * returns (pre-check, then collision recovery); `insertThrows` models the
  * partial-unique collision (the real `insertRun` rejects, caught identically to a
- * sync throw); `insertErr` models a plain driver failure; `authorizeRefusal` is
- * the reason of a refusal of the authorize gate.
+ * sync throw); `insertErr` models a plain driver failure.
  */
 function makeSeams(
     behavior: {

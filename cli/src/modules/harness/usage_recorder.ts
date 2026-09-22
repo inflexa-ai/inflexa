@@ -9,14 +9,13 @@ import { upsertLlmUsage, type LlmUsageEntry } from "../../db/primary_mutation.ts
 // embedder decides where they land — so this module is the ONLY place a harness usage record crosses
 // into the cli's ledger vocabulary.
 //
-// `record` is a notice of the harness: it reports a failure as the `err` of its `ResultAsync`, and the
-// harness logs that reason and lets the run continue. Two contract terms shape everything here, and both
-// are load-bearing rather than stylistic. `record` MUST NOT throw: the agent loop delivers the notice
-// bare — no `await`, no `try` — so a throw that escapes before the `ResultAsync` exists would fail a
-// turn that had otherwise succeeded, over a bookkeeping row. And `record` MUST NOT block: it runs
-// synchronously at LLM-call cadence on the loop's hot path, which is why the write is a single-row insert
-// against a local WAL file rather than anything buffered or asynchronous (an async writer would trade
-// guaranteed durability for microseconds, and be the only async store in the cli).
+// Two contract terms shape everything here, and both are load-bearing rather than stylistic. `record`
+// MUST NOT throw: the agent loop delivers the notice bare — no `await`, no `try` — so a throw that
+// escapes before the `ResultAsync` exists would fail a turn that had otherwise succeeded, over a
+// bookkeeping row. And `record` MUST NOT block: it runs synchronously at LLM-call cadence on the loop's
+// hot path, which is why the write is a single-row insert against a local WAL file rather than anything
+// buffered or asynchronous (an async writer would trade guaranteed durability for microseconds, and be
+// the only async store in the cli).
 //
 // The harness also guarantees key stability but NOT at-most-once delivery — a replayed durable workflow
 // body re-fires `record` with a byte-identical `recordKey` — which the storage layer absorbs by
