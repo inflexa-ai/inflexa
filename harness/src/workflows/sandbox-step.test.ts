@@ -405,7 +405,6 @@ describe("sandbox-step spawn", () => {
         expect(spawns[0]!.session.runFrame).toEqual({ runId: USAGE_RUN_ID, stepId: USAGE_STEP_ID });
         expect(spawns[0]!.session.scope.analysisId).toBe(ANALYSIS_ID);
         expect(spawns[0]!.session.provenance.agentId).toBe(USAGE_AGENT_ID);
-        // The spec carries no id and no label: both come from the session and the client.
         expect(Object.keys(spawns[0]!.spec).sort()).toEqual(["childWorkflowId", "extraEnv", "image", "resources"]);
     });
 });
@@ -413,7 +412,6 @@ describe("sandbox-step spawn", () => {
 // ── suspension ────────────────────────────────────────────────────────
 
 describe("sandbox-step suspension", () => {
-    /** A pool that records each statement, so the ledger write of a suspension is assertable. */
     function statementPool(): { pool: Pool; statements: Array<{ text: string; values: readonly unknown[] }> } {
         const statements: Array<{ text: string; values: readonly unknown[] }> = [];
         const pool = {

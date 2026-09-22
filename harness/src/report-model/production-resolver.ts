@@ -603,7 +603,6 @@ async function extractFallThrough(arm: ExtractionArm | undefined, requests: read
         return out;
     }
     if (answered.isErr()) {
-        // The pass suspended: the reason of the host reaches each reference of the batch, unread.
         for (const request of requests) {
             out.set(request.path, {
                 kind: "unavailable",

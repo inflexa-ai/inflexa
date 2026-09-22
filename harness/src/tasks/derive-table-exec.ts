@@ -68,8 +68,6 @@ export async function runDeriveTableExecBody(input: DeriveTableExecInput, deps: 
     // callback host parses to find the workflow that awaits this exec.
     const execId = `${workflowId}:${DERIVE_STEP_LITERAL}:fn-0`;
 
-    // The sandbox takes its ids from the session that the tool authorized, and the client calls the label
-    // hook of the host with it. A refusal of that hook with the suspend flag is a value; each other spawn failure throws.
     const spawned = keepSuspendingRefusal(
         await deps.sandboxClient.createSandbox(
             forStep(input.runSession, DERIVE_STEP_LITERAL),

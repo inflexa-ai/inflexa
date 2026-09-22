@@ -167,8 +167,6 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
                 logger.error("pending-step sweep failed", { runId, ...logger.errorFields(err) });
             }
 
-            // The close and the revoke are notices: each failure is logged and
-            // reported in `converged`, and the cancel stands.
             const charge = await deliverNotice(
                 logger.with({ runId }),
                 "RunCharge.close",

@@ -140,13 +140,8 @@ export async function generateStepSummaryAndWrite(
     return summary;
 }
 
-/**
- * Why the registration of a step failed: the registry refused it as a gate, or
- * it rejected terminal rows. `message` carries the per-file detail.
- */
 export type StepRegistrationFailure = { readonly kind: "refused"; readonly refusal: GateRefusal } | { readonly kind: "rejected"; readonly message: string };
 
-/** The one line that names a registration failure, for the log and the thrown step failure. */
 export function describeStepRegistrationFailure(failure: StepRegistrationFailure): string {
     return failure.kind === "refused" ? `the artifact registry refused the registration: ${failure.refusal.reason}` : failure.message;
 }

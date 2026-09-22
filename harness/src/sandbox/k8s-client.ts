@@ -382,10 +382,7 @@ function buildJobSpec(
     if (config.runtimeClassName) podSpec.runtimeClassName = config.runtimeClassName;
 
     // Pod-template placement is load-bearing: a cost reconciler allocates by pod
-    // labels, thus a Job-only label is invisible to it. The Job and the pod
-    // template carry the same set. The host labels merge first, thus a harness
-    // key wins a clash, and each value reaches the API server as it is: the API
-    // server does the check of a label value at admission (`labels.ts`).
+    // labels, thus a Job-only label is invisible to it.
     const labels = mergeLabels(hostLabels, harnessLabels(session, sandboxId));
 
     return {

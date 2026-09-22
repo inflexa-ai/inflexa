@@ -1093,8 +1093,6 @@ describe("retry policy constants", () => {
 });
 
 describe("createAiSdkProvider request headers hook", () => {
-    // The hook is not the model wire: its refusal stops the call at once, and the
-    // refused attempt is never sent. The count of wire calls is the assertion.
     it("stops the call at once on a hook err, sends no request, and never retries", async () => {
         let generateCalls = 0;
         let hookCalls = 0;

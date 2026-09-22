@@ -47,13 +47,12 @@ export function loadAnalysisStatus(pool: Querier, resourceId: string): ResultAsy
 }
 
 /**
- * Mark an analysis as suspended. The one function of each suspension of a
- * workflow (workflow-suspension spec), for each reason of the host.
+ * Mark an analysis as suspended.
  * Idempotent — no-op if already suspended.
  *
  * `suspended_insufficient_funds` is the name of the one suspended state, for
- * each reason, thus no reason is persisted and no data migration is necessary.
- * A chat turn never calls it: a host resumes the analysis on the next message.
+ * each reason of the host, thus no reason is persisted. A chat turn never calls
+ * it.
  */
 export function suspendAnalysis(pool: Querier, analysisId: string): ResultAsync<void, DbError> {
     return tryMutation("analyses.suspendAnalysis", async () => {

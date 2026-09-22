@@ -54,10 +54,6 @@ export interface RunAuthorization {
  * Authorize durable work at the async edge. `authorize` produces the durable
  * `RunSession`; `revoke` releases a self-minted run credential on the terminal
  * path (a no-op for reused or local authorizations).
- *
- * `authorize` is a gate: a refusal is an `err`, and the work does not start.
- * `revoke` and `revokeByJti` are notices: the work is complete, thus an `err`
- * is logged and changes no outcome (see `lib/hooks.ts`).
  */
 export interface RunAuthorizer {
     authorize(input: AuthorizeRunInput): ResultAsync<RunAuthorization, GateFailure>;

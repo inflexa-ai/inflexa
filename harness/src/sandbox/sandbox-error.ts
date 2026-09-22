@@ -250,7 +250,6 @@ export class SandboxFailure extends Error {
     }
 }
 
-/** A refusal of the label hook with the suspend flag: the one spawn failure that a spawn path reads as a value. */
 export type SuspendingRefusal = Extract<SandboxError, { readonly type: "labels_refused" }> & { readonly suspend: true };
 
 function isSuspendingRefusal(e: SandboxError): e is SuspendingRefusal {
@@ -258,13 +257,9 @@ function isSuspendingRefusal(e: SandboxError): e is SuspendingRefusal {
 }
 
 /**
- * Split the result of a spawn at a DBOS boundary. A refusal of the label hook
- * with the suspend flag stays a value, thus the spawn path suspends with no
- * `catch`. Each other failure, a refusal without the flag included, throws as
- * a `SandboxFailure` with its full description, thus DBOS records the step or
- * the workflow as failed. Call it inside the step of the spawn, before the
- * checkpoint: the cause of a backend failure does not survive the
- * serialization of a `Result`.
+ * Split the result of a spawn at a DBOS boundary. Call it inside the step of
+ * the spawn, before the checkpoint: the cause of a backend failure does not
+ * survive the serialization of a `Result`.
  */
 export function keepSuspendingRefusal(result: Result<SandboxRef, SandboxError>): Result<SandboxRef, SuspendingRefusal> {
     if (result.isErr() && isSuspendingRefusal(result.error)) return err(result.error);

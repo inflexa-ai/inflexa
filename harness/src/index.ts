@@ -89,10 +89,10 @@ export type { GateFailure, NoticeFailure } from "./lib/hooks.js";
 
 // Hook: model request headers. An optional gate on each provider. The provider
 // calls it before each attempt of a model request and adds the headers as the
-// hook gives them; with no hook, a request carries no header from a hook.
+// hook gives them.
 export type { RequestHeaders, ResolveRequestHeaders } from "./providers/request-headers.js";
 
-// Seam: run-level billing bracket. `open` is a gate and `close` is a notice.
+// Seam: run-level billing bracket.
 export { createNoopRunCharge } from "./billing/noop-run-charge.js";
 export type { RunCharge, RunChargeOutcome } from "./billing/run-charge.js";
 
@@ -603,7 +603,7 @@ export type { SandboxClient } from "./sandbox/client.js";
 // Hook: sandbox labels. An optional gate on the config of the sandbox client.
 // The client calls it at each spawn with the `SpawnSession` of the spawn, on
 // both backends, and stamps each label as the hook gives it under the harness
-// label set. `createSandbox` takes the session and the `SandboxSpec` of a spawn.
+// label set.
 export type { ResolveSandboxLabels, SandboxLabels, SandboxSpec } from "./sandbox/types.js";
 export type { SpawnSession } from "./auth/types.js";
 // The throw of the client seam. An embedder matches the class and reads the

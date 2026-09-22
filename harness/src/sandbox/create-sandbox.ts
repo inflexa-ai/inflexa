@@ -172,14 +172,7 @@ export interface CreateSandboxClientConfig {
     runtimeClassName?: string;
     /** Override the backend selection — defaults to `env.SANDBOX_BACKEND`. */
     backend?: "docker" | "k8s";
-    /**
-     * The sandbox label hook of the host: a gate (`lib/hooks.ts`). The client
-     * calls it at each spawn with the session of the spawn, before it makes the
-     * step tree and before it calls a backend, on both backends. Its labels
-     * merge under the harness labels, and the client stamps each value as the
-     * hook gives it (`labels.ts`). A refusal is the `labels_refused` variant,
-     * and no backend call occurs. Absent, a sandbox carries no host labels.
-     */
+    /** Absent, a sandbox carries no host labels. */
     resolveSandboxLabels?: ResolveSandboxLabels;
     /**
      * Optional logger forwarded to the Docker backend so a store degradation
@@ -356,7 +349,6 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     // poll loop's escalation probe are the same backend inspect.
     const isAlive = async (ref: SandboxRef) => unwrapOrThrow((await ops.isAlive(ref)).mapErr(failing));
 
-    /** The host labels of one spawn: the labels of the hook, or none when no hook is wired. */
     const hostLabelsFor = (session: SpawnSession): ResultAsync<SandboxLabels, SandboxError> => {
         const hook = config.resolveSandboxLabels;
         if (hook === undefined) return okAsync({});

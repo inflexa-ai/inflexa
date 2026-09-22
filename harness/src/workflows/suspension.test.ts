@@ -9,8 +9,7 @@ import { suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal } fr
 
 describe("a chat turn with a suspend error", () => {
     it("fails the turn, and the host reads the reason of the host by the kind of the error", async () => {
-        // A chat turn is not a workflow: the turn fails, and nothing marks the
-        // analysis. The loop holds no pool, thus it has no state to change.
+        // A chat turn is not a workflow: nothing marks the analysis.
         const provider: AgentChat = {
             capabilities: { toolCalling: true },
             chat: () => errAsync({ type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Provider call failed (HTTP 402)" }),

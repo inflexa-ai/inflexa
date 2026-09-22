@@ -60,9 +60,8 @@ export const DEFAULT_SUSPEND_ON: SuspendOn = { 402: "payment_required" };
  * (`classifyProviderError`) still reaches the `status` / `code` signals after
  * `toThrowable` rethrows at a step boundary.
  *
- * A `suspend` error carries the `reason` of the host. It carries the `status`
- * that the map matched, and no status when the request headers hook refused
- * the call with the suspend flag.
+ * A `suspend` error carries the `reason` of the host. It carries no `status`
+ * when the request headers hook refused the call with the suspend flag.
  */
 export type ProviderError =
     | { readonly type: "auth"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
@@ -88,14 +87,12 @@ export function isProviderError(value: unknown): value is ProviderError {
     return (v.type === "auth" || v.type === "suspend" || v.type === "provider") && typeof v.retryable === "boolean" && typeof v.message === "string";
 }
 
-/** A `suspend` error: a status in the map of the provider, or a refusal of a gate with the suspend flag. */
 export type SuspendError = Extract<ProviderError, { readonly type: "suspend" }>;
 
 /**
  * Find a `suspend` error on a failure or on its `cause` chain. A step boundary
  * rethrows a `ProviderError` inside a `ResultError`, with the value on
- * `.cause`, thus the walk reaches it. The walk reads the kind of the error and
- * never its message.
+ * `.cause`, thus the walk reaches it.
  *
  * A failed step that DBOS replays gives the error that DBOS recorded. That
  * record keeps only the enumerable fields of a `ResultError`: `.value` stays,
@@ -150,9 +147,9 @@ export function toProviderError(e: unknown, workload: string, suspendOn: Suspend
     }
     // The `provider` and `suspend` arms compose one generic HTTP message rather
     // than forwarding the SDK message verbatim. A `suspend` message names no
-    // cause of its own: the reason of the host rides beside it, and the harness
-    // does not read it. The composition has to happen: when a 4xx body does not
-    // parse against the configured provider's error schema, the AI SDK falls back to
+    // cause of its own: the reason of the host rides beside it. The composition
+    // has to happen: when a 4xx body does not parse against the configured
+    // provider's error schema, the AI SDK falls back to
     // `response.statusText`, so the "detail" is a bare HTTP reason phrase —
     // `"Bad Request"` — that names neither the call nor the cause, while the
     // status, the workload, and the body the SDK captured are all still on the
@@ -215,12 +212,10 @@ function excerptResponseBody(body: string): string {
 }
 
 /**
- * The classification of a provider failure. `retryable` says whether
- * re-issuing the same call could plausibly succeed. The Anthropic SDK already
- * retries transient failures internally; a `retryable: true` classification on
- * an error that still reached here tells the caller the failure is transient in
- * nature, not that a retry is mandatory. A `suspend` classification carries the
- * status that the map matched and the reason of the host.
+ * `retryable` says whether re-issuing the same call could plausibly succeed.
+ * The Anthropic SDK already retries transient failures internally; a
+ * `retryable: true` classification on an error that still reached here tells
+ * the caller the failure is transient in nature, not that a retry is mandatory.
  */
 export type ProviderErrorClassification =
     | { readonly kind: "suspend"; readonly retryable: false; readonly reason: string; readonly status: number }

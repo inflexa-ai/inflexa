@@ -456,9 +456,7 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             );
             if (authorized.isErr()) {
                 // The refusal ends the run before a workflow exists, thus the
-                // reserved row must not stay `running`. With the suspend flag the
-                // run is canceled and the analysis is suspended, for any reason of
-                // the host; without it the run fails.
+                // reserved row must not stay `running`.
                 const { kind, reason } = authorized.error;
                 if (kind === "suspended") {
                     await updateRunStatus(deps.pool, runId, "canceled", reason).match(

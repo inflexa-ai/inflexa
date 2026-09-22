@@ -156,9 +156,8 @@ export interface RunSession {
 }
 
 /**
- * A `RunSession` whose run frame names a step: the session of a sandbox spawn.
- * A sandbox takes its analysis id, its run id, and its step id from this
- * session, thus a spawn without one does not compile.
+ * The session of a sandbox spawn. A sandbox takes its analysis id, its run id,
+ * and its step id from this session.
  */
 export interface SpawnSession extends RunSession {
     readonly runFrame: RunFrame & { readonly stepId: string };

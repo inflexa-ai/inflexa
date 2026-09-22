@@ -44,9 +44,8 @@ export interface EmbeddingProviderDeps {
      * the matching width or the per-analysis index is created at the wrong size.
      */
     readonly dimensions?: number;
-    /** The request headers hook of the host. Absent, the calls carry no header from a hook. */
     readonly resolveRequestHeaders?: ResolveRequestHeaders;
-    /** The map from an HTTP status to a suspend reason. Absent, the provider uses `DEFAULT_SUSPEND_ON`. */
+    /** Absent, the provider uses `DEFAULT_SUSPEND_ON`. */
     readonly suspendOn?: SuspendOn;
     /** Diagnostics sink for the retry envelope. Defaults to a no-op. */
     readonly logger?: Logger;
@@ -78,7 +77,6 @@ export function createEmbeddingProvider(deps: EmbeddingProviderDeps): EmbeddingP
             const retry = createRetry(undefined, logger, EMBEDDING_MAX_RETRIES, suspendOn, hookCall);
             try {
                 const response = await retry(async () => {
-                    // The hook runs before each attempt. A refusal stops the call before a request is sent.
                     const headers = await headersForAttempt(deps.resolveRequestHeaders, session, hookCall);
                     return await client.embeddings.create({ model, input: [...texts], encoding_format: "float" }, { headers });
                 });

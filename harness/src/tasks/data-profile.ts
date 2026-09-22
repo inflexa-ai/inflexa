@@ -259,7 +259,6 @@ async function readSetHeaders(args: {
             emit: async () => {},
         });
     } catch (err) {
-        // A cancel from DBOS passes through with no change.
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
         logger.warn("input-scan header readout failed (non-fatal)", logger.errorFields(err));
         return new Map();
@@ -446,15 +445,11 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
     // Cortex-owned and must be revoked here.
     const { analysisId, runSession, ownsMandate = true, stagedInputs } = input; // oss-core-managed-ok
     const authorization: RunAuthorization = { runSession, ownsMandate }; // oss-core-managed-ok
-    // The revoke is a notice: a failure is logged, and the terminal outcome of the profile stays.
     const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(authorization, reason));
 
-    // The suspension of the profile (workflow-suspension spec). The profile is a
-    // durable owner: the row fails with the reason of the host, because the
-    // profile ledger has no suspended state and the retry path takes a `failed`
-    // row again. The analysis is marked as suspended, and the workflow ends in
-    // CANCELLED. A body driven outside a workflow has nothing to cancel.
     let selfCancelled = false;
+    // A suspension fails the row with the reason of the host, because the profile
+    // ledger has no suspended state and the retry path takes a `failed` row again.
     const suspendProfile = async (suspension: Suspension): Promise<void> => {
         logger.warn("profile suspended", { reason: suspension.reason });
         settleTerminalWrite(logger, analysisId, unwrapOrThrow(await failDataProfile(deps.pool, analysisId, suspension.reason)), "failed");
@@ -609,9 +604,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // run panel's activity readout was built to remove.
         await activity.sandboxInit();
 
-        // The sandbox takes its ids from the profile session, and the client calls
-        // the label hook of the host with it. A refusal of that hook with the
-        // suspend flag is a value; each other spawn failure throws.
         const spawned = keepSuspendingRefusal(
             await deps.sandboxClient.createSandbox(
                 forStep(runSession, DATA_PROFILE_STEP_LITERAL),
@@ -759,7 +751,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     runStep: durableStep,
                     resolved: () => accepted !== null,
                     usageRecorder: deps.usageRecorder,
-                    // A cancel from DBOS ends the loop, and the dispatch never turns it into a tool error.
                     isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
                 },
                 {
@@ -813,9 +804,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
         }
     } catch (err) {
-        // A cancel from DBOS, the self-cancel of a suspension included, passes through with no change.
         if (selfCancelled || err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-        // A `suspend` error of a model request of the profiler suspends the profile.
         const suspension = suspensionOfFailure(err);
         if (suspension !== undefined) return await suspendProfile(suspension);
         logger.error("profile failed", logger.errorFields(err));
@@ -933,7 +922,7 @@ export function dataProfileWorkflowId(analysisId: string, nonce: string): string
  * triggers are already serialized by the ledger CAS. The caller has already
  * staged the inputs and supplied the manifest in `params.stagedInputs`; this
  * forwards it into the workflow input. Fire-and-forget: the handle result is
- * not awaited. A refused authorization is the `err`, and no workflow starts.
+ * not awaited.
  */
 async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<Result<void, GateRefusal>> {
     const authorized = await authorizeDataProfile(deps, params);
@@ -1059,12 +1048,6 @@ async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: 
     await failClaimedProfile(deps, analysisId, phase, profileFailureReason(cause));
 }
 
-/**
- * Settle a claimed profile whose authorization the host refused. No workflow
- * exists, thus the row fails with the reason of the host. A refusal with the
- * suspend flag also marks the analysis as suspended; there is no workflow to
- * cancel.
- */
 async function refuseClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, refusal: GateRefusal): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
     logger.error("the profile was not authorized", { phase, reason: refusal.reason, suspend: refusal.kind === "suspended" });
@@ -1074,7 +1057,6 @@ async function refuseClaimedProfile(deps: DataProfileTriggerDeps, analysisId: st
     if (marked.isErr()) logger.error("the analysis was not marked as suspended", { phase, err: marked.error });
 }
 
-/** Fail the `running` row of a profile that never got a workflow. */
 async function failClaimedProfile(deps: DataProfileTriggerDeps, analysisId: string, phase: string, reason: string): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
     const failed = await failDataProfile(deps.pool, analysisId, reason);

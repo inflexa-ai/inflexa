@@ -62,10 +62,7 @@ export interface SandboxClient {
      * recovery re-run whose machine already exists (the crash window between
      * spawn and checkpoint) **adopts** it rather than leaking a second one.
      *
-     * The analysis id, the run id, and the step id come from `session`. The
-     * client calls its label hook with that session before it makes the step
-     * tree and before it calls a backend (sandbox-labels spec). Each spawn
-     * failure is an `err` value, the refusal of the label hook
+     * Each spawn failure is an `err` value, the refusal of the label hook
      * (`labels_refused`) included: a spawn path splits the result with
      * `keepSuspendingRefusal`. Only a defect of the deployment config, or a
      * throw of the workspace-root resolver, throws, and it fails the workflow.

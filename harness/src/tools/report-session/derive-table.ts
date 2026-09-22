@@ -208,10 +208,6 @@ export function describeExecFailure(result: ExecResult): string | undefined {
  */
 export interface DeriveTableExecInput {
     readonly analysisId: string;
-    /**
-     * The session that the tool authorized for the derivation. The container takes its analysis id, its run
-     * id, and its step id from it, and the label hook of the host gets it.
-     */
     readonly runSession: RunSession;
     readonly executionId: string;
     readonly script: string;
@@ -226,8 +222,7 @@ export interface DeriveTableExecInput {
  *
  * The composition realizes it over a registered workflow, thus the container lives inside a workflow body
  * and the await is legal under each transport. A fault of the sandbox rejects the promise, and the tool
- * turns that rejection into one short detail. A suspension of the derivation is the `err`, and the tool
- * reports its reason.
+ * turns that rejection into one short detail.
  */
 export type DeriveTableRunner = (input: DeriveTableExecInput) => Promise<Result<ExecResult, Suspension>>;
 

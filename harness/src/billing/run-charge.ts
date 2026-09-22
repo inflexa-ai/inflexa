@@ -16,10 +16,7 @@ import type { ResultAsync } from "neverthrow";
 import type { AgentSession } from "../auth/types.js";
 import type { GateFailure, NoticeFailure } from "../lib/hooks.js";
 
-/**
- * The outcome of a run, as `close` gets it. A suspension carries the reason of
- * the host, which the harness does not read.
- */
+/** A suspension carries the reason of the host, which the harness does not read. */
 export type RunChargeOutcome = { readonly kind: "ok" | "error" | "canceled" } | { readonly kind: "suspended"; readonly reason: string };
 
 export interface RunCharge {

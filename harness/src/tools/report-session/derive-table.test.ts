@@ -169,7 +169,6 @@ function makeSandbox(args: {
     readonly reply?: ExecResult;
     readonly throws?: boolean;
     readonly write?: (outputHostPath: string) => Promise<void>;
-    /** A refusal of the label hook that the client gives in place of a sandbox. */
     readonly refuse?: { readonly reason: string; readonly suspend: boolean };
 }): FakeSandbox {
     const creates: TestSpawn[] = [];
@@ -180,7 +179,6 @@ function makeSandbox(args: {
         toolchainSource: "store" as const,
         createSandbox(session: SpawnSession, spec: SandboxSpec) {
             if (args.refuse !== undefined) return errAsync({ type: "labels_refused" as const, op: "createSandbox", ...args.refuse });
-            // Recorded as one literal: the ids of the session beside the spec.
             creates.push({ analysisId: session.scope.analysisId, runId: session.runFrame.runId, stepId: session.runFrame.stepId, ...spec });
             return okAsync(ref);
         },
@@ -304,10 +302,8 @@ describe("a suspended derivation", () => {
 
         const result = await derive(tool, {});
 
-        // The conversation agent reads the suspension here. The body has no pool, thus it cannot mark the analysis.
         expect(result).toMatchObject({ outcome: "suspended", reason: "account_frozen" });
         expect(result.outcome === "suspended" ? result.detail : "").toContain("account_frozen");
-        // The tool still revokes the authorization on its terminal path.
         expect(auth.revoked).toEqual(["derive-table-failed"]);
     });
 

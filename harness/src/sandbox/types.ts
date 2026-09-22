@@ -362,12 +362,7 @@ export interface SubmitExecBody {
     stderrByteCap?: number;
 }
 
-/**
- * What a spawn needs beside its session. The analysis id, the run id, and the
- * step id come from the `SpawnSession` of `createSandbox`, thus the spec holds
- * none of them. It holds no label either: the client gets the host labels
- * from its label hook.
- */
+/** What a spawn needs beside its session. */
 export interface SandboxSpec {
     /** The first `execId` that will fire against this sandbox; nullable for
      *  early-create flows where the workflow mints the first execId later. */

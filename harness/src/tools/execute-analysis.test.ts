@@ -379,7 +379,6 @@ describe("createExecuteAnalysisTool plan mode", () => {
 
         const result = await tool.execute({ mode: "plan", planId: PLAN_ID }, fakeContext());
 
-        // The refusal is a value: the tool result carries the reason, and nothing throws.
         expect(result._unsafeUnwrapErr()).toMatchObject({ error: expect.stringContaining("mint refused"), retryable: false });
         // The reserved row is released — marked failed with the reason — so the
         // partial-unique slot frees up and a retry can re-run.
