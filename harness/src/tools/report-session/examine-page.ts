@@ -37,15 +37,16 @@
  * one and the look cannot count. The tool then gives a missed-stamp outcome that directs a new preview,
  * because a repeated look never stamps a marker that no preview wrote.
  *
- * The eyes seam, the chrome navigation, and the workspace-root seam each speak the throw protocol. The tool
- * guards each of them, thus a fault of a look becomes a typed outcome and the loop never sees a throw.
+ * The eyes seam, the chrome navigation, and the workspace-root seam each speak the throw protocol. The URL
+ * seam gives a `Result`. The tool guards each of them, thus a fault of a look becomes a typed outcome and
+ * the loop never sees a throw.
  *
  * A hang is not a throw, and a guard alone never ends one. Thus the acquire and the release each carry a
  * deadline. A realization that hangs while it starts a browser would otherwise hold the whole agent turn,
  * and no outcome would ever arrive.
  */
 
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,6 +54,7 @@ import { z } from "zod";
 
 import type { AuthContext } from "../../auth/types.js";
 import { hasBrowserUrl, type ChromeConfig } from "../../lib/chrome.js";
+import type { GateFailure } from "../../lib/hooks.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { createStaticEyes, type AcquireEyes, type EyesLease, type EyesScope } from "../../lib/eyes.js";
 import { defaultErrorFields, type Logger } from "../../lib/logger.js";
@@ -71,7 +73,7 @@ export type { CaptureCoverage, CapturePage, FailedRequest, PageCapture };
  * The args carry the auth of the tool call beside the page identity, thus a realization mints the URL
  * under the credential of the caller and holds no ambient state.
  */
-export type ResolvePageUrl = (args: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext }) => Promise<string>;
+export type ResolvePageUrl = (args: { pagePath: string; analysisId: string; threadId: string; auth: AuthContext }) => ResultAsync<string, GateFailure>;
 
 /** The empty input. The tool examines the current page of the thread, thus it needs no field. */
 const examinePageInput = z.object({});
@@ -402,14 +404,20 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
                 return ok({ outcome: "capture-failed", detail: "the session page could not be read" });
             }
 
-            // The URL seam speaks the throw protocol like the other seams, thus a fault of the formation
-            // becomes a typed outcome and the look never starts.
+            // An `err` of the URL seam and a rejected realization each become a typed outcome, and the look
+            // never starts.
             let url: string;
             try {
-                url =
-                    deps.resolvePageUrl !== undefined
-                        ? await deps.resolvePageUrl({ pagePath, analysisId, threadId, auth: ctx.session.auth })
-                        : pathToFileURL(pagePath).href;
+                if (deps.resolvePageUrl === undefined) {
+                    url = pathToFileURL(pagePath).href;
+                } else {
+                    const resolved = await deps.resolvePageUrl({ pagePath, analysisId, threadId, auth: ctx.session.auth });
+                    if (resolved.isErr()) {
+                        logger.warn("the page URL did not resolve", { threadId, analysisId, reason: resolved.error.reason });
+                        return ok({ outcome: "capture-failed", detail: "the page URL did not resolve" });
+                    }
+                    url = resolved.value;
+                }
             } catch (cause) {
                 logger.warn("the page URL did not resolve", { threadId, analysisId, ...defaultErrorFields(cause) });
                 return ok({ outcome: "capture-failed", detail: "the page URL did not resolve" });

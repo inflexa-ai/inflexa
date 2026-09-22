@@ -11,17 +11,26 @@
  * tool call, thus the composition binds a factory and the preview tool builds the publisher over the
  * scope of the call — exactly as it builds the reference resolver. A boot-time singleton could not
  * carry that credential, and a host that bans ambient state could not bind one at all. The local
- * default (`UnavailableSessionPagePublisher`) returns not-ok, thus the preview tool attaches no URL
+ * default (`UnavailableSessionPagePublisher`) gives an `err`, thus the preview tool attaches no URL
  * and the render still lands — the page path stays the whole local contract.
  */
 
+import { errAsync, type ResultAsync } from "neverthrow";
+
 import type { AuthContext } from "../../auth/types.js";
 
-export type SessionPageMintResult =
-    { ok: true; data: { baseUrl: string; token: string; expiresAt: string } } | { ok: false; status?: number; error: { message?: string } };
+/** The grant of one session page: the content-server base, the token, and its expiry. */
+export interface SessionPageGrant {
+    readonly baseUrl: string;
+    readonly token: string;
+    readonly expiresAt: string;
+}
 
-/** The not-ok arm of the seam's result — what a failed mint is allowed to carry. */
-export type SessionPageMintFailure = Extract<SessionPageMintResult, { ok: false }>;
+/** What a failed mint is allowed to carry. */
+export interface SessionPageMintFailure {
+    readonly status?: number;
+    readonly error: { readonly message?: string };
+}
 
 /**
  * Renders a failed mint as the line an agent reads back from the preview tool.
@@ -46,7 +55,7 @@ export interface SessionPagePublisher {
      * caller spells the whole URL through `buildReportSessionUrl`, thus the formula lives in the
      * contract and never in a realization.
      */
-    mintSessionPageAccess(threadId: string): Promise<SessionPageMintResult>;
+    mintSessionPageAccess(threadId: string): ResultAsync<SessionPageGrant, SessionPageMintFailure>;
 }
 
 /**
@@ -56,14 +65,11 @@ export interface SessionPagePublisher {
 export type MakeSessionPagePublisher = (scope: { analysisId: string; auth: AuthContext }) => SessionPagePublisher;
 
 /**
- * Local default — no hosted view of a session page. Returns not-ok, thus the preview tool carries the
+ * Local default — no hosted view of a session page. Gives an `err`, thus the preview tool carries the
  * refusal as data and the page path stays the whole result.
  */
 export class UnavailableSessionPagePublisher implements SessionPagePublisher {
-    async mintSessionPageAccess(_threadId: string): Promise<SessionPageMintResult> {
-        return {
-            ok: false,
-            error: { message: "the hosted view of a session page is unavailable in this environment" },
-        };
+    mintSessionPageAccess(_threadId: string): ResultAsync<SessionPageGrant, SessionPageMintFailure> {
+        return errAsync({ error: { message: "the hosted view of a session page is unavailable in this environment" } });
     }
 }

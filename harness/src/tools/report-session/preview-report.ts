@@ -67,7 +67,7 @@ import type { DerivationRecord } from "../../state/report-session-state.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { openReportThread, type ReportSessionStateGateway, type SessionRefusal } from "../report-authoring/authoring-tools.js";
 import { bindReadExport, bindSessionEmit, type ProvenanceSeam } from "../../provenance/seam.js";
-import { describeSessionPageMintFailure, type MakeSessionPagePublisher, type SessionPageMintResult } from "./session-page-publisher.js";
+import { describeSessionPageMintFailure, type MakeSessionPagePublisher, type SessionPageGrant } from "./session-page-publisher.js";
 
 /** The empty input. The tool renders the current draft of the thread, thus it needs no field. */
 const previewReportInput = z.object({});
@@ -472,7 +472,7 @@ async function sweepAssets(assetsDir: string, staged: ReadonlySet<string>, logge
  *
  * An absent factory gives no grant, and the arm carries no access field — the page path stays the whole
  * local contract. The tool builds the publisher over the scope of the call, thus the mint runs under the
- * auth of the caller. A refusal, a thrown construction, and a thrown realization each become the
+ * auth of the caller. An `err`, a thrown construction, and a rejected realization each become the
  * not-granted arm, thus a broken grant surface never costs the render. The URL spells through
  * `buildReportSessionUrl`, thus the formula lives in the contract and the seam gives the content-server
  * base alone.
@@ -487,21 +487,23 @@ async function mintAccess(
     if (makeSessionPages === undefined) {
         return undefined;
     }
-    let minted: SessionPageMintResult;
+    let grant: SessionPageGrant;
     try {
-        minted = await makeSessionPages({ analysisId, auth }).mintSessionPageAccess(threadId);
+        const minted = await makeSessionPages({ analysisId, auth }).mintSessionPageAccess(threadId);
+        if (minted.isErr()) {
+            const detail = describeSessionPageMintFailure(minted.error);
+            logger.warn("the session-page mint refused", { threadId, analysisId, detail });
+            return { granted: false, detail };
+        }
+        grant = minted.value;
     } catch (cause) {
         logger.warn("the session-page mint threw", { threadId, analysisId, ...defaultErrorFields(cause) });
         return { granted: false, detail: "session-page-access mint failed" };
     }
-    if (!minted.ok) {
-        logger.warn("the session-page mint refused", { threadId, analysisId, detail: describeSessionPageMintFailure(minted) });
-        return { granted: false, detail: describeSessionPageMintFailure(minted) };
-    }
     return {
         granted: true,
-        url: buildReportSessionUrl(minted.data.baseUrl, analysisId, threadId, "index.html", minted.data.token),
-        expiresAt: minted.data.expiresAt,
+        url: buildReportSessionUrl(grant.baseUrl, analysisId, threadId, "index.html", grant.token),
+        expiresAt: grant.expiresAt,
     };
 }
 

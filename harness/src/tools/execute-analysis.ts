@@ -30,6 +30,7 @@ import { routeAdHocRequest, type AdHocRoute, type AdHocRouterDeps } from "./ad-h
 import { adHocPlanId, adHocRunId } from "./analysis-invocation.js";
 import { defineTool, type ToolContext } from "./define-tool.js";
 import { queryPackages, readInventorySections, type ListAvailablePackagesDeps } from "./sandbox/list-available-packages.js";
+import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 
 const planIdSchema = z.string().regex(/^pln-[a-f0-9]{8}$/, "planId must be a pln-<8hex> value");
 const inputSchema = z
@@ -153,15 +154,13 @@ async function linkPlanPackages(extendAnalysisFarm: ExtendAnalysisFarm | undefin
     }
     const queries = [...union.values()];
     if (queries.length === 0) return 0;
-    let outcomes: Awaited<ReturnType<ExtendAnalysisFarm>>;
-    try {
-        outcomes = await extendAnalysisFarm(analysisId, queries);
-    } catch (cause) {
-        // A realization throw is an `unavailable` answer, not a driver error.
-        // The sibling resolver seam maps a throw the same way (farm.ts), and
-        // the planner can act on "the store cannot answer" — not on a stack.
-        throw new PlanPackagesMissingError([], [], cause instanceof Error ? cause.message : String(cause));
+    const linked = await callExtendAnalysisFarm(extendAnalysisFarm, analysisId, queries);
+    if (linked.isErr()) {
+        // A call that gave no answer is an `unavailable` answer, not a driver
+        // error: the planner can act on "the store cannot answer".
+        throw new PlanPackagesMissingError([], [], linked.error);
     }
+    const outcomes = linked.value;
     // An `unavailable` outcome preempts everything: the link pass could not
     // answer at all (an unreadable graph, a locked farm), so a per-package
     // absence list would be a fabrication. One reason covers the batch.

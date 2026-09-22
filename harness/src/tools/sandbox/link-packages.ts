@@ -49,6 +49,23 @@ function describeParseError(entry: string, error: ParseQueryError): string {
     }
 }
 
+/**
+ * Call the seam, and give the outcomes or the one reason that the call gave
+ * no answer. An `err` and a rejected realization each give that reason, thus
+ * no call site sees a throw.
+ */
+export async function callExtendAnalysisFarm(
+    extendAnalysisFarm: ExtendAnalysisFarm,
+    analysisId: string,
+    queries: readonly PackageQuery[],
+): Promise<Result<readonly PackageRequestOutcome[], string>> {
+    try {
+        return (await extendAnalysisFarm(analysisId, queries)).mapErr((failure) => failure.reason);
+    } catch (cause) {
+        return err(cause instanceof Error ? cause.message : String(cause));
+    }
+}
+
 export function createLinkPackagesTool(deps: LinkPackagesDeps) {
     return defineTool({
         id: "link_packages",
@@ -85,16 +102,14 @@ export function createLinkPackagesTool(deps: LinkPackagesDeps) {
                 }
                 queries.push(parsed.value);
             }
-            // A realization throw reads as `unavailable` per query. The loop
-            // would render the throw as a raw tool error, and a raw driver
-            // message teaches the agent nothing that `reason` does not.
-            try {
-                const outcomes = await deps.extendAnalysisFarm(deps.analysisId, queries);
-                return ok({ outcomes });
-            } catch (cause) {
-                const reason = cause instanceof Error ? cause.message : String(cause);
+            // A call that gave no answer reads as `unavailable` per query. A
+            // raw tool error teaches the agent nothing that `reason` does not.
+            const linked = await callExtendAnalysisFarm(deps.extendAnalysisFarm, deps.analysisId, queries);
+            if (linked.isErr()) {
+                const reason = linked.error;
                 return ok({ outcomes: queries.map((query) => ({ kind: "unavailable" as const, spelling: query.spelling, reason })) });
             }
+            return ok({ outcomes: linked.value });
         },
     });
 }

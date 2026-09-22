@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { errAsync, okAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { RequestSession, RunSession } from "../auth/types.js";
@@ -15,6 +15,7 @@ import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import type { GateFailure } from "../lib/hooks.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
+import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
 import type { AdHocRoute } from "./ad-hoc-router.js";
@@ -565,9 +566,9 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
-            extendAnalysisFarm: async (analysisId, queries) => {
+            extendAnalysisFarm: (analysisId, queries) => {
                 seamCalls.push({ analysisId, queries: [...queries] });
-                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("launch seam should be used");
@@ -595,12 +596,14 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: throwingAuthorizer,
             runLauncher: launcher,
-            extendAnalysisFarm: async (_analysisId, queries) =>
-                queries.map((q) => ({
-                    kind: "collision" as const,
-                    spelling: q.spelling,
-                    storeDirs: ["python-dir", "r-dir"] as [string, string],
-                })),
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) => ({
+                        kind: "collision" as const,
+                        spelling: q.spelling,
+                        storeDirs: ["python-dir", "r-dir"] as [string, string],
+                    })),
+                ),
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
             },
@@ -626,9 +629,9 @@ describe("createExecuteAnalysisTool ad hoc mode", () => {
             utilityModel: "utility-model",
             runAuthorizer: authorizer,
             runLauncher: launcher,
-            extendAnalysisFarm: async () => {
+            extendAnalysisFarm: () => {
                 seamCalled = true;
-                return [];
+                return okAsync([]);
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("launch seam should be used");
@@ -720,9 +723,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (analysisId, queries) => {
+            extendAnalysisFarm: (analysisId, queries) => {
                 seamCalls.push({ analysisId, queries: [...queries] });
-                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: q.version ?? "1.0.0" }));
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: q.version ?? "1.0.0" })));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("the tool launches via the seam, never calls directly");
@@ -750,11 +753,13 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
-            extendAnalysisFarm: async (_analysisId, queries) =>
-                queries.map((q) =>
-                    q.spelling === "scanpy"
-                        ? { kind: "absent" as const, spelling: q.spelling, acquisitionPossible: true }
-                        : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) =>
+                        q.spelling === "scanpy"
+                            ? { kind: "absent" as const, spelling: q.spelling, acquisitionPossible: true }
+                            : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+                    ),
                 ),
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
@@ -783,12 +788,14 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             // The realization reports a store it cannot read the same way for
             // every request; the refusal must carry the reason once and must
             // not name any package as missing.
-            extendAnalysisFarm: async (_analysisId, queries) =>
-                queries.map((q) => ({
-                    kind: "unavailable" as const,
-                    spelling: q.spelling,
-                    reason: "the dependency graph names 1 edge(s) that it does not hold",
-                })),
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) => ({
+                        kind: "unavailable" as const,
+                        spelling: q.spelling,
+                        reason: "the dependency graph names 1 edge(s) that it does not hold",
+                    })),
+                ),
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
             },
@@ -821,9 +828,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, queries) => {
+            extendAnalysisFarm: (_analysisId, queries) => {
                 seamCalls.push({ queries: [...queries] });
-                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -859,9 +866,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, queries) => {
+            extendAnalysisFarm: (_analysisId, queries) => {
                 seamCalls.push({ queries: [...queries] });
-                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -903,9 +910,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, queries) => {
+            extendAnalysisFarm: (_analysisId, queries) => {
                 seamCalls.push({ queries: [...queries] });
-                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -938,9 +945,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async (_analysisId, queries) => {
+            extendAnalysisFarm: (_analysisId, queries) => {
                 seamCalls.push({ queries: [...queries] });
-                return queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" }));
+                return okAsync(queries.map((q) => ({ kind: "linked" as const, spelling: q.spelling, version: "1.0.0" })));
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");
@@ -975,16 +982,18 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
-            extendAnalysisFarm: async (_analysisId, queries) => {
+            extendAnalysisFarm: (_analysisId, queries) => {
                 seamCalls.push({ queries: [...queries] });
-                return queries.map((q) =>
-                    q.track === undefined
-                        ? {
-                              kind: "collision" as const,
-                              spelling: q.spelling,
-                              storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
-                          }
-                        : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+                return okAsync(
+                    queries.map((q) =>
+                        q.track === undefined
+                            ? {
+                                  kind: "collision" as const,
+                                  spelling: q.spelling,
+                                  storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                              }
+                            : { kind: "linked" as const, spelling: q.spelling, version: "1.0.0" },
+                    ),
                 );
             },
             executeAnalysisWorkflow: async () => {
@@ -1013,13 +1022,15 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
-            extendAnalysisFarm: async (_analysisId, queries) =>
-                queries.map((q) => ({
-                    kind: "collision" as const,
-                    spelling: q.spelling,
-                    storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
-                    detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
-                })),
+            extendAnalysisFarm: (_analysisId, queries) =>
+                okAsync(
+                    queries.map((q) => ({
+                        kind: "collision" as const,
+                        spelling: q.spelling,
+                        storeDirs: ["igraph-0.11.9-aaaaaaaa", "igraph-2.1.4-bbbbbbbb"] as [string, string],
+                        detail: "python igraph-0.11.9-aaaaaaaa, r igraph-2.1.4-bbbbbbbb",
+                    })),
+                ),
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
             },
@@ -1032,7 +1043,10 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
         expect(launches).toHaveLength(0);
     });
 
-    it("a realization throw refuses the launch as the one store reason, not as a raw error", async () => {
+    it.each<[string, ExtendAnalysisFarm]>([
+        ["an err", () => errAsync({ reason: "the graph file is locked by another process", suspend: false })],
+        ["a rejection", () => new ResultAsync(Promise.reject(new Error("the graph file is locked by another process")))],
+    ])("%s of the realization refuses the launch as the one store reason, not as a raw error", async (_label, extendAnalysisFarm) => {
         setEnv();
         const { pool } = fakePool({
             "SELECT plan FROM cortex_plans": [{ plan: planWithPackages }],
@@ -1043,9 +1057,7 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: throwingAuthorizer,
-            extendAnalysisFarm: async () => {
-                throw new Error("the graph file is locked by another process");
-            },
+            extendAnalysisFarm,
             executeAnalysisWorkflow: async () => {
                 throw new Error("should not be called");
             },
@@ -1070,9 +1082,9 @@ describe("createExecuteAnalysisTool — the pre-launch link pass", () => {
             pool,
             runLauncher: launcher,
             runAuthorizer: authorizer,
-            extendAnalysisFarm: async () => {
+            extendAnalysisFarm: () => {
                 seamCalled = true;
-                return [];
+                return okAsync([]);
             },
             executeAnalysisWorkflow: async () => {
                 throw new Error("unused");

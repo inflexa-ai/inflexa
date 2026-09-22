@@ -30,8 +30,8 @@ export {
     describeSessionPageMintFailure,
     UnavailableSessionPagePublisher,
     type MakeSessionPagePublisher,
+    type SessionPageGrant,
     type SessionPageMintFailure,
-    type SessionPageMintResult,
     type SessionPagePublisher,
 } from "./session-page-publisher.js";
 export { createRecordVersionTool, type RecordVersionInput, type RecordVersionResult, type RecordVersionToolDeps } from "./record-version.js";
