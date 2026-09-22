@@ -376,18 +376,20 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         // The label hook runs first: a refusal makes no step tree and calls no backend.
         const hostLabels = await hostLabelsFor(session);
         if (hostLabels.isErr()) return err(hostLabels.error);
-        const precreateFailed = (cause: unknown): SandboxError => ({
-            type: "container_create_failed",
-            op: "createSandbox.precreateStepTree",
-            sandboxId: identity.sandboxId,
-            cause,
-        });
+        const createFailed =
+            (op: string) =>
+            (cause: unknown): SandboxError => ({
+                type: "container_create_failed",
+                op,
+                sandboxId: identity.sandboxId,
+                cause,
+            });
         // Every caller must declare resources — a sandbox with no cpu/memory
         // request is a semantic error, not something to paper over with a
         // default.
         if (!spec.resources) {
             return err(
-                precreateFailed(
+                createFailed("createSandbox")(
                     new Error(
                         `createSandbox: ${session.scope.analysisId}/${session.runFrame.runId}/${session.runFrame.stepId} has no resources — every caller must declare cpu/memoryGb`,
                     ),
@@ -405,7 +407,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                 },
                 mountCoordsOf(session, spec),
             ),
-            precreateFailed,
+            createFailed("createSandbox.precreateStepTree"),
         );
         if (precreated.isErr()) return err(precreated.error);
         // Clamp to cluster ceilings so the pod is always quota-admissible.
