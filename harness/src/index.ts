@@ -120,7 +120,12 @@ export type { ProvenanceCollector } from "./provenance/collector.js";
 // state. The URL seam of the eyes rides beside the publisher factory: a host whose
 // browser cannot reach the workspace tree binds a served URL for the look.
 export { UnavailableSessionPagePublisher } from "./tools/report-session/session-page-publisher.js";
-export type { MakeSessionPagePublisher, SessionPagePublisher, SessionPageMintResult } from "./tools/report-session/session-page-publisher.js";
+export type {
+    MakeSessionPagePublisher,
+    SessionPageGrant,
+    SessionPageMintFailure,
+    SessionPagePublisher,
+} from "./tools/report-session/session-page-publisher.js";
 export type { ResolvePageUrl, SessionPageAccess } from "./tools/report-session/index.js";
 
 // Seam: the one provenance surface. The embedder records the facts of a run and the acts of a

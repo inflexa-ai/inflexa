@@ -14,6 +14,7 @@
  */
 
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,7 +36,7 @@ import type {
 } from "../report-authoring/authoring-tools.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { readToolResultImages, type ToolContext } from "../define-tool.js";
-import { createExaminePageTool, type CapturePage, type ExaminePageResult, type PageCapture } from "./examine-page.js";
+import { createExaminePageTool, type CapturePage, type ExaminePageResult, type PageCapture, type ResolvePageUrl } from "./examine-page.js";
 
 const DEFAULT_ANALYSIS_ID = "analysis-001";
 
@@ -708,7 +709,7 @@ describe("the URL seam", () => {
             capture,
             resolvePageUrl: (args) => {
                 resolvedArgs = args;
-                return Promise.resolve("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
+                return okAsync("https://content.test/report-sessions/analysis-001/t1/index.html?t=tok");
             },
         });
 
@@ -729,7 +730,10 @@ describe("the URL seam", () => {
         expect(gateway.seenOf(threadId)).toBe("rendered-hash");
     });
 
-    it("gives the typed capture failure when the resolver throws, and no look runs", async () => {
+    it.each<[string, ResolvePageUrl]>([
+        ["gives an err", () => errAsync({ reason: "the grant surface is down", suspend: false })],
+        ["rejects", () => new ResultAsync(Promise.reject(new Error("the grant surface is down")))],
+    ])("gives the typed capture failure when the resolver %s, and no look runs", async (_label, resolvePageUrl) => {
         const root = await makeRoot();
         const threadId = "t1";
         await writePage(root, threadId);
@@ -741,7 +745,7 @@ describe("the URL seam", () => {
             resolveWorkspaceRoot: () => root,
             chrome: {},
             capture,
-            resolvePageUrl: () => Promise.reject(new Error("the grant surface is down")),
+            resolvePageUrl,
         });
 
         const result = (await tool.execute({}, ctxForThread(threadId)))._unsafeUnwrap();

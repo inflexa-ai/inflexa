@@ -121,8 +121,12 @@ export type PackageRequestOutcome =
  *
  * The seam speaks the query of the `package-identity` capability, thus the
  * host resolves the identity and the harness never folds a name.
+ *
+ * A failure of one package is an outcome. An `err` means that the whole
+ * call gave no answer, and the harness reads it as `unavailable` for each
+ * query.
  */
-export type ExtendAnalysisFarm = (analysisId: string, queries: readonly PackageQuery[]) => Promise<readonly PackageRequestOutcome[]>;
+export type ExtendAnalysisFarm = (analysisId: string, queries: readonly PackageQuery[]) => ResultAsync<readonly PackageRequestOutcome[], GateFailure>;
 
 /**
  * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when

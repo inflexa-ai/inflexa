@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync } from "neverthrow";
 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -241,7 +242,7 @@ describe("createSandboxAgent", () => {
 });
 
 describe("createSandboxAgent — the farm-extension seam", () => {
-    const extendAnalysisFarm = async () => [];
+    const extendAnalysisFarm = () => okAsync([]);
 
     it("a bound seam adds link_packages to the always-on substrate, and no meta names it", () => {
         const bare = { ...meta, tools: [] as const };
@@ -311,13 +312,11 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         expect(boundOne.systemPrompt).not.toBe(unbound.systemPrompt);
     });
 
-    it("a realization throw reads as unavailable per request, never as a raw tool error", async () => {
+    it("an err of the realization reads as unavailable per request, never as a raw tool error", async () => {
         const def = createSandboxAgent(
             {
                 ...makeFakeSandboxAgentDeps(),
-                extendAnalysisFarm: async () => {
-                    throw new Error("the dependency graph is unreadable");
-                },
+                extendAnalysisFarm: () => errAsync({ reason: "the dependency graph is unreadable", suspend: false }),
             },
             meta,
             body,
@@ -339,12 +338,12 @@ describe("createSandboxAgent — the farm-extension seam", () => {
         const def = createSandboxAgent(
             {
                 ...makeFakeSandboxAgentDeps({ analysisId: "an-42" }),
-                extendAnalysisFarm: async (analysisId, queries) => {
+                extendAnalysisFarm: (analysisId, queries) => {
                     calls.push({ analysisId, spellings: queries.map((q) => q.spelling) });
-                    return [
+                    return okAsync([
                         { kind: "linked", spelling: "scanpy", version: "1.10.0" },
                         { kind: "absent", spelling: "nonesuch", acquisitionPossible: true },
-                    ];
+                    ]);
                 },
             },
             meta,

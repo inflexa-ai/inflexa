@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 
 import {
     makeFakeChatProvider,
@@ -40,7 +41,7 @@ function makeProfileDeps(over: Partial<DataProfileDeps> = {}): DataProfileDeps {
 
 describe("profilerSandboxAgentDeps — the farm-extension seam", () => {
     const step = makeFakeSandboxAgentDeps().step;
-    const extendAnalysisFarm: ExtendAnalysisFarm = async () => [];
+    const extendAnalysisFarm: ExtendAnalysisFarm = () => okAsync([]);
 
     it("a bound seam gives the profiler roster link_packages, with the link prompt layer", () => {
         const def = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps({ extendAnalysisFarm }), step));

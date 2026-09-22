@@ -8,6 +8,7 @@
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -865,8 +866,7 @@ describe("the result detail", () => {
 describe("the hosted view", () => {
     /** A publisher whose one grant carries the content-server base, thus the tool spells the whole URL. */
     const grantingPublisher: SessionPagePublisher = {
-        mintSessionPageAccess: () =>
-            Promise.resolve({ ok: true as const, data: { baseUrl: "https://content.test/", token: "tok/en", expiresAt: "2026-08-17T00:00:00Z" } }),
+        mintSessionPageAccess: () => okAsync({ baseUrl: "https://content.test/", token: "tok/en", expiresAt: "2026-08-17T00:00:00Z" }),
     };
 
     it("attaches the URL of the session page beside the path when the publisher grants", async () => {
@@ -911,7 +911,7 @@ describe("the hosted view", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            makeSessionPages: () => ({ mintSessionPageAccess: () => Promise.resolve({ ok: false as const, status: 403, error: { message: "no grant" } }) }),
+            makeSessionPages: () => ({ mintSessionPageAccess: () => errAsync({ status: 403, error: { message: "no grant" } }) }),
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
@@ -945,7 +945,7 @@ describe("the hosted view", () => {
         }
     });
 
-    it("carries a thrown realization as data, and the render stays good", async () => {
+    it("carries a rejected realization as data, and the render stays good", async () => {
         const root = await makeRoot();
         const gateway = makeFakeGateway();
         gateway.seed("t1", { document: metricDoc(), snapshot: metricSnapshot });
@@ -953,7 +953,7 @@ describe("the hosted view", () => {
             gateway,
             makeResolver: () => createFixtureResolver(),
             resolveWorkspaceRoot: () => root,
-            makeSessionPages: () => ({ mintSessionPageAccess: () => Promise.reject(new Error("the grant surface is down")) }),
+            makeSessionPages: () => ({ mintSessionPageAccess: () => new ResultAsync(Promise.reject(new Error("the grant surface is down"))) }),
         });
 
         const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();

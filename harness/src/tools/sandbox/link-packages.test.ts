@@ -1,20 +1,22 @@
 import { describe, expect, it } from "bun:test";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createLinkPackagesTool } from "./link-packages.js";
 import type { PackageQuery } from "../../sandbox/package-identity.js";
+import type { ExtendAnalysisFarm } from "../../sandbox/types.js";
 
 /** A seam that records what it received and links every query it is given. */
 function recordingSeam(): {
     calls: Array<{ analysisId: string; queries: PackageQuery[] }>;
-    extendAnalysisFarm: (a: string, q: readonly PackageQuery[]) => Promise<{ kind: "linked"; spelling: string; version: string }[]>;
+    extendAnalysisFarm: ExtendAnalysisFarm;
 } {
     const calls: Array<{ analysisId: string; queries: PackageQuery[] }> = [];
     return {
         calls,
-        extendAnalysisFarm: async (analysisId, queries) => {
+        extendAnalysisFarm: (analysisId, queries) => {
             calls.push({ analysisId, queries: [...queries] });
-            return queries.map((query) => ({ kind: "linked" as const, spelling: query.spelling, version: query.version ?? "1.0.0" }));
+            return okAsync(queries.map((query) => ({ kind: "linked" as const, spelling: query.spelling, version: query.version ?? "1.0.0" })));
         },
     };
 }
@@ -69,13 +71,11 @@ describe("link_packages — the query grammar", () => {
         expect(seam.calls).toEqual([]);
     });
 
-    it("a realization throw reads as unavailable per query, echoing each spelling", async () => {
-        const tool = createLinkPackagesTool({
-            extendAnalysisFarm: async () => {
-                throw new Error("the dependency graph is unreadable");
-            },
-            analysisId: "an-42",
-        });
+    it.each<[string, ExtendAnalysisFarm]>([
+        ["an err", () => errAsync({ reason: "the dependency graph is unreadable", suspend: false })],
+        ["a rejection", () => new ResultAsync(Promise.reject(new Error("the dependency graph is unreadable")))],
+    ])("%s of the realization reads as unavailable per query, echoing each spelling", async (_label, extendAnalysisFarm) => {
+        const tool = createLinkPackagesTool({ extendAnalysisFarm, analysisId: "an-42" });
 
         const result = (await tool.execute({ packages: ["scanpy", "r:GO.db"] }, makeToolContext().ctx))._unsafeUnwrap();
 
@@ -88,7 +88,7 @@ describe("link_packages — the query grammar", () => {
     });
 
     it("the description names the prefixed retry", () => {
-        const tool = createLinkPackagesTool({ extendAnalysisFarm: async () => [], analysisId: "an-42" });
+        const tool = createLinkPackagesTool({ extendAnalysisFarm: () => okAsync([]), analysisId: "an-42" });
 
         expect(tool.description).toContain("call this tool again for that package with the prefixed form, `python:<name>` or `r:<name>`");
     });
