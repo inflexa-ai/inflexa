@@ -992,6 +992,14 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
     });
 }
 
+/** The host policy of a config, with each absent member left absent. */
+export function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
+    return {
+        ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),
+        ...(deps.suspendOn !== undefined ? { suspendOn: deps.suspendOn } : {}),
+    };
+}
+
 /**
  * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
  * connection and model. The model is closed into the returned provider here (it
@@ -1005,14 +1013,6 @@ function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageMod
  * value on the returned instance. When the field is absent, it installs no
  * wrapper, it hands the SDK no bound, and it advertises no value.
  */
-/** The host policy of a config, with each absent member left absent. */
-function hostPolicyOf(deps: ProviderHostPolicy): ProviderHostPolicy {
-    return {
-        ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),
-        ...(deps.suspendOn !== undefined ? { suspendOn: deps.suspendOn } : {}),
-    };
-}
-
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     const requestTimeoutMs = config.requestTimeoutMs;

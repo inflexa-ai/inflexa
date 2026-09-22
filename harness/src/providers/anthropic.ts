@@ -6,7 +6,7 @@
  */
 
 import type { Logger } from "../lib/logger.js";
-import { createConfiguredAiSdkProvider, type ProviderHostPolicy } from "./ai-sdk.js";
+import { createConfiguredAiSdkProvider, hostPolicyOf, type ProviderHostPolicy } from "./ai-sdk.js";
 import type { ChatProvider, FetchLike } from "./types.js";
 
 export interface AnthropicProviderDeps extends ProviderHostPolicy {
@@ -27,8 +27,7 @@ export interface AnthropicProviderDeps extends ProviderHostPolicy {
  */
 export function createAnthropicProvider(deps: AnthropicProviderDeps): ChatProvider {
     return createConfiguredAiSdkProvider({
-        ...(deps.resolveRequestHeaders !== undefined ? { resolveRequestHeaders: deps.resolveRequestHeaders } : {}),
-        ...(deps.suspendOn !== undefined ? { suspendOn: deps.suspendOn } : {}),
+        ...hostPolicyOf(deps),
         logger: deps.logger,
         config: {
             kind: "anthropic",
