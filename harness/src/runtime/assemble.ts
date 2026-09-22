@@ -316,14 +316,12 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const extractValues = registerExtractValuesWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
         runAuthorizer: wf.dataProfile.runAuthorizer,
-        pool: wf.dataProfile.pool,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
     // A session derivation runs its container here and not in the turn. The await of an exec is a
     // workflow-body call under the callback transport, thus the tool starts this workflow and awaits it.
     const deriveTableExec = registerDeriveTableExecWorkflow({
         sandboxClient: wf.dataProfile.sandboxClient,
-        pool: wf.dataProfile.pool,
         ...(wf.dataProfile.logger ? { logger: wf.dataProfile.logger } : {}),
     });
 

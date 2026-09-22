@@ -22,14 +22,11 @@ import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorize
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice, passGate } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
-import { unwrapOrThrow } from "../lib/result.js";
 import type { ExtractionArm, ExtractionArtifact, ExtractionRequest } from "../report-model/production-resolver.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
-import { suspendAnalysis } from "../state/analyses.js";
-import type { Querier } from "../state/db.js";
 import { suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "../workflows/suspension.js";
 import type { ExecEmit, ExecResult, SubmitExecBody } from "../sandbox/types.js";
 import { EXTRACTION_INPUT_ENV, EXTRACTION_SCRIPT, ExtractValuesResultSchema, type ExtractValuesResult } from "./extract-values-script.js";
@@ -66,8 +63,6 @@ export interface ExtractValuesDeps {
     readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
     readonly runAuthorizer: RunAuthorizer;
-    /** The app pool, for the mark of the analysis when the pass suspends. */
-    readonly pool: Querier;
 }
 
 /**
@@ -143,7 +138,7 @@ export function parseExtractionOutput(result: ExecResult): ExtractValuesResult {
  * authorization on every terminal path, and it tears the container down on both paths.
  *
  * A chat turn awaits this workflow, thus a suspension is the `err` of the result, and the workflow does not
- * cancel (workflow-suspension spec). The body marks the analysis as suspended before it returns the `err`.
+ * cancel (workflow-suspension spec). The body does not mark the analysis: the caller reports the suspension.
  */
 export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, deps: ExtractValuesDeps): Promise<Result<ExtractValuesResult, Suspension>> {
     const logger = (deps.logger ?? createNoopLogger()).named("extract-values").with({ analysisId: input.analysisId });
@@ -170,7 +165,6 @@ export async function runExtractValuesBody(input: ExtractValuesWorkflowInput, de
             const suspension = suspensionOfSpawnRefusal(spawned.error);
             logger.warn("extraction suspended", { reason: suspension.reason });
             await revoke("extract-values-suspended");
-            unwrapOrThrow(await suspendAnalysis(deps.pool, analysisId));
             return err(suspension);
         }
         const sandbox = spawned.value;
