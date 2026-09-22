@@ -91,9 +91,9 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
 
     // `api-key`: connect directly to the configured OpenAI-compatible endpoint.
     // The CLI's local mode does no attribution, so it wires no request headers
-    // hook. `model`/`dimensions` fall
-    // through to the harness defaults (text-embedding-3-small / 1536) when unset;
-    // a custom `model` needs a matching `dimensions` or the boot probe rejects it.
+    // hook. `model`/`dimensions` fall through to the harness defaults
+    // (text-embedding-3-small / 1536) when unset; a custom `model` needs a
+    // matching `dimensions` or the boot probe rejects it.
     const apiKey = config.embedding.apiKey;
     if (!apiKey) {
         return err({
