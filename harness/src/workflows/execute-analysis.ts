@@ -349,7 +349,7 @@ async function ledgerStep(log: Logger, name: string, write: () => ResultAsync<un
         async (): Promise<Result<void, string>> => {
             const written = await write();
             if (written.isOk()) return ok(undefined);
-            log.error(`${name} failed`, { error: describeDbError(written.error), ...log.errorFields(written.error.cause) });
+            log.named(name).error("ledger write failed", { error: describeDbError(written.error), ...log.errorFields(written.error.cause) });
             return err(describeDbError(written.error));
         },
         { name },
