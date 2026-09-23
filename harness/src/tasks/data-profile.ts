@@ -20,7 +20,7 @@
 
 import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { randomUUID } from "node:crypto";
-import { err, ok, type Result, type ResultAsync } from "neverthrow";
+import { ResultAsync, err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 
 import { forStep, forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
@@ -34,6 +34,7 @@ import type { BioToolKeys } from "../tools/bio/keys.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import type { DbError } from "../lib/db-result.js";
 import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -511,16 +512,18 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         }
 
         // 2. Register staged files in cortex_artifacts
-        await upsertArtifacts(
-            deps.pool,
-            stagedInputs.map((f) => ({
-                resourceId: analysisId,
-                path: inputArtifactPath(f),
-                hash: f.hash,
-                size: f.size,
-                role: "input" as const,
-                fileId: f.fileId,
-            })),
+        unwrapOrThrow(
+            await upsertArtifacts(
+                deps.pool,
+                stagedInputs.map((f) => ({
+                    resourceId: analysisId,
+                    path: inputArtifactPath(f),
+                    hash: f.hash,
+                    size: f.size,
+                    role: "input" as const,
+                    fileId: f.fileId,
+                })),
+            ),
         );
 
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
@@ -851,9 +854,28 @@ function settleTerminalWrite(logger: Logger, analysisId: string, write: DataProf
  * - `"already_running"`: a workflow already owns the row, and nothing new ran.
  * - `"completed"`: the analysis has no input files, so the row is `completed` at once
  *   with no result. No workflow ran (see {@link completeEmptyDataProfile}).
- * - `"failed"`: the trigger refused the call or faulted, and the row is unchanged.
+ * - `"failed"`: the trigger refused the call, and the row is unchanged.
  */
 export type DataProfileTriggerResult = "started" | "restarted" | "already_running" | "completed" | "failed";
+
+/**
+ * Why the dispatch of a claimed profile started no workflow. The dispatch writes `failed` to the claimed
+ * row before a caller reads the `err`:
+ * - `refused`: `RunAuthorizer.authorize` gave an `err`. `reason` and `suspend` are the values of the host.
+ * - `start_failed`: DBOS did not start the workflow. `cause` is the throw of DBOS.
+ */
+export type DataProfileStartError =
+    { readonly type: "refused"; readonly reason: string; readonly suspend: boolean } | { readonly type: "start_failed"; readonly cause: unknown };
+
+/** A one-line, user-facing description of a `DataProfileStartError`. */
+export function describeDataProfileStartError(e: DataProfileStartError): string {
+    switch (e.type) {
+        case "refused":
+            return `the profile run was not authorized: ${e.reason}`;
+        case "start_failed":
+            return `the profile workflow did not start: ${profileFailureReason(e.cause)}`;
+    }
+}
 
 /**
  * Route-side deps for triggering the data-profile workflow: the ledger pool,
@@ -917,17 +939,14 @@ export function dataProfileWorkflowId(analysisId: string, nonce: string): string
 }
 
 /**
- * Authorize the run via the `RunAuthorizer` and start the data-profile workflow
- * under a per-attempt id `dataprofile:{analysisId}:{nonce}` — concurrent
- * triggers are already serialized by the ledger CAS. The caller has already
- * staged the inputs and supplied the manifest in `params.stagedInputs`; this
- * forwards it into the workflow input. Fire-and-forget: the handle result is
- * not awaited.
+ * Start the data-profile workflow under the authorization and a per-attempt id
+ * `dataprofile:{analysisId}:{nonce}` — concurrent triggers are already
+ * serialized by the ledger CAS. The caller has already staged the inputs and
+ * supplied the manifest in `params.stagedInputs`; this forwards it into the
+ * workflow input. The handle result is not awaited.
  */
-async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<Result<void, GateRefusal>> {
-    const authorized = await authorizeDataProfile(deps, params);
-    if (authorized.isErr()) return err(authorized.error);
-    const { runSession, ownsMandate } = authorized.value; // oss-core-managed-ok
+async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, authorization: RunAuthorization): Promise<void> {
+    const { runSession, ownsMandate } = authorization; // oss-core-managed-ok
     const attemptNonce = randomUUID();
     await DBOS.startWorkflow(deps.workflow, {
         workflowID: dataProfileWorkflowId(params.analysisId, attemptNonce),
@@ -937,20 +956,34 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
         ownsMandate, // oss-core-managed-ok
         stagedInputs: params.stagedInputs,
     });
-    return ok(undefined);
 }
 
 /**
- * Dispatch a claimed profile, fire-and-forget. The claim already flipped the
- * row to `running`, thus a refused authorization and a rejected start each
- * settle the row as `failed`, and it never wedges at `running`.
+ * Authorize and start a claimed profile. The claim already flipped the row to
+ * `running`, thus a refused authorization and a failed start each settle the
+ * row as `failed` before the `err`, and the row never wedges at `running`. A
+ * rejected `authorize` promise is a defect of the host: the row is settled the
+ * same way, and the rejection passes through.
  */
-async function dispatchClaimedProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, phase: string): Promise<void> {
-    const started = await startDataProfileWorkflow(deps, params).catch(async (cause: unknown) => {
-        await compensateStartFailure(deps, params.analysisId, phase, cause);
-        return undefined;
+async function dispatchClaimedProfile(
+    deps: DataProfileTriggerDeps,
+    params: DataProfileTriggerParams,
+    phase: string,
+): Promise<Result<void, DataProfileStartError>> {
+    const authorized = await Promise.resolve(authorizeDataProfile(deps, params)).catch(async (defect: unknown) => {
+        await compensateStartFailure(deps, params.analysisId, phase, defect);
+        throw defect;
     });
-    if (started?.isErr()) await refuseClaimedProfile(deps, params.analysisId, phase, started.error);
+    if (authorized.isErr()) {
+        await refuseClaimedProfile(deps, params.analysisId, phase, authorized.error);
+        return err({ type: "refused", reason: authorized.error.reason, suspend: authorized.error.kind === "suspended" });
+    }
+    const started = await ResultAsync.fromPromise(startDataProfileWorkflow(deps, params, authorized.value), (cause) => cause);
+    if (started.isErr()) {
+        await compensateStartFailure(deps, params.analysisId, phase, started.error);
+        return err({ type: "start_failed", cause: started.error });
+    }
+    return ok(undefined);
 }
 
 /**
@@ -970,71 +1003,84 @@ async function dispatchClaimedProfile(deps: DataProfileTriggerDeps, params: Data
  * `"completed"`. An empty manifest against a seed that names files is a divergence
  * between the caller and the ledger, and the trigger refuses it.
  *
- * Returns what happened, so the caller can surface it (e.g. in the seed response).
+ * Returns what happened, so the caller can surface it (e.g. in the seed response). A
+ * failed ledger read or claim is the `err`. The dispatch settles its own row, thus a
+ * refusal or a failed start after a claim shows on the ledger only.
  */
-export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<DataProfileTriggerResult> {
+export function triggerDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): ResultAsync<DataProfileTriggerResult, DbError> {
+    return new ResultAsync(claimAndDispatchProfile(deps, params));
+}
+
+async function claimAndDispatchProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<Result<DataProfileTriggerResult, DbError>> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId: params.analysisId });
     const { analysisId } = params;
-    try {
-        // ADVISORY pre-check, not the enforcement — the claim CAS carries the same seed
-        // conjunct (see `SEEDED` in state/data-profile.ts) and is what actually makes a
-        // seedless `running` row impossible. This read exists only to name the cause: on
-        // the ordinary non-racing path it turns an opaque "no claim matched" into a
-        // precise reason. An empty array is not a seed — it names zero files. Reads via
-        // `loadSeedInputFileIds`, which returns null for BOTH a missing analysis row and
-        // a NULL-seed row (`loadDataProfileStatus` would hide the seed of a cleared row).
-        const seeded = unwrapOrThrow(await loadSeedInputFileIds(deps.pool, analysisId));
+    // ADVISORY pre-check, not the enforcement — the claim CAS carries the same seed
+    // conjunct (see `SEEDED` in state/data-profile.ts) and is what actually makes a
+    // seedless `running` row impossible. This read exists only to name the cause: on
+    // the ordinary non-racing path it turns an opaque "no claim matched" into a
+    // precise reason. An empty array is not a seed — it names zero files. Reads via
+    // `loadSeedInputFileIds`, which returns null for BOTH a missing analysis row and
+    // a NULL-seed row (`loadDataProfileStatus` would hide the seed of a cleared row).
+    const seedRead = await loadSeedInputFileIds(deps.pool, analysisId);
+    if (seedRead.isErr()) return err(seedRead.error);
+    const seeded = seedRead.value;
 
-        if (params.stagedInputs.length === 0) {
-            // The trigger validates the manifest it is about to dispatch against the ledger
-            // seed. A seeded row profiled against an EMPTY manifest would claim `running` and
-            // then hit the body's empty-manifest path, and complete with a NULL result while
-            // the seed still names files. Refuse the divergence before any claim.
-            if (seeded !== null && seeded.length > 0) {
-                logger.error("trigger rejected: empty manifest dispatched against a non-empty seed", { seededCount: seeded.length });
-                return "failed";
-            }
-
-            // The analysis has no input files, so there is nothing to profile. The row is
-            // `completed` at once, with no workflow. The CAS carries the same seed
-            // predicate as this pre-read, so a seed upsert that lands in between cannot be
-            // hidden behind a finished profile: the stamp refuses, and the status read
-            // below names the cause.
-            if (unwrapOrThrow(await completeEmptyDataProfile(deps.pool, analysisId))) return "completed";
-            const current = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
-            if (current?.status === "running") return "already_running";
-            logger.error("trigger rejected: empty-set completion refused (no analysis row, or the seed now names files)");
-            return "failed";
+    if (params.stagedInputs.length === 0) {
+        // The trigger validates the manifest it is about to dispatch against the ledger
+        // seed. A seeded row profiled against an EMPTY manifest would claim `running` and
+        // then hit the body's empty-manifest path, and complete with a NULL result while
+        // the seed still names files. Refuse the divergence before any claim.
+        if (seeded !== null && seeded.length > 0) {
+            logger.error("trigger rejected: empty manifest dispatched against a non-empty seed", { seededCount: seeded.length });
+            return ok("failed");
         }
 
-        // A non-empty manifest against a seed that names no file: the caller skipped the
-        // seed, or the analysis row is missing. Name the cause before any claim.
-        if (seeded === null || seeded.length === 0) {
-            logger.error("trigger rejected: no seeded input set (missing analysis row or caller skipped seeding)");
-            return "failed";
-        }
-
-        const started = unwrapOrThrow(await tryStartDataProfile(deps.pool, analysisId));
-        if (started) {
-            void dispatchClaimedProfile(deps, params, "Run");
-            return "started";
-        }
-        const restarted = unwrapOrThrow(await tryRerunDataProfile(deps.pool, analysisId));
-        if (restarted) {
-            void dispatchClaimedProfile(deps, params, "Re-run");
-            return "restarted";
-        }
-        const status = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
-        if (status?.status === "running") return "already_running";
-        return "failed";
-    } catch (err) {
-        logger.error("trigger error", logger.errorFields(err));
-        return "failed";
+        // The analysis has no input files, so there is nothing to profile. The row is
+        // `completed` at once, with no workflow. The CAS carries the same seed
+        // predicate as this pre-read, so a seed upsert that lands in between cannot be
+        // hidden behind a finished profile: the stamp refuses, and the status read
+        // below names the cause.
+        const completed = await completeEmptyDataProfile(deps.pool, analysisId);
+        if (completed.isErr()) return err(completed.error);
+        if (completed.value) return ok("completed");
+        const current = await loadDataProfileStatus(deps.pool, analysisId);
+        if (current.isErr()) return err(current.error);
+        if (current.value?.status === "running") return ok("already_running");
+        logger.error("trigger rejected: empty-set completion refused (no analysis row, or the seed now names files)");
+        return ok("failed");
     }
+
+    // A non-empty manifest against a seed that names no file: the caller skipped the
+    // seed, or the analysis row is missing. Name the cause before any claim.
+    if (seeded === null || seeded.length === 0) {
+        logger.error("trigger rejected: no seeded input set (missing analysis row or caller skipped seeding)");
+        return ok("failed");
+    }
+
+    const started = await tryStartDataProfile(deps.pool, analysisId);
+    if (started.isErr()) return err(started.error);
+    if (started.value) {
+        dispatchInBackground(deps, params, "Run");
+        return ok("started");
+    }
+    const restarted = await tryRerunDataProfile(deps.pool, analysisId);
+    if (restarted.isErr()) return err(restarted.error);
+    if (restarted.value) {
+        dispatchInBackground(deps, params, "Re-run");
+        return ok("restarted");
+    }
+    const status = await loadDataProfileStatus(deps.pool, analysisId);
+    if (status.isErr()) return err(status.error);
+    return ok(status.value?.status === "running" ? "already_running" : "failed");
+}
+
+/** The dispatch settles the row on each arm and logs a defect, thus the trigger keeps no outcome of it. */
+function dispatchInBackground(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, phase: string): void {
+    void dispatchClaimedProfile(deps, params, phase).catch(() => undefined);
 }
 
 /**
- * Compensate a fire-and-forget start that rejected. The ledger CAS in
+ * Compensate a start that failed after the claim. The ledger CAS in
  * `tryStart`/`tryRerun`/`tryRetry` already flipped the row to `running`; if the
  * dispatch never landed a workflow, DBOS has nothing to recover, so without
  * this the row would sit at `running` forever and every later trigger would
@@ -1077,21 +1123,13 @@ async function failClaimedProfile(deps: DataProfileTriggerDeps, analysisId: stri
 /**
  * Start the data-profile workflow for an already-claimed analysis (the retry
  * route claims via `tryRetryDataProfile`, then calls this). The caller does not
- * await the workflow's completion, but a start that rejects compensates the
- * ledger (see {@link compensateStartFailure}) before re-throwing, so a caller's
- * own `.catch` still observes the error and the row never wedges at `running`.
- * A refused authorization fails the row with the reason of the host, and the
- * promise resolves: the row is where a caller reads the outcome.
+ * wait for the completion of the workflow. A refused authorization and a failed
+ * start each settle the row as `failed` before the `err` (see
+ * {@link dispatchClaimedProfile}), thus a caller that minted an authorization
+ * can revoke it.
  */
-export async function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<void> {
-    let started: Result<void, GateRefusal>;
-    try {
-        started = await startDataProfileWorkflow(deps, params);
-    } catch (cause) {
-        await compensateStartFailure(deps, params.analysisId, "Retry", cause);
-        throw cause;
-    }
-    if (started.isErr()) await refuseClaimedProfile(deps, params.analysisId, "Retry", started.error);
+export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): ResultAsync<void, DataProfileStartError> {
+    return new ResultAsync(dispatchClaimedProfile(deps, params, "Retry"));
 }
 
 /**

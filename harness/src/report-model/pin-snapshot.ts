@@ -22,7 +22,7 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { tryFs } from "../lib/fs-result.js";
-import { queryAnalysisArtifacts, type AnalysisArtifactRef } from "../state/artifacts.js";
+import { queryAnalysisArtifacts } from "../state/artifacts.js";
 import type { Querier } from "../state/db.js";
 import { queryRunsByAnalysis } from "../state/runs.js";
 import { isSafeId, runDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -266,19 +266,13 @@ export async function pinReportSnapshot(
     analysisId: string,
     options: PinReportSnapshotOptions = {},
 ): Promise<Result<ReportSnapshot, PinSnapshotError>> {
-    let ledgerRows: AnalysisArtifactRef[];
-    try {
-        ledgerRows = await queryAnalysisArtifacts(pool, analysisId);
-    } catch (cause) {
-        // The query speaks the throw protocol of the `pg` driver. This is the thin wrapper that turns
-        // that throw into a value, thus each caller above reads a failure as data.
-        return err({ kind: "ledger-read-failed", cause });
-    }
+    const ledgerRows = await queryAnalysisArtifacts(pool, analysisId);
+    if (ledgerRows.isErr()) return err({ kind: "ledger-read-failed", cause: ledgerRows.error.cause });
 
     // The ledger accepts any path. A null-prototype map keeps a key such as `__proto__` an ordinary
     // entry, thus no path collides with a prototype slot.
     const artifacts: Record<string, ArtifactSnapshot> = Object.create(null);
-    for (const row of ledgerRows) {
+    for (const row of ledgerRows.value) {
         artifacts[row.path] = { hash: row.hash, fileType: row.fileType };
     }
 

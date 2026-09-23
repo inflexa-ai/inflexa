@@ -78,7 +78,7 @@ describe("createReportSessionRuntime", () => {
         await seedAnalysis(analysisId);
         await seedThread(threadId, analysisId);
         const earlyPath = "runs/r1/output/de.csv";
-        await upsertArtifact(pool, artifact(analysisId, earlyPath, "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(analysisId, earlyPath, "sha256:aaa")))._unsafeUnwrap();
 
         const runtime = createReportSessionRuntime({ pool });
 
@@ -90,7 +90,7 @@ describe("createReportSessionRuntime", () => {
         expect(first.state.document).toEqual({ title: "", sections: [] });
 
         // A new artifact lands after the pin. The stored membership must not grow.
-        await upsertArtifact(pool, artifact(analysisId, "runs/r2/output/late.csv", "sha256:bbb"));
+        (await upsertArtifact(pool, artifact(analysisId, "runs/r2/output/late.csv", "sha256:bbb")))._unsafeUnwrap();
 
         const second = await runtime.gateway.load(threadId);
         expect(second.outcome).toBe("found");
@@ -177,7 +177,7 @@ describe("createReportSessionRuntime", () => {
         await seedAnalysis(analysisId);
         await seedThread(threadId, analysisId);
         const earlyPath = "runs/r1/output/de.csv";
-        await upsertArtifact(pool, artifact(analysisId, earlyPath, "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(analysisId, earlyPath, "sha256:aaa")))._unsafeUnwrap();
 
         // The first runtime instance pins the snapshot and writes the row.
         const writer = createReportSessionRuntime({ pool });
@@ -185,7 +185,7 @@ describe("createReportSessionRuntime", () => {
         expect(written.outcome).toBe("found");
 
         // A new artifact lands after the row is written.
-        await upsertArtifact(pool, artifact(analysisId, "runs/r2/output/late.csv", "sha256:bbb"));
+        (await upsertArtifact(pool, artifact(analysisId, "runs/r2/output/late.csv", "sha256:bbb")))._unsafeUnwrap();
 
         // A fresh runtime instance reads the stored snapshot, and it pins nothing.
         const reader = createReportSessionRuntime({ pool });
@@ -248,7 +248,7 @@ describe("createReportSessionRuntime", () => {
         await seedAnalysis(analysisId);
         await seedThread(threadId, analysisId);
         const pinnedPath = "runs/r1/output/de.csv";
-        await upsertArtifact(pool, artifact(analysisId, pinnedPath, "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(analysisId, pinnedPath, "sha256:aaa")))._unsafeUnwrap();
 
         const runtime = createReportSessionRuntime({ pool });
         const pinned = await runtime.gateway.load(threadId);
@@ -289,7 +289,7 @@ describe("createReportSessionRuntime", () => {
         const threadId = "thread-derived-binding";
         await seedAnalysis(analysisId);
         await seedThread(threadId, analysisId);
-        await upsertArtifact(pool, artifact(analysisId, "runs/r1/output/de.csv", "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(analysisId, "runs/r1/output/de.csv", "sha256:aaa")))._unsafeUnwrap();
 
         const runtime = createReportSessionRuntime({ pool });
         await runtime.gateway.load(threadId);

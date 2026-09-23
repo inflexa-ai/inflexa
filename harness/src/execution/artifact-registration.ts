@@ -14,6 +14,7 @@ import { err, ok, type Result } from "neverthrow";
 import type { Pool, PoolClient } from "pg";
 import type { AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
+import type { DbError } from "../lib/db-result.js";
 import { passGate, type GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import type { RegisterArtifactInput } from "../state/index.js";
@@ -33,6 +34,10 @@ export interface ArtifactRegistrationResult {
     failureDetails: Array<{ path: string; error: string }>;
 }
 
+/** Why a registration stopped: the `register` gate refused it, or a write of the local ledger failed. */
+export type ArtifactRegistrationFailure =
+    { readonly kind: "refused"; readonly refusal: GateRefusal } | { readonly kind: "ledger_failed"; readonly error: DbError };
+
 // ── Registration ─────────────────────────────────────────────────────
 
 /**
@@ -43,7 +48,8 @@ export interface ArtifactRegistrationResult {
  * and applies any returned external ids back onto the local rows.
  *
  * A refusal of `register` writes no external id: the upserted rows keep
- * `artifact_id = NULL`.
+ * `artifact_id = NULL`. A failed ledger write stops the registration at that
+ * write.
  */
 export async function registerStepArtifacts(
     db: Pool | PoolClient,
@@ -54,7 +60,7 @@ export async function registerStepArtifacts(
     // the seam's payload, handed verbatim to `registry.register`, and an
     // embedder's registry has no business receiving the host's logger.
     logger: Logger = createNoopLogger(),
-): Promise<Result<ArtifactRegistrationResult, GateRefusal>> {
+): Promise<Result<ArtifactRegistrationResult, ArtifactRegistrationFailure>> {
     const { resourceId, runId, stepId, artifacts } = input;
     const log = logger.named("artifact-registration").with({ runId, stepId });
 
@@ -80,11 +86,12 @@ export async function registerStepArtifacts(
         };
     });
 
-    await upsertArtifacts(db, localEntries);
+    const upserted = await upsertArtifacts(db, localEntries);
+    if (upserted.isErr()) return err({ kind: "ledger_failed", error: upserted.error });
 
     const localPaths = new Set(localEntries.map((e) => e.path));
     const registered = await passGate("ArtifactRegistry.register", registry.register(input, session));
-    if (registered.isErr()) return err(registered.error);
+    if (registered.isErr()) return err({ kind: "refused", refusal: registered.error });
     const result = registered.value;
 
     // The registry excluded these from `failed` by its own severity judgement, so
@@ -102,7 +109,8 @@ export async function registerStepArtifacts(
         // Skip files the registry also returned that we didn't upsert locally
         // (e.g., data inputs that were already born-synced).
         if (!localPaths.has(reg.path)) continue;
-        await updateArtifactId(db, resourceId, reg.path, reg.externalId);
+        const updated = await updateArtifactId(db, resourceId, reg.path, reg.externalId);
+        if (updated.isErr()) return err({ kind: "ledger_failed", error: updated.error });
         externalRegistered++;
     }
 
