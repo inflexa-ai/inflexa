@@ -592,8 +592,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             '`category` is shorthand for a top-level group (e.g. "pathways", "regulatory-networks"), and the groups present come back in `categories`; ' +
             "`limit` caps the entries returned. The response carries `returned`, `total`, and `hasMore`, so truncation is never silent. " +
             "An empty result means the dataset is absent right now — not that it is unobtainable. Say so; never guess a path, and never silently substitute a different dataset. " +
-            "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path, and whatever is added shows up on a later call. " +
-            "So before you report a gap as permanent, check whether any tool you hold reaches that provisioning path — offer that route if one exists, and call the gap permanent only when none does.",
+            "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path, and whatever is added shows up on a later call.",
         inputSchema: ListAvailableRefsInputSchema,
         // `execute` resolves `path ?? category` for the subtree it inspects, and
         // it ignores `category` when `path` is present. `query` is an ADDITIVE

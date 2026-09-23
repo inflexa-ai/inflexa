@@ -30,7 +30,7 @@ export interface AgentDefinition {
     readonly systemPrompt: string;
     readonly model: string;
     readonly tools: readonly Tool[];
-    /** Runaway guard — at the cap the loop forces a tool-less wrap-up call. */
+    /** Runaway guard — at the cap the loop forces a wrap-up call that forbids tools. */
     readonly maxIterations: number;
 }
 

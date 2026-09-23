@@ -268,10 +268,8 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             if (directParse.ok) return ok(directParse.value);
 
             // Slow path: a single-shot conversion call (no tools) transforms the
-            // raw output into a valid envelope. The harness anthropic provider
-            // silently drops `temperature` on 4.7+ models, so an explicit
-            // Sonnet-vs-Opus split is unnecessary — the parse+validate+envelope
-            // cascade below is the real safety net.
+            // raw output into a valid envelope. The parse+validate+envelope
+            // cascade below is the safety net.
             try {
                 const reply = unwrapOrThrow(
                     await deps.provider.chat(

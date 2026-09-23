@@ -372,10 +372,11 @@ The agent prompts are in `prompts/`. Each prompt obeys these conventions:
 
 1. **No run-order assumptions.** An agent must never assume that it operates on a
    first run. Search broadly for what exists before you continue.
-2. **Anti-patterns are explicit.** Each prompt has a "Do NOT" section that lists
-   the specific failure modes. When you edit a prompt, always maintain and extend
-   those lists. To tell an agent what not to do is as important as to tell it what
-   to do.
+2. **A "Do NOT" entry names a failure that an agent showed.** Give the reason
+   with each entry. State each other rule one time, as the behavior that you
+   want. A prohibition against a failure that the model does not make can move
+   the model toward that failure. When a failure no longer occurs, remove its
+   entry.
 3. **What the agent was handed is authoritative. Look further only where it is
    thin.** There is no unconditional orient-first pass. The **briefing** of a
    sandbox step is its first user message, composed at dispatch

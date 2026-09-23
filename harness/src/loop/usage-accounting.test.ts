@@ -96,10 +96,10 @@ const echoTool: Tool = defineTool({
     execute: async ({ label }) => ok({ label }),
 });
 
-/** Never stops asking for tools — only the tool-less wrap-up call ends the run. */
+/** Never stops asking for tools — only the wrap-up call, which forbids one, ends the run. */
 function neverTerminates(replyUsage: ChatUsage): ScriptedProvider {
     return scriptedProvider((callIndex, request) =>
-        Object.keys(request.tools).length === 0
+        request.toolChoice === "none"
             ? makeMessage([textBlock("wrap-up")], "end_turn", replyUsage)
             : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use", replyUsage),
     );

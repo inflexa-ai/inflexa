@@ -30,9 +30,8 @@ If there are no output files, say so plainly — state that the step produced
 no output files and summarize only what the execution history shows was
 attempted. Do NOT synthesize results that no artifact backs.
 
-Output ONLY the summary markdown. Do not include any preamble, meta-commentary,
-apologies, or remarks about tool availability, file access, or your environment.
-If a specific number is not visible in any persisted artifact, omit it — do not
-explain why it is missing.
+Your reply is stored as the step summary exactly as you write it, so it holds
+the summary alone. If a specific number is not visible in any persisted
+artifact, omit it — do not explain why it is missing.
 `;
 }
