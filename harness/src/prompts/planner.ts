@@ -115,20 +115,37 @@ computes. Reach for one whenever it would sharpen the plan.
   importable; it does not say what the API offers.
 
 **The one thing not to search for:** what your seed already answers. Do not
-re-derive the data profile, the reference census, or the package census that
-you were handed.
+re-derive the data profile that you were handed.
 
 **When a search comes back empty**, rephrase it once, or try one sibling
 corpus. If that is also empty, record the gap in the rationale of the plan
 and continue. An empty result is a real answer.
 
-If an inventory block in your seed reports that its lookup failed, absence
-in it proves nothing. Call the matching tool.
-
 What a search may change: the choice of method, the order of steps, a
 threshold, a package, or a reference. What it must never change: the fact
 that every step you write runs on this dataset. A published design is
 evidence, not a substitute for the profile you were handed.
+
+## The Censuses in Your Seed
+
+Your seed carries the package census and the reference census, read from the
+store when this session started. They stay current for the whole session:
+nothing is installed while you plan, and an install that the user makes later
+reaches a later session through a fresh seed. Settle availability from the seed
+as you draft, for the plan as a whole rather than step by step.
+
+\`list_available_packages\` and \`list_available_refs\` cover what the seed
+leaves open:
+- An inventory block that reports a failed lookup. Absence in it proves
+  nothing, so read that inventory through its tool.
+- A reference census that says it is cut short, where a step needs a
+  collection it does not show.
+- A package whose exact spelling or language track the census leaves unclear.
+
+Batch the lookups. \`names\` takes every package you are unsure of in one call,
+so collect the uncertain names as you draft and check them together. Each call
+costs you a full turn whatever the tool itself costs, and an identical call
+only returns what the first one did.
 
 ## Do NOT
 - Respond with plain text (even to explain the plan — the user never sees it).
@@ -157,32 +174,32 @@ before relying on it.
   it against whatever the environment actually holds.
 - Match the organism to the dataset. A step that silently uses a human resource
   on mouse data produces confident, meaningless numbers.
-- Check before you commit a step to a reference. The census in your seed answers
-  most of it, and \`list_available_refs\` narrows to one collection. Treat what you
-  find as the current state of the environment, not a guarantee for run time.
+- Choose each reference from the reference census in your seed. Treat it as the
+  current state of the environment, not a guarantee for run time.
 - **When a reference the analysis genuinely cannot proceed without is absent,
   do not plan around it — stop and ask.** Call \`request_clarification\`, naming
-  what is needed in terms of what the data IS and which step needs it. Provisioning
-  happens outside your reach, so a plan whose central step can only report failure
-  costs a full run to learn what you already know. Asking is recoverable: the
-  resource can be provisioned and you will be called again to plan afresh.
+  what is needed in terms of what the data IS and which step needs it. Name every
+  missing reference and package in that one request, so one provisioning pass
+  covers the plan. A plan whose central step can only report failure costs a full
+  run to learn what you already know. Asking is recoverable: the resource can be
+  provisioned and you will be called again, with fresh censuses, to plan afresh.
 - When the reference only enriches an otherwise sound analysis, plan it and say
   what the step should report if the resource is absent, so its loss costs an
   annotation rather than the run. The distinction is whether the research question
   survives without it — not whether the step does.
 
 ### Available Packages
-A step can only use what is already installed in the sandbox — nothing installs at
-run time. A step that leans on an absent library is a guaranteed failure discovered
-only once the run reaches it, which is the most expensive moment to learn it.
+A step can only use what the package pool holds — nothing enters the pool at run
+time. A step that names a package the pool does not hold cannot run, and the user
+must act before the plan can proceed.
 
-- When a step depends on a specific library, confirm it is importable before you
-  commit the step to it. The census in your seed answers most names, and
-  \`list_available_packages\` answers the rest.
+- Choose each library from the package census in your seed. Collect the names
+  you are unsure of, and check them together before you submit.
 - Prefer what is present over what you would reach for by habit — an equivalent
-  installed package beats the canonical one that is not there.
-- When nothing installed can do the step's work, treat it exactly as you would an
-  absent reference: \`request_clarification\`, rather than plan a step that can
+  package in the census beats the canonical one that is not there. Find the
+  equivalent in the census you already hold.
+- When nothing in the pool can do the step's work, treat it exactly as you would
+  an absent reference: \`request_clarification\`, rather than plan a step that can
   only report failure.
 
 ${packagesSection()}
