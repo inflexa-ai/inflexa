@@ -242,8 +242,9 @@ export async function routeAdHocRequest(
                             content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
                         },
                     ],
+                    // No forced tool choice: some Claude models reject it with a
+                    // 400. A reply without the call falls back below as `malformed`.
                     tools: routeTool(),
-                    toolChoice: { type: "tool", toolName: "submit_route" },
                 },
                 forSubAgent(input.session, AD_HOC_ROUTER_AGENT_ID),
                 signal,

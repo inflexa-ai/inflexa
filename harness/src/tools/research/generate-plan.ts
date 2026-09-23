@@ -1164,10 +1164,9 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         emit: ctx.emit,
                         runStep: passthroughStep,
                         resolved: () => holder.outcome !== null,
-                        // Planner prose is unusable: every meaningful outcome is
-                        // a tool call, and the terminal predicate stops the loop
-                        // as soon as one is recorded.
-                        toolChoice: "required",
+                        // No forced tool choice: some Claude models reject it with a
+                        // 400. The prompt names the terminal tools, and the salvage
+                        // turn below recovers a run that ends on prose.
                         logger,
                         usageRecorder: deps.usageRecorder,
                         // Fold the planner's calls into the turn total the root loop reports.

@@ -209,18 +209,17 @@ describe("runAgent prompt-cache directive", () => {
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        // 3 iterations + the forced tool-less wrap-up.
+        // 3 iterations + the forced wrap-up.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
             expect(breakpointsOf(call.messages)).toEqual([call.messages.length - 1]);
             expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
 
-        // The wrap-up is the call that empties the tool set — it must still place
-        // the breakpoint (its write is the one the cache_write_tokens metric exposes
-        // as waste).
+        // The wrap-up keeps the tool set of the loop, thus the cached prefix of
+        // the loop holds, and it forbids a call.
         const wrapUp = chat.calls.at(-1)!;
-        expect(Object.keys(wrapUp.tools)).toHaveLength(0);
+        expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
         expect(wrapUp.toolChoice).toBe("none");
         expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
     });

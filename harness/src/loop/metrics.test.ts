@@ -103,13 +103,10 @@ describe("runAgent metrics", () => {
     });
 
     it("increments the cap-hit counter exactly once for a capped run", async () => {
-        // Never terminates on its own — only the tool-less wrap-up call ends it.
-        // `tools` is a `ToolSet` (a record keyed by tool id), so the wrap-up's
-        // emptied tool set is an empty object, not an empty array.
+        // Never terminates on its own — only the wrap-up call, which forbids a
+        // tool, ends it.
         const chat = scriptedProvider((_callIndex, request) =>
-            Object.keys(request.tools).length === 0
-                ? makeMessage([textBlock("wrap-up")], "end_turn")
-                : makeMessage([toolUseBlock("t", "echo", {})], "tool_use"),
+            request.toolChoice === "none" ? makeMessage([textBlock("wrap-up")], "end_turn") : makeMessage([toolUseBlock("t", "echo", {})], "tool_use"),
         );
 
         await runAgent(agentDef(2), GO, makeSession(), runOpts(chat));

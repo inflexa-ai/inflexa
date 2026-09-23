@@ -234,11 +234,11 @@ describe("runAgent — workflow tools run unwrapped, in order", () => {
 // ── 5.6 — max-iteration wrap-up ─────────────────────────────────────
 
 describe("runAgent — max-iteration wrap-up", () => {
-    it("forces one tool-less call at the cap and returns without throwing", async () => {
-        // The provider never stops asking for tools — except when handed an
-        // empty tool list, which forces the wrap-up text reply.
+    it("forces one call that forbids tools at the cap and returns without throwing", async () => {
+        // The provider never stops asking for tools — except when a call
+        // forbids one, which forces the wrap-up text reply.
         const provider = scriptedProvider((callIndex, request) =>
-            request.tools !== undefined && Object.keys(request.tools).length === 0
+            request.toolChoice === "none"
                 ? makeMessage([textBlock("here is where I reached")], "end_turn")
                 : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );
@@ -247,7 +247,8 @@ describe("runAgent — max-iteration wrap-up", () => {
 
         // 3 capped iterations + 1 forced wrap-up call.
         expect(provider.calls).toHaveLength(4);
-        expect(provider.calls[3]!.tools).toEqual({});
+        expect(provider.calls[3]!.toolChoice).toBe("none");
+        expect(Object.keys(provider.calls[3]!.tools)).toEqual(Object.keys(provider.calls[2]!.tools));
 
         const last = messages.at(-1)!;
         expect(last.role).toBe("assistant");
@@ -886,12 +887,10 @@ describe("runAgent — aborted terminal path", () => {
 
 describe("runAgent — aborted wrap-up path", () => {
     // A provider that never stops asking for tools in-loop — burning every iteration —
-    // and, when handed the empty wrap-up tool set, resolves an abort carrying `partial`.
+    // and, when the wrap-up call forbids a tool, resolves an abort carrying `partial`.
     function abortsAtWrapUp(partial: string): ScriptedProvider {
         return scriptedProvider((callIndex, request) =>
-            request.tools !== undefined && Object.keys(request.tools).length === 0
-                ? abortedReply(partial)
-                : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
+            request.toolChoice === "none" ? abortedReply(partial) : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );
     }
 
@@ -900,7 +899,7 @@ describe("runAgent — aborted wrap-up path", () => {
 
         const { messages, finish } = await runAgent(agentDef([echoTool()], 3), GO, makeSession(), opts(provider));
 
-        // The abort during the tool-less wrap-up is reported as aborted; the loop still
+        // The abort during the wrap-up is reported as aborted; the loop still
         // genuinely exhausted its iterations, so cappedOut stays true.
         expect(finish.reason).toBe("aborted");
         expect(finish.cappedOut).toBe(true);
@@ -1050,7 +1049,7 @@ describe("runAgent — finish signal", () => {
 
     it("reports cappedOut with reason max_iterations on the wrap-up path", async () => {
         const provider = scriptedProvider((callIndex, request) =>
-            request.tools !== undefined && Object.keys(request.tools).length === 0
+            request.toolChoice === "none"
                 ? makeMessage([textBlock("reached")], "end_turn")
                 : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );

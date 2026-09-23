@@ -218,13 +218,12 @@ The skills you have access to are listed in your agent instructions.
 
 ## Context7 — Documentation Lookup
 
-Look up current documentation via context7 before writing non-trivial code:
-1. \`resolve_library_id\` with the package name to get the library ID.
-2. \`query_docs\` with the library ID and the specific function or method.
-
-Critical for rapidly-evolving packages (scvi-tools, spatialdata, cellrank,
-pertpy, muon) but applies broadly. Do NOT guess API details from memory —
-verify with context7 or skill references first.
+When you are not certain of a function's signature or behavior, look it up
+with context7 before you write the call: \`resolve_library_id\` with the
+package name, then \`query_docs\` with the library ID and the function.
+Rapidly-evolving packages (scvi-tools, spatialdata, cellrank, pertpy, muon)
+change their APIs between releases, so check them against the docs or the
+skill references rather than memory.
 
 ## Command Execution
 

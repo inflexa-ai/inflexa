@@ -54,7 +54,7 @@ function getInstruments(): Instruments {
                 unit: "{iteration}",
             }),
             capHits: meter.createCounter("cortex.harness.agent.cap_hits", {
-                description: "runAgent completions that exhausted maxIterations and took the " + "forced tool-less wrap-up path",
+                description: "runAgent completions that exhausted maxIterations and took the " + "forced wrap-up path",
             }),
             inputTokens: meter.createCounter("cortex.harness.agent.input_tokens", {
                 description: "Input tokens billed across every LLM call in a runAgent completion, cache reads included",

@@ -48,7 +48,7 @@ Your prior conversation — tool calls, code output, intermediate results — is
 
 Ground every quantitative claim in a PERSISTED output file: open it with the read_file tool and report what the file actually contains. A number that appears only in command stdout is NOT a citable result — read the artifact that holds it. If there are no output files, say so plainly; do not invent numbers and do not synthesize results no artifact backs.
 
-When finished, output ONLY the markdown summary as your final message — no preamble, no apologies, no tool calls.`;
+When finished, write the markdown summary as your final message. It is stored as the step summary exactly as you write it.`;
 
 /** Sub-agent identity for the summary loop — provenance only. */
 const SUMMARY_AGENT_ID = "step-summary-writer";

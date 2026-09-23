@@ -182,7 +182,7 @@ describe("generatePlan loop-driving tool", () => {
         expect(result.event).toBe("error");
         expect(result.error).toBe("Data is incompatible with every available agent.");
         expect(provider.calls).toHaveLength(1);
-        expect(provider.calls[0]!.toolChoice).toBe("required");
+        expect(provider.calls[0]!.toolChoice).toBeUndefined();
 
         // The planner ran on a derived child Session, offered every terminal tool. Only the
         // terminal set is asserted: those are what can record an outcome, so a missing one

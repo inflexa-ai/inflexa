@@ -98,8 +98,8 @@ export interface RunAgentOptions {
     readonly runStep: RunStep;
     readonly formatStepName?: StepNameFormatter;
     readonly isFatalLoopError?: (err: unknown) => boolean;
-    /** Tool-selection policy for in-loop model calls. The cap wrap-up remains
-     * tool-less regardless. */
+    /** Tool-selection policy for in-loop model calls. The cap wrap-up forbids a
+     * tool call regardless. */
     readonly toolChoice?: ChatRequest["toolChoice"];
     /**
      * Optional outcome predicate for loop-driving agents whose result is
@@ -544,16 +544,14 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         if (opts.resolved?.()) return stopOnResolved(i);
     }
 
-    // Cache defeater (known; not fixed here). Emptying the tool set changes the
-    // very front of the request prefix — tool definitions are cached ahead of
-    // system and history — so this call reads *nothing* back from the cache and
-    // rewrites the whole prefix from scratch. It still places the breakpoint
-    // because it is the one call whose write is pure waste, and the
-    // cache_write_tokens counter is what makes that waste visible.
+    // The wrap-up keeps the tool set of the loop and forbids a call through
+    // `toolChoice`. A changed tool set rewrites the cached prefix, and a model
+    // that binds its signed thinking blocks to the prefix can reject the
+    // transcript.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
         provider.chat(
-            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: {}, toolChoice: "none", reasoning },
+            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", reasoning },
             session,
             signal,
         ),
@@ -561,7 +559,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     accountForCall(wrapUp, wrapUpStepName);
 
     if (wrapUp.finishReason === "aborted") {
-        // An abort during the tool-less wrap-up is still the user cutting the turn — the
+        // An abort during the wrap-up is still the user cutting the turn — the
         // same event the in-loop path handles — so it gets the identical treatment: keep a
         // partial only when it carries content, and stamp the marker on the last assistant
         // this run produced. Reporting it as a plain cap-out would hide the interruption

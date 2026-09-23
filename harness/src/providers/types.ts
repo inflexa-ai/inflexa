@@ -42,7 +42,11 @@ export interface ChatRequest {
     readonly system: string;
     readonly messages: readonly ModelMessage[];
     readonly tools: ToolSet;
-    readonly toolChoice?: "auto" | "none" | "required" | { readonly type: "tool"; readonly toolName: string };
+    /**
+     * A forced choice (`required`, or one named tool) is absent on purpose: some
+     * Claude models reject it with a 400, and the model is chosen at run time.
+     */
+    readonly toolChoice?: "auto" | "none";
     readonly providerOptions?: ProviderOptions;
     /**
      * How deep the model reasons on this call. Absent sends no directive, thus

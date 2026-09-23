@@ -22,7 +22,7 @@
  *   guardrails. Only the conversation agent faces a human, so only it opts in.
  *
  * - `conversational` (default `false`) adds `SOULConversationalPrompt` —
- *   personality, response policy, and the 7-step reasoning cadence. Conversation
+ *   personality and response policy. Conversation
  *   agent only: a tool-only specialist's tight loop competes with conversational
  *   discipline.
  *
@@ -40,9 +40,8 @@ export interface ComposeSystemPromptOptions {
      */
     readonly identity?: boolean;
     /**
-     * Include the SOUL conversational layer (personality, response policy,
-     * 7-step reasoning). Default `false` — opt in only for the conversation
-     * agent.
+     * Include the SOUL conversational layer (personality and response policy).
+     * Default `false` — opt in only for the conversation agent.
      */
     readonly conversational?: boolean;
 }
