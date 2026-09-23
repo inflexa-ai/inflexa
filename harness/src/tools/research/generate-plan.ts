@@ -76,10 +76,10 @@ const PLANNER_AGENT_ID = "planner";
  * path and submits the plan that it had, not the plan that it was building.
  * Thus the wall-clock guard, not this number, is what bounds the worst case.
  */
-const PLANNER_MAX_ITERATIONS = 200;
+const PLANNER_MAX_ITERATIONS = 300;
 
 /** Wall-clock guard for a single plan-generation invocation. */
-const PLAN_TIMEOUT_MS = 600_000;
+const PLAN_TIMEOUT_MS = 1_800_000;
 
 // ── Diagnostic bounds ───────────────────────────────────────────────
 //
@@ -922,8 +922,8 @@ function buildPlannerSearchTools(deps: GeneratePlanDeps): Tool[] {
         queryDocsTool,
         // The environment itself. The seed already carries a rendered census of
         // both stores. These two tools are for the narrow second look: one
-        // collection of the reference store, or one package name that a step is
-        // about to import.
+        // collection of the reference store, or one batch of the package names
+        // that the census leaves unclear.
         createListAvailableRefsTool(deps.refStorePath === undefined ? {} : { refStorePath: deps.refStorePath }),
         // The planner is a conversation surface, thus the pool-scope reader binds
         // when the embedder gives one, and the answer names what the store HOLDS.
