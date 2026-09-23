@@ -1,5 +1,12 @@
 import { intro, log, outro, spinner } from "@clack/prompts";
-import { loadDataProfileStatus, reconcileOrphanedDataProfile, runDataProfile, triggerDataProfile, tryRetryDataProfile } from "@inflexa-ai/harness";
+import {
+    describeDataProfileStartError,
+    loadDataProfileStatus,
+    reconcileOrphanedDataProfile,
+    runDataProfile,
+    triggerDataProfile,
+    tryRetryDataProfile,
+} from "@inflexa-ai/harness";
 
 import { fail } from "../../../lib/cli.ts";
 import { getLogger } from "../../../lib/log.ts";
@@ -97,7 +104,10 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
         (p) => p,
         (e) => fail("Failed to seed the harness analysis state", e),
     );
-    const outcome = await triggerDataProfile(runtime.triggerDeps, params);
+    const outcome = (await triggerDataProfile(runtime.triggerDeps, params)).match(
+        (o) => o,
+        (e) => fail("Failed to trigger the data profile", e),
+    );
     switch (outcome) {
         case "started":
             log.step("Data profiling started");
@@ -128,13 +138,10 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
                 );
                 fail(`Could not start profiling${status?.error ? ` — last error: ${status.error}` : ""}. See the logs for details.`);
             }
-            runDataProfile(runtime.triggerDeps, params).catch((cause: unknown) => {
-                getLogger("harness").error(
-                    { analysisId: analysis.id, err: cause instanceof Error ? cause.message : String(cause) },
-                    "profile retry failed to start",
-                );
-            });
-            log.step("Previous profile failed — retrying");
+            (await runDataProfile(runtime.triggerDeps, params)).match(
+                () => log.step("Previous profile failed — retrying"),
+                (e) => fail(`Could not start the profile retry — ${describeDataProfileStartError(e)}`),
+            );
             break;
         }
         default: {

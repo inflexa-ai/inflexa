@@ -98,12 +98,12 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
             ran.seed = true;
             return okAsync({ auth: makeLocalAuth(), analysisId: ANALYSIS.id, stagedInputs: STAGED });
         },
-        trigger: async () => {
+        trigger: () => {
             ran.trigger = true;
-            return "started";
+            return okAsync("started");
         },
         retryClaim: () => okAsync(false),
-        run: async () => {},
+        run: () => okAsync(undefined),
         ...over,
     };
     return { seams, ran };
@@ -248,8 +248,9 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
                 claimed = true;
                 return okAsync(true);
             },
-            run: async () => {
+            run: () => {
                 ranRun = true;
+                return okAsync(undefined);
             },
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
@@ -327,7 +328,7 @@ describe("reprofileForInputChange", () => {
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(enumerated([file("f1"), file("f2"), file("f3")])),
             loadStatus: () => okAsync(completedWith()),
-            trigger: async () => "restarted",
+            trigger: () => okAsync("restarted"),
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ran.stage).toBe(true);
@@ -341,7 +342,7 @@ describe("reprofileForInputChange", () => {
             enumerate: () => ok(enumerated([file("f1")])),
             loadStatus: () => okAsync(completedWith()),
             materialized: () => ok(true),
-            trigger: async () => "restarted",
+            trigger: () => okAsync("restarted"),
         });
         expect((await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).kind).toBe("triggered");
     });
@@ -358,7 +359,7 @@ describe("reprofileForInputChange", () => {
                 claimed = true;
                 return okAsync(true);
             },
-            run: async () => {},
+            run: () => okAsync(undefined),
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(claimed).toBe(true);
@@ -419,15 +420,24 @@ describe("ensureProfileAtParity — faults", () => {
     });
 
     test("a trigger CAS lost to another attempt is already_running", async () => {
-        const { seams } = trackingSeams({ trigger: async () => "already_running" });
+        const { seams } = trackingSeams({ trigger: () => okAsync("already_running") });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: true });
     });
 
     test("a trigger failure is failed with a reason (parity never retries)", async () => {
-        const { seams } = trackingSeams({ trigger: async () => "failed" });
+        const { seams } = trackingSeams({ trigger: () => okAsync("failed") });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
         expect(outcome.kind).toBe("failed");
         if (outcome.kind === "failed") expect(outcome.reason.length).toBeGreaterThan(0);
+    });
+
+    test("a trigger ledger fault is failed with its reason", async () => {
+        const { seams } = trackingSeams({ trigger: () => errAsync({ type: "query_failed", op: "dataProfile.loadSeedInputFileIds", cause: null }) });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({
+            kind: "failed",
+            reason: "the profile trigger failed (query_failed)",
+            materialized: true,
+        });
     });
 });
 
@@ -456,12 +466,12 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
             stage: async () => ok(STAGED),
             // The real shared core — this is the whole point of the assertion below.
             seed: seedProfileLedger,
-            trigger: async (_deps, params) => {
+            trigger: (_deps, params) => {
                 capturedParams = params;
-                return "started";
+                return okAsync("started");
             },
             retryClaim: () => okAsync(false),
-            run: async () => {},
+            run: () => okAsync(undefined),
         };
 
         const outcome = await ensureProfileAtParity(runtime, ANALYSIS, seams);
@@ -509,7 +519,7 @@ describe("forceReprofile", () => {
         const { seams, ran } = trackingSeams({
             enumerate: () => ok(new Set(["f1", "f2"])),
             loadStatus: () => okAsync(completedWith()),
-            trigger: async () => "restarted",
+            trigger: () => okAsync("restarted"),
         });
         expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
         expect(ran.stage).toBe(true);
@@ -544,17 +554,18 @@ describe("forceReprofile", () => {
     });
 
     test("a trigger CAS lost passes through as already_running", async () => {
-        const { seams } = trackingSeams({ trigger: async () => "already_running" });
+        const { seams } = trackingSeams({ trigger: () => okAsync("already_running") });
         expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: true });
     });
 
     test("a failed row is retry-claimed and re-run → triggered (restarted)", async () => {
         let ranRun = false;
         const { seams } = trackingSeams({
-            trigger: async () => "failed",
+            trigger: () => okAsync("failed"),
             retryClaim: () => okAsync(true),
-            run: async () => {
+            run: () => {
                 ranRun = true;
+                return okAsync(undefined);
             },
         });
         expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true, materialized: true });
@@ -564,23 +575,22 @@ describe("forceReprofile", () => {
     test("a failed row whose retry claim is lost is failed — never re-run", async () => {
         let ranRun = false;
         const { seams } = trackingSeams({
-            trigger: async () => "failed",
+            trigger: () => okAsync("failed"),
             retryClaim: () => okAsync(false),
-            run: async () => {
+            run: () => {
                 ranRun = true;
+                return okAsync(undefined);
             },
         });
         expect((await forceReprofile(stubRuntime, ANALYSIS, seams)).kind).toBe("failed");
         expect(ranRun).toBe(false);
     });
 
-    test("a claimed retry whose start rejects is failed", async () => {
+    test("a claimed retry whose start fails is failed", async () => {
         const { seams } = trackingSeams({
-            trigger: async () => "failed",
+            trigger: () => okAsync("failed"),
             retryClaim: () => okAsync(true),
-            run: async () => {
-                throw new Error("start rejected");
-            },
+            run: () => errAsync({ type: "start_failed", cause: new Error("start rejected") }),
         });
         expect((await forceReprofile(stubRuntime, ANALYSIS, seams)).kind).toBe("failed");
     });
