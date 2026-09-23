@@ -3,6 +3,9 @@
  * reconciliation.
  */
 
+import type { ResultAsync } from "neverthrow";
+
+import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import type { ArtifactRow } from "./schema.js";
 
@@ -23,10 +26,11 @@ export interface RegisterArtifactInput {
     fileId?: string | null;
 }
 
-export async function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): Promise<void> {
+export function upsertArtifact(pool: Querier, entry: RegisterArtifactInput): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
-    await pool.query({
-        text: `INSERT INTO cortex_artifacts
+    return tryMutation("artifacts.upsertArtifact", async () => {
+        await pool.query({
+            text: `INSERT INTO cortex_artifacts
           (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           ON CONFLICT (analysis_id, path) DO UPDATE SET
@@ -37,18 +41,19 @@ export async function upsertArtifact(pool: Querier, entry: RegisterArtifactInput
             source_run = EXCLUDED.source_run,
             file_type = COALESCE(EXCLUDED.file_type, cortex_artifacts.file_type),
             file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id)`,
-        values: [
-            entry.resourceId,
-            entry.path,
-            entry.hash,
-            entry.size,
-            entry.role,
-            entry.sourceStep ?? null,
-            entry.sourceRun ?? null,
-            entry.fileType ?? null,
-            entry.fileId ?? null,
-            now,
-        ],
+            values: [
+                entry.resourceId,
+                entry.path,
+                entry.hash,
+                entry.size,
+                entry.role,
+                entry.sourceStep ?? null,
+                entry.sourceRun ?? null,
+                entry.fileType ?? null,
+                entry.fileId ?? null,
+                now,
+            ],
+        });
     });
 }
 
@@ -73,33 +78,34 @@ const ROWS_PER_STATEMENT = 1_000;
  * idempotent per row (`ON CONFLICT ... DO UPDATE`), so a failure between
  * chunks is healed by the caller's retry re-upserting the same manifest.
  */
-export async function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[]): Promise<void> {
+export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[]): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
-    for (let start = 0; start < entries.length; start += ROWS_PER_STATEMENT) {
-        const chunk = entries.slice(start, start + ROWS_PER_STATEMENT);
-        const placeholders = chunk
-            .map((_, i) => {
-                const base = i * COLS_PER_ROW;
-                return (
-                    `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, ` +
-                    `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
-                );
-            })
-            .join(", ");
-        const values = chunk.flatMap((e) => [
-            e.resourceId,
-            e.path,
-            e.hash,
-            e.size,
-            e.role,
-            e.sourceStep ?? null,
-            e.sourceRun ?? null,
-            e.fileType ?? null,
-            e.fileId ?? null,
-            now,
-        ]);
-        await pool.query({
-            text: `INSERT INTO cortex_artifacts
+    return tryMutation("artifacts.upsertArtifacts", async () => {
+        for (let start = 0; start < entries.length; start += ROWS_PER_STATEMENT) {
+            const chunk = entries.slice(start, start + ROWS_PER_STATEMENT);
+            const placeholders = chunk
+                .map((_, i) => {
+                    const base = i * COLS_PER_ROW;
+                    return (
+                        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, ` +
+                        `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
+                    );
+                })
+                .join(", ");
+            const values = chunk.flatMap((e) => [
+                e.resourceId,
+                e.path,
+                e.hash,
+                e.size,
+                e.role,
+                e.sourceStep ?? null,
+                e.sourceRun ?? null,
+                e.fileType ?? null,
+                e.fileId ?? null,
+                now,
+            ]);
+            await pool.query({
+                text: `INSERT INTO cortex_artifacts
           (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, created_at)
           VALUES ${placeholders}
           ON CONFLICT (analysis_id, path) DO UPDATE SET
@@ -110,9 +116,10 @@ export async function upsertArtifacts(pool: Querier, entries: RegisterArtifactIn
             source_run = EXCLUDED.source_run,
             file_type = COALESCE(EXCLUDED.file_type, cortex_artifacts.file_type),
             file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id)`,
-            values,
-        });
-    }
+                values,
+            });
+        }
+    });
 }
 
 /** Result type for input artifact metadata lookups. */
@@ -127,39 +134,43 @@ export interface InputArtifactMeta {
  * Query cortex_artifacts for input-role rows matching the given paths.
  * Used at the registration boundary to resolve metadata for data-source inputs.
  */
-export async function queryInputArtifacts(pool: Querier, analysisId: string, paths: string[]): Promise<InputArtifactMeta[]> {
-    if (paths.length === 0) return [];
-    const result = await pool.query<{
-        path: string;
-        hash: string;
-        size: number;
-        file_id: string | null;
-    }>({
-        text: `SELECT path, hash, size, file_id
+export function queryInputArtifacts(pool: Querier, analysisId: string, paths: string[]): ResultAsync<InputArtifactMeta[], DbError> {
+    return tryQuery("artifacts.queryInputArtifacts", async () => {
+        if (paths.length === 0) return [];
+        const result = await pool.query<{
+            path: string;
+            hash: string;
+            size: number;
+            file_id: string | null;
+        }>({
+            text: `SELECT path, hash, size, file_id
           FROM cortex_artifacts
           WHERE analysis_id = $1 AND role = 'input' AND path = ANY($2::text[])`,
-        values: [analysisId, paths],
+            values: [analysisId, paths],
+        });
+        return result.rows.map((r) => ({
+            path: r.path,
+            hash: r.hash,
+            size: Number(r.size),
+            fileId: r.file_id ?? null,
+        }));
     });
-    return result.rows.map((r) => ({
-        path: r.path,
-        hash: r.hash,
-        size: Number(r.size),
-        fileId: r.file_id ?? null,
-    }));
 }
 
-export async function queryUnsyncedStepArtifacts(pool: Querier, resourceId: string, runId: string, stepId: string): Promise<ArtifactRow[]> {
-    const result = await pool.query({
-        text: `SELECT analysis_id, path, artifact_id, file_id, hash, size, role,
+export function queryUnsyncedStepArtifacts(pool: Querier, resourceId: string, runId: string, stepId: string): ResultAsync<ArtifactRow[], DbError> {
+    return tryQuery("artifacts.queryUnsyncedStepArtifacts", async () => {
+        const result = await pool.query({
+            text: `SELECT analysis_id, path, artifact_id, file_id, hash, size, role,
                  source_step, source_run, created_at, file_type
           FROM cortex_artifacts
           WHERE analysis_id = $1 AND source_run = $2 AND source_step = $3
             AND artifact_id IS NOT NULL AND file_id IS NULL
             AND role = 'step_output'
           ORDER BY created_at`,
-        values: [resourceId, runId, stepId],
+            values: [resourceId, runId, stepId],
+        });
+        return result.rows.map(mapArtifactRow);
     });
-    return result.rows.map(mapArtifactRow);
 }
 
 /** One registered step output, as a downstream consumer needs to name it. */
@@ -175,10 +186,17 @@ export interface StepArtifactRef {
  * path, so a `limit` truncates the tail of the list rather than an arbitrary
  * slice of it — and so the same call replays to the same rows.
  */
-export async function queryStepArtifactPaths(pool: Querier, resourceId: string, runId: string, stepId: string, limit: number): Promise<StepArtifactRef[]> {
-    if (limit <= 0) return [];
-    const result = await pool.query<{ path: string; file_type: string | null }>({
-        text: `SELECT path, file_type
+export function queryStepArtifactPaths(
+    pool: Querier,
+    resourceId: string,
+    runId: string,
+    stepId: string,
+    limit: number,
+): ResultAsync<StepArtifactRef[], DbError> {
+    return tryQuery("artifacts.queryStepArtifactPaths", async () => {
+        if (limit <= 0) return [];
+        const result = await pool.query<{ path: string; file_type: string | null }>({
+            text: `SELECT path, file_type
           FROM cortex_artifacts
           WHERE analysis_id = $1 AND source_run = $2 AND source_step = $3
             AND role = 'step_output'
@@ -191,9 +209,10 @@ export async function queryStepArtifactPaths(pool: Querier, resourceId: string, 
                    END,
                    path
           LIMIT $4`,
-        values: [resourceId, runId, stepId, limit],
+            values: [resourceId, runId, stepId, limit],
+        });
+        return result.rows.map((r) => ({ path: r.path, fileType: r.file_type ?? null }));
     });
-    return result.rows.map((r) => ({ path: r.path, fileType: r.file_type ?? null }));
 }
 
 /** One registered artifact of an analysis, as a reader of the full artifact set names it. */
@@ -212,52 +231,60 @@ export interface AnalysisArtifactRef {
  * query drops such a row, a later refusal says that the artifact never existed, and that reason is
  * false.
  */
-export async function queryAnalysisArtifacts(pool: Querier, analysisId: string): Promise<AnalysisArtifactRef[]> {
-    const result = await pool.query<{ path: string; hash: string; file_type: string | null }>({
-        text: `SELECT path, hash, file_type
+export function queryAnalysisArtifacts(pool: Querier, analysisId: string): ResultAsync<AnalysisArtifactRef[], DbError> {
+    return tryQuery("artifacts.queryAnalysisArtifacts", async () => {
+        const result = await pool.query<{ path: string; hash: string; file_type: string | null }>({
+            text: `SELECT path, hash, file_type
           FROM cortex_artifacts
           WHERE analysis_id = $1
           ORDER BY path`,
-        values: [analysisId],
+            values: [analysisId],
+        });
+        return result.rows.map((r) => ({ path: r.path, hash: r.hash, fileType: r.file_type ?? null }));
     });
-    return result.rows.map((r) => ({ path: r.path, hash: r.hash, fileType: r.file_type ?? null }));
 }
 
 /** Count step-output artifacts produced by a run — for the run-completed card. */
-export async function countArtifactsForRun(pool: Querier, analysisId: string, runId: string): Promise<number> {
-    const result = await pool.query<{ n: string }>({
-        text: `SELECT COUNT(*)::text AS n
+export function countArtifactsForRun(pool: Querier, analysisId: string, runId: string): ResultAsync<number, DbError> {
+    return tryQuery("artifacts.countArtifactsForRun", async () => {
+        const result = await pool.query<{ n: string }>({
+            text: `SELECT COUNT(*)::text AS n
           FROM cortex_artifacts
           WHERE analysis_id = $1 AND source_run = $2 AND role = 'step_output'`,
-        values: [analysisId, runId],
+            values: [analysisId, runId],
+        });
+        return Number(result.rows[0]?.n ?? 0);
     });
-    return Number(result.rows[0]?.n ?? 0);
 }
 
-export async function updateArtifactId(pool: Querier, resourceId: string, path: string, artifactId: string, fileType?: string | null): Promise<void> {
-    await pool.query({
-        text: `UPDATE cortex_artifacts SET artifact_id = $1,
+export function updateArtifactId(pool: Querier, resourceId: string, path: string, artifactId: string, fileType?: string | null): ResultAsync<void, DbError> {
+    return tryMutation("artifacts.updateArtifactId", async () => {
+        await pool.query({
+            text: `UPDATE cortex_artifacts SET artifact_id = $1,
              file_type = COALESCE($4, file_type)
            WHERE analysis_id = $2 AND path = $3`,
-        values: [artifactId, resourceId, path, fileType ?? null],
+            values: [artifactId, resourceId, path, fileType ?? null],
+        });
     });
 }
 
-export async function updateFileIds(pool: Querier, pairs: Array<{ artifactId: string; fileId: string }>): Promise<void> {
-    if (pairs.length === 0) return;
-    const values: unknown[] = [];
-    const tuples: string[] = [];
-    for (let i = 0; i < pairs.length; i++) {
-        const base = i * 2;
-        tuples.push(`($${base + 1}::text, $${base + 2}::text)`);
-        values.push(pairs[i]!.artifactId, pairs[i]!.fileId);
-    }
-    await pool.query({
-        text: `UPDATE cortex_artifacts AS a
+export function updateFileIds(pool: Querier, pairs: Array<{ artifactId: string; fileId: string }>): ResultAsync<void, DbError> {
+    return tryMutation("artifacts.updateFileIds", async () => {
+        if (pairs.length === 0) return;
+        const values: unknown[] = [];
+        const tuples: string[] = [];
+        for (let i = 0; i < pairs.length; i++) {
+            const base = i * 2;
+            tuples.push(`($${base + 1}::text, $${base + 2}::text)`);
+            values.push(pairs[i]!.artifactId, pairs[i]!.fileId);
+        }
+        await pool.query({
+            text: `UPDATE cortex_artifacts AS a
            SET file_id = c.file_id
            FROM (VALUES ${tuples.join(", ")}) AS c(artifact_id, file_id)
            WHERE a.artifact_id = c.artifact_id`,
-        values,
+            values,
+        });
     });
 }
 

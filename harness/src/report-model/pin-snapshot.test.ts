@@ -45,11 +45,13 @@ describe("pinReportSnapshot", () => {
         // The seed mixes the two roles on purpose. The snapshot states membership, thus the role of an
         // artifact never decides whether it is a member. A staged input is a member, the same as a step
         // output.
-        await upsertArtifacts(pool, [
-            artifact(DE_TABLE, "sha256:aaa", "output"),
-            artifact(VOLCANO, "sha256:bbb", "figure"),
-            artifact(COUNTS, "sha256:ccc", "output", "input"),
-        ]);
+        (
+            await upsertArtifacts(pool, [
+                artifact(DE_TABLE, "sha256:aaa", "output"),
+                artifact(VOLCANO, "sha256:bbb", "figure"),
+                artifact(COUNTS, "sha256:ccc", "output", "input"),
+            ])
+        )._unsafeUnwrap();
 
         const snapshot = (await pinReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
 
@@ -62,7 +64,7 @@ describe("pinReportSnapshot", () => {
     it("gives an empty map and no error for an analysis with no registered artifact", async () => {
         // The seed belongs to a different analysis. Thus the empty answer comes from the scope of the
         // pin, and not from an empty table.
-        await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output", "step_output", "analysis-other"));
+        (await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output", "step_output", "analysis-other")))._unsafeUnwrap();
 
         const result = await pinReportSnapshot(pool, ANALYSIS);
 
@@ -71,10 +73,10 @@ describe("pinReportSnapshot", () => {
     });
 
     it("holds no entry for an artifact that registers after the pin", async () => {
-        await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output"));
+        (await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output")))._unsafeUnwrap();
         const earlier = (await pinReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
 
-        await upsertArtifact(pool, artifact(LATE_TABLE, "sha256:ddd", "output"));
+        (await upsertArtifact(pool, artifact(LATE_TABLE, "sha256:ddd", "output")))._unsafeUnwrap();
 
         expect(Object.keys(earlier.artifacts)).toEqual([DE_TABLE]);
 
@@ -87,7 +89,7 @@ describe("pinReportSnapshot", () => {
     it("keeps a path of `__proto__` an ordinary entry", async () => {
         // The ledger accepts any path. A plain object treats `__proto__` as the prototype setter, thus
         // the entry vanishes. The null-prototype map keeps the key an own member of the snapshot.
-        await upsertArtifact(pool, artifact("__proto__", "sha256:eee", "output"));
+        (await upsertArtifact(pool, artifact("__proto__", "sha256:eee", "output")))._unsafeUnwrap();
 
         const snapshot = (await pinReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
 
@@ -96,7 +98,7 @@ describe("pinReportSnapshot", () => {
     });
 
     it("keeps a row whose bytes are unrecoverable", async () => {
-        await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output"));
+        (await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output")))._unsafeUnwrap();
         const marked = await pool.query("UPDATE cortex_artifacts SET unrecoverable_at = $1 WHERE analysis_id = $2 AND path = $3", [
             new Date().toISOString(),
             ANALYSIS,
@@ -110,7 +112,7 @@ describe("pinReportSnapshot", () => {
     });
 
     it("copies no row into an entry", async () => {
-        await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output"));
+        (await upsertArtifact(pool, artifact(DE_TABLE, "sha256:aaa", "output")))._unsafeUnwrap();
 
         const snapshot = (await pinReportSnapshot(pool, ANALYSIS))._unsafeUnwrap();
 

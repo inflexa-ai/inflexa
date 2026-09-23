@@ -295,9 +295,9 @@ export function expireStaleDataProfile(pool: Querier, analysisId: string, timeou
  * Reset a ledger row wedged at `running` with no workflow behind it back to
  * `failed`, so the normal retry path can re-profile it.
  *
- * A start that rejects after the CAS already flipped the row to `running`
+ * A start that fails after the CAS already flipped the row to `running`
  * compensates itself (`triggerDataProfile`/`runDataProfile` fail the ledger in
- * their catch). This covers the residual case that compensation cannot: a host
+ * their dispatch). This covers the residual case that compensation cannot: a host
  * that dies in the window between the CAS and the `DBOS.startWorkflow` insert
  * leaves a `running` row with no workflow for recovery to resume — nothing
  * would ever move it off `running`, and every later trigger reports

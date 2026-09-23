@@ -478,13 +478,14 @@ export type { Pool } from "pg";
 // when the analysis names a non-empty seeded input set; a failed profile is re-claimed
 // via `tryRetryDataProfile` and then started with `runDataProfile` (the managed retry
 // route's shape — embedders mirror it).
-export { registerDataProfileWorkflow, triggerDataProfile, runDataProfile } from "./tasks/data-profile.js";
+export { registerDataProfileWorkflow, triggerDataProfile, runDataProfile, describeDataProfileStartError } from "./tasks/data-profile.js";
 export type {
     DataProfileDeps,
     DataProfileWorkflowInput,
     DataProfileTriggerDeps,
     DataProfileTriggerParams,
     DataProfileTriggerResult,
+    DataProfileStartError,
 } from "./tasks/data-profile.js";
 /**
  * The synthetic run id the data-profile workflow stamps onto its own frame — the profile has no run

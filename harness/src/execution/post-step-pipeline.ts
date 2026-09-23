@@ -22,13 +22,13 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
-import type { GateRefusal } from "../lib/hooks.js";
+import { describeDbError } from "../lib/db-result.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 
 import type { ArtifactRegistry } from "./artifact-registry.js";
-import { registerStepArtifacts } from "./artifact-registration.js";
+import { registerStepArtifacts, type ArtifactRegistrationFailure } from "./artifact-registration.js";
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
 import { generateFileMetadata as coreGenerateFileMetadata, type ArtifactForMetadata, type FileMetadataEntry } from "./artifact-metadata.js";
 import { generateStepSummary as coreGenerateStepSummary } from "./step-summary.js";
@@ -140,10 +140,17 @@ export async function generateStepSummaryAndWrite(
     return summary;
 }
 
-export type StepRegistrationFailure = { readonly kind: "refused"; readonly refusal: GateRefusal } | { readonly kind: "rejected"; readonly message: string };
+export type StepRegistrationFailure = ArtifactRegistrationFailure | { readonly kind: "rejected"; readonly message: string };
 
 export function describeStepRegistrationFailure(failure: StepRegistrationFailure): string {
-    return failure.kind === "refused" ? `the artifact registry refused the registration: ${failure.refusal.reason}` : failure.message;
+    switch (failure.kind) {
+        case "refused":
+            return `the artifact registry refused the registration: ${failure.refusal.reason}`;
+        case "ledger_failed":
+            return `the artifact ledger write failed: ${describeDbError(failure.error)}`;
+        case "rejected":
+            return failure.message;
+    }
 }
 
 /**
@@ -154,7 +161,7 @@ export function describeStepRegistrationFailure(failure: StepRegistrationFailure
  * plus anything rejected as a consequence of one — so a non-zero count means
  * real outputs went unregistered, and the `err` carries the per-file detail (the
  * OSS filesystem registry returns `externalFailed: 0`, so it never trips). A
- * refusal of the `register` gate is the other `err`.
+ * refusal of the `register` gate and a failed ledger write are the other `err`s.
  * Returns the reconciled manifest.
  */
 export async function reconcileAndRegisterStepArtifacts(
@@ -190,7 +197,7 @@ export async function reconcileAndRegisterStepArtifacts(
         session,
         deps.logger,
     );
-    if (registered.isErr()) return err({ kind: "refused", refusal: registered.error });
+    if (registered.isErr()) return err(registered.error);
     const reg = registered.value;
     if (reg.externalFailed > 0) {
         // The registry commits per leaf and per activity, so accepted and rejected

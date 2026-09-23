@@ -70,7 +70,7 @@
  */
 
 import { DBOS, Error as DBOSErrors, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
-import { ResultAsync, err, ok, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool } from "pg";
@@ -567,7 +567,7 @@ async function collectUpstreamHandoffs(args: {
     const handoffs: UpstreamHandoff[] = [];
     for (const summary of summaries) {
         const outputDir = stepSubdir(runStepDir(runId, summary.stepId), "output");
-        const artifacts = await queryStepArtifactPaths(pool, analysisId, runId, summary.stepId, MAX_UPSTREAM_ARTIFACTS);
+        const artifacts = unwrapOrThrow(await queryStepArtifactPaths(pool, analysisId, runId, summary.stepId, MAX_UPSTREAM_ARTIFACTS));
         handoffs.push({
             stepId: summary.stepId,
             agentId: summary.agentId,
@@ -1578,10 +1578,9 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
     // completed/failed shapes genuinely differ — the provenance record does not.
     if (status === "completed" || status === "partial") {
-        const artifactCount = await DBOS.runStep(
-            async () => await ResultAsync.fromPromise(countArtifactsForRun(deps.pool, input.analysisId, runId), () => "the artifact count failed").unwrapOr(0),
-            { name: "count-run-artifacts" },
-        );
+        const artifactCount = await DBOS.runStep(async () => await countArtifactsForRun(deps.pool, input.analysisId, runId).unwrapOr(0), {
+            name: "count-run-artifacts",
+        });
         await emitStreamPart({
             type: "data-run-completed",
             runId,

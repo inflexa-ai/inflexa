@@ -435,7 +435,7 @@ describe("spawnReportSession pin", () => {
     it("pins the snapshot of the child before any turn of the child runs", async () => {
         await seedAnalysisRow(ANALYSIS_A);
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa")))._unsafeUnwrap();
 
         const child = (await pinningSpawn().spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
@@ -447,11 +447,11 @@ describe("spawnReportSession pin", () => {
     it("keeps an artifact that lands after the spawn out of the stored snapshot", async () => {
         await seedAnalysisRow(ANALYSIS_A);
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa")))._unsafeUnwrap();
         const child = (await pinningSpawn().spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
         // A run registers an artifact between the spawn and the first turn.
-        await upsertArtifact(pool, artifact(ANALYSIS_A, LATE, "sha256:bbb"));
+        (await upsertArtifact(pool, artifact(ANALYSIS_A, LATE, "sha256:bbb")))._unsafeUnwrap();
         // The first turn anchors again. The operation is idempotent, thus it reads
         // the stored snapshot and it pins nothing.
         const firstTurn = await createReportSessionRuntime({ pool }).ensureSessionState(child.threadId);
@@ -465,7 +465,7 @@ describe("spawnReportSession pin", () => {
     it("keeps the child when the pin fails, and the next call pins", async () => {
         await seedAnalysisRow(ANALYSIS_A);
         await seedConversation("p1", ANALYSIS_A, "Parent");
-        await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa"));
+        (await upsertArtifact(pool, artifact(ANALYSIS_A, EARLY, "sha256:aaa")))._unsafeUnwrap();
         // The anchor operation fails the same way a transient store fault fails it.
         const failing = createReportSessionSpawn({
             pool,

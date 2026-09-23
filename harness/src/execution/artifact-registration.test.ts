@@ -113,8 +113,25 @@ describe("registerStepArtifacts — a refusal of the register gate", () => {
             {} as AgentSession,
         );
 
-        expect(registration._unsafeUnwrapErr()).toEqual({ kind: "failed", gate: "ArtifactRegistry.register", reason: "r" });
+        expect(registration._unsafeUnwrapErr()).toEqual({ kind: "refused", refusal: { kind: "failed", gate: "ArtifactRegistry.register", reason: "r" } });
         expect(statements.some((sql) => sql.includes("INSERT INTO cortex_artifacts"))).toBe(true);
         expect(statements.some((sql) => sql.includes("SET artifact_id"))).toBe(false);
+    });
+});
+
+describe("registerStepArtifacts — a failed ledger write", () => {
+    it("gives the write failure as its err", async () => {
+        const failing = { query: async () => Promise.reject(new Error("connection terminated")) } as unknown as Pool;
+
+        const registration = await registerStepArtifacts(
+            failing,
+            registryReturning(accepted),
+            { resourceId: RID, runId: RUN, stepId: STEP, artifacts: manifest(), collector: new ProvenanceCollector({ stepId: STEP, runId: RUN }) },
+            {} as AgentSession,
+        );
+
+        const failure = registration._unsafeUnwrapErr();
+        expect(failure.kind).toBe("ledger_failed");
+        expect(failure.kind === "ledger_failed" && failure.error.op).toBe("artifacts.upsertArtifacts");
     });
 });

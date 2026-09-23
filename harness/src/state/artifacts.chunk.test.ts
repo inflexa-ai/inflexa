@@ -44,7 +44,7 @@ describe("upsertArtifacts chunking", () => {
         const { querier, captured } = capturingQuerier();
         const entries = Array.from({ length: 7_000 }, (_, i) => entry(i));
 
-        await upsertArtifacts(querier, entries);
+        (await upsertArtifacts(querier, entries))._unsafeUnwrap();
 
         expect(captured.length).toBeGreaterThan(1);
         for (const q of captured) {
@@ -59,10 +59,12 @@ describe("upsertArtifacts chunking", () => {
 
     it("placeholders restart at $1 in every statement", async () => {
         const { querier, captured } = capturingQuerier();
-        await upsertArtifacts(
-            querier,
-            Array.from({ length: 1_500 }, (_, i) => entry(i)),
-        );
+        (
+            await upsertArtifacts(
+                querier,
+                Array.from({ length: 1_500 }, (_, i) => entry(i)),
+            )
+        )._unsafeUnwrap();
 
         expect(captured).toHaveLength(2);
         for (const q of captured) {
@@ -75,11 +77,11 @@ describe("upsertArtifacts chunking", () => {
 
     it("a small manifest stays a single statement and an empty one issues none", async () => {
         const one = capturingQuerier();
-        await upsertArtifacts(one.querier, [entry(0), entry(1)]);
+        (await upsertArtifacts(one.querier, [entry(0), entry(1)]))._unsafeUnwrap();
         expect(one.captured).toHaveLength(1);
 
         const none = capturingQuerier();
-        await upsertArtifacts(none.querier, []);
+        (await upsertArtifacts(none.querier, []))._unsafeUnwrap();
         expect(none.captured).toHaveLength(0);
     });
 });
