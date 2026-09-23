@@ -224,8 +224,12 @@ empty it SHALL return all-zero counts immediately and SHALL NOT call the registr
 `ArtifactRegistry.register` MUST be a gate, as the host-hooks capability describes. It MUST return
 `ResultAsync<ExternalRegistrationResult, GateFailure>`, and it MUST give a failure as an `err`, never as a throw. A
 partial outcome MUST be an `ok` value, not an `err`. If `register` gives an `err`, `registerStepArtifacts` MUST write
-no external id, and it MUST return that `err` as its result. The upserted rows stay in the ledger with
-`artifact_id = NULL`. The step then records the failure with the reason of the host.
+no external id, and it MUST return that refusal as an `err` of the variant `refused`. The upserted rows stay in the
+ledger with `artifact_id = NULL`. The step then records the failure with the reason of the host.
+
+If a write of the local ledger fails, `registerStepArtifacts` MUST stop at that write. It MUST return the `DbError` as
+an `err` of the variant `ledger_failed`, and it MUST NOT throw. The step then fails the same as for a refusal that does
+not suspend.
 
 The registry's outcome is partial by contract — it commits per leaf and per
 activity, with no batch-wide rollback — so `registered` and `failed` arriving
@@ -275,7 +279,13 @@ because one implementation chose not to log it.
 - **GIVEN** a registry whose `register` gives `errAsync({ reason: "r", suspend: false })`
 - **WHEN** the harness calls `registerStepArtifacts` with 3 reconciled artifacts
 - **THEN** `cortex_artifacts` holds 3 rows with `artifact_id = NULL`
-- **AND** `registerStepArtifacts` returns an `err` that carries the reason `r`, and it does not throw
+- **AND** `registerStepArtifacts` returns an `err` of the variant `refused` that carries the reason `r`, and it does not throw
+
+#### Scenario: A failed ledger write fails the registration
+
+- **GIVEN** a ledger connection whose write fails
+- **WHEN** the harness calls `registerStepArtifacts` with 3 reconciled artifacts
+- **THEN** `registerStepArtifacts` returns an `err` of the variant `ledger_failed` that carries the `DbError` of the upsert, and it does not throw
 
 ### Requirement: Integrity stages fail-fast; enrichment stages degrade
 
@@ -426,4 +436,31 @@ artifact table directly.
 - **WHEN** a step in run-2 runs `workspace_search("normalized expression matrix")`
 - **THEN** results MAY include files from run-1 (e.g. `runs/run-01/qc/output/normalized.csv`)
 - **AND** the file is accessible via the flat read-only mount
+
+### Requirement: The artifact ledger helpers give a Result
+
+`src/state/artifacts.ts` MUST export these helpers. Each helper takes a `Querier` first and returns
+`ResultAsync<…, DbError>`:
+
+- `upsertArtifact(pool, entry)` and `upsertArtifacts(pool, entries)`: the upserts of the artifact upsert semantics requirement.
+- `queryInputArtifacts(pool, analysisId, paths)`: the `input` rows at the paths.
+- `queryUnsyncedStepArtifacts(pool, resourceId, runId, stepId)`: the rows of the optional external sync tracking requirement.
+- `queryStepArtifactPaths(pool, resourceId, runId, stepId, limit)`: the step outputs of a step, most consequential first.
+- `queryAnalysisArtifacts(pool, analysisId)`: each artifact of an analysis, ordered by path.
+- `countArtifactsForRun(pool, analysisId, runId)`: the count of the step outputs of a run.
+- `updateArtifactId(pool, resourceId, path, artifactId, fileType?)` and `updateFileIds(pool, pairs)`: the sync writes.
+
+A driver failure MUST be an `err`, never a throw. Absence rides the `ok` channel as `[]` or `0`. A workflow body or a
+step body changes an `err` into a throw with `unwrapOrThrow`. Each other caller keeps the Result.
+
+#### Scenario: A driver failure is an err
+
+- **GIVEN** a `Querier` whose query rejects
+- **WHEN** the harness calls `upsertArtifacts`
+- **THEN** it gives an `err` with the `op` `artifacts.upsertArtifacts`, and it does not throw
+
+#### Scenario: No matching row is an empty ok
+
+- **WHEN** the harness calls `queryInputArtifacts` with paths that no `input` row holds
+- **THEN** it gives `ok([])`
 
