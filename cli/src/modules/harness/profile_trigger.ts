@@ -1,6 +1,7 @@
-import { err, ok, ResultAsync, type Result } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import {
     clearDataProfile,
+    describeDataProfileStartError,
     loadDataProfileStatus,
     makeLocalAuth,
     reconcileOrphanedDataProfile,
@@ -241,13 +242,12 @@ async function retryFailedRow(
     // it on. The command dies with "could not start"; headless, we report a distinct `failed`
     // reason so the caller can word the refusal separately from a start fault.
     if (!claimResult.value) return { kind: "failed", reason: "could not claim the failed profile to retry", materialized: true };
-    // Claimed `failed → running`. `runDataProfile` resolves once the run is DISPATCHED (not
-    // completed) and compensates the ledger on a rejected start (see its doc), so bridging its
-    // promise and mapping ok/err is the headless twin of the command's fire-and-forget `.catch`.
-    // A resurrected failure is a re-profile, hence `restarted: true`.
-    return await ResultAsync.fromPromise(seams.run(runtime.triggerDeps, params), (cause) => cause).match(
+    // Claimed `failed → running`. `runDataProfile` gives its outcome once the run is DISPATCHED (not
+    // completed), and it settles the row as `failed` before an `err` (see its doc). A resurrected
+    // failure is a re-profile, hence `restarted: true`.
+    return (await seams.run(runtime.triggerDeps, params)).match(
         (): ProfileParityOutcome => ({ kind: "triggered", restarted: true, materialized: true }),
-        (): ProfileParityOutcome => ({ kind: "failed", reason: "the profile workflow could not be started", materialized: true }),
+        (e): ProfileParityOutcome => ({ kind: "failed", reason: describeDataProfileStartError(e), materialized: true }),
     );
 }
 
@@ -396,7 +396,9 @@ async function runProfileLadder(
     // way force does instead.
     if (status?.status === "failed") return await retryFailedRow(runtime, analysis, params, seams);
 
-    const result = await seams.trigger(runtime.triggerDeps, params);
+    const triggerResult = await seams.trigger(runtime.triggerDeps, params);
+    if (triggerResult.isErr()) return { kind: "failed", reason: `the profile trigger failed (${triggerResult.error.type})`, materialized: true };
+    const result = triggerResult.value;
     switch (result) {
         case "started":
         case "restarted":
@@ -489,7 +491,9 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
     if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
     const params = paramsResult.value;
 
-    const result = await seams.trigger(runtime.triggerDeps, params);
+    const triggerResult = await seams.trigger(runtime.triggerDeps, params);
+    if (triggerResult.isErr()) return { kind: "failed", reason: `the profile trigger failed (${triggerResult.error.type})`, materialized: true };
+    const result = triggerResult.value;
     switch (result) {
         case "started":
         case "restarted":
