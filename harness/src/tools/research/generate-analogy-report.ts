@@ -23,6 +23,7 @@ import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { countChatTokens } from "../../loop/metrics.js";
 import { accountForChatCall, finalText, runAgent } from "../../loop/run-agent.js";
@@ -192,10 +193,13 @@ export interface GenerateAnalogyReportDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** Operational logging seam; omitted falls back to no-op. The reason of a recorder `err` of the conversion call lands here. */
+    readonly logger?: Logger;
 }
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {
+    const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
     const ncbi = createNcbiTools(deps.bioKeys);
     const reasonerTools: readonly Tool[] = [
         createSearchSemanticScholarTool({ ...(deps.bioKeys.semanticScholar === undefined ? {} : { apiKey: deps.bioKeys.semanticScholar }) }),
@@ -307,7 +311,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                     stepName: CONVERSION_CALL_NAME,
                     invocationId: ctx.invocationId,
                     usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
-                    logger: createNoopLogger(),
+                    logger,
                     rollups: ctx.turnUsage === undefined ? [] : [ctx.turnUsage],
                 });
 

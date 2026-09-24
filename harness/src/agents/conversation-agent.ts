@@ -340,7 +340,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createShowPlanTool(pool),
         showFileTool,
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder }),
+        createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder, ...(deps.logger ? { logger: deps.logger } : {}) }),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),
         createReadFileTool(workspaceFs),

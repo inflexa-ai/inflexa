@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
 import type { AgentRunUsage } from "../../loop/metrics.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
@@ -184,6 +185,30 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(researchKeys).toEqual(["run-1:step-1:conversation-agent>analogical-reasoner:test-tool-call:llm-0"]);
         expect(conversion[0]!.recordKey).toBe("run-1:step-1:conversation-agent>analogical-reasoner:test-tool-call:analogy-conversion");
         expect(turnUsage).toEqual({ inputTokens: 120, outputTokens: 15 });
+    });
+
+    it("logs a recorder err of the conversion call at the error level, and still returns the envelope", async () => {
+        const provider = scriptedProvider([
+            makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn"),
+            makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn", { inputTokens: 20, outputTokens: 5 }),
+        ]);
+        const logger = createCapturingLogger();
+        const tool = createGenerateAnalogyReportTool({
+            provider,
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            usageRecorder: { record: () => errAsync({ reason: "ledger offline" }) },
+            logger,
+        });
+        const { ctx } = makeToolContext();
+
+        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctx))._unsafeUnwrap() as typeof VALID_ENVELOPE;
+        // The notice helper logs when the result of the recorder arrives, on a later turn of the event loop.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(result.analogies).toHaveLength(1);
+        const failures = logger.records.filter((record) => record.level === "error" && record.fields["notice"] === "UsageRecorder.record");
+        expect(failures.map((record) => record.fields["reason"])).toEqual(["ledger offline"]);
     });
 
     it("rejects empty problem at the input-schema boundary", async () => {
