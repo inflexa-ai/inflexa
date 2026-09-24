@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
-import { err, ok, okAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
@@ -10,7 +10,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
-import type { ChatResponse } from "../providers/types.js";
+import type { AgentChat, ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
 import { defineTool, withToolResultImage, withToolResultImages, type Tool } from "../tools/define-tool.js";
 import {
@@ -23,9 +23,9 @@ import {
     toolUseBlock,
 } from "./__fixtures__/scripted-provider.js";
 import { continueAgent } from "./continue-agent.js";
-import { runAgent, WRAP_UP_REQUEST, type RunAgentOptions } from "./run-agent.js";
+import { runAgent, WRAP_UP_REQUEST, type AgentRound, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
-import type { AgentDefinition, EmitEvent, RunStep } from "./types.js";
+import type { AgentDefinition, EmitEvent, LoopMessage, RunStep } from "./types.js";
 
 // ── Harness helpers ─────────────────────────────────────────────────
 
@@ -1185,7 +1185,7 @@ describe("runAgent — aborted terminal path", () => {
         expect(messages.some((m) => m.role === "assistant" && isInterruptedMessage(m))).toBe(false);
     });
 
-    it("keeps the transcript valid and marks the tool-calling step when the abort lands during tool execution", async () => {
+    it("keeps the transcript valid and leaves the tool-calling step unmarked when the abort lands during tool execution", async () => {
         // The tool honors the signal by throwing; the chat path wires no fatal
         // predicate, so the throw becomes an error tool result, the tool message
         // completes, and the FOLLOWING model call resolves aborted-empty.
@@ -1206,10 +1206,9 @@ describe("runAgent — aborted terminal path", () => {
         // [user, assistant(tool_use), tool(error result)] — the aborted-empty reply added nothing.
         expect(messages).toHaveLength(3);
 
-        // The marker rides the tool-calling assistant step, not the tool row.
         const toolCallStep = messages[1]!;
         expect(toolCallStep.role).toBe("assistant");
-        expect(isInterruptedMessage(toolCallStep)).toBe(true);
+        expect(isInterruptedMessage(toolCallStep)).toBe(false);
 
         // The tool message completes the call — no dangling tool_use.
         const results = toolResultParts(messages[2]);
@@ -1253,7 +1252,7 @@ describe("runAgent — aborted wrap-up path", () => {
         expect(isInterruptedMessage(last)).toBe(true);
     });
 
-    it("pushes nothing on an empty wrap-up abort and marks the last tool-calling step", async () => {
+    it("pushes nothing on an empty wrap-up abort and marks no message", async () => {
         const provider = abortsAtWrapUp("");
 
         const { messages, finish } = await runAgent(agentDef([echoTool()], 3), GO, makeSession(), opts(provider));
@@ -1265,9 +1264,7 @@ describe("runAgent — aborted wrap-up path", () => {
         expect(messages.at(-1)!.role).toBe("user");
         expect(isSyntheticUserMessage(messages.at(-1)!)).toBe(true);
 
-        // The marker rides the last assistant step the loop produced (the final tool-calling step).
-        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")!;
-        expect(isInterruptedMessage(lastAssistant)).toBe(true);
+        expect(messages.some((m) => isInterruptedMessage(m))).toBe(false);
     });
 });
 
@@ -1959,6 +1956,152 @@ describe("runAgent — per-call duration", () => {
     });
 });
 
+// ── round sink (see the harness-agent-loop spec) ─────────────────────
+
+/** A round sink that keeps a copy of each round that it gets. */
+function recordingSink(): { onRound: (round: AgentRound) => Promise<void>; rounds: LoopMessage[][] } {
+    const rounds: LoopMessage[][] = [];
+    return {
+        rounds,
+        onRound: async (round) => {
+            rounds.push([...round.messages]);
+        },
+    };
+}
+
+describe("runAgent — round sink", () => {
+    const echoCall = (id: string): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: id })], "tool_use");
+    const threeRequests = (): ChatResponse[] => [echoCall("tu-1"), echoCall("tu-2"), makeMessage([textBlock("done")], "end_turn")];
+
+    it("gives rounds that follow the initial messages and equal the messages of the result", async () => {
+        const provider = scriptedProvider(threeRequests());
+        const sink = recordingSink();
+
+        const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { onRound: sink.onRound }));
+
+        expect([...GO, ...sink.rounds.flat()]).toEqual(messages);
+    });
+
+    it("holds each earlier reply and tool message when the provider gets the next request", async () => {
+        const sink = recordingSink();
+        const replies = threeRequests();
+        const held: boolean[] = [];
+        const provider = scriptedProvider((callIndex, request) => {
+            held.push(JSON.stringify(request.messages) === JSON.stringify([...GO, ...sink.rounds.flat()]));
+            return replies[callIndex]!;
+        });
+
+        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { onRound: sink.onRound, promptCache: "off" }));
+
+        expect(held).toEqual([true, true, true]);
+    });
+
+    it("gives no empty round", async () => {
+        const provider = scriptedProvider(threeRequests());
+        const sink = recordingSink();
+
+        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { onRound: sink.onRound }));
+
+        expect(sink.rounds).toHaveLength(3);
+        expect(sink.rounds.every((round) => round.length > 0)).toBe(true);
+    });
+
+    it("gives a truncated prose reply and its steer in one round", async () => {
+        const provider = scriptedProvider([makeMessage([textBlock("a long answer that")], "max_tokens"), makeMessage([textBlock("ends here")], "end_turn")]);
+        const sink = recordingSink();
+
+        await runAgent(agentDef([]), GO, makeSession(), opts(provider, { onRound: sink.onRound }));
+
+        const first = sink.rounds[0]!;
+        expect(first.map((m) => m.role)).toEqual(["assistant", "user"]);
+        expect(isSyntheticUserMessage(first[1]!)).toBe(true);
+    });
+
+    it("holds the wrap-up request when the loop sends the first wrap-up request", async () => {
+        const sink = recordingSink();
+        let heldAtWrapUp: boolean | undefined;
+        const provider = scriptedProvider((callIndex, request) => {
+            if (!isWrapUpRequest(request)) return echoCall(`tu-${callIndex}`);
+            heldAtWrapUp ??= sink.rounds.at(-1)!.some((m) => m.role === "user" && m.content === WRAP_UP_REQUEST);
+            return makeMessage([textBlock("here is where I reached")], "end_turn");
+        });
+
+        await runAgent(agentDef([echoTool()], 1), GO, makeSession(), opts(provider, { onRound: sink.onRound }));
+
+        expect(heldAtWrapUp).toBe(true);
+    });
+
+    it("gives the assistant message and a not-run result before a fatal tool throw", async () => {
+        const fatal = new Error("workflow cancelled");
+        const workflow = defineTool({
+            id: "workflow_fatal",
+            description: "Throws a fatal workflow error.",
+            executionMode: "workflow",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => {
+                throw fatal;
+            },
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "workflow_fatal", {})], "tool_use")]);
+        const sink = recordingSink();
+
+        await expect(
+            runAgent(agentDef([workflow]), GO, makeSession(), opts(provider, { onRound: sink.onRound, isFatalLoopError: (e) => e === fatal })),
+        ).rejects.toBe(fatal);
+
+        const last = sink.rounds.at(-1)!;
+        expect(last.map((m) => m.role)).toEqual(["assistant", "tool"]);
+        expect(toolResultParts(last[1]).map((r) => [r.toolCallId, outputValue(r)])).toEqual([["tu-1", NOT_RUN_TOOL_RESULT]]);
+    });
+
+    it("gives no round when the first request fails", async () => {
+        const failing: AgentChat = {
+            capabilities: { toolCalling: true },
+            chat: () => errAsync({ type: "provider", retryable: false, message: "the endpoint failed" }),
+        };
+        const sink = recordingSink();
+
+        await expect(runAgent(agentDef([]), GO, makeSession(), { ...opts(scriptedProvider([])), provider: failing, onRound: sink.onRound })).rejects.toThrow(
+            "the endpoint failed",
+        );
+
+        expect(sink.rounds).toEqual([]);
+    });
+
+    it("does not call a sink again after it rejects, and throws its rejection", async () => {
+        const rejection = new Error("the store is gone");
+        let calls = 0;
+        const provider = scriptedProvider(threeRequests());
+
+        await expect(
+            runAgent(
+                agentDef([echoTool()]),
+                GO,
+                makeSession(),
+                opts(provider, {
+                    onRound: async () => {
+                        calls++;
+                        throw rejection;
+                    },
+                }),
+            ),
+        ).rejects.toBe(rejection);
+
+        expect(calls).toBe(1);
+    });
+
+    it("gives the same messages and the same finish with and without a sink", async () => {
+        const sink = recordingSink();
+
+        const withSink = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(scriptedProvider(threeRequests()), { onRound: sink.onRound }));
+        const withoutSink = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(scriptedProvider(threeRequests())));
+
+        expect(withSink.messages).toEqual(withoutSink.messages);
+        expect(withSink.finish).toEqual(withoutSink.finish);
+    });
+});
+
 // ── continueAgent (see the harness-agent-loop spec) ──────────────────
 
 describe("continueAgent", () => {
@@ -2077,5 +2220,23 @@ describe("continueAgent", () => {
         );
 
         expect(rec.names).toEqual(["file-metadata:llm-0", "file-metadata:tool-echo-tu-m", "file-metadata:llm-1"]);
+    });
+
+    it("gives the request text in the first round and the reply in the next round", async () => {
+        const { messages, agent } = await conversation();
+        const provider = scriptedProvider([makeMessage([textBlock("summary")], "end_turn")]);
+        const sink = recordingSink();
+
+        await continueAgent(
+            agent,
+            messages,
+            { text: "Summarize the work.", mask: "none", maxRequests: 2, stepNamespace: "step-summary" },
+            makeSession(),
+            opts(provider, { onRound: sink.onRound }),
+        );
+
+        expect(sink.rounds).toHaveLength(2);
+        expect(sink.rounds[0]!.map((m) => m.content)).toEqual(["Summarize the work."]);
+        expect(sink.rounds[1]!.map((m) => m.content)).toEqual([[{ type: "text", text: "summary" }]]);
     });
 });

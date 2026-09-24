@@ -8,18 +8,18 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 1. The round sink of the loop
 
-- [ ] 1.1 In `src/loop/run-agent.ts`, export `interface AgentRound { readonly messages: readonly LoopMessage[] }`. The doc comment says that a round holds the messages that the loop appended after the last call of the sink.
-- [ ] 1.2 Add `readonly onRound?: (round: AgentRound) => Promise<void>` to `RunAgentOptions`. The doc comment gives the three call points of 1.4 to 1.6. It also says that a durable loop passes no sink, because DBOS replays the body.
-- [ ] 1.3 In the run state that the segments share, keep `givenCount`, with the start value `initial.length`. Add `giveRound()`, which calls the sink with `messages.slice(givenCount)` when that slice holds a message. Then it sets `givenCount`.
-- [ ] 1.4 Await `giveRound()` before each model request of each segment, the wrap-up requests included. Expected result: the sink holds each tool message before the next request.
-- [ ] 1.5 At each exit of the task segment, of the wrap-up, and of `continueAgent`, await `giveRound()`. Do it after the not-run answers and after the interruption marker.
-- [ ] 1.6 Wrap the body of the run in a `catch` that runs only when the run has a sink. It calls `answerUnansweredToolCalls(messages, givenCount)`, awaits `giveRound()`, and throws the first error again.
-- [ ] 1.7 Set a flag when the sink rejects. The `catch` of 1.6 throws such an error again at once, with no call of the sink. When the last `giveRound()` of the `catch` rejects, throw the first error.
-- [ ] 1.8 Keep `roundStart`, the length of `messages` when the loop sends a model request. Make `markLastLoopAssistant` mark only a message at or after `roundStart`.
-- [ ] 1.9 Expected result of 1.8: a partial with content carries the marker, and an abort with no partial marks no message. Write the doc comment of `markLastLoopAssistant` and the comments at its call sites again.
-- [ ] 1.10 In `src/loop/continue-agent.ts`, give `opts.onRound` to the segment. Expected result: the request text of the continuation rides its first round.
-- [ ] 1.11 In `src/index.ts`, export the type `AgentRound` beside `RunAgentOptions`.
-- [ ] 1.12 In `src/loop/run-agent.test.ts`, add `describe("runAgent — round sink")` with these tests:
+- [x] 1.1 In `src/loop/run-agent.ts`, export `interface AgentRound { readonly messages: readonly LoopMessage[] }`. The doc comment says that a round holds the messages that the loop appended after the last call of the sink.
+- [x] 1.2 Add `readonly onRound?: (round: AgentRound) => Promise<void>` to `RunAgentOptions`. The doc comment gives the three call points of 1.4 to 1.6. It also says that a durable loop passes no sink, because DBOS replays the body.
+- [x] 1.3 In the run state that the segments share, keep `givenCount`, with the start value `initial.length`. Add `giveRound()`, which calls the sink with `messages.slice(givenCount)` when that slice holds a message. Then it sets `givenCount`.
+- [x] 1.4 Await `giveRound()` before each model request of each segment, the wrap-up requests included. Expected result: the sink holds each tool message before the next request.
+- [x] 1.5 At each exit of the task segment, of the wrap-up, and of `continueAgent`, await `giveRound()`. Do it after the not-run answers and after the interruption marker.
+- [x] 1.6 Wrap the body of the run in a `catch` that runs only when the run has a sink. It calls `answerUnansweredToolCalls(messages, givenCount)`, awaits `giveRound()`, and throws the first error again.
+- [x] 1.7 Set a flag when the sink rejects. The `catch` of 1.6 throws such an error again at once, with no call of the sink. When the last `giveRound()` of the `catch` rejects, throw the first error.
+- [x] 1.8 Keep `roundStart`, the length of `messages` when the loop sends a model request. Make `markLastLoopAssistant` mark only a message at or after `roundStart`.
+- [x] 1.9 Expected result of 1.8: a partial with content carries the marker, and an abort with no partial marks no message. Write the doc comment of `markLastLoopAssistant` and the comments at its call sites again.
+- [x] 1.10 In `src/loop/continue-agent.ts`, give `opts.onRound` to the segment. Expected result: the request text of the continuation rides its first round.
+- [x] 1.11 In `src/index.ts`, export the type `AgentRound` beside `RunAgentOptions`.
+- [x] 1.12 In `src/loop/run-agent.test.ts`, add `describe("runAgent — round sink")` with these tests:
   - The initial messages and then each round equal `result.messages`.
   - The fake provider reads the record of the sink at each call, and each earlier reply and tool message is there.
   - No round is empty.
@@ -29,9 +29,9 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
   - A failed first request gives no round.
   - A sink that rejects gets no second call, and the run throws its rejection.
   - A run with a sink and a run without one, over one model script, return the same messages and the same finish.
-- [ ] 1.13 In `describe("runAgent — aborted terminal path")` and `describe("runAgent — aborted wrap-up path")`, change each test that expects the marker on a tool-calling message. Expected result: that message carries no marker.
-- [ ] 1.14 In `describe("continueAgent")`, add a test with a sink. Expected result: the first round holds the request text, and the next round holds the reply.
-- [ ] 1.15 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 1.13 In `describe("runAgent — aborted terminal path")` and `describe("runAgent — aborted wrap-up path")`, change each test that expects the marker on a tool-calling message. Expected result: that message carries no marker.
+- [x] 1.14 In `describe("continueAgent")`, add a test with a sink. Expected result: the first round holds the request text, and the next round holds the reply.
+- [x] 1.15 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 2. The context records
 

@@ -66,6 +66,11 @@ export interface RunAgentResult {
     readonly finish: AgentFinish;
 }
 
+/** The messages that the loop appended after the last call of the round sink. */
+export interface AgentRound {
+    readonly messages: readonly LoopMessage[];
+}
+
 const TRUNCATED_PROSE_STEER = "Your previous reply was cut off at the output-token limit; continue concisely, or finish via your terminal tool.";
 
 const TRUNCATED_TOOL_USE_ERROR =
@@ -85,6 +90,11 @@ export interface RunAgentOptions {
     readonly provider: AgentChat;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
+    /**
+     * The round sink. The loop awaits it before each model request, at each exit, and before a throw.
+     * A durable loop passes no sink, because DBOS replays the loop body.
+     */
+    readonly onRound?: (round: AgentRound) => Promise<void>;
     /**
      * Per-turn user-approval seam threaded into every tool's `ToolContext` as
      * `ctx.ask`. A conversation tool calls it to pause for an explicit user
@@ -257,6 +267,17 @@ export function openLoop(
     }
 
     const messages: LoopMessage[] = [...initial];
+    // The loop never changes a message before `givenCount`, because the sink can hold it already.
+    let givenCount = initial.length;
+    // Stays true when the sink rejects, thus the throw path does not call the sink again.
+    let sinkPending = false;
+    const giveRound = async (): Promise<void> => {
+        if (opts.onRound === undefined || messages.length === givenCount) return;
+        sinkPending = true;
+        await opts.onRound({ messages: messages.slice(givenCount) });
+        sinkPending = false;
+        givenCount = messages.length;
+    };
     const source: EventSource = {
         agentId: session.provenance.agentId ?? agent.id,
         callPath: session.provenance.callPath,
@@ -401,6 +422,7 @@ export function openLoop(
         await emit({ type: "iteration", source, index, final: true });
         recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
         logFinish("warn", "denied", false);
+        await giveRound();
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries, ...finishUsage() } };
     };
     /**
@@ -486,6 +508,7 @@ export function openLoop(
         settleTranscript();
         await emit({ type: "iteration", source, index, final: true });
         recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
+        await giveRound();
         return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
     };
 
@@ -498,18 +521,17 @@ export function openLoop(
             // whatever its reply, thus its `iteration` event is the final one.
             const endsRun = segment.closesCappedRun === true && k === segment.maxRequests - 1;
             if (segment.closesCappedRun !== true) iterations++;
+            await giveRound();
+            const roundStart = messages.length;
             const reply = await callModel(names.llm(k));
 
             if (reply.finishReason === "aborted") {
                 // An interrupted turn keeps whatever the model produced before the cut, but
-                // never an empty shell: a partial with no content adds no message, so a
-                // no-output abort leaves the transcript at the initial prefix. The marker
-                // then rides the last assistant message this run produced — the partial when
-                // it has content, or the tool-calling step when the abort landed mid-dispatch
-                // — an assistant role no turn-boundary reader observes. "aborted" is not
-                // "tool-calls", so this falls into the terminal return below.
+                // never an empty shell: a partial with no content adds no message. Only the
+                // partial carries the marker, because the sink can hold each earlier message.
+                // "aborted" is not "tool-calls", so this falls into the terminal return below.
                 if (assistantHasContent(reply.message)) messages.push(reply.message);
-                markLastLoopAssistant(messages, initial.length);
+                markLastLoopAssistant(messages, roundStart);
             } else {
                 messages.push(reply.message);
             }
@@ -575,10 +597,12 @@ export function openLoop(
                     const reason = reply.finishReason === "aborted" ? "aborted" : "max_iterations";
                     recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
                     logFinish("warn", reason, true);
+                    await giveRound();
                     return { messages, finish: { reason, cappedOut: true, truncationRecoveries, ...finishUsage() } };
                 }
                 recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
                 logFinish("info", reply.finishReason, false);
+                await giveRound();
                 return {
                     messages,
                     finish: {
@@ -612,10 +636,28 @@ export function openLoop(
         settleTranscript();
         recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
         logFinish("warn", "max_iterations", true);
+        await giveRound();
         return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
     };
 
-    return { runSegment, endCapped };
+    // A throw keeps the open round, and the not-run results keep that stored round valid on the wire.
+    const giveRoundBeforeThrow = async <T>(body: () => Promise<T>): Promise<T> => {
+        if (opts.onRound === undefined) return body();
+        try {
+            return await body();
+        } catch (err) {
+            if (sinkPending) throw err;
+            answerUnansweredToolCalls(messages, givenCount);
+            // A rejection of this call must not hide the error of the run.
+            await giveRound().catch(() => undefined);
+            throw err;
+        }
+    };
+
+    return {
+        runSegment: (segment) => giveRoundBeforeThrow(() => runSegment(segment)),
+        endCapped: () => giveRoundBeforeThrow(endCapped),
+    };
 }
 
 /** What one completed LLM call is accounted under. */
@@ -732,14 +774,11 @@ function assistantHasContent(message: Extract<ModelMessage, { role: "assistant" 
 }
 
 /**
- * Stamp the interruption marker on the last assistant message the loop produced
- * this run — an index at or beyond the `initial` prefix — replacing the slot with
- * a marked copy so the mark rides into `appendTurn` and the stored row. When the
- * turn produced no assistant message beyond `initial` (a no-output abort on a
- * fresh turn), there is nothing to mark and the transcript is left untouched.
+ * Mark the aborted partial of the last request. A message before `roundStart` stays unmarked,
+ * because the round sink can hold it already.
  */
-function markLastLoopAssistant(messages: LoopMessage[], initialCount: number): void {
-    for (let idx = messages.length - 1; idx >= initialCount; idx--) {
+function markLastLoopAssistant(messages: LoopMessage[], roundStart: number): void {
+    for (let idx = messages.length - 1; idx >= roundStart; idx--) {
         const message = messages[idx]!;
         if (message.role === "assistant") {
             messages[idx] = markInterruptedMessage(message);
