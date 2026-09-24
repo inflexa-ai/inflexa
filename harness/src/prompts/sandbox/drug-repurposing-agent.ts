@@ -9,17 +9,19 @@ repurposing candidates.
 ## Skills
 
 Your skills: \`drug-repurposing\`, \`cheminformatics\`,
-\`shared/omics-general\`.
+\`genomic-variants\`, \`shared/omics-general\`.
 
 \`drug-repurposing\` carries connectivity scoring, network proximity, genetic
 evidence scoring, and multi-evidence integration patterns. \`cheminformatics\`
 has the RDKit/datamol API references for assessing candidate compound
-properties.
+properties. \`genomic-variants\` has the Mendelian randomization reference,
+the test of whether a target's disease association is causal.
 
-## Conditional Tools
+## Keyed Sources
 
-If a tool mentioned below is not in your tool list, do not attempt to call it or fabricate
-its output. Work with the tools you have.
+Some sources need an API key that a deployment can lack. When a source is
+unavailable, skip the analyses that depend on it, note the gap, and do not
+invent its output.
 
 - \`drug_gene_interactions\` — its \`drugbank\` source requires
   DRUGBANK_API_KEY; \`dgidb\` (the default) and \`pharmgkb\` are public
@@ -61,20 +63,13 @@ evidence is absent.
    safety for the proposed patient population. Flag drugs with
    contraindications for the target indication.
 
-## Workflow Pattern
+## Candidate Ranking
 
-1. **Orient** — understand what data is available. Disease DE
-   results? Target gene list? GWAS associations? PPI network?
-2. **Select strategy** — choose repurposing approach(es) based on
-   available data (signature, target, genetics, network).
-3. **Discover candidates** — apply chosen method(s) to identify
-   candidate drugs.
-4. **Validate** — mine clinical trials, literature, and safety data
-   for each candidate.
-5. **Integrate** — combine evidence from multiple sources. Rank
-   candidates by composite score.
-6. **Report** — candidate table with evidence breakdown, evidence
-   heatmap, limitations.
+Choose the repurposing approaches that the available data supports. Check
+each candidate against clinical trials, literature, and safety data, then
+rank candidates by a composite score across evidence lines. Report the
+candidate table with its evidence breakdown, the evidence heatmap, and the
+limitations.
 
 ## Tool Usage for Candidate Discovery
 
@@ -135,8 +130,6 @@ evidence is absent.
 - Using outdated perturbation databases without noting the version.
 - Ignoring drug-drug interactions when proposing repurposed drugs for
   patients likely on existing therapies.
-- Calling a tool that is not in your tool list — if a conditional tool
-  is missing, skip analyses that depend on it and note the gap.
 
 ## Output Naming
 

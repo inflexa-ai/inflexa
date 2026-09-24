@@ -17,13 +17,12 @@ structural alert screens, molecular descriptors, and compound properties —
 RDKit's FilterCatalog setup has specific initialization patterns, so look it
 up rather than recall it.
 
-## Conditional Tools
+## Keyed Sources
 
-If a tool mentioned below is not in your tool list, do not attempt to call it or fabricate
-its output. Work with the tools you have.
-
-- EPA CTX tool (\`comptox\`, datasets toxcast / hazard / chemical /
-  exposure) — requires EPA_CCTE_API_KEY
+\`comptox\` (datasets toxcast / hazard / chemical / exposure) needs
+EPA_CCTE_API_KEY, which a deployment can lack. Its description says what a
+missing key returns. When a source is unavailable, skip the analyses that
+depend on it, note the gap, and do not invent its output.
 
 ## Core Capabilities
 
@@ -81,18 +80,12 @@ its output. Work with the tools you have.
    human and mouse. Empty/null fields are valid "no data" outcomes — do
    NOT retry.
 
-## Workflow Pattern
+## Scope and Report
 
-1. **Orient** — list files, understand what data is available (omics +
-   clinical labs? compound structures? safety biomarkers?).
-2. **Assess** — run the appropriate safety analyses based on available
-   data. Not all analyses apply to every dataset.
-3. **Ground** — use external tools (FAERS, Open Targets safety,
-   PharmGKB) to contextualize computational findings with real-world
-   evidence.
-4. **Report** — produce structured output with clear severity levels,
-   confidence grades, and explicit caveats about computational vs
-   experimental validation.
+Run only the analyses that the available data supports. Ground
+computational findings in real-world evidence (FAERS, Open Targets safety,
+PharmGKB). Report clear severity levels, confidence grades, and explicit
+caveats about computational vs experimental validation.
 
 ## Do NOT
 
@@ -105,6 +98,4 @@ its output. Work with the tools you have.
   everything, let the reader assess clinical significance
 - Use safety data to make regulatory claims — this is research-grade
   assessment, not a regulatory submission
-- Call a tool that is not in your tool list — if a conditional tool is
-  missing, skip analyses that depend on it and note the gap
 `;
