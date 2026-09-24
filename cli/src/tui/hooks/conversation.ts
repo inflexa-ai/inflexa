@@ -18,7 +18,15 @@ import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
-import { isSubAgentEvent, readAskPart, readPlanCard, readChildSessionStarted, readRunCard, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
+import {
+    isSubAgentEvent,
+    readAskPart,
+    readCompactionPart,
+    readPlanCard,
+    readChildSessionStarted,
+    readRunCard,
+    subAgentActivityLabel,
+} from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation } from "../../modules/harness/artifact_open.ts";
 import {
     buildChatSession,
@@ -39,6 +47,7 @@ import { chatStatus, setChatStatus } from "./status.ts";
 import { runTurnWrite } from "./thread_write.ts";
 import type {
     AskCardPart,
+    CompactionPart,
     MessageRole,
     OpenableCardPart,
     OpenableEntry,
@@ -454,6 +463,26 @@ function reconcileAskCard(ask: ReturnType<typeof readAskPart>): void {
 }
 
 /**
+ * Fold a `data-compaction` emission onto the live transcript: the first emission of an id appends the part,
+ * and a later one replaces its status and its figures in place (latest-wins), as {@link reconcileAskCard} does.
+ */
+function reconcileCompaction(compaction: ReturnType<typeof readCompactionPart>): void {
+    const id = currentAssistantId;
+    if (!id) return;
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === id);
+            if (!msg) return;
+            const idx = msg.parts.findIndex((p) => p.type === "compaction" && p.compactionId === compaction.compactionId);
+            // A fresh object on each write, thus Solid reconciles the edit.
+            const part: CompactionPart = { id: msg.parts[idx]?.id ?? randomUUIDv7(), type: "compaction", ...compaction };
+            if (idx === -1) msg.parts.push(part);
+            else msg.parts[idx] = part;
+        }),
+    );
+}
+
+/**
  * Echo the user's typed reject feedback onto the live ask card so the transcript shows what they said.
  * The ledger and the model-facing denial carry the feedback on their own; this write is presentation
  * only. It SPREADS the existing part and adds `feedback`, so whatever status a terminal re-emit
@@ -498,6 +527,7 @@ type EmitEventArg = Parameters<EmitFn>[0];
  *   - `data-child-session-started` with threadType `report` becomes a report-session part at its
  *     position, and it pokes the report-children listing so the entry paints inside the turn; any
  *     other threadType renders the tagged mention;
+ *   - `data-compaction` becomes one compaction part of the turn, updated in place by its id;
  *   - any other `data-*` part renders a visible tagged mention (observed, not swallowed);
  *   - `iteration`/`done` are dropped.
  *
@@ -623,6 +653,9 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
             if (currentAnalysisId !== null && currentSessionId !== null) void refreshReportChildren(currentAnalysisId, currentSessionId);
             return;
         }
+        case "data-compaction":
+            reconcileCompaction(readCompactionPart(data));
+            return;
         case "data-ask": {
             // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
             // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
@@ -1042,7 +1075,7 @@ function replayedToolStatus(outcome: ToolCallOutcome | undefined): ToolCallPart[
  * Map a reconstructed {@link CortexMsg} to a {@link UIMessage}: text → text part; a replayed
  * tool-call → a finished tool part; recognized cards (`data-plan`/`data-run-card`) → card parts via
  * the SAME readers the live adapter uses; a `data-child-session-started` with threadType `report` → a
- * report-session part at its stored position; anything else the harness resolver kept → a visible tagged mention. The harness resolver already dropped what the UI does not render (reasoning, tool
+ * report-session part at its stored position; a `data-compaction` divider → a compaction part; anything else the harness resolver kept → a visible tagged mention. The harness resolver already dropped what the UI does not render (reasoning, tool
  * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
  * the part is passed straight through. A persisted `interrupted` marker re-derives the same live flag
  * so a reloaded transcript renders exactly what the live abort showed.
@@ -1100,6 +1133,9 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 parts.push({ id: randomUUIDv7(), type: "report-session", threadId: started.threadId });
                 break;
             }
+            case "data-compaction":
+                parts.push({ id: randomUUIDv7(), type: "compaction", ...readCompactionPart(part) });
+                break;
             default:
                 // Observe a reconstructed part the UI has no first-class renderer for as a one-line tagged
                 // mention — never swallowed. (The recognized display cards are handled in the cases above.)

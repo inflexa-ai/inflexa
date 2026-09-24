@@ -13,6 +13,7 @@ import { RunCardBlock, type RunCardState } from "../components/run_card_block.ts
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock, type OpenableRowView } from "../components/openable_card_block.tsx";
 import { ReportSessionBlock } from "../components/report_session_block.tsx";
+import { CompactionBlock } from "../components/compaction_block.tsx";
 import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { reportChildren } from "../hooks/report_children.ts";
@@ -132,6 +133,8 @@ export function MessageBlock(props: MessageBlockProps) {
     // body text in the SAME column. This sum is the invariant: change one term and the other must move
     // to match, or the two roles misalign under their headers.
     const bodyPadLeft = (): number => (props.role === "user" ? space.sm : space.md);
+    // A reloaded compaction divider spans the transcript on its own, thus it takes no event rule.
+    const dividerOnly = (): boolean => props.role === "event" && props.parts.length === 1 && props.parts[0]?.type === "compaction";
     const parts = (): JSX.Element => (
         <For each={props.parts}>
             {(part): JSX.Element => {
@@ -187,6 +190,15 @@ export function MessageBlock(props: MessageBlockProps) {
                         return <AskCard part={part} />;
                     case "report-session":
                         return <ReportSessionEntry threadId={part.threadId} />;
+                    case "compaction":
+                        return (
+                            <CompactionBlock
+                                status={part.status}
+                                tokensBefore={part.tokensBefore}
+                                tokensAfter={part.tokensAfter}
+                                durationMs={part.durationMs}
+                            />
+                        );
                     default: {
                         // Exhaustive: a new Part kind without a case fails the build here.
                         const _exhaustive: never = part;
@@ -231,9 +243,11 @@ export function MessageBlock(props: MessageBlockProps) {
                     </>
                 }
             >
-                <box flexDirection="column" border={["left"]} borderColor={theme().fgSubtle} paddingLeft={space.sm}>
-                    {parts()}
-                </box>
+                <Show when={!dividerOnly()} fallback={parts()}>
+                    <box flexDirection="column" border={["left"]} borderColor={theme().fgSubtle} paddingLeft={space.sm}>
+                        {parts()}
+                    </box>
+                </Show>
             </Show>
         </box>
     );

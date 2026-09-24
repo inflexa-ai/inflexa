@@ -183,27 +183,27 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 7. The CLI
 
-- [ ] 7.1 In `cli/src/types/session.ts`, add `CompactionPart` to the `Part` union. It holds `id`, `type: "compaction"`, `compactionId`, `status`, `tokensBefore`, `tokensAfter?`, and `durationMs?`.
-- [ ] 7.2 The doc comment of `CompactionPart` says that the live adapter updates the part in place by `compactionId`, and that a reload gives the terminal status.
-- [ ] 7.3 In `cli/src/modules/harness/chat_printer.ts`, add `readCompactionPart(data: unknown)`. It copies each field that it keeps. An unknown or missing status reads as `failed`, the safe terminal.
-- [ ] 7.4 In `cli/src/tui/hooks/conversation.ts`, add a `data-compaction` case to `renderDataPart`. The first emission of an id appends a compaction part to the assistant message of the turn.
-- [ ] 7.5 A later emission with the same id replaces the status and the figures of that part in place, the same as `reconcileAskCard`. Expected result: one part for each compaction.
-- [ ] 7.6 In `cortexToUiMessage`, add a `data-compaction` case that gives a compaction part. Expected result: a stored divider maps to an `event` message with one compaction part.
-- [ ] 7.7 Make `cli/src/tui/components/compaction_block.tsx`. The status `running` renders one muted line: `Summarizing earlier conversation` and then `GLYPHS.ellipsis`.
-- [ ] 7.8 A terminal status renders a divider: a full-width row with a rule of `GLYPHS.lineHorizontal` on each side of a muted label.
-- [ ] 7.9 The label of `done` is `Summarized earlier conversation`, then `tokensBefore`, `GLYPHS.arrowRight`, and `tokensAfter`, then the duration. `Sep` separates the facts.
-- [ ] 7.10 The label of `failed` is `Could not summarize earlier conversation`. When `tokensAfter` exists, the label adds `dropped the oldest turns` and the two token figures.
-- [ ] 7.11 Format each token figure with `formatTokens()` and the duration with `Date.formatDuration`. Take each color from `theme` and each span from the emphasis components.
-- [ ] 7.12 In `cli/src/tui/layout/message_block.tsx`, add the `compaction` case to the part switch. An `event` message whose only part is a compaction part renders the divider with no left rule.
-- [ ] 7.13 In `cli/src/tui/layout/design_gallery.tsx`, add a state exhibit of the compaction block: running, done, failed with a drop, and failed with no drop.
-- [ ] 7.14 In `cli/src/tui/hooks/conversation.test.ts`, add these tests:
+- [x] 7.1 In `cli/src/types/session.ts`, add `CompactionPart` to the `Part` union. It holds `id`, `type: "compaction"`, `compactionId`, `status`, `tokensBefore`, `tokensAfter?`, and `durationMs?`.
+- [x] 7.2 The doc comment of `CompactionPart` says that the live adapter updates the part in place by `compactionId`, and that a reload gives the terminal status.
+- [x] 7.3 In `cli/src/modules/harness/chat_printer.ts`, add `readCompactionPart(data: unknown)`. It copies each field that it keeps. An unknown or missing status reads as `failed`, the safe terminal.
+- [x] 7.4 In `cli/src/tui/hooks/conversation.ts`, add a `data-compaction` case to `renderDataPart`. The first emission of an id appends a compaction part to the assistant message of the turn.
+- [x] 7.5 A later emission with the same id replaces the status and the figures of that part in place, the same as `reconcileAskCard`. Expected result: one part for each compaction.
+- [x] 7.6 In `cortexToUiMessage`, add a `data-compaction` case that gives a compaction part. Expected result: a stored divider maps to an `event` message with one compaction part.
+- [x] 7.7 Make `cli/src/tui/components/compaction_block.tsx`. The status `running` renders one muted line: `Summarizing earlier conversation` and then `GLYPHS.ellipsis`.
+- [x] 7.8 A terminal status renders a divider: a full-width row with a rule of `GLYPHS.lineHorizontal` on each side of a muted label.
+- [x] 7.9 The label of `done` is `Summarized earlier conversation`, then `tokensBefore`, `GLYPHS.arrowRight`, and `tokensAfter`, then the duration. `Sep` separates the facts.
+- [x] 7.10 The label of `failed` is `Could not summarize earlier conversation`. When `tokensAfter` exists, the label adds `dropped the oldest turns` and the two token figures.
+- [x] 7.11 Format each token figure with `formatTokens()` and the duration with `Date.formatDuration`. Take each color from `theme` and each span from the emphasis components.
+- [x] 7.12 In `cli/src/tui/layout/message_block.tsx`, add the `compaction` case to the part switch. An `event` message whose only part is a compaction part renders the divider with no left rule.
+- [x] 7.13 In `cli/src/tui/layout/design_gallery.tsx`, add a state exhibit of the compaction block: running, done, failed with a drop, and failed with no drop.
+- [x] 7.14 In `cli/src/tui/hooks/conversation.test.ts`, add these tests:
   - A `running` emission and a `done` emission under one id give one compaction part with the status `done`.
   - A reload of a stored divider gives an `event` message with one compaction part.
   - No tagged mention appears for `data-compaction`.
   - A malformed status gives the status `failed`.
-- [ ] 7.15 In the new `cli/src/tui/components/compaction_block.render.test.tsx`, add a frame test of each form. Assert the span colors of the label on `github-light`.
-- [ ] 7.16 In `cli/`, run `bun run harness:local`. Run `tsc -p tsconfig.json`. Run `bun test src/tui/hooks/conversation.test.ts src/tui/components/compaction_block.render.test.tsx src/modules/harness`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
-- [ ] 7.17 In `cli/`, run `openspec validate render-the-chat-compaction --strict`. Mark the tasks of that change.
+- [x] 7.15 In the new `cli/src/tui/components/compaction_block.render.test.tsx`, add a frame test of each form. Assert the span colors of the label on `github-light`.
+- [x] 7.16 In `cli/`, run `bun run harness:local`. Run `tsc -p tsconfig.json`. Run `bun test src/tui/hooks/conversation.test.ts src/tui/components/compaction_block.render.test.tsx src/modules/harness`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 7.17 In `cli/`, run `openspec validate render-the-chat-compaction --strict`. Mark the tasks of that change.
 
 ## 8. Documents and final checks
 

@@ -29,6 +29,7 @@ import { ErrorBlock } from "../components/error_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
 import { ReportSessionBlock } from "../components/report_session_block.tsx";
+import { CompactionBlock } from "../components/compaction_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
@@ -1143,6 +1144,18 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         scope={{ word: "REPORT", accent: true }}
                         interruptHint={{ label: interruptHintLabel(interruptKey, false), armed: false }}
                     />
+                </State>
+                <State n="27" label="compaction — the harness summarizes the earlier conversation">
+                    {/* One part moves through these states in place. A reload shows the stored divider alone,
+                        as an event entry with no left rule. */}
+                    <text fg={theme().fgMuted}>running — one muted line while the harness summarizes:</text>
+                    <CompactionBlock status="running" tokensBefore={162_000} />
+                    <text fg={theme().fgMuted}>done — the divider with the two token figures and the duration:</text>
+                    <CompactionBlock status="done" tokensBefore={162_000} tokensAfter={14_000} durationMs={21_000} />
+                    <text fg={theme().fgMuted}>failed with a drop — the oldest turns left the context:</text>
+                    <CompactionBlock status="failed" tokensBefore={170_000} tokensAfter={90_000} durationMs={3_000} />
+                    <text fg={theme().fgMuted}>failed with no drop — the turn failed, and the next turn compacts again:</text>
+                    <CompactionBlock status="failed" tokensBefore={170_000} durationMs={3_000} />
                 </State>
             </ScrollPane>
         </DialogPanel>
