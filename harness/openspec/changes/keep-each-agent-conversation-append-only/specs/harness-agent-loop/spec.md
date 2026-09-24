@@ -229,6 +229,68 @@ The loop MUST deliver each record through the notice helper of the host-hooks ca
 - **THEN** the loop logs the reason of each `err` at the error level
 - **AND** the run has the same finish reason and the same usage rollups as a run whose recorder succeeds
 
+### Requirement: A denied tool approval terminates the turn
+
+When the user rejects the approval request of a tool (refer to the tool-approval capability), the `execute` of the tool throws. The loop MUST change that rejection into a model-visible `execution-denied` tool result that carries the feedback of the user. Then the loop MUST stop the turn.
+
+The sibling tool calls of the same reply complete, and the loop appends their results beside the denial. The loop MUST NOT make a model call after the denial: no tool-calling iteration and no wrap-up request. The denial tool result is the final content of the turn.
+
+A denial is different from a recoverable tool error. The model reads an ordinary tool error and tries again. A denial ends the turn, thus the agent cannot argue with the decision of the user. An approval (`once` or `always`) MUST NOT end the turn. The tool continues to its guarded action, and the loop continues as usual.
+
+#### Scenario: A rejected approval hard-stops the turn
+
+- **GIVEN** a turn in which the answer to the approval request of a tool is `reject`
+- **WHEN** the loop dispatches that tool call
+- **THEN** the results of the turn carry a model-visible `execution-denied` result with the feedback
+- **AND** the loop makes no model call after it: no tool-calling iteration and no wrap-up request
+
+#### Scenario: Concurrent siblings complete before the stop
+
+- **GIVEN** a reply whose parallel tool calls include one denied approval and one ordinary tool
+- **WHEN** the loop processes the turn
+- **THEN** the loop appends the result of the ordinary tool beside the denial, and then the loop stops
+
+#### Scenario: The denial is distinguished from a recoverable tool error
+
+- **GIVEN** a turn with one denied approval and no other tool that fails
+- **WHEN** the loop processes the results
+- **THEN** it ends the turn, and it does not continue as it does for an ordinary retryable tool error
+
+#### Scenario: An approved request does not terminate the turn
+
+- **GIVEN** a turn in which the answer to the approval request of a tool is `once`
+- **WHEN** the loop dispatches that tool call
+- **THEN** the tool continues to its guarded action, and the loop continues as usual
+
+### Requirement: Loop log levels are assigned by outcome class, not by call site
+
+The loop MUST assign the levels thus that the default level stays affordable for a long run. A degraded outcome MUST show at the default level:
+
+- `debug`: one record for each iteration, which names the tools that the iteration dispatched.
+- `info`: the terminal record of a run that ended as intended.
+- `warn`: a run that gave a result but did not end as intended. The run used its iteration cap and ran the wrap-up, or it ended on a denied tool approval.
+- `error`: a run that could not give a result.
+
+The record of each iteration is the only record whose count grows with the length of the run. Thus at the default level, a run MUST give a bounded count of records, whatever the count of its iterations.
+
+#### Scenario: A capped-out run is visible at the default level
+
+- **GIVEN** an agent that uses all of its `maxIterations` and runs the wrap-up
+- **WHEN** the run completes
+- **THEN** its terminal record is at `warn`, not at `info`
+
+#### Scenario: Per-iteration detail is confined to debug
+
+- **GIVEN** an agent that runs for ten iterations
+- **WHEN** the sink filters at `info`
+- **THEN** one record of the run stays, and none of the ten records of the iterations stays
+
+#### Scenario: A denied approval is a degraded outcome
+
+- **GIVEN** a tool approval that the user denies, which ends the turn
+- **WHEN** the loop returns
+- **THEN** the terminal record is at `warn`, and it carries the denial as the finish reason
+
 ## ADDED Requirements
 
 ### Requirement: The declared tools stay fixed for each request of a conversation

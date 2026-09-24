@@ -12,7 +12,7 @@ The code changes the prefix of a conversation at these sites:
 Two more sites make calls that are not necessary:
 
 - The analogy report converts a text reply into its envelope with a second model call with no tools (`src/tools/research/generate-analogy-report.ts` near line 274).
-- The synthesis prompt asks for 1 to 3 delegations to `literature_reviewer` (`src/prompts/synthesis-agent.ts` near line 54). No code limits the count.
+- Each delegation of the synthesizer to `literature_reviewer` runs a full sub-agent loop. The iteration budget of the synthesizer plans for 1 to 3 delegations (`SYNTHESIZER_MAX_ITERATIONS` in `src/execution/run-synthesis.ts`). No code limits the count.
 
 This change is the second of three. The first change, `update-the-provider-layer-for-current-models`, prepares the provider layer. It adds the session key, the effort on the provider configuration, and the metrics of each call. This change builds on its code and on the text of two of its deltas.
 
@@ -130,7 +130,7 @@ This design rejects one tool for the whole envelope. `AnalogicalReasonerOutputSc
 
 ### The synthesis limits literature_reviewer to 3 calls
 
-`generateRunSynthesis` gives `toolBudget: { literature_reviewer: 3 }`. The prompt already asks for 1 to 3 delegations for each run. The refusal gives the reason to the model, thus the prompt does not change.
+`generateRunSynthesis` gives `toolBudget: { literature_reviewer: 3 }`. The iteration budget of the synthesizer plans for 1 to 3 delegations, and each delegation runs a full sub-agent loop. Thus the budget makes that plan a rule of the harness. The prompt names no count, because a model takes a number in a prompt as a target. The refusal gives the limit to the model, thus the prompt does not change.
 
 ## Risks / Trade-offs
 
