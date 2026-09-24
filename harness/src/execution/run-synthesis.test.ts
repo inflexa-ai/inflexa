@@ -32,6 +32,7 @@ import {
     persistSynthesis,
 } from "./run-synthesis.js";
 import type { ToolContext } from "../tools/define-tool.js";
+import type { ChatRequest } from "../providers/types.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 
@@ -614,6 +615,53 @@ describe("generateRunSynthesis — happy path", () => {
         if (result.kind === "synthesis") {
             expect(result.synthesis.runId).toBe(RUN_ID);
         }
+    });
+
+    it("runs 3 reviewer loops and refuses a fourth literature_reviewer call with the error of the budget", async () => {
+        // The synthesizer and its reviewer share the provider. A synthesizer
+        // request declares `submit_synthesis`, and a reviewer request does not.
+        const isSynthesizer = (request: ChatRequest): boolean => "submit_synthesis" in request.tools;
+        let synthesizerTurn = 0;
+        const provider = scriptedProvider((_i, request) => {
+            if (!isSynthesizer(request)) return makeMessage([textBlock("evidence report")], "end_turn");
+            synthesizerTurn++;
+            if (synthesizerTurn === 1) {
+                // Three delegations in one round all run.
+                return makeMessage(
+                    [1, 2, 3].map((n) => toolUseBlock(`rv-${n}`, "literature_reviewer", { brief: `brief ${n}` })),
+                    "tool_use",
+                );
+            }
+            if (synthesizerTurn === 2) return makeMessage([toolUseBlock("rv-4", "literature_reviewer", { brief: "brief 4" })], "tool_use");
+            return makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })], "tool_use");
+        });
+
+        const result = await generateRunSynthesis({
+            provider,
+            session: makeRunSession(),
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
+            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "x" }],
+            planNarrative: "n/a",
+            runId: RUN_ID,
+        });
+
+        expect(result.kind).toBe("synthesis");
+        // One reviewer loop of one request for each of the first 3 calls, and none for the fourth.
+        expect(provider.calls.filter((request) => !isSynthesizer(request))).toHaveLength(3);
+        const lastSynthesizerRequest = provider.calls.filter(isSynthesizer).at(-1)!;
+        const results = lastSynthesizerRequest.messages.flatMap((message) => (message.role === "tool" ? message.content : []));
+        const fourth = results.find((part) => part.type === "tool-result" && part.toolCallId === "rv-4");
+        expect(fourth).toMatchObject({
+            output: {
+                type: "error-text",
+                value: JSON.stringify({
+                    error: "The tool literature_reviewer reached its limit of 3 calls in this run, thus this call did not run.",
+                    retryable: false,
+                }),
+            },
+        });
     });
 
     it("throws on empty summaries", async () => {
