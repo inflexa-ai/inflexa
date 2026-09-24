@@ -83,7 +83,7 @@ export type StartReportSessionInput = z.infer<typeof startReportSessionInput>;
  * never throws for a degraded condition.
  *
  * `started` and `existing-session` name a report thread. `refused` names a call
- * whose scope carries no conversation thread. The four refusals of the spawn
+ * whose scope carries no conversation thread. The three refusals of the spawn
  * keep their own names, thus the agent reads one reason from the spawn and from
  * the tool alike. `failed` is a store fault, and it carries a short line.
  */
@@ -94,7 +94,6 @@ export type StartReportSessionResult =
     | { outcome: "no_browser"; detail: string }
     | { outcome: "parent_not_found" }
     | { outcome: "parent_not_a_conversation"; threadType: ThreadType }
-    | { outcome: "empty_parent_transcript" }
     | { outcome: "failed"; detail: string };
 
 /**
@@ -153,8 +152,6 @@ function toOutcome(fault: SpawnRefusal | DbError | ThreadInputError): StartRepor
             return { outcome: "parent_not_found" };
         case "parent_not_a_conversation":
             return { outcome: "parent_not_a_conversation", threadType: fault.threadType };
-        case "empty_parent_transcript":
-            return { outcome: "empty_parent_transcript" };
         case "query_failed":
         case "mutation_failed":
         case "connection_failed":

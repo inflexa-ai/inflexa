@@ -390,8 +390,7 @@ function conversationAgentOver(eyes: AcquireEyes | undefined, chrome: ChromeConf
 }
 
 /**
- * Seed the parent conversation of one start-tool case. The spawn refuses an empty transcript, thus the parent
- * carries one turn.
+ * Seed the parent conversation of one start-tool case. The parent carries one turn.
  */
 async function seedParent(pool: Pool, analysisId: string, parentThreadId: string): Promise<void> {
     (await upsertAnalysis(pool, analysisId, null))._unsafeUnwrap();

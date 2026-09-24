@@ -287,13 +287,14 @@ describe("spawnReportSession refusals", () => {
         expect(await reportThreadCount()).toBe(1);
     });
 
-    it("refuses an empty parent transcript with empty_parent_transcript and writes no row", async () => {
+    it("spawns from an empty parent transcript at the anchor before seq 0", async () => {
         (await store.createThread({ threadId: "p1", analysisId: ANALYSIS_A, title: "Empty" }))._unsafeUnwrap();
 
-        const failed = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrapErr();
+        const child = (await spawn.spawnReportSession("p1", BRIEF))._unsafeUnwrap();
 
-        expect(failed).toEqual({ type: "empty_parent_transcript", op: "spawn-report-session", parentThreadId: "p1" });
-        expect(await reportThreadCount()).toBe(0);
+        expect(child.parentThreadId).toBe("p1");
+        expect(child.parentSeq).toBe(-1);
+        expect(await reportThreadCount()).toBe(1);
     });
 });
 
