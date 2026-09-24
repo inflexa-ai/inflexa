@@ -9,6 +9,7 @@ import {
     runAgent,
     type AgentChat,
     type AgentDefinition,
+    type AgentSession,
     type ChatRequest,
     type ChatResponse,
     type ChatUsage,
@@ -27,8 +28,14 @@ import { createUsageRecorder } from "./usage_recorder.ts";
 // the seam, the mapping, and the schema each look right in isolation and can still disagree about
 // which column an id lands in.
 //
-// The session is built by `buildChatSession`, the same function the TUI and the REPL drive, so the
-// attribution asserted below is the attribution a real chat turn produces rather than a fixture's guess.
+// The session is built by `buildChatSession`, the same function the TUI and the REPL drive, with the
+// provenance that the harness turn stamps from the resolved agent. Thus the attribution asserted below
+// is the attribution a real chat turn produces rather than a fixture's guess.
+
+/** The session of a root loop: the chat session with the provenance that the harness turn stamps. */
+function rootSession(analysisId: string, threadId: string): AgentSession {
+    return { ...buildChatSession(analysisId, threadId), provenance: { agentId: "conversation-agent", callPath: ["conversation-agent"] } };
+}
 
 let conn: Database;
 
@@ -85,7 +92,7 @@ function rows(): UsageRow[] {
 
 describe("a chat turn's calls land in the local ledger", () => {
     test("one row per completed call, attributed to the analysis and thread with no run frame", async () => {
-        const session = buildChatSession("tui-chat", "ana-ledger", "thr-ledger");
+        const session = rootSession("ana-ledger", "thr-ledger");
         // Two calls: the first asks for a tool, the second answers. "One row per call" is only testable
         // with more than one call, and a tool round-trip is how a real turn gets there.
         const chat = scriptedChat([
@@ -100,7 +107,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             execute: async ({ label }) => ok({ label }),
         });
 
-        await runAgent(agent("tui-chat", [echo]), [{ role: "user", content: "go" }], session, {
+        await runAgent(agent("conversation-agent", [echo]), [{ role: "user", content: "go" }], session, {
             provider: chat,
             signal: new AbortController().signal,
             emit: () => {},
@@ -132,10 +139,10 @@ describe("a chat turn's calls land in the local ledger", () => {
     });
 
     test("the analysis total read back through the query layer is what the turn actually spent", async () => {
-        const session = buildChatSession("tui-chat", "ana-total", "thr-total");
+        const session = rootSession("ana-total", "thr-total");
         const chat = scriptedChat([reply([{ type: "text", text: "done" }], "stop", { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 60 })]);
 
-        await runAgent(agent("tui-chat", []), [{ role: "user", content: "go" }], session, {
+        await runAgent(agent("conversation-agent", []), [{ role: "user", content: "go" }], session, {
             provider: chat,
             signal: new AbortController().signal,
             emit: () => {},
@@ -152,7 +159,7 @@ describe("a chat turn's calls land in the local ledger", () => {
     });
 
     test("a sub-agent's calls reach the same ledger under its own id and call path", async () => {
-        const session = buildChatSession("tui-chat", "ana-nested", "thr-nested");
+        const session = rootSession("ana-nested", "thr-nested");
         const recorder = createUsageRecorder();
         // The nested loop is what a real sub-agent tool (planner, literature reviewer) does: derive a
         // child session with `forSubAgent` and drive another `runAgent` under the SAME injected
@@ -180,7 +187,7 @@ describe("a chat turn's calls land in the local ledger", () => {
             reply([{ type: "text", text: "done" }], "stop", { inputTokens: 140, outputTokens: 35 }),
         ]);
 
-        await runAgent(agent("tui-chat", [planTool]), [{ role: "user", content: "go" }], session, {
+        await runAgent(agent("conversation-agent", [planTool]), [{ role: "user", content: "go" }], session, {
             provider: rootChat,
             signal: new AbortController().signal,
             emit: () => {},
@@ -190,8 +197,8 @@ describe("a chat turn's calls land in the local ledger", () => {
 
         const ledger = rows();
         expect(ledger).toHaveLength(3);
-        expect(ledger.filter((r) => r.agent_id === "planner").map((r) => r.call_path)).toEqual(["tui-chat>planner"]);
-        expect(ledger.filter((r) => r.agent_id === "tui-chat").map((r) => r.call_path)).toEqual(["tui-chat", "tui-chat"]);
+        expect(ledger.filter((r) => r.agent_id === "planner").map((r) => r.call_path)).toEqual(["conversation-agent>planner"]);
+        expect(ledger.filter((r) => r.agent_id === "conversation-agent").map((r) => r.call_path)).toEqual(["conversation-agent", "conversation-agent"]);
         // Both loops attribute to the one analysis, so the analysis total covers the sub-agent's spend
         // — which is the whole reason a sub-agent records under the same injected realization.
         expect(getAnalysisUsageTotals("ana-nested")._unsafeUnwrap()).toMatchObject({ calls: 3, inputTokens: 250, outputTokens: 57 });
@@ -200,14 +207,14 @@ describe("a chat turn's calls land in the local ledger", () => {
     // The harness turn needs Postgres, thus a stand-in runs the real `runAgent` with the recorder that
     // the production engine handed it. An engine that dropped the field writes no row below.
     test("the conversation agent's own calls reach the ledger through the production chat-turn path", async () => {
-        const session = buildChatSession("tui-chat", "ana-chat-turn", "thr-chat-turn");
+        const session = buildChatSession("ana-chat-turn", "thr-chat-turn");
         const chat = scriptedChat([reply([{ type: "text", text: "answered" }], "stop", { inputTokens: 320, outputTokens: 44 })]);
 
         const outcome = await runChatTurn(
             {
                 // Only the harness turn reads the pool, and a stand-in replaces that turn below.
                 pool: {} as unknown as Pool,
-                agents: { forThread: () => ok(agent("tui-chat", [])) },
+                agents: { forThread: () => ok(agent("conversation-agent", [])) },
                 chat: () => chat,
                 session,
                 emit: () => {},
@@ -219,7 +226,8 @@ describe("a chat turn's calls land in the local ledger", () => {
             },
             {
                 turn: async (_deps, params) => {
-                    const run = await runAgent(agent("tui-chat", []), [{ role: "user", content: params.userInput }], params.session, {
+                    const stamped = { ...params.session, provenance: { agentId: "conversation-agent", callPath: ["conversation-agent"] } };
+                    const run = await runAgent(agent("conversation-agent", []), [{ role: "user", content: params.userInput }], stamped, {
                         provider: params.chat(params.emit),
                         signal: params.signal,
                         emit: params.emit,
@@ -238,19 +246,19 @@ describe("a chat turn's calls land in the local ledger", () => {
         expect(ledger).toHaveLength(1);
         // Under the CONVERSATION agent's own id — the attribution that was missing from every row the
         // real ledger held, where only sub-agents and workflow agents ever appeared.
-        expect(ledger[0]).toMatchObject({ agent_id: "tui-chat", call_path: "tui-chat", thread_id: "thr-chat-turn", input_tokens: 320, output_tokens: 44 });
+        expect(ledger[0]).toMatchObject({ agent_id: "conversation-agent", call_path: "conversation-agent", thread_id: "thr-chat-turn", input_tokens: 320, output_tokens: 44 });
         expect(getAnalysisUsageTotals("ana-chat-turn")._unsafeUnwrap()).toMatchObject({ calls: 1, inputTokens: 320, outputTokens: 44 });
     });
 
     test("a re-delivered record updates its row in place instead of double-counting the turn", async () => {
-        const session = buildChatSession("tui-chat", "ana-replay", "thr-replay");
+        const session = rootSession("ana-replay", "thr-replay");
         const recorder = createUsageRecorder();
         // A replayed durable body re-fires `record` with a byte-identical key. Chat keys are minted
         // per call, so the re-delivery is staged by hand — the property under test is the sink's, not
         // the key scheme's.
         const call = {
-            recordKey: "run-1:step-a:tui-chat:llm-0",
-            agentId: "tui-chat",
+            recordKey: "run-1:step-a:conversation-agent:llm-0",
+            agentId: "conversation-agent",
             callPath: session.provenance.callPath,
             scope: session.scope,
             runId: "run-1",

@@ -315,7 +315,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 pool: {} as unknown as Pool,
                 agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
                 chat: () => ({}) as AgentChat,
-                session: buildChatSession("tui-chat", "an-1", "t-1"),
+                session: buildChatSession("an-1", "t-1"),
                 emit: (() => {}) as EmitFn,
                 signal: new AbortController().signal,
                 // The turn's accounting seam. Nothing here records — the `turn` seam never completes a

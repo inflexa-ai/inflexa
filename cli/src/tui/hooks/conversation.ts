@@ -1460,7 +1460,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
     // Per-turn streaming wrapper: forward each provider text delta into the adapter as a `text-delta`
     // event, so answers accumulate in `streamText` as they arrive. Only this top-level
     // loop runs on the wrapper — sub-agent loops were wired to the plain provider at assembly.
-    const session = buildChatSession("tui-chat", opts.analysisId, opts.sessionId);
+    const session = buildChatSession(opts.analysisId, opts.sessionId);
 
     // The engine is contractually non-rejecting — every failure returns a `TurnOutcome`. But `turnSettled`
     // is awaited by the retract path, so this promise MUST settle on EVERY exit: a contract-violating throw
