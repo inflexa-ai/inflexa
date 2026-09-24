@@ -8,6 +8,7 @@ import type { AgentSession } from "../auth/types.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../providers/types.js";
 import { defineTool, withToolResultImage, type Tool } from "../tools/define-tool.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "./__fixtures__/scripted-provider.js";
 import { continueAgent } from "./continue-agent.js";
 import { runAgent, type RunAgentOptions } from "./run-agent.js";
@@ -392,5 +393,36 @@ describe("runAgent — long tool results", () => {
         const excerpt = textOf(onlyResult(messages));
         expect(excerpt.split("\n")[0]).toContain(`Shown: the first ${EXCERPT_HEAD_CHARS - 1} and the last ${EXCERPT_TAIL_CHARS - 1} characters.`);
         expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(excerpt)).toBe(false);
+    });
+
+    it("gives the result of read_tool_output uncut when the model reads the reference of its own excerpt", async () => {
+        const store = memoryStore();
+        const provider = scriptedProvider((i, request) => {
+            if (i === 0) return makeMessage([toolUseBlock("tu-1", "big", { length: 100_000 })], "tool_use");
+            if (i === 1) {
+                const excerpt = textOf(onlyResult(request.messages));
+                const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt)![1]!;
+                return makeMessage([toolUseBlock("tu-2", "read_tool_output", { ref, limit: 16_384 })], "tool_use");
+            }
+            return makeMessage([textBlock("done")], "end_turn");
+        });
+
+        const { messages } = await runAgent(
+            agentDef([sizedTool(), createReadToolOutputTool(store)]),
+            GO,
+            makeSession(),
+            opts(provider, { toolOutputStore: store }),
+        );
+
+        const read = (messages.filter((m) => m.role === "tool")[1]!.content as ToolResultPart[])[0]!;
+        expect(read.output.type).toBe("json");
+        expect((read.output as { value: unknown }).value).toMatchObject({
+            status: "ok",
+            offset: 0,
+            end: 16_384,
+            more: true,
+            text: sizedText(100_000).slice(0, 16_384),
+        });
+        expect(store.puts).toHaveLength(1);
     });
 });
