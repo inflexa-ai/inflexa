@@ -9,6 +9,8 @@ import type {
     Reference,
     UnresolvedReference,
 } from "../contracts/report-reference.js";
+import type { ChartBlock } from "../contracts/report-blocks.js";
+import { walkBlocks } from "./block-walk.js";
 import type { ReportSnapshot } from "./reference-resolver.js";
 import { validateReferenceStructure } from "./structural-validation.js";
 
@@ -263,6 +265,33 @@ describe("validateReferenceStructure", () => {
             const failure = failureFor(bounded, rowSnapshot);
             expect(failure?.reason).toBe("locator-out-of-range");
             expect(failure?.detail).toContain("constructor");
+        });
+
+        /** The grammar columns that the walk collects for one chart over the rows artifact. */
+        function walkedColumns(encoding: ChartBlock["encoding"], composition?: ChartBlock["composition"]): string[] {
+            const block: ChartBlock =
+                composition !== undefined
+                    ? { kind: "chart", id: "c1", binding: tableReference(ROWS_PATH, ROWS_HASH), composition }
+                    : { kind: "chart", id: "c1", binding: tableReference(ROWS_PATH, ROWS_HASH), chartType: "scatter", encoding };
+            return walkBlocks([block]).references[0]?.encodingColumns ?? [];
+        }
+
+        it("refuses an invented column in a color channel, a composition facet, and an order column", () => {
+            // Each new member of the grammar names a column. The walk collects it, thus the structural tier
+            // refuses an invented one before the block lands, exactly as it refuses an invented x.
+            const color = columnFailure(walkedColumns({ x: "log2FoldChange", y: "padj", color: "invented_color" }));
+            expect(color?.reason).toBe("locator-out-of-range");
+            expect(color?.detail).toContain("invented_color");
+
+            const facet = columnFailure(
+                walkedColumns(undefined, { series: [{ form: "scatter", encoding: { x: "log2FoldChange", y: "padj" } }], facet: "invented_facet" }),
+            );
+            expect(facet?.reason).toBe("locator-out-of-range");
+            expect(facet?.detail).toContain("invented_facet");
+
+            const order = columnFailure(walkedColumns({ x: { column: "gene", orderBy: "invented_rank" }, y: "padj" }));
+            expect(order?.reason).toBe("locator-out-of-range");
+            expect(order?.detail).toContain("invented_rank");
         });
 
         it("refuses a chart column that names an inherited member of a plain object", () => {

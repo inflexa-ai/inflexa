@@ -840,6 +840,56 @@ a.report-citation-source:hover {
   width: 100%;
   height: 400px;
 }
+/* A faceted chart lays out three panels to a row, and each further row of panels adds the height of one
+   row. Twelve panels at most give four rows. */
+.chart-container-rows-2 {
+  height: 760px;
+}
+.chart-container-rows-3 {
+  height: 1120px;
+}
+.chart-container-rows-4 {
+  height: 1480px;
+}
+/* The export row of a chart card: the two SVG files and the three PNG controls, under the chart body. */
+.report-chart-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+/* A link and a control of the export row read as one kind of button, as the download of a table does. */
+.report-chart-export-link,
+.report-chart-export-button {
+  display: inline-block;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary-500);
+  text-decoration: none;
+  background: var(--color-card);
+  border: 1px solid var(--color-primary-200);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.report-chart-export-link:hover,
+.report-chart-export-button:hover {
+  color: var(--color-primary-700);
+  background: var(--color-primary-50);
+  border-color: var(--color-primary-500);
+}
+/* The note of a chart past the export bound. It stands where the two SVG links stand on a smaller chart. */
+.report-chart-export-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
 
 /* ── References appendix ──────────────────────────────── */
 /* The appendix is a record of where each value came from. A reader consults it, and a reader does not read
@@ -1056,6 +1106,10 @@ a.report-citation-source:hover {
   .report-lineage-popover {
     display: none;
   }
+  /* Each export draws a file on the screen, and paper downloads nothing. */
+  .report-chart-export {
+    display: none;
+  }
   /* The printer gives the page margin. Thus the screen padding of the container drops out. */
   body:has(#report-sidebar) {
     padding-left: 0;
@@ -1167,6 +1221,140 @@ export const GRID_THEME_PARAMS = {
 export const ECHARTS_THEME_NAME = "inflexa";
 
 /**
+ * The font stack of the chart text: the journal sans stack. A figure keeps its own typography on the page
+ * and in the paper, thus the chart text never reads the page fonts.
+ *
+ * No family name takes quotes. The server render of the chart runtime writes the stack into a double-quoted
+ * `style` attribute with no escape, and a double quote there breaks the SVG file.
+ */
+export const CHART_FONT_STACK = "Helvetica, Arial, sans-serif";
+
+/**
+ * The text sizes of a chart, in pixels: on the page, in the SVG and the column PNG, and in the slide PNG.
+ *
+ * The print size is 7.5 points at the column width, which a journal accepts. The slide size reads from the
+ * back of a room at the full width of a slide.
+ */
+export const CHART_PAGE_TEXT_PX = 12;
+export const CHART_PRINT_TEXT_PX = 10;
+export const CHART_SLIDE_TEXT_PX = 24;
+
+/** The names of the two export themes. The registration script and the export read the same names. */
+export const CHART_PRINT_THEME_NAME = `${ECHARTS_THEME_NAME}-print`;
+export const CHART_SLIDE_THEME_NAME = `${ECHARTS_THEME_NAME}-slide`;
+
+/** The pixel ratio of a column PNG: 300 dots for each inch, over the 96 CSS pixels of one inch. */
+const COLUMN_PIXEL_RATIO = 300 / 96;
+
+/** The size of one chart export: the name of its theme, the CSS pixel box, and the millimeter box of a column. */
+export interface ChartExportSize {
+    readonly theme: string;
+    readonly textPx: number;
+    readonly widthPx: number;
+    readonly heightPx: number;
+    readonly widthMm?: number;
+    readonly heightMm?: number;
+    readonly pixelRatio: number;
+    readonly label: string;
+}
+
+/**
+ * The export sizes of a chart: the single journal column, the double journal column, and a 16:9 slide.
+ *
+ * A column states its box in millimeters and in CSS pixels at 96 pixels for each inch: 89 × 67 mm is 336 ×
+ * 253 px, and 183 × 92 mm is 692 × 348 px. The column PNG draws at a pixel ratio of 3.125, which is 300 DPI,
+ * thus the single column is 1050 px wide. The slide draws at 1920 × 1080 px at a ratio of one. The columns
+ * read the print text size, and the slide reads the slide text size.
+ */
+export const CHART_EXPORT_SIZES = {
+    single: {
+        theme: CHART_PRINT_THEME_NAME,
+        textPx: CHART_PRINT_TEXT_PX,
+        widthPx: 336,
+        heightPx: 253,
+        widthMm: 89,
+        heightMm: 67,
+        pixelRatio: COLUMN_PIXEL_RATIO,
+        label: "89 mm",
+    },
+    double: {
+        theme: CHART_PRINT_THEME_NAME,
+        textPx: CHART_PRINT_TEXT_PX,
+        widthPx: 692,
+        heightPx: 348,
+        widthMm: 183,
+        heightMm: 92,
+        pixelRatio: COLUMN_PIXEL_RATIO,
+        label: "183 mm",
+    },
+    slide: { theme: CHART_SLIDE_THEME_NAME, textPx: CHART_SLIDE_TEXT_PX, widthPx: 1920, heightPx: 1080, pixelRatio: 1, label: "16:9" },
+} as const satisfies Record<string, ChartExportSize>;
+
+/**
+ * The near-black ink of a chart: the text, the two axis lines, and the stroke of an interval.
+ *
+ * A journal figure draws its frame and its text in one dark ink, thus the page and the export read alike.
+ */
+export const CHART_INK = "#222222";
+
+/**
+ * The categorical palette of a chart: the Okabe-Ito set, in the order blue, vermilion, bluish green,
+ * orange, reddish purple, sky blue, yellow, and black.
+ *
+ * The set is public and colorblind-safe: no two hues differ by a red-green difference alone. A series that
+ * names no color takes the next hue of this order.
+ */
+export const CHART_PALETTE = ["#0072b2", "#d55e00", "#009e73", "#e69f00", "#cc79a7", "#56b4e9", "#f0e442", "#000000"] as const;
+
+/** The one focus color of a chart. It is the first hue of the palette, thus a focus reads as the lead series. */
+export const FOCUS_CHART_COLOR = CHART_PALETTE[0];
+
+/**
+ * The sequential ramp of a continuous color: the ten stops of viridis, dark to light. A continuous scale maps
+ * the low value to `#440154` and the high value to `#fde725`.
+ */
+export const SEQUENTIAL_RAMP = ["#440154", "#482777", "#3e4989", "#31688e", "#26828e", "#1f9e89", "#35b779", "#6ece58", "#b5de2b", "#fde725"] as const;
+
+/**
+ * The diverging ramp of a continuous color: the palette blue through a near-white to the palette vermilion.
+ * The derivation centers the ramp on zero, thus the near-white stop marks no change.
+ */
+export const DIVERGING_RAMP = [CHART_PALETTE[0], "#f7f7f7", CHART_PALETTE[1]] as const;
+
+/** The smallest and the largest symbol of a `size` channel, in pixels. */
+export const SIZE_CHANNEL_RANGE_PX = [6, 24] as const;
+
+/**
+ * The band at the right edge of a chart that a continuous color scale takes, in percent of the width. The plot
+ * leaves the band free, and the title of the scale in an export wraps into it.
+ */
+export const COLOR_SCALE_BAND_PCT = 18;
+
+/**
+ * The largest count of slots of one chart, where a slot is one pair of a category and a group. A stacked form,
+ * a radar, a violin, and a heatmap lay out one slot for each pair, thus the bound holds their grids to a size
+ * that a reader reads and that the render holds in memory.
+ */
+export const CHART_SLOT_LIMIT = 100_000;
+
+/**
+ * The largest count of bars that carry a value label, counted across the series of one chart.
+ *
+ * A label on each of a few bars reads as the exact value beside the bar. Past this count the labels crowd
+ * each other, and the axis reads better alone.
+ */
+export const BAR_VALUE_LABEL_LIMIT = 12;
+
+/**
+ * The largest count of facet panels of one chart, and the count of panels in one row.
+ *
+ * A small multiple compares its panels at a glance. Past twelve panels each panel is too small to read, and
+ * a derived table of fewer groups serves the reader better.
+ */
+export const FACET_PANEL_LIMIT = 12;
+export const FACET_COLUMNS = 3;
+
+/**
  * The muted chart color, beside the palette of the theme.
  *
  * A null category states no finding, thus it must recede behind the categories that do. The value is the
@@ -1207,59 +1395,77 @@ export const SCATTER_CROWD_OPACITY = 0.5;
 export const CHART_INLINE_OPTION_BOUND = 100_000;
 
 /**
- * The ECharts theme as a plain object. The renderer serializes this object and registers it, thus the theme
- * never rides a JSON file and no run-time read is necessary. The palette and the axis styles mirror the
- * light design tokens above.
+ * The publication theme of a chart, at one text size.
+ *
+ * The page and the export read one theme, thus a chart on the page is the chart that the paper gets. The
+ * left and the bottom axis lines are strong and dark, with ticks outside the plot. There is no grid line, no
+ * frame around the legend, and no toolbox, because the chart card carries the export row. The text reads in
+ * the journal sans stack and in the near-black ink.
+ *
+ * The chart runtime reads the style of an axis by its type, thus each of the four axis types carries the same
+ * style. The text size scales the text alone: the page, the print export, and the slide export each register
+ * one theme.
  */
-export const ECHARTS_THEME = {
-    color: ["#576dea", "#ef4444", "#22c55e", "#a78bfa", "#f59e0b", "#ec4899", "#06b6d4", "#f97316", "#8b5cf6", "#14b8a6"],
-    backgroundColor: "transparent",
-    textStyle: {
-        fontFamily: "'Space Grotesk Variable', system-ui, sans-serif",
-        fontSize: 12,
-        color: "#64748b",
-    },
-    title: {
-        show: false,
-    },
-    legend: {
-        bottom: 0,
-        textStyle: { fontSize: 11, color: "#64748b" },
-        itemGap: 16,
-        itemWidth: 12,
-        itemHeight: 12,
-    },
-    grid: {
-        left: 60,
-        right: 24,
-        top: 24,
-        bottom: 48,
-        containLabel: false,
-    },
-    tooltip: {
-        backgroundColor: "#ffffff",
-        borderColor: "#e2e8f0",
-        textStyle: { color: "#334155", fontSize: 12 },
-        extraCssText: "border-radius: 4px; box-shadow: 0 4px 12px rgba(15,23,42,0.1);",
-    },
-    toolbox: {
-        feature: {
-            saveAsImage: { title: "Save", pixelRatio: 2 },
+export function chartTheme(textPx: number) {
+    const axis = {
+        axisLine: { show: true, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },
+        axisTick: { show: true, inside: false, lineStyle: { color: CHART_INK, width: CHART_AXIS_LINE_PX } },
+        axisLabel: { color: CHART_INK, fontSize: textPx },
+        splitLine: { show: false },
+        nameTextStyle: { color: CHART_INK, fontSize: textPx },
+    };
+    // A value axis draws its line at the edge of the plot, thus the left and the bottom lines frame the figure.
+    // A category axis keeps its line on the zero of the value axis, thus a bar stands on a zero baseline.
+    const valueAxis = { ...axis, axisLine: { ...axis.axisLine, onZero: false } };
+    return {
+        color: [...CHART_PALETTE],
+        backgroundColor: "transparent",
+        textStyle: { fontFamily: CHART_FONT_STACK, fontSize: textPx, color: CHART_INK },
+        title: { show: false },
+        legend: {
+            bottom: 0,
+            borderWidth: 0,
+            textStyle: { fontFamily: CHART_FONT_STACK, fontSize: textPx, color: CHART_INK },
+            itemGap: 16,
+            itemWidth: textPx,
+            itemHeight: textPx,
         },
-        iconStyle: { borderColor: "#94a3b8" },
-        right: 16,
-        top: 0,
-    },
-    xAxis: {
-        axisLine: { lineStyle: { color: "#e2e8f0" } },
-        axisTick: { lineStyle: { color: "#e2e8f0" } },
-        axisLabel: { color: "#64748b", fontSize: 11 },
-        splitLine: { lineStyle: { color: "#f1f5f9", type: "dashed" } },
-    },
-    yAxis: {
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: { color: "#64748b", fontSize: 11 },
-        splitLine: { lineStyle: { color: "#f1f5f9", type: "dashed" } },
-    },
-};
+        grid: { left: 60, right: 24, top: 24, bottom: 48, containLabel: false },
+        tooltip: {
+            backgroundColor: "#ffffff",
+            borderColor: "#e2e8f0",
+            textStyle: { color: "#334155", fontSize: 12 },
+            extraCssText: "border-radius: 4px; box-shadow: 0 4px 12px rgba(15,23,42,0.1);",
+        },
+        categoryAxis: axis,
+        valueAxis,
+        logAxis: valueAxis,
+        timeAxis: valueAxis,
+        visualMap: { textStyle: { fontFamily: CHART_FONT_STACK, fontSize: textPx, color: CHART_INK } },
+        radar: {
+            axisName: { color: CHART_INK, fontSize: textPx },
+            axisLine: { lineStyle: { color: CHART_RADAR_WEB } },
+            splitLine: { lineStyle: { color: CHART_RADAR_WEB } },
+            splitArea: { show: false },
+        },
+    };
+}
+
+/** The width of the two axis lines and of their ticks, in pixels. */
+const CHART_AXIS_LINE_PX = 1.5;
+
+/** The light web of a radar. The web is the coordinate of the radar, thus it stays and recedes. */
+const CHART_RADAR_WEB = "#d4d4d4";
+
+/** The theme that the page registers under `ECHARTS_THEME_NAME`, at the page text size. */
+export const ECHARTS_THEME = chartTheme(CHART_PAGE_TEXT_PX);
+
+/**
+ * The registered themes: the page theme, the print theme of the SVG and the column PNG, and the slide theme.
+ * The registration script writes each one, and the export reads one by its name.
+ */
+export const CHART_THEMES = [
+    { name: ECHARTS_THEME_NAME, textPx: CHART_PAGE_TEXT_PX },
+    { name: CHART_PRINT_THEME_NAME, textPx: CHART_PRINT_TEXT_PX },
+    { name: CHART_SLIDE_THEME_NAME, textPx: CHART_SLIDE_TEXT_PX },
+] as const;

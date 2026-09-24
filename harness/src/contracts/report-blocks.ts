@@ -24,10 +24,26 @@ import {
 } from "./report-reference.js";
 
 /**
- * The chart vocabulary. The first seven values name one plot form each. The last four are presets of a
+ * The chart vocabulary. The first eleven values name one plot form each. The last four are presets of a
  * scientific plot, and the renderer expands a preset into a composition.
  */
-const ChartTypeSchema = z.enum(["bar", "line", "scatter", "histogram", "box", "heatmap", "pie", "volcano", "manhattan", "ma", "km"]);
+const ChartTypeSchema = z.enum([
+    "bar",
+    "line",
+    "scatter",
+    "histogram",
+    "box",
+    "heatmap",
+    "pie",
+    "violin",
+    "stacked-bar",
+    "normalized-bar",
+    "radar",
+    "volcano",
+    "manhattan",
+    "ma",
+    "km",
+]);
 
 /** The per-row transforms of a channel. Each derived value comes from one cell. */
 const ChartTransformSchema = z.enum(["log10", "neg_log10", "abs", "rank"]);
@@ -62,38 +78,97 @@ const ORIENTATION_DESCRIPTION =
     "The arrangement of the bars. `vertical` is the default, and it draws the categories along the bottom. `horizontal` draws them up the left side, and it is the form to reach for when a category name is long, for example a gene-set name: a long name reads on the y axis, and it is unreadable slanted under a vertical bar. The channels do not move with the orientation. `x` names the category column and `y` names the value column in both.";
 
 /**
- * One visual channel: a column name, or a column with a per-row transform.
+ * One visual channel: a column name, or a column with a per-row transform and a category order.
  *
- * The object form carries a column and a transform, and it carries no value. Thus a channel can never
- * bring a data literal into the chart option.
+ * The object form carries column names and closed enum members, and it carries no value. Thus a channel can
+ * never bring a data literal into the chart option. The refine holds the order direction to a declared sort
+ * column, because a direction with nothing to sort by names a rule that nothing reads.
  */
 export const ChartChannelSchema = z.union([
     z.string().describe("The column that feeds the channel."),
-    z.strictObject({
-        column: z.string().describe("The column that feeds the channel."),
-        transform: ChartTransformSchema.describe(
-            "The per-row transform. `log10` and `neg_log10` drop a cell that is not positive. `rank` gives the place of the cell in the ascending order of the column, and a tie shares its place.",
-        ),
-    }),
+    z
+        .strictObject({
+            column: z.string().describe("The column that feeds the channel."),
+            transform: ChartTransformSchema.optional().describe(
+                "The per-row transform. `log10` and `neg_log10` drop a cell that is not positive. `rank` gives the place of the cell in the ascending order of the column, and a tie shares its place.",
+            ),
+            orderBy: z
+                .string()
+                .optional()
+                .describe(
+                    "The column that sorts the categories of this channel, for example the leaf order of a clustered heatmap or the score of a ranked bar. Each category must hold one value in this column. A tie keeps the order of the rows. It is legal on a channel that draws a category axis alone.",
+                ),
+            order: z
+                .enum(["asc", "desc"])
+                .optional()
+                .describe(
+                    "The direction of the `orderBy` sort. `asc` is the default, and `desc` puts the largest value first. It is legal beside `orderBy` alone.",
+                ),
+        })
+        .refine((channel) => channel.order === undefined || channel.orderBy !== undefined, {
+            message: "`order` is legal beside `orderBy` alone. Name the column that sorts the categories.",
+            path: ["order"],
+        }),
 ]);
 
+/** The teaching text of the continuous color channel. The quick path and a series both carry it. */
+const COLOR_DESCRIPTION =
+    "A numeric column that colors each point or bar on a continuous scale, for example the expression of a gene over an embedding or the adjusted p of an enriched set. A column that holds values on both sides of zero takes a diverging scale centered on zero, and every other column takes a sequential scale. It is legal on a `scatter` and a `bar`, and never beside a `group` channel. A row whose cell is not numeric draws no point.";
+
+/** The teaching text of the size channel. The quick path and a series both carry it. */
+const SIZE_DESCRIPTION =
+    "A numeric column that sizes each point, for example the gene count of an enrichment dot plot. It is legal on a `scatter` alone. A row whose cell is not numeric draws no point.";
+
+/** The teaching text of the lower interval bound. The quick path and a series both carry it. */
+const LOW_DESCRIPTION =
+    "The column of the lower bound of an interval around each plotted value, for example the lower confidence limit of a forest plot or of an error bar. Give `high` with it. The bound sits on the value axis, and a lower bound above its value is a fault. It is legal on a `bar` and a `scatter`.";
+
+/** The teaching text of the upper interval bound. The quick path and a series both carry it. */
+const HIGH_DESCRIPTION =
+    "The column of the upper bound of an interval around each plotted value. Give `low` with it. An upper bound under its value is a fault. It is legal on a `bar` and a `scatter`.";
+
+/** The teaching text of the facet channel. The quick path and a composition both carry it. */
+const FACET_DESCRIPTION =
+    "A category column that splits one table into small multiples: one panel for each value, in the order of the rows, with one shared axis range. At most 12 panels. It is legal on a `scatter`, a `line`, and a `bar`.";
+
+/** The one refine rule of an interval: the two bounds arrive together. */
+function holdsBothBounds(encoding: { low?: unknown; high?: unknown }): boolean {
+    return (encoding.low === undefined) === (encoding.high === undefined);
+}
+
+/** The refusal of a lone interval bound. */
+const LONE_BOUND = { message: "An interval has two bounds. Give `low` and `high` together.", path: ["low"] };
+
 /** The mapping from a data column to a visual channel. Each channel is optional. */
-const ChartEncodingSchema = z.strictObject({
-    x: ChartChannelSchema.optional().describe("The channel on the x axis."),
-    y: ChartChannelSchema.optional().describe("The channel on the y axis."),
-    group: ChartChannelSchema.optional().describe("The column that splits and colors the series."),
-    value: ChartChannelSchema.optional().describe("The value column for a pie or heatmap."),
-    label: z.string().optional().describe("The column that names each point. The name rides the tooltip of a bar, a line, and a scatter."),
-});
+const ChartEncodingSchema = z
+    .strictObject({
+        x: ChartChannelSchema.optional().describe("The channel on the x axis."),
+        y: ChartChannelSchema.optional().describe("The channel on the y axis."),
+        group: ChartChannelSchema.optional().describe("The column that splits and colors the series."),
+        value: ChartChannelSchema.optional().describe("The value column for a pie or heatmap."),
+        label: z.string().optional().describe("The column that names each point. The name rides the tooltip of a bar, a line, and a scatter."),
+        color: ChartChannelSchema.optional().describe(COLOR_DESCRIPTION),
+        size: ChartChannelSchema.optional().describe(SIZE_DESCRIPTION),
+        low: ChartChannelSchema.optional().describe(LOW_DESCRIPTION),
+        high: ChartChannelSchema.optional().describe(HIGH_DESCRIPTION),
+        facet: ChartChannelSchema.optional().describe(FACET_DESCRIPTION),
+    })
+    .refine(holdsBothBounds, LONE_BOUND);
 
 /** The channels of one series. A series plots two channels, thus `x` and `y` are both present. */
-const ChartSeriesEncodingSchema = z.strictObject({
-    x: ChartChannelSchema.describe("The channel on the x axis."),
-    y: ChartChannelSchema.describe("The channel on the y axis."),
-    y0: ChartChannelSchema.optional().describe("The lower bound of a band. It is legal on an `area` series only."),
-    group: ChartChannelSchema.optional().describe("The column that splits the series, one series for each value."),
-    label: z.string().optional().describe("The column that names each point of the series."),
-});
+const ChartSeriesEncodingSchema = z
+    .strictObject({
+        x: ChartChannelSchema.describe("The channel on the x axis."),
+        y: ChartChannelSchema.describe("The channel on the y axis."),
+        y0: ChartChannelSchema.optional().describe("The lower bound of a band. It is legal on an `area` series only."),
+        group: ChartChannelSchema.optional().describe("The column that splits the series, one series for each value."),
+        label: z.string().optional().describe("The column that names each point of the series."),
+        color: ChartChannelSchema.optional().describe(COLOR_DESCRIPTION),
+        size: ChartChannelSchema.optional().describe(SIZE_DESCRIPTION),
+        low: ChartChannelSchema.optional().describe(LOW_DESCRIPTION),
+        high: ChartChannelSchema.optional().describe(HIGH_DESCRIPTION),
+    })
+    .refine(holdsBothBounds, LONE_BOUND);
 
 /**
  * One series of a composition: a plot form, its own channels, and an optional legend name.
@@ -163,11 +238,15 @@ export const ChartAxesSchema = z.strictObject({
     y: ChartAxisSchema.optional().describe("The y axis."),
 });
 
-/** The full chart grammar: the series, the annotations, and the axes. Each series reads the one bound table. */
+/**
+ * The full chart grammar: the series, the annotations, the axes, and the facet. Each series reads the one
+ * bound table.
+ */
 export const ChartCompositionSchema = z.strictObject({
     series: z.array(ChartSeriesSchema).min(1).describe("One series at least. Each one reads the bound table."),
     annotations: z.array(ChartAnnotationSchema).optional().describe("The guide lines, the guide bands, and the point names."),
     axes: ChartAxesSchema.optional().describe("The axis titles and the axis scales."),
+    facet: ChartChannelSchema.optional().describe(`${FACET_DESCRIPTION} On a composition, the first series has one of those forms.`),
 });
 
 /**
@@ -239,16 +318,23 @@ export const ChartBlockSchema = z
         title: z.string().optional(),
         binding: ArtifactTableReferenceSchema.describe("The whole-table artifact to plot."),
         chartType: ChartTypeSchema.optional().describe(
-            "The quick path. Give `encoding` with it, and omit `composition`. A preset (`volcano`, `manhattan`, `ma`, `km`) reads the same channels, and it applies its own transform and its own guide lines.",
+            "The quick path. Give `encoding` with it, and omit `composition`. A `violin` draws the density of `y` in each category of `x`. A `stacked-bar` stacks the `group` parts of each category, a `normalized-bar` stacks their shares, and a `radar` draws one polygon for each `group` over the categories of `x`. These three need a `group` channel. A preset (`volcano`, `manhattan`, `ma`, `km`) reads the same channels, and it applies its own transform and its own guide lines.",
         ),
         encoding: ChartEncodingSchema.optional().describe("The channels of the quick path."),
         orientation: ChartOrientationSchema.optional().describe(
-            `${ORIENTATION_DESCRIPTION} The field belongs to the \`bar\` chart type, and every other type refuses it.`,
+            `${ORIENTATION_DESCRIPTION} The field belongs to the \`bar\`, the \`stacked-bar\`, and the \`normalized-bar\` chart types, and every other type refuses it.`,
         ),
         thresholds: ChartThresholdsSchema.optional().describe(
             "The threshold pair of a `volcano`. It replaces the preset defaults of `0.05` and `1`, and it moves the guide lines and the color split together. State it to draw the volcano of a corrected significance column. Every other chart type reads no threshold, thus every other type refuses the field.",
         ),
         composition: ChartCompositionSchema.optional().describe("The full grammar. Omit `chartType` and `encoding` with it."),
+        focus: z
+            .array(z.string())
+            .min(1)
+            .optional()
+            .describe(
+                "The category values of the finding. Each named category takes the one focus color, and every other category is muted. On a bar with no `group` channel a category is a value of `x`, and on every other chart it is a value of `group`. It is legal on a bar and the two stacked forms, and on a grouped scatter, line, box, violin, and radar. It is never legal beside a `color` channel.",
+            ),
         caption: z.string().optional(),
     })
     .refine(
@@ -360,6 +446,20 @@ export function channelColumn(channel: ChartChannel): string {
 /** The transform of one channel, or `undefined` when the channel names a plain column. */
 export function channelTransform(channel: ChartChannel): ChartTransform | undefined {
     return typeof channel === "string" ? undefined : channel.transform;
+}
+
+/** The category order of one channel: the column that sorts the categories, and the direction of the sort. */
+export interface ChannelOrder {
+    readonly by: string;
+    readonly order: "asc" | "desc";
+}
+
+/** The category order of one channel, or `undefined` when the channel declares none. */
+export function channelOrder(channel: ChartChannel): ChannelOrder | undefined {
+    if (typeof channel === "string" || channel.orderBy === undefined) {
+        return undefined;
+    }
+    return { by: channel.orderBy, order: channel.order ?? "asc" };
 }
 
 export type ChartChannel = z.infer<typeof ChartChannelSchema>;

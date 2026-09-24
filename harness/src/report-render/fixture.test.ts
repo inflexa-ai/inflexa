@@ -11,8 +11,9 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { ATOM_BLOCK_SCHEMAS, SectionBlockSchema, type Block } from "../contracts/report-blocks.js";
-import { FIXTURE_DOCUMENT } from "./fixture.js";
+import { ATOM_BLOCK_SCHEMAS, ChartBlockSchema, SectionBlockSchema, type Block, type ChartBlock } from "../contracts/report-blocks.js";
+import { FIXTURE_DOCUMENT, FIXTURE_VALUES } from "./fixture.js";
+import { renderReportPage } from "./render.js";
 
 /** Each block kind that the contract declares. The set reads the `kind` literal of each block schema. */
 function contractKinds(): string[] {
@@ -77,5 +78,37 @@ describe("the design fixture", () => {
         // The fixture must show both forms, otherwise one of the two designs never reaches the page.
         expect(runs.filter((length) => length >= 2).length).toBeGreaterThan(0);
         expect(runs.filter((length) => length === 1).length).toBeGreaterThan(0);
+    });
+});
+
+describe("the chart forms of the design fixture", () => {
+    /** Each chart block of the fixture. */
+    const charts = everyBlock(FIXTURE_DOCUMENT.sections).filter((block): block is ChartBlock => block.kind === "chart");
+
+    /** The encoding of each quick path, and the series encodings of each composition. */
+    const encodings = charts.flatMap((chart) => [
+        ...(chart.encoding !== undefined ? [chart.encoding] : []),
+        ...(chart.composition?.series.map((series) => series.encoding) ?? []),
+    ]);
+
+    it("holds one chart of each chart type that the contract declares", () => {
+        // The type list reads the contract, thus a new chart form fails this gate until the fixture draws it.
+        const declared = [...ChartBlockSchema.shape.chartType.unwrap().options].sort();
+        const covered = [...new Set(charts.flatMap((chart) => (chart.chartType !== undefined ? [chart.chartType] : [])))].sort();
+        expect(covered).toEqual(declared);
+    });
+
+    it("holds an interval, a facet, a focus, and a continuous color", () => {
+        expect(encodings.some((encoding) => encoding.low !== undefined && encoding.high !== undefined)).toBe(true);
+        expect(charts.some((chart) => chart.encoding?.facet !== undefined || chart.composition?.facet !== undefined)).toBe(true);
+        expect(charts.some((chart) => chart.focus !== undefined)).toBe(true);
+        expect(encodings.some((encoding) => encoding.color !== undefined)).toBe(true);
+    });
+
+    it("renders each chart, with its two SVG files", () => {
+        const rendered = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES);
+        expect(rendered.isOk() ? [] : rendered.error).toEqual([]);
+        const svgs = rendered._unsafeUnwrap().dataAssets.filter((asset) => asset.name.endsWith(".svg"));
+        expect(svgs.length).toBe(2 * charts.length);
     });
 });

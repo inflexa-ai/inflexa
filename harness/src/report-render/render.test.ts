@@ -7,6 +7,7 @@ import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
 import {
     CHART_INLINE_OPTION_BOUND,
     DESIGN_CSS,
+    SCATTER_CROWD_ROWS,
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
     GRID_MIN_COLUMN_WIDTH_PX,
@@ -18,6 +19,7 @@ import {
 import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "./fixture.js";
 import {
     CHART_BOOTSTRAP,
+    CHART_OPTIONS_GLOBAL,
     GRID_BOOTSTRAP,
     LINEAGE_COMPLETE_NOTE,
     LINEAGE_NO_ANSWER_NOTE,
@@ -650,7 +652,8 @@ describe("the lineage stamp and the popover control", () => {
         // Absence of the document is a normal condition. The page then holds the markup that it holds
         // without the lineage, thus nothing on it opens a panel.
         expect(html).not.toContain("data-lineage");
-        expect(html).not.toContain("<button");
+        // The export controls of a chart card are the one button kind of a page with no document.
+        expect(load(html)("button").not(".report-chart-export-button").length).toBe(0);
         expect(html).not.toContain(LINEAGE_POPOVER);
         expect(load(html)(`.${LINEAGE_CONTROL_CLASS}`).length).toBe(0);
     });
@@ -1112,7 +1115,13 @@ describe("the page stands alone", () => {
         // A data asset is a file that this render produced, thus it stays at the root of the directory.
         expect(rendered.dataAssets.length).toBeGreaterThan(0);
         expect(rendered.dataAssets.filter((asset) => asset.name.includes("/"))).toEqual([]);
+        // The page loads each payload as a script, and it links each SVG file of a chart. No SVG loads as a script.
         for (const asset of rendered.dataAssets) {
+            if (asset.name.endsWith(".svg")) {
+                expect(rendered.html).toContain(`href="${ASSETS_DIR}/${asset.name}"`);
+                expect(rendered.html).not.toContain(`<script src="${ASSETS_DIR}/${asset.name}"`);
+                continue;
+            }
             expect(rendered.html).toContain(`<script src="${ASSETS_DIR}/${asset.name}"></script>`);
         }
     });
@@ -2522,6 +2531,54 @@ describe("the chart bootstrap under a broken chart", () => {
     });
 });
 
+describe("the chart bootstrap binds the named renderers", () => {
+    /** Run the emitted bootstrap over one container whose option names two renderers, and give the set option. */
+    function bootOne(option: Record<string, unknown>): { applied: Record<string, unknown>[]; win: Record<string, unknown> } {
+        const applied: Record<string, unknown>[] = [];
+        const win: Record<string, unknown> = { addEventListener: () => undefined };
+        const container = {
+            getAttribute: () => "violin-1",
+            nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+        };
+        const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = {
+            init: () => ({ setOption: (given: Record<string, unknown>) => applied.push(given) }),
+            getInstanceByDom: () => undefined,
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        return { applied, win };
+    }
+
+    const option = {
+        xAxis: { type: "category", data: ["a"] },
+        yAxis: { type: "value" },
+        series: [
+            { type: "custom", renderItem: "outline", data: [] },
+            { type: "custom", renderItem: "interval", data: [] },
+        ],
+    };
+
+    it("replaces each renderer name with its function before the chart runtime reads the option", () => {
+        const { applied } = bootOne(option);
+        const series = applied[0].series as Record<string, unknown>[];
+        // The option carries a name, and the runtime takes a function. The bind runs before `setOption`.
+        expect(typeof series[0].renderItem).toBe("function");
+        expect(typeof series[1].renderItem).toBe("function");
+        expect(CHART_BOOTSTRAP).toContain("reportBindRenderers(option)");
+        expect(CHART_BOOTSTRAP).toContain('"interval"');
+        expect(CHART_BOOTSTRAP).toContain('"outline"');
+    });
+
+    it("keeps the option of each chart by its block id, with the renderer names as data", () => {
+        const { win } = bootOne(option);
+        const kept = (win[CHART_OPTIONS_GLOBAL] as Record<string, Record<string, unknown>>)["violin-1"];
+        // The export draws the chart again from this option, thus it stays plain data and names each renderer.
+        expect((kept.series as Record<string, unknown>[]).map((entry) => entry.renderItem)).toEqual(["outline", "interval"]);
+    });
+});
+
 describe("renderReportPage number format", () => {
     /** A one-section page over one metric block and one table block. */
     function pageOf(blocks: Block[]): ReportDocument {
@@ -2629,6 +2686,14 @@ describe("the shared chart payload", () => {
         return { document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks }] }, values, rows };
     }
 
+    /**
+     * The table payloads of one render. Each chart also stages its SVG files, and the page loads none of them
+     * as a script, thus a suite about the payload reads the payload assets alone.
+     */
+    function payloadsOf(rendered: { dataAssets: readonly { name: string; bytes: string }[] }): { name: string; bytes: string }[] {
+        return rendered.dataAssets.filter((asset) => asset.name.endsWith(".data.js"));
+    }
+
     /** The registry that the page holds after the assets and the decoder run. */
     function registryOf(assets: readonly { bytes: string }[]): Record<string, { rows: Record<string, string | number>[]; total: number }> {
         const window: Record<string, unknown> = {};
@@ -2644,8 +2709,8 @@ describe("the shared chart payload", () => {
         const page = pageOf([table, volcanoBlock()]);
         const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
 
-        expect(rendered.dataAssets.length).toBe(1);
-        const registry = registryOf(rendered.dataAssets);
+        expect(payloadsOf(rendered).length).toBe(1);
+        const registry = registryOf(payloadsOf(rendered));
         // One asset registers the rows one time. The second id takes the same object, thus the page carries
         // one copy of the table and each block finds it under its own id.
         expect(Object.keys(registry).sort()).toEqual(["cht", "tbl"]);
@@ -2654,7 +2719,7 @@ describe("the shared chart payload", () => {
         // The table encoded the payload, and the chart reads it under its own id. Thus the shared payload
         // plots the chart, and the grid of the table reads the same rows.
         const json = load(rendered.html)("script[type='application/json']").text();
-        const built = bootChart(rendered.dataAssets, json);
+        const built = bootChart(payloadsOf(rendered), json);
         expect(built.map((series) => series.data.length).reduce((sum, count) => sum + count, 0)).toBe(page.rows.length);
     });
 
@@ -2667,7 +2732,7 @@ describe("the shared chart payload", () => {
         expect(json.length).toBeLessThan(CHART_INLINE_OPTION_BOUND);
         expect(json).not.toContain("G4001");
 
-        const built = bootChart(rendered.dataAssets, json);
+        const built = bootChart(payloadsOf(rendered), json);
         const inline = deriveChartOption(volcanoBlock(), page.rows, COLUMNS)._unsafeUnwrap();
         // The page reads the payload and rebuilds each series. The two forms are the same chart, thus the
         // data of the page and the data of the inline derivation match cell for cell.
@@ -2689,7 +2754,7 @@ describe("the shared chart payload", () => {
 
         // The grid bundle weighs about two megabytes, and this page builds no grid. The decoder still rides,
         // because the chart reads the decoded rows.
-        expect(rendered.dataAssets.length).toBe(1);
+        expect(payloadsOf(rendered).length).toBe(1);
         expect(rendered.html).not.toContain(AG_GRID_ASSET.file);
         expect(rendered.html).not.toContain(GRID_BOOTSTRAP);
         expect(rendered.html).toContain(TABLE_DATA_DECODER);
@@ -2699,7 +2764,7 @@ describe("the shared chart payload", () => {
         const page = pageOf([volcanoBlock()], 20);
         const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
 
-        expect(rendered.dataAssets).toEqual([]);
+        expect(payloadsOf(rendered)).toEqual([]);
         const json = load(rendered.html)("script[type='application/json']").text();
         expect(json).toContain("G19");
         expect(json).not.toContain(CHART_SOURCE_MEMBER);
@@ -2712,7 +2777,7 @@ describe("the shared chart payload", () => {
 
         // The bound is part of the binding. Two bindings that differ in it name two row sets, thus one
         // payload for both would ship the rows of one block under the id of the other.
-        expect(rendered.dataAssets.length).toBe(2);
+        expect(payloadsOf(rendered).length).toBe(2);
     });
 
     /** The series that the chart bootstrap sets, over the payloads of the page and one option JSON. */
@@ -2747,6 +2812,202 @@ describe("the shared chart payload", () => {
     function asSeries(option: Record<string, unknown>): { data: unknown[] }[] {
         return (option.series ?? []) as { data: unknown[] }[];
     }
+});
+
+describe("the chart exports", () => {
+    const binding: TableBlock["binding"] = { kind: "artifact-table", path: "runs/run-1/step-a/output/de.csv", hash: `sha256:${"c".repeat(64)}` };
+
+    /** One page over one chart block, and the rows of its table. */
+    function chartPage(block: ChartBlock, rows: Record<string, string | number>[], columns?: string[]): { document: ReportDocument; values: RenderValues } {
+        return {
+            document: { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [block] }] },
+            values: { [block.id]: { type: "table", rows, ...(columns !== undefined ? { columns } : {}) } },
+        };
+    }
+
+    const bars: ChartBlock = { kind: "chart", id: "bars", title: "Pathway scores", binding, chartType: "bar", encoding: { x: "k", y: "v" } };
+    const barRows = [
+        { k: "a", v: 1 },
+        { k: "b", v: 2 },
+    ];
+
+    it("stages two SVG files for one chart, links both from the card, and loads neither as a script", () => {
+        const page = chartPage(bars, barRows);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const svgs = rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"));
+
+        expect(svgs.map((asset) => asset.name.replace(/c-[0-9a-f]{12}-/, "c-HASH-"))).toEqual(["c-HASH-89mm.svg", "c-HASH-183mm.svg"]);
+        const $ = load(rendered.html);
+        for (const asset of svgs) {
+            expect(asset.bytes.startsWith("<svg ")).toBe(true);
+            expect($(`a[href="${ASSETS_DIR}/${asset.name}"]`).length).toBe(1);
+            expect($(`script[src="${ASSETS_DIR}/${asset.name}"]`).length).toBe(0);
+        }
+        // The download name of a link reads as the chart, and not as a hash.
+        expect($(`a[href="${ASSETS_DIR}/${svgs[0].name}"]`).attr("download")).toBe("pathway-scores-89mm.svg");
+    });
+
+    it("gives the same names and the same bytes over two renders", () => {
+        const page = chartPage(bars, barRows);
+        const first = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const second = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        expect(second.dataAssets).toEqual(first.dataAssets);
+        expect(second.html).toBe(first.html);
+    });
+
+    it("carries the three PNG controls under the chart body", () => {
+        const page = chartPage(bars, barRows);
+        const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+        const controls = $(".report-chart-export button[data-export]");
+        expect(controls.map((_index, element) => $(element).attr("data-export")).get()).toEqual(["single", "double", "slide"]);
+        // Each control names the container of its chart, thus the bootstrap finds the kept option.
+        expect(controls.first().attr("data-chart")).toBe("chart-bars");
+        expect(controls.first().attr("data-file")).toBe("pathway-scores-89mm.png");
+        expect(controls.first().attr("type")).toBe("button");
+    });
+
+    it("exports every row of a dense chart, whose page option reads the payload", () => {
+        const rows: Record<string, string | number>[] = [];
+        // Values with many digits make the inline option pass its bound, thus the page reads the payload.
+        for (let index = 0; index < 6000; index += 1) rows.push({ gene: `G${index}`, x: (index % 400) + 0.123456, y: ((index * 7) % 311) + 0.654321 });
+        const scatter: ChartBlock = { kind: "chart", id: "dense", binding, chartType: "scatter", encoding: { x: "x", y: "y" } };
+        const page = chartPage(scatter, rows, ["gene", "x", "y"]);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        expect(load(rendered.html)("script[type='application/json']").text()).toContain(CHART_SOURCE_MEMBER);
+        const single = rendered.dataAssets.find((asset) => asset.name.endsWith("-89mm.svg"));
+        // The export reads the inline option, thus each point of the table is in the file. A dense scatter
+        // draws one path, and each point is one move of it.
+        const cloud = /<path d="([^"]{1000,})"/.exec(single?.bytes ?? "");
+        expect(cloud?.[1].match(/M/g)?.length).toBe(6000);
+    });
+
+    it("stages no SVG for a chart past the crowd row count, and the card states that the PNG serves it", () => {
+        const rows: Record<string, string | number>[] = [];
+        for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) rows.push({ x: index, y: index % 97 });
+        const scatter: ChartBlock = { kind: "chart", id: "crowd", binding, chartType: "scatter", encoding: { x: "x", y: "y" } };
+        const page = chartPage(scatter, rows, ["x", "y"]);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+
+        expect(rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"))).toEqual([]);
+        const $ = load(rendered.html);
+        expect($(".report-chart-export-note").text()).toContain("PNG");
+        expect($(".report-chart-export button[data-export]").length).toBe(3);
+    });
+
+    it("grows the chart body of a facet of two panel rows", () => {
+        const rows: Record<string, string | number>[] = [];
+        for (const sample of ["s1", "s2", "s3", "s4"]) {
+            for (let index = 0; index < 4; index += 1) rows.push({ sample, x: index, y: index * 2 });
+        }
+        const faceted: ChartBlock = { kind: "chart", id: "panels", binding, chartType: "scatter", encoding: { x: "x", y: "y", facet: "sample" } };
+        const page = chartPage(faceted, rows);
+        const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+        expect($("[data-echarts-id='panels']").attr("class")).toBe("chart-container chart-container-rows-2");
+        expect(DESIGN_CSS).toContain(".chart-container-rows-2");
+    });
+
+    it("keeps the container of each new form with zero rows, and reports no problem", () => {
+        for (const chartType of ["violin", "stacked-bar", "normalized-bar", "radar"] as const) {
+            const block: ChartBlock = { kind: "chart", id: "empty", binding, chartType, encoding: { x: "k", y: "v", group: "g" } };
+            const page = chartPage(block, []);
+            const rendered = renderReportPage(page.document, page.values);
+            expect(rendered.isOk()).toBe(true);
+            expect(rendered._unsafeUnwrap().html).toContain('data-echarts-id="empty"');
+        }
+    });
+
+    it("hides the export row in print", () => {
+        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-export \{\s*display: none;/);
+    });
+});
+
+describe("the PNG download of the page", () => {
+    /** Run the bootstrap over one chart, then click one export control, and give what the page drew. */
+    function clickExport(kind: string): {
+        init: Record<string, unknown>[];
+        setOption: Record<string, unknown>[];
+        downloads: { href: string; download: string }[];
+        dataUrl: Record<string, unknown>[];
+    } {
+        const init: Record<string, unknown>[] = [];
+        const setOption: Record<string, unknown>[] = [];
+        const downloads: { href: string; download: string }[] = [];
+        const dataUrl: Record<string, unknown>[] = [];
+        const listeners: Record<string, (event: unknown) => void> = {};
+        const option = {
+            xAxis: { type: "category", data: ["a"], nameGap: 34 },
+            yAxis: { type: "value" },
+            tooltip: { trigger: "item" },
+            series: [{ type: "bar", data: [1] }],
+        };
+        const container = {
+            getAttribute: (name: string) => (name === "id" ? "chart-bars" : "bars"),
+            nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+        };
+        const body = { appendChild: () => undefined, removeChild: () => undefined };
+        const doc = {
+            body,
+            querySelectorAll: () => [container],
+            dispatchEvent: () => true,
+            addEventListener: (type: string, listener: (event: unknown) => void) => {
+                listeners[type] = listener;
+            },
+            createElement: (tag: string) => {
+                if (tag === "a") {
+                    const anchor = { href: "", download: "", click: () => downloads.push({ href: anchor.href, download: anchor.download }) };
+                    return anchor;
+                }
+                return { style: {} };
+            },
+        };
+        const echarts = {
+            init: (_dom: unknown, theme: unknown, opts: Record<string, unknown> | undefined) => {
+                init.push({ theme, ...(opts ?? {}) });
+                return {
+                    setOption: (given: Record<string, unknown>) => setOption.push(given),
+                    getDataURL: (given: Record<string, unknown>) => {
+                        dataUrl.push(given);
+                        return "data:image/png;base64,AAAA";
+                    },
+                    dispose: () => undefined,
+                };
+            },
+            getInstanceByDom: () => undefined,
+        };
+        const win: Record<string, unknown> = { addEventListener: () => undefined };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        const control = {
+            getAttribute: (name: string) => ({ "data-export": kind, "data-chart": "chart-bars", "data-file": `bars-${kind}.png` })[name] ?? null,
+        };
+        listeners.click({ target: { closest: () => control } });
+        expect(errors).toEqual([]);
+        return { init: init.slice(1), setOption: setOption.slice(1), downloads, dataUrl };
+    }
+
+    it("draws the single column offscreen at 300 DPI and the print text size, then downloads the PNG", () => {
+        const drawn = clickExport("single");
+        expect(drawn.init).toEqual([{ theme: "inflexa-print", renderer: "canvas", width: 336, height: 253, devicePixelRatio: 3.125 }]);
+        // 336 CSS pixels at a ratio of 3.125 is 1050 pixels, the width of one journal column at 300 DPI.
+        expect(336 * (drawn.init[0].devicePixelRatio as number)).toBe(1050);
+        expect(drawn.dataUrl).toEqual([{ type: "png", pixelRatio: 3.125, backgroundColor: "#ffffff" }]);
+        expect(drawn.setOption[0].tooltip).toBeUndefined();
+        expect(drawn.setOption[0].animation).toBe(false);
+        expect(drawn.downloads).toEqual([{ href: "data:image/png;base64,AAAA", download: "bars-single.png" }]);
+    });
+
+    it("draws the double column and the 16:9 slide at their sizes and their text sizes", () => {
+        expect(clickExport("double").init[0]).toEqual({ theme: "inflexa-print", renderer: "canvas", width: 692, height: 348, devicePixelRatio: 3.125 });
+        const slide = clickExport("slide");
+        expect(slide.init[0]).toEqual({ theme: "inflexa-slide", renderer: "canvas", width: 1920, height: 1080, devicePixelRatio: 1 });
+        // The slide text is twice the page text, thus the gap between the axis and its name doubles.
+        expect((slide.setOption[0].xAxis as Record<string, unknown>).nameGap as number).toBe(68);
+    });
+
+    it("draws nothing for a control that names no kept chart or no size", () => {
+        expect(clickExport("constructor").downloads).toEqual([]);
+    });
 });
 
 describe("the pre-bound total of a table", () => {
