@@ -19,7 +19,9 @@ import {
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
     RETRY_MAX_RETRIES,
+    sessionKeyOf,
 } from "./ai-sdk.js";
+import { forSubAgent, type AgentSession, type RunFrame, type Scope } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { LogFields, Logger } from "../lib/logger.js";
 import type { GateFailure } from "../lib/hooks.js";
@@ -633,6 +635,37 @@ describe("the order of the reasoning effort", () => {
         await callBothPaths(provider, request);
 
         expect(sent).toEqual(["xhigh", "xhigh"]);
+    });
+});
+
+describe("sessionKeyOf", () => {
+    /** A session over the analysis `a1`, with the thread and the run frame of one case. */
+    function sessionWith(threadId?: string, runFrame?: RunFrame): AgentSession {
+        const scope: Scope = { kind: "analysis", analysisId: "a1", ...(threadId !== undefined ? { threadId } : {}) };
+        return { ...makeSession({ scope }), ...(runFrame !== undefined ? { runFrame } : {}) };
+    }
+
+    it.each<[string, AgentSession, string]>([
+        ["a run frame with a step gives the step key", sessionWith(undefined, { runId: "r1", stepId: "s1" }), "a1:r1:s1"],
+        ["a run frame without a step gives the run key", sessionWith(undefined, { runId: "r1" }), "a1:r1"],
+        ["a scope with a thread gives the thread key", sessionWith("t1"), "a1:t1"],
+        ["a scope with no thread and no run frame gives the analysis id", sessionWith(), "a1"],
+    ])("%s", (_label, session, key) => {
+        expect(sessionKeyOf(session)).toBe(key);
+    });
+
+    it("gives a run that a chat started the run key, not the key of the chat", () => {
+        // The scope of the run carries the thread of the chat that started it.
+        expect(sessionKeyOf(sessionWith("t1", { runId: "r1" }))).toBe("a1:r1");
+    });
+
+    it("gives a sub-agent the key of its parent", () => {
+        const parent = sessionWith("t1", { runId: "r1", stepId: "s1" });
+
+        const child = forSubAgent(parent, "literature-reviewer");
+
+        expect(child.provenance).not.toEqual(parent.provenance);
+        expect(sessionKeyOf(child)).toBe(sessionKeyOf(parent));
     });
 });
 

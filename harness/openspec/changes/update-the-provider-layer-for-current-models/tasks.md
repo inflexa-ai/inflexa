@@ -33,18 +33,18 @@ Each path is relative to `harness/`. A path that starts with `cli/` is relative 
 
 ## 3. The session key
 
-- [ ] 3.1 In `src/providers/ai-sdk.ts`, add `export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">): string`. The doc comment says that the key holds only identifiers, because the key goes to the vendor. The function gives the key of the first rule that applies:
+- [x] 3.1 In `src/providers/ai-sdk.ts`, add `export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">): string`. The doc comment says that the key holds only identifiers, because the key goes to the vendor. The function gives the key of the first rule that applies:
   - A run frame with a step gives `<analysisId>:<runId>:<stepId>`.
   - A run frame without a step gives `<analysisId>:<runId>`.
   - A scope with a thread gives `<analysisId>:<threadId>`.
   - Else, the key is `<analysisId>`.
-- [ ] 3.2 In `src/providers/ai-sdk.ts`, add `interface ProviderCall` with `session: AgentSession` and `reasoning: ReasoningPolicy`. Add `readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined` to `AiSdkProviderDeps`. The `reasoning` of the call is the effort that 2.3 selects.
-- [ ] 3.3 In `chat` and in `chatStream` of `createAiSdkProvider`, call `providerOptionsFor` one time for each call, before the retry envelope. Give the result to `streamText`, merged over `req.providerOptions` for each namespace. Group 7 removes `req.providerOptions`.
-- [ ] 3.4 In `createConfiguredAiSdkProvider`, give each arm its `providerOptionsFor`. The `anthropic` arm gives `{ anthropic: { metadata: { userId: sessionKeyOf(session) } } }`. The `openai` arm gives `{ openai: { promptCacheKey: sessionKeyOf(session) } }`. The `openai-compatible` arm gets no function.
-- [ ] 3.5 In `src/providers/ai-sdk.test.ts`, add a table test of `sessionKeyOf` for the four rules. Add a test that a session and its `forSubAgent` child give the same key. Add a test that a scope with a thread and a run frame without a step gives `<analysisId>:<runId>`.
-- [ ] 3.6 In `src/providers/configured-provider.barrel.test.ts`, add wire tests. Expected result: the `anthropic` body carries `metadata.user_id`, the `openai` body carries `prompt_cache_key`, and the `openai-compatible` body carries neither.
-- [ ] 3.7 In `src/providers/ai-sdk.openai-arm.test.ts`, add a test that the call options carry `promptCacheKey` and `store` together. `withStoreDirective` spreads the `openai` namespace already, thus no source change is necessary.
-- [ ] 3.8 Run `tsc -p tsconfig.json`. Run `bun test src/providers/ai-sdk.test.ts src/providers/ai-sdk.openai-arm.test.ts src/providers/configured-provider.barrel.test.ts`. Then run `bun run format:file` on each changed file under `src/`.
+- [x] 3.2 In `src/providers/ai-sdk.ts`, add `interface ProviderCall` with `session: AgentSession` and `reasoning: ReasoningPolicy`. Add `readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined` to `AiSdkProviderDeps`. The `reasoning` of the call is the effort that 2.3 selects.
+- [x] 3.3 In `chat` and in `chatStream` of `createAiSdkProvider`, call `providerOptionsFor` one time for each call, before the retry envelope. Give the result to `streamText`, merged over `req.providerOptions` for each namespace. Group 7 removes `req.providerOptions`.
+- [x] 3.4 In `createConfiguredAiSdkProvider`, give each arm its `providerOptionsFor`. The `anthropic` arm gives `{ anthropic: { metadata: { userId: sessionKeyOf(session) } } }`. The `openai` arm gives `{ openai: { promptCacheKey: sessionKeyOf(session) } }`. The `openai-compatible` arm gets no function.
+- [x] 3.5 In `src/providers/ai-sdk.test.ts`, add a table test of `sessionKeyOf` for the four rules. Add a test that a session and its `forSubAgent` child give the same key. Add a test that a scope with a thread and a run frame without a step gives `<analysisId>:<runId>`.
+- [x] 3.6 In `src/providers/configured-provider.barrel.test.ts`, add wire tests. Expected result: the `anthropic` body carries `metadata.user_id`, the `openai` body carries `prompt_cache_key`, and the `openai-compatible` body carries neither.
+- [x] 3.7 In `src/providers/ai-sdk.openai-arm.test.ts`, add a test that the call options carry `promptCacheKey` and `store` together. `withStoreDirective` spreads the `openai` namespace already, thus no source change is necessary.
+- [x] 3.8 Run `tsc -p tsconfig.json`. Run `bun test src/providers/ai-sdk.test.ts src/providers/ai-sdk.openai-arm.test.ts src/providers/configured-provider.barrel.test.ts`. Then run `bun run format:file` on each changed file under `src/`.
 
 ## 4. The thinking-binding mode and the drop log
 
