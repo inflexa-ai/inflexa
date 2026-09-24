@@ -16,18 +16,28 @@ import type { z } from "zod";
 import type { AgentSession } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { CompactionPart } from "../contracts/chat-parts.js";
 import { stripNulCharacters } from "../input-sanitization.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import { deliverNotice } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { ATTR_INFLEXA_TOOL_USE_ID, passThroughSpan, stableSpan } from "../lib/otel-spans.js";
-import { ResultError } from "../lib/result.js";
+import { ResultError, unwrapOrThrow } from "../lib/result.js";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
-import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
+import {
+    dropMarkerMessage,
+    markCompactionExchange,
+    markInterruptedMessage,
+    summaryMarkerMessage,
+    syntheticUserMessage,
+} from "../memory/ai-sdk-message-storage.js";
+import { conversationView, keptTurnsForDrop, viewTokens } from "../memory/conversation-view.js";
 import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
-import { classifyProviderError } from "../providers/errors.js";
+import { classifyProviderError, extractStatus, type ProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
+import { COMPACTION_MAX_REQUESTS, type CompactionPolicy } from "./compaction.js";
+import { continueAgent, type ContinuationResult } from "./continue-agent.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
@@ -76,6 +86,17 @@ export interface RunAgentResult {
     readonly finish: AgentFinish;
 }
 
+/** A request that the provider refused for its content: the HTTP status and the text of the provider error. */
+export interface RequestRefusal {
+    readonly status: number;
+    readonly message: string;
+}
+
+/** The result of a segment. A segment that ends on a refusal of its request carries the refusal. */
+export interface SegmentResult extends RunAgentResult {
+    readonly refusal?: RequestRefusal;
+}
+
 /** The messages that the loop appended after the last call of the round sink. */
 export interface AgentRound {
     readonly messages: readonly LoopMessage[];
@@ -105,6 +126,12 @@ export interface RunAgentOptions {
      * A durable loop passes no sink, because DBOS replays the loop body.
      */
     readonly onRound?: (round: AgentRound) => Promise<void>;
+    /**
+     * The compaction policy. Each request then sends the view of the transcript, and the loop compacts
+     * before a task request whose view passes the budget. A durable loop passes no policy, because
+     * `recordsAfter` reads the database outside a step.
+     */
+    readonly compaction?: CompactionPolicy;
     /**
      * Per-turn user-approval seam threaded into every tool's `ToolContext` as
      * `ctx.ask`. A conversation tool calls it to pause for an explicit user
@@ -207,7 +234,7 @@ export const WRAP_UP_MAX_REQUESTS = 2;
 async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
     const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
     const loop = openLoop(agent, initial, session, opts, agent.id);
-    const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0 });
+    const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0, checksBudget: true });
     if (task !== "capped") return task;
 
     // The wrap-up refuses calls through the mask, not `toolChoice` (see its
@@ -239,6 +266,10 @@ export interface LoopSegment {
      * iterations, and the last one always ends the run, whatever its reply.
      */
     readonly closesCappedRun?: boolean;
+    /** The loop compacts before a request of the segment whose view passes the budget of the policy. */
+    readonly checksBudget?: boolean;
+    /** A refusal of a request, a `provider` error with the status `400` or `413`, ends the segment with no new message. */
+    readonly endsOnRequestRefusal?: boolean;
 }
 
 /**
@@ -247,7 +278,7 @@ export interface LoopSegment {
  */
 export interface OpenLoop {
     /** Run one segment: the result of the run when a reply ends it, or `"capped"` when the segment used its cap. */
-    runSegment(segment: LoopSegment): Promise<RunAgentResult | "capped">;
+    runSegment(segment: LoopSegment): Promise<SegmentResult | "capped">;
     /** End a run after its last segment used its cap. */
     endCapped(): Promise<RunAgentResult>;
 }
@@ -294,6 +325,13 @@ export function openLoop(
         agentId: session.provenance.agentId ?? agent.id,
         callPath: session.provenance.callPath,
     };
+    const policy = opts.compaction;
+    const viewOptions = { keepFirstTurn: policy?.keepFirstTurn === true };
+    const viewOf = (): LoopMessage[] => (policy === undefined ? messages : conversationView(messages, viewOptions).messages);
+    // The steer of a truncated prose reply and the reply after it complete one reply, thus no exchange goes between them.
+    let continuesTruncation = false;
+    let compactionStopped = false;
+    let compactions = 0;
     // Bound from the same `source` the emitted events carry: one derivation feeding
     // both sinks, so a record and an event cannot disagree about who produced them.
     // `callPath` rides as an array rather than a joined string — the queryable form;
@@ -415,18 +453,28 @@ export function openLoop(
     });
 
     /**
-     * One model request over the transcript so far. Token counters grow inside
+     * One model request over the view of the transcript. Token counters grow inside
      * the step body, so a replayed step (a stored reply) does not double-count.
      */
-    const callModel = async (stepName: string): Promise<ChatResponse> => {
+    const callModel = async (stepName: string, endsOnRequestRefusal: boolean): Promise<ChatResponse | { readonly refusal: RequestRefusal }> => {
         const request: ChatRequest = {
             system,
-            messages: withPromptCacheBreakpoint(messages, promptCache),
+            messages: withPromptCacheBreakpoint(viewOf(), promptCache),
             tools: toolDefs,
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
             ...reasoningField,
         };
-        const reply = await resultStep(callStep)(stepName, () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId)));
+        const chat = () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId));
+        if (!endsOnRequestRefusal) {
+            const reply = await resultStep(callStep)(stepName, chat);
+            accountForChatCall(reply, { ...accounting, stepName });
+            return reply;
+        }
+        // The step gives the `Result` as its value, thus a refusal ends the segment and no step throws for it.
+        const result = await callStep(stepName, async () => await chat());
+        const refusal = result.isErr() ? requestRefusalOf(result.error) : undefined;
+        if (refusal !== undefined) return { refusal };
+        const reply = unwrapOrThrow(result);
         accountForChatCall(reply, { ...accounting, stepName });
         return reply;
     };
@@ -531,7 +579,95 @@ export function openLoop(
         return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
     };
 
-    const runSegment = async (segment: LoopSegment): Promise<RunAgentResult | "capped"> => {
+    const endOnRefusal = async (refusal: RequestRefusal): Promise<SegmentResult> => {
+        settleTranscript();
+        recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
+        logFinish("warn", "error", false);
+        await giveRound();
+        return { messages, finish: { reason: "error", cappedOut: false, truncationRecoveries, ...finishUsage() }, refusal };
+    };
+
+    /** The result of the run when an abort ends the exchange, or `undefined` when the run continues. */
+    const compact = async (active: CompactionPolicy, tokensBefore: number, index: number): Promise<RunAgentResult | undefined> => {
+        const id = randomUUID();
+        const stepNamespace = `compaction-${compactions++}`;
+        const startedAt = performance.now();
+        const emitPart = (data: Omit<CompactionPart, "type">) => emit({ type: "data-compaction", source, data });
+        await emitPart({ id, status: "running", tokensBefore });
+        const { onRound: _onRound, compaction: _compaction, ...conversationOptions } = opts;
+        let settled = false;
+        try {
+            const exchange = await continueAgent(
+                agent,
+                viewOf(),
+                {
+                    text: active.request,
+                    mask: active.mask,
+                    maxRequests: COMPACTION_MAX_REQUESTS,
+                    stepNamespace,
+                    accountingAgentId: `${agent.id}-compaction`,
+                    endOnRequestRefusal: true,
+                },
+                session,
+                { ...conversationOptions, provider: active.provider, turnUsage },
+            );
+            messages.push(...exchange.messages.map((message) => markCompactionExchange(message, id)));
+            await giveRound();
+            if (exchange.finish.reason === "aborted") {
+                settled = true;
+                await emitPart({ id, status: "failed", tokensBefore, durationMs: Math.round(performance.now() - startedAt) });
+                settleTranscript();
+                await emit({ type: "iteration", source, index, final: true });
+                recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
+                logFinish("info", "aborted", false);
+                await giveRound();
+                return { messages, finish: { reason: "aborted", cappedOut: false, truncationRecoveries, ...finishUsage() } };
+            }
+
+            const summary = summaryOf(exchange);
+            const keptTurns = summary === undefined ? keptTurnsForDrop(messages, viewOptions, active.budget) : 0;
+            const markerOf = (tokensAfter: number, durationMs: number): LoopMessage =>
+                summary === undefined
+                    ? dropMarkerMessage({ kind: "drop", id, tokensBefore, tokensAfter, durationMs, keptTurns })
+                    : summaryMarkerMessage(summary, { kind: "summary", id, tokensBefore, tokensAfter, durationMs });
+            // The figures of a marker do not change the view, thus a draft marker gives the view of the real one.
+            const view = conversationView([...messages, markerOf(0, 0)], viewOptions).messages;
+            const records = await active.recordsAfter(view);
+            const tokensAfter = viewTokens([...view, ...records]);
+            const durationMs = Math.round(performance.now() - startedAt);
+            messages.push(markerOf(tokensAfter, durationMs), ...records);
+            await giveRound();
+            settled = true;
+            await emitPart({ id, status: summary === undefined ? "failed" : "done", tokensBefore, tokensAfter, durationMs });
+
+            const fields = { compactionId: id, tokensBefore, tokensAfter, durationMs };
+            if (summary === undefined) {
+                const refusal = exchange.refusal === undefined ? {} : { status: exchange.refusal.status, providerError: exchange.refusal.message };
+                log.warn("compaction gave no summary, thus the oldest turns left the view", { ...fields, keptTurns, ...refusal });
+            } else {
+                log.info("conversation compacted", fields);
+            }
+            if (summary !== undefined && tokensAfter > active.budget) {
+                log.warn("the compacted view still exceeds the budget, thus the run compacts no more", {
+                    compactionId: id,
+                    tokensAfter,
+                    budget: active.budget,
+                });
+            }
+            if (summary === undefined || tokensAfter > active.budget) compactionStopped = true;
+            return undefined;
+        } finally {
+            if (!settled) await emitPart({ id, status: "failed", tokensBefore, durationMs: Math.round(performance.now() - startedAt) });
+        }
+    };
+
+    const compactOverBudget = async (index: number): Promise<RunAgentResult | undefined> => {
+        if (policy === undefined || continuesTruncation || compactionStopped) return undefined;
+        const tokensBefore = viewTokens(viewOf());
+        return tokensBefore > policy.budget ? compact(policy, tokensBefore, index) : undefined;
+    };
+
+    const runSegment = async (segment: LoopSegment): Promise<SegmentResult | "capped"> => {
         const names = segment.stepNames;
         if (segment.requestText !== undefined) messages.push(syntheticUserMessage(segment.requestText));
         for (let k = 0; k < segment.maxRequests; k++) {
@@ -539,10 +675,17 @@ export function openLoop(
             // The last request of a segment that closes a capped run ends the run,
             // whatever its reply, thus its `iteration` event is the final one.
             const endsRun = segment.closesCappedRun === true && k === segment.maxRequests - 1;
-            if (segment.closesCappedRun !== true) iterations++;
             await giveRound();
+            if (segment.checksBudget === true) {
+                const ended = await compactOverBudget(index);
+                if (ended !== undefined) return ended;
+            }
+            if (segment.closesCappedRun !== true) iterations++;
             const roundStart = messages.length;
-            const reply = await callModel(names.llm(k));
+            const called = await callModel(names.llm(k), segment.endsOnRequestRefusal === true);
+            continuesTruncation = false;
+            if ("refusal" in called) return endOnRefusal(called.refusal);
+            const reply = called;
 
             if (reply.finishReason === "aborted") {
                 // An interrupted turn keeps whatever the model produced before the cut, but
@@ -568,6 +711,7 @@ export function openLoop(
                     // storage treats a genuine `user` message as the start of a conversation turn. Unmarked, it
                     // would split this turn in two everywhere that boundary is read.
                     messages.push(syntheticUserMessage(TRUNCATED_PROSE_STEER));
+                    continuesTruncation = true;
                     continue;
                 }
                 const trailing = toolCalls[toolCalls.length - 1]!;
@@ -677,6 +821,22 @@ export function openLoop(
         runSegment: (segment) => giveRoundBeforeThrow(() => runSegment(segment)),
         endCapped: () => giveRoundBeforeThrow(endCapped),
     };
+}
+
+/** The statuses of a request that the provider refuses for its content, for example a request past the context window. */
+const REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 413]);
+
+function requestRefusalOf(error: ProviderError): RequestRefusal | undefined {
+    if (error.type !== "provider") return undefined;
+    const status = extractStatus(error);
+    return status !== undefined && REFUSAL_STATUSES.has(status) ? { status, message: error.message } : undefined;
+}
+
+/** The text of the last reply of an exchange, when that reply ends the exchange with the finish reason `stop`. */
+function summaryOf(exchange: ContinuationResult): string | undefined {
+    if (exchange.finish.reason !== "stop") return undefined;
+    const text = finalText(exchange.messages).trim();
+    return text.length > 0 ? text : undefined;
 }
 
 /** What one completed LLM call is accounted under. */

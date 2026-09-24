@@ -8,7 +8,15 @@
 import type { AgentSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import { traceAgentRun } from "./genai-spans.js";
-import { DEFAULT_STEP_NAME_FORMATTER, isTurnRoot, openLoop, type AgentFinish, type RunAgentOptions, type StepNameFormatter } from "./run-agent.js";
+import {
+    DEFAULT_STEP_NAME_FORMATTER,
+    isTurnRoot,
+    openLoop,
+    type AgentFinish,
+    type RequestRefusal,
+    type RunAgentOptions,
+    type StepNameFormatter,
+} from "./run-agent.js";
 import type { ToolMask } from "./tool-mask.js";
 import type { AgentDefinition, LoopMessage } from "./types.js";
 
@@ -26,12 +34,16 @@ export interface ContinuationRequest {
      * `agent.id`, through `forSubAgent`. Omitted, both stay the agent's own.
      */
     readonly accountingAgentId?: string;
+    /** A `provider` error with the status `400` or `413` ends the continuation with the finish reason `error`, and no throw. */
+    readonly endOnRequestRefusal?: boolean;
 }
 
 export interface ContinuationResult {
     /** The new messages only, starting with the synthetic request. */
     readonly messages: LoopMessage[];
     readonly finish: AgentFinish;
+    /** The refusal that ended a continuation with `endOnRequestRefusal`. */
+    readonly refusal?: RequestRefusal;
 }
 
 export function namespacedStepNames(base: StepNameFormatter, namespace: string): StepNameFormatter {
@@ -63,8 +75,10 @@ export function continueAgent(
             stepNames: namespacedStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER, request.stepNamespace),
             firstIndex: 0,
             requestText: request.text,
+            ...(request.endOnRequestRefusal === true ? { endsOnRequestRefusal: true } : {}),
         });
         const result = outcome === "capped" ? await loop.endCapped() : outcome;
-        return { messages: result.messages.slice(conversation.length), finish: result.finish };
+        const refusal = outcome === "capped" ? undefined : outcome.refusal;
+        return { messages: result.messages.slice(conversation.length), finish: result.finish, ...(refusal === undefined ? {} : { refusal }) };
     });
 }

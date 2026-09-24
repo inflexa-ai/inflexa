@@ -240,6 +240,8 @@ export type { Ask, AskRequest, AskReply, AskApproval } from "./tools/approval/co
 // Agent loop.
 export { runAgent, finalText } from "./loop/run-agent.js";
 export type { RunAgentOptions, RunAgentResult, AgentFinish, AgentRound } from "./loop/run-agent.js";
+export type { CompactionPolicy } from "./loop/compaction.js";
+export type { ToolMask } from "./loop/tool-mask.js";
 export type { AgentDefinition, RunStep, EmitFn, EmitEvent, EventSource } from "./loop/types.js";
 export type { KeptToolOutput, ToolOutputStore } from "./loop/tool-output.js";
 // `passthroughStep` is the in-process `RunStep`: the host request/chat path runs

@@ -90,38 +90,38 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 5. The compaction of the loop
 
-- [ ] 5.1 Make `src/loop/compaction.ts`. Export `interface CompactionPolicy` with the fields of the design, and `COMPACTION_MAX_REQUESTS = 4`.
-- [ ] 5.2 In `src/loop/run-agent.ts`, add `readonly compaction?: CompactionPolicy` to `RunAgentOptions`. The doc comment gives the check points, and it says that a durable loop passes no policy.
-- [ ] 5.3 Add `readonly checksBudget?: boolean` to `LoopSegment`. `runAgentLoop` sets it on the task segment only. Expected result: the wrap-up and each continuation never compact.
-- [ ] 5.4 In `src/loop/continue-agent.ts`, add `readonly endOnRequestRefusal?: boolean` to `ContinuationRequest`. Give it to the segment as `LoopSegment.endsOnRequestRefusal`.
-- [ ] 5.5 In `openLoop`, when the segment has `endsOnRequestRefusal`, run the model step with `callStep`, not `resultStep`. The step gives the `Result` as its value.
-- [ ] 5.6 A `provider` error whose `extractStatus` is `400` or `413` ends the segment with the finish reason `error`. Expected result: no throw, and no message joins the transcript.
+- [x] 5.1 Make `src/loop/compaction.ts`. Export `interface CompactionPolicy` with the fields of the design, and `COMPACTION_MAX_REQUESTS = 4`.
+- [x] 5.2 In `src/loop/run-agent.ts`, add `readonly compaction?: CompactionPolicy` to `RunAgentOptions`. The doc comment gives the check points, and it says that a durable loop passes no policy.
+- [x] 5.3 Add `readonly checksBudget?: boolean` to `LoopSegment`. `runAgentLoop` sets it on the task segment only. Expected result: the wrap-up and each continuation never compact.
+- [x] 5.4 In `src/loop/continue-agent.ts`, add `readonly endOnRequestRefusal?: boolean` to `ContinuationRequest`. Give it to the segment as `LoopSegment.endsOnRequestRefusal`.
+- [x] 5.5 In `openLoop`, when the segment has `endsOnRequestRefusal`, run the model step with `callStep`, not `resultStep`. The step gives the `Result` as its value.
+- [x] 5.6 A `provider` error whose `extractStatus` is `400` or `413` ends the segment with the finish reason `error`. Expected result: no throw, and no message joins the transcript.
   - Add `readonly refusal?: { status: number; message: string }` to `ContinuationResult`. It keeps the status and the `message` of that error.
-- [ ] 5.7 Each other `err` of that step goes through `unwrapOrThrow`, the same as in `resultStep`. Expected result: an `auth`, a `suspend`, or a transient error throws.
-- [ ] 5.8 In `openLoop`, add `viewOf()`. With a policy, it gives `conversationView(messages, { keepFirstTurn }).messages`. Without a policy, it gives `messages`.
-- [ ] 5.9 `callModel` sends `withPromptCacheBreakpoint(viewOf(), promptCache)`. Expected result: a run with no policy sends the same request bytes as before.
-- [ ] 5.10 Keep the flag `continuesTruncation`. Set it when the loop appends the steer of a truncated prose reply, and clear it after the next request.
-- [ ] 5.11 Keep the flag `compactionStopped` and the count `compactions`. The count gives `<n>` of the namespace `compaction-<n>`.
-- [ ] 5.12 Before each request of a segment with `checksBudget`, after the round sink got the round, estimate `viewTokens(viewOf())`.
-- [ ] 5.13 When the estimate exceeds `policy.budget`, and neither flag stops it, await `compact(estimate)`.
-- [ ] 5.14 In `compact`, emit a `data-compaction` part with `running`, a new id, and `tokensBefore`. Use the `source` of the run.
-- [ ] 5.15 Run the exchange with `continueAgent(agent, viewOf(), request, session, options)`. The request holds the text and the mask of the policy, the cap, and `endOnRequestRefusal: true`.
+- [x] 5.7 Each other `err` of that step goes through `unwrapOrThrow`, the same as in `resultStep`. Expected result: an `auth`, a `suspend`, or a transient error throws.
+- [x] 5.8 In `openLoop`, add `viewOf()`. With a policy, it gives `conversationView(messages, { keepFirstTurn }).messages`. Without a policy, it gives `messages`.
+- [x] 5.9 `callModel` sends `withPromptCacheBreakpoint(viewOf(), promptCache)`. Expected result: a run with no policy sends the same request bytes as before.
+- [x] 5.10 Keep the flag `continuesTruncation`. Set it when the loop appends the steer of a truncated prose reply, and clear it after the next request.
+- [x] 5.11 Keep the flag `compactionStopped` and the count `compactions`. The count gives `<n>` of the namespace `compaction-<n>`.
+- [x] 5.12 Before each request of a segment with `checksBudget`, after the round sink got the round, estimate `viewTokens(viewOf())`.
+- [x] 5.13 When the estimate exceeds `policy.budget`, and neither flag stops it, await `compact(estimate)`.
+- [x] 5.14 In `compact`, emit a `data-compaction` part with `running`, a new id, and `tokensBefore`. Use the `source` of the run.
+- [x] 5.15 Run the exchange with `continueAgent(agent, viewOf(), request, session, options)`. The request holds the text and the mask of the policy, the cap, and `endOnRequestRefusal: true`.
   - The import makes a cycle between `run-agent.ts` and `continue-agent.ts`. Each module uses the other only inside a function, thus the cycle is safe.
-- [ ] 5.16 The request also holds the namespace `compaction-<n>` and the accounting id `<agent.id>-compaction`.
-- [ ] 5.17 The options are `opts` with `provider: policy.provider` and the turn accumulator of the run. They hold no `onRound` and no `compaction`.
-- [ ] 5.18 Put the exchange in a `try` block with a `finally` block and no `catch`. For a throw, the `finally` block emits `failed`, and the throw passes through.
-- [ ] 5.19 Mark each message of the exchange with `markCompactionExchange`. Append the messages to `messages`, and give them to the sink as one round.
-- [ ] 5.20 For the finish reason `aborted`, emit `failed`. Then end the run the same way as an aborted reply of the task. Expected result: the finish reason `aborted`, and a transcript with the exchange and no marker.
-- [ ] 5.21 For a summary, make the marker with `summaryMarkerMessage`. For an exchange with no summary, make it with `dropMarkerMessage` and `keptTurnsForDrop(messages, options, policy.budget)`.
-- [ ] 5.22 The figures of a marker do not change the view. Thus compute the new view as `conversationView` of `messages` and the marker.
-- [ ] 5.23 Call `policy.recordsAfter` with the new view. Estimate `tokensAfter` over the new view and the records, and measure `durationMs`.
-- [ ] 5.24 Make the marker again with `tokensAfter` and `durationMs`. Append it and then the records to `messages`, and give the two to the sink as one round.
-- [ ] 5.25 Emit `done` for a summary, or `failed` for a drop, with `tokensAfter` and `durationMs`.
-- [ ] 5.26 Log at `info` for a summary and at `warn` for a drop. Give the id, the two estimates, the duration, and `keptTurns` as fields.
+- [x] 5.16 The request also holds the namespace `compaction-<n>` and the accounting id `<agent.id>-compaction`.
+- [x] 5.17 The options are `opts` with `provider: policy.provider` and the turn accumulator of the run. They hold no `onRound` and no `compaction`.
+- [x] 5.18 Put the exchange in a `try` block with a `finally` block and no `catch`. For a throw, the `finally` block emits `failed`, and the throw passes through.
+- [x] 5.19 Mark each message of the exchange with `markCompactionExchange`. Append the messages to `messages`, and give them to the sink as one round.
+- [x] 5.20 For the finish reason `aborted`, emit `failed`. Then end the run the same way as an aborted reply of the task. Expected result: the finish reason `aborted`, and a transcript with the exchange and no marker.
+- [x] 5.21 For a summary, make the marker with `summaryMarkerMessage`. For an exchange with no summary, make it with `dropMarkerMessage` and `keptTurnsForDrop(messages, options, policy.budget)`.
+- [x] 5.22 The figures of a marker do not change the view. Thus compute the new view as `conversationView` of `messages` and the marker.
+- [x] 5.23 Call `policy.recordsAfter` with the new view. Estimate `tokensAfter` over the new view and the records, and measure `durationMs`.
+- [x] 5.24 Make the marker again with `tokensAfter` and `durationMs`. Append it and then the records to `messages`, and give the two to the sink as one round.
+- [x] 5.25 Emit `done` for a summary, or `failed` for a drop, with `tokensAfter` and `durationMs`.
+- [x] 5.26 Log at `info` for a summary and at `warn` for a drop. Give the id, the two estimates, the duration, and `keptTurns` as fields.
   - A drop for a refusal also gives `status` and `providerError`, the `message` of the error, as fields. Expected result: a false drop is visible in the log.
-- [ ] 5.27 Set `compactionStopped` after a drop, or when the new estimate still exceeds the budget.
-- [ ] 5.28 In `src/index.ts`, export the types `CompactionPolicy` and `ToolMask` beside `RunAgentOptions`.
-- [ ] 5.29 In `src/loop/run-agent.test.ts`, add `describe("runAgent — compaction")` with these tests:
+- [x] 5.27 Set `compactionStopped` after a drop, or when the new estimate still exceeds the budget.
+- [x] 5.28 In `src/index.ts`, export the types `CompactionPolicy` and `ToolMask` beside `RunAgentOptions`.
+- [x] 5.29 In `src/loop/run-agent.test.ts`, add `describe("runAgent — compaction")` with these tests:
   - A run with no policy sends its transcript, and no compaction runs.
   - A view within the budget runs no exchange.
   - A round that passes the budget runs the exchange before the next request.
@@ -130,7 +130,7 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
   - A second compaction starts from the first summary marker.
   - `keepFirstTurn` keeps the first turn in front of the marker.
   - The mask refuses a tool outside it during the exchange.
-- [ ] 5.30 In the same block, add these tests:
+- [x] 5.30 In the same block, add these tests:
   - An exchange that calls a tool in each of its 4 replies ends with a drop marker.
   - A `400` refusal of the exchange gives a drop marker, and the run does not throw.
   - The `warn` of that drop carries the status `400` and the error text of the provider.
@@ -142,7 +142,7 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
   - The part goes `running` and then `done`, under one id, with the source of the run.
   - The usage records of the exchange carry `<agent.id>-compaction`, and the turn total holds them.
   - A wrap-up request and a request after a truncated reply run no exchange.
-- [ ] 5.31 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 5.31 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 6. The chat turn
 
