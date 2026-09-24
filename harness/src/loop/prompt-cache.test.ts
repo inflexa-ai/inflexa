@@ -276,25 +276,28 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
-        // Caching off leaves no marker anywhere and no bag at all. The reasoning
-        // depth rides on its own neutral field, thus it writes no vendor key here.
+        // Caching off leaves no marker anywhere and no bag at all. The loop sends
+        // no reasoning of its own, thus it writes no vendor key here either.
         for (const call of chat.calls) {
             expect(breakpointsOf(call.messages)).toEqual([]);
             expect(call.providerOptions).toBeUndefined();
-            expect(call.reasoning).toBe("xhigh");
+            expect("reasoning" in call).toBe(false);
         }
     });
 });
 
 describe("runAgent reasoning directive", () => {
-    it("carries the neutral depth on every call, and writes no vendor key for it", async () => {
+    it("sends no reasoning on any call when the caller gives none, and writes no vendor key", async () => {
         const chat = neverTerminating();
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
+        // 3 iterations + the forced wrap-up. The provider applies the effort of
+        // its configuration to a request that sets none, thus the loop leaves
+        // the field out.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
-            expect(call.reasoning).toBe("xhigh");
+            expect("reasoning" in call).toBe(false);
             // The vendor key is what turned the per-model table of the provider
             // package off, thus nothing may write it again.
             expect(call.providerOptions?.["anthropic"]?.["effort"]).toBeUndefined();
@@ -302,11 +305,14 @@ describe("runAgent reasoning directive", () => {
         }
     });
 
-    it("honours an explicit depth from the composition root", async () => {
+    it("sends an explicit depth from the composition root on each call, the wrap-up included", async () => {
         const chat = neverTerminating();
 
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { reasoning: "low" }));
 
+        // 2 iterations + the forced wrap-up.
+        expect(chat.calls).toHaveLength(3);
+        expect(chat.calls.at(-1)?.toolChoice).toBe("none");
         for (const call of chat.calls) {
             expect(call.reasoning).toBe("low");
         }

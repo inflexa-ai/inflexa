@@ -55,19 +55,29 @@ function responsesSse(text: string, model: string): Response {
     ]);
 }
 
+/** One outbound request as it reached the wire: the whole JSON body, and the headers with lowercase names. */
+interface CapturedRequest {
+    readonly body: Record<string, unknown>;
+    readonly headers: Record<string, string>;
+}
+
 /**
- * Records each outbound request body so a test can assert on the wire model the
- * provider bound at construction (the request itself carries no model field),
- * and replies with a response echoing that body's `model`.
+ * Records each outbound request, its whole body and its headers, so a test can
+ * assert on what reached the wire, for example the model that the provider
+ * bound at construction (the request itself carries no model field). The reply
+ * echoes the `model` of the body.
  */
-function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; bodies: Array<{ model?: string; max_tokens?: number }> } {
-    const bodies: Array<{ model?: string; max_tokens?: number }> = [];
+function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; requests: CapturedRequest[] } {
+    const requests: CapturedRequest[] = [];
     const fetch: FetchLike = async (_input, init) => {
-        const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string; max_tokens?: number }) : {};
-        bodies.push(body);
-        return respond("Hello, world", body.model ?? "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        // `Headers` folds each name to lowercase, thus an assertion does not
+        // depend on the spelling that the SDK forwards.
+        const headers = Object.fromEntries(new Headers(init?.headers));
+        requests.push({ body, headers });
+        return respond("Hello, world", typeof body["model"] === "string" ? body["model"] : "");
     };
-    return { fetch, bodies };
+    return { fetch, requests };
 }
 
 const request: ChatRequest = {
@@ -161,7 +171,30 @@ describe("provider configuration front door", () => {
         expect(second.isOk()).toBe(true);
         // Same shared connection config; each provider instance's request carries the
         // model it was constructed with — no per-request model.
-        expect(cap.bodies.map((body) => body.model)).toEqual(["model-a", "model-b"]);
+        expect(cap.requests.map((captured) => captured.body["model"])).toEqual(["model-a", "model-b"]);
+    });
+});
+
+describe("the reasoning effort of the configuration", () => {
+    it("sends the configured effort of an anthropic arm on the wire", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-5-5",
+                fetch: cap.fetch,
+                reasoning: "high",
+            },
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        // The request sets no reasoning, thus the configured value applies, and
+        // the package maps it onto the effort of the model.
+        expect(cap.requests[0]?.body["output_config"]).toMatchObject({ effort: "high" });
     });
 });
 
@@ -177,7 +210,7 @@ describe("output-token ceiling", () => {
         const result = await provider.chat(request, makeSession());
 
         expect(result.isOk()).toBe(true);
-        return cap.bodies[0]?.max_tokens;
+        return cap.requests[0]?.body["max_tokens"] as number | undefined;
     }
 
     const anthropicModel =
