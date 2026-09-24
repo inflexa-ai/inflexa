@@ -715,6 +715,19 @@ Other facts:
   a durable key cannot match a key of the conversation. An accounting agent id
   names its usage records, its token counters, and its run metrics. The salvage of
   `runToTerminal`, the file metadata, and the step summary are continuations.
+- **The cut of a long tool result** (`loop/tool-output.ts`) — the loop measures
+  the text of each tool result in `dispatchTool`, before the result joins the
+  transcript. Thus each tool and each segment of a conversation get the cut.
+
+  A text longer than `TOOL_RESULT_CAP`, 32,768 characters, becomes an excerpt.
+  The excerpt gives a line that states the cut, the first 4,096 characters, a
+  marker line, and the last 8,192 characters.
+
+  When the run has a `toolOutputStore` and the agent declares
+  `read_tool_output`, the loop keeps the whole text before a request sends the
+  result. Then the excerpt gives the reference of the kept text.
+  `read_tool_output` reads a kept text by its reference: a window of characters,
+  or the matches of a pattern.
 - **Execution-mode partitioned dispatch**
   ([harness-tools](openspec/specs/harness-tools/spec.md)). The dispatch obeys the
   `executionMode` of each tool. A `step` tool is the default: the ~35 external bio
@@ -760,7 +773,9 @@ Other facts:
   [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
 - **Workflow and sandbox agent loops** — no `messages` table. The durability is
   the DBOS step cache, and the debug method is read-side reconstruction from
-  `dbos.operation_outputs`. Refer to
+  `dbos.operation_outputs`. The step cache holds the excerpt of a cut tool
+  result, and `cortex_tool_outputs` holds its full text under the analysis and
+  the reference. A text of a chat turn also names its thread. Refer to
   [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
 
 ### Request headers at the wire boundary

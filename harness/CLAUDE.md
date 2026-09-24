@@ -506,7 +506,9 @@ wiped when the profiling completes. Its durable products are the vector index an
 The harness uses Postgres, with `pg` directly and pgvector. The DBOS system DB
 carries the workflow state, the step cache, and the durable streams. The app tables
 (`cortex_runs`, `cortex_step_executions`, `cortex_artifacts`, `messages`,
-`cortex_working_memory`) are thin ledgers.
+`cortex_working_memory`, `cortex_tool_outputs`) are thin ledgers.
+`cortex_tool_outputs` holds the kept text of each cut tool result. It is
+conversation data, the same as the rows of `messages`.
 The rich data (the summaries, the findings, the file descriptions) is in files and
 in the vector index, not in DB columns. The connection parameters come from
 `DB_PG_HOST`, `DB_PG_PORT`, `DB_PG_NAME`, `DB_PG_USER`, `DB_PG_PASSWORD`, and
