@@ -101,7 +101,7 @@ describe("opentargets — action 'target'", () => {
                 ensemblId: TP53,
                 approvedSymbol: "TP53",
                 approvedName: "tumor protein p53",
-                tractability: { smallMolecule: true, antibody: false, otherModalities: true },
+                tractability: { smallMolecule: ["Approved Drug"], antibody: [], otherModalities: ["Literature"] },
                 associations: [
                     {
                         diseaseId: "EFO_0000311",

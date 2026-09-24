@@ -30,14 +30,16 @@ const inputSchema = z
             .enum(["compound", "crossrefs", "assays"])
             .describe(
                 "Which PubChem lookup to run. " +
-                    "'compound' — resolve `query` (in the namespace named by `searchBy`) to a compound. Returns results[]: identity (cid, canonicalSmiles, inchi, inchiKey, iupacName, " +
+                    "'compound' — resolve `query` (in the namespace named by `searchBy`) to a compound. Returns results[]: identity (cid, canonicalSmiles — " +
+                    "the PubChem connectivity SMILES, with no stereochemistry and no isotopes, thus inchi is the full structure — inchi, inchiKey, iupacName, " +
                     "molecularFormula) and computed properties (molecularWeight, xlogp, tpsa, hbondDonorCount, hbondAcceptorCount, rotatableBondCount, complexity). " +
                     "'crossrefs' — external registry ids for a `cid`. Returns crossRefs[]: a flat list of { source, id } entries. `source` names the registry that the id pattern " +
                     "identifies — ChEMBL, ChEBI, DrugBank, KEGG, HMDB, CAS, PDB or UNII — and it is null for an id of any other registry; filter by `source` for the one you want. " +
                     "This is the bridge out of PubChem. " +
                     "'assays' — bioassay screening summaries for a `cid`; answers 'has this compound ever been screened, and against what?'. Returns assays[]: aid, assayName, targetName " +
                     "(the target accession, for example a UniProt or PDB id), " +
-                    "activityOutcome (Active / Inactive / Inconclusive / Unspecified), activityValue. Broad HTS screening coverage, NOT curated potency — for numbers you intend to quote " +
+                    "activityOutcome (Active / Inactive / Inconclusive / Unspecified), activityValue (in µM; null when the assay reports none). Broad HTS " +
+                    "screening coverage, NOT curated potency — for numbers you intend to quote " +
                     "(IC50/Ki), prefer chembl action='bioactivity'.",
             ),
         query: z

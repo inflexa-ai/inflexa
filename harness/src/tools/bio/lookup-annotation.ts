@@ -117,7 +117,9 @@ const inputSchema = z
             .enum(["go", "kegg", "reactome", "pathways"])
             .describe(
                 "'go' — Gene Ontology via QuickGO (EBI); needs ONE of goId, query, or geneProductId. Returns terms[] { id, name, definition, aspect } " +
-                    "and/or annotations[] { geneProductId, goId, goName, aspect, evidenceCode, qualifier }. " +
+                    "and/or annotations[] { geneProductId, goId, goName, aspect, evidenceCode, qualifier } — the first `limit` rows that QuickGO " +
+                    "serves, one row for each term, evidence and reference, thus a term can repeat, a well-studied protein holds hundreds of rows, " +
+                    "and the result gives no total. " +
                     "'kegg' / 'reactome' — one pathway database; needs query or pathwayId. 'pathways' — both, in parallel; needs query or pathwayId. " +
                     "Returns pathways[] { id, name, source, url, description?, genes? }.",
             ),
@@ -149,8 +151,10 @@ const inputSchema = z
             .boolean()
             .optional()
             .describe(
-                "Pathway vocabularies only. Default FALSE — member-gene lists cost one request per pathway and run to hundreds of symbols. True only when " +
-                    "you need the members, not the pathway identities.",
+                "Pathway vocabularies only. Default FALSE — member lists cost one request per pathway and run to hundreds of entries. KEGG members " +
+                    "are NCBI Gene (Entrez) IDs ('7157'), not symbols. Reactome members are participant entity names with their compartment " +
+                    "('p-T389/412-RPS6KB1 [cytosol]', 'ATP [cytosol]'), small molecules included. True only when you need the members, not the " +
+                    "pathway identities.",
             ),
         limit: z
             .number()

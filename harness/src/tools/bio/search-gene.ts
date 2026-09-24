@@ -47,7 +47,8 @@ export const searchGeneTool = defineTool({
         "biotype, assembly, description; plus resolvedFrom[] and notFound[]. Gene-level only — no transcripts or exons. Batch up to 200 identifiers per " +
         "call.\n" +
         "ACCEPTED IDENTIFIERS, mixed freely in one call: a HUGO gene symbol ('BRCA1'), an Ensembl gene ID ('ENSG00000012048'), an HGNC ID ('HGNC:1100'), " +
-        "a UniProt accession ('P38398') and a ChEMBL target ID ('CHEMBL5619'). An input that is not a symbol is anchored on the HGNC and UniProt " +
+        "a six-character UniProt accession ('P38398') and a ChEMBL target ID ('CHEMBL5619'); a ten-character accession ('A0A0B4J1Y9') is read " +
+        "as a symbol and lands in notFound. An input that is not a symbol is anchored on the HGNC and UniProt " +
         "registries first, and the approved symbol it yields is reported in resolvedFrom[] — that anchoring is human, so a non-symbol input with a " +
         "non-human `species` looks the ortholog up by the human approved symbol.\n" +
         "notFound is valid no-data (a deprecated, aliased or mistyped identifier, or one this species has no gene for) — report it and continue, do not " +

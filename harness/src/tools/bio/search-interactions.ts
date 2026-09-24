@@ -20,12 +20,16 @@ export const searchInteractionsTool = defineTool({
         "evidence into one confidence score — for interactions and gene-set functional enrichment. " +
         "'partners' — the one-hop interaction partners of the input proteins, score-sorted: 'what else does this protein work with?'. " +
         "'network' — the interactions AMONG the input proteins only, no new nodes: 'is my gene set actually connected?'. " +
-        "'enrichment' — statistical over-representation of GO, KEGG, Reactome and Pfam terms in the input set, FDR-sorted: the enrichment TEST, as " +
+        "'enrichment' — statistical over-representation of terms in the input set against the whole genome, FDR-sorted, over every STRING " +
+        "category: GO Process / Function / Component, KEGG, Reactome (RCTM), Pfam, InterPro, UniProt keywords, COMPARTMENTS, DISEASES, HPO, " +
+        "WikiPathways and PubMed publications (PMID) among them, with `category` naming the source of each row. It is the enrichment TEST, as " +
         "opposed to lookup_annotation, which just reads a vocabulary. " +
         "ACCEPTED IDENTIFIERS: STRING resolves each one itself, so a HUGO gene symbol ('TP53'), a UniProt accession ('P04637'), an Ensembl protein ID " +
         "('ENSP00000269305') and a full protein name all work, mixed in one call. `species` takes an NCBI Taxonomy ID (9606 = human).\n" +
-        "`limit` applies to all three actions and defaults small: a network over N proteins grows with N² edges. `totalEdges` / `totalTerms` give the " +
-        "pre-trim counts. An empty result is valid no-data (unconnected set, no enriched term, unresolvable identifiers) — report it and continue, do " +
+        "`limit` applies to all three actions and defaults small: a network over N proteins grows with N² edges. For 'partners', STRING applies " +
+        "it to EACH input protein, thus N inputs give up to N × limit rows. `totalEdges` / `totalTerms` give the pre-trim counts of 'network' and " +
+        "'enrichment'; 'partners' gives no total. An empty result is valid no-data (unconnected set, no enriched term, unresolvable identifiers) — " +
+        "report it and continue, do " +
         "not retry.",
     inputSchema: z.object({
         identifiers: z.array(z.string()).min(1).max(100).describe("Protein/gene identifiers (e.g. ['TP53', 'BRCA1'])"),
@@ -45,7 +49,7 @@ export const searchInteractionsTool = defineTool({
             .max(500)
             .default(DEFAULT_LIMIT)
             .describe(
-                `Max records returned — partners, network edges, or enriched terms depending on action (default ${DEFAULT_LIMIT}, max 500). ` +
+                `Max records returned — partners PER INPUT PROTEIN, network edges, or enriched terms depending on action (default ${DEFAULT_LIMIT}, max 500). ` +
                     "Rows are ordered best-first (score descending for interactions, FDR ascending for enrichment), so the default keeps the strongest.",
             ),
     }),

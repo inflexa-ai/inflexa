@@ -47,8 +47,9 @@ const inputSchema = z
             .enum(["search", "details", "fulltext"])
             .describe(
                 "'search' (needs query) — returns totalFound plus, per hit, PMID, title, journal, year and an author summary. " +
-                    "'details' (needs pmids, max 20 per call) — each article's full abstract, journal, year, DOI, pmcId (non-null only when open-access " +
-                    "full text exists in PubMed Central), plus the leading authors and MeSH terms with authorCount / meshTermCount giving the true totals. " +
+                    "'details' (needs pmids, max 20 per call) — each article's full abstract, journal, year, DOI, pmcId (non-null when the article is in " +
+                    "PubMed Central, which includes articles outside the open-access subset), plus the leading authors and MeSH terms with authorCount / " +
+                    "meshTermCount giving the true totals. " +
                     "'fulltext' (needs pmcId, taken from a 'details' result) — the body of ONE open-access PMC article as plain text with section headers " +
                     "preserved, trimmed to maxChars; `outline` lists every section with its size and whether it came back, and truncated says whether " +
                     "anything was left out. available: false when the article is not open-access.",
@@ -142,7 +143,7 @@ type PubMedOutput =
     | { totalFound: number; results: PubMedSummary[] }
     | { articles: BoundedArticleDetail[]; notFound: string[] }
     | { pmcId: string; available: false }
-    | ({ pmcId: string; available: true } & BoundedFullText);
+    | ({ pmcId: string; available: true } & Omit<BoundedFullText, "sections">);
 
 export function createPubMedTool(deps: { ncbiApiKey?: string }) {
     return defineTool({
@@ -152,10 +153,10 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
             "the U.S. National Library of Medicine, through the NCBI E-utilities. The three actions form a chain " +
             "— search, then details on the relevant hits, then fulltext; see the action parameter for what each needs and returns.\n" +
             "ACCEPTED IDENTIFIERS: an Entrez free-text query with optional field tags for 'search' ('PCSK9[Title] AND 2020:2024[dp]'); PMIDs for " +
-            "'details' ('34567890'); and a PMID or a PMC ID for 'fulltext' ('PMC7096066'). For literature outside MEDLINE — a method, a model, a " +
-            "preprint — use search_semantic_scholar or search_arxiv instead.\n" +
+            "'details' ('34567890'); and a PMC ID for 'fulltext' ('PMC7096066'), never a PMID — the PMC number of an article differs from its PMID. " +
+            "PubMed holds MEDLINE and PMC only, thus a method, a model or a preprint outside MEDLINE is often absent here.\n" +
             "Read " +
-            "fulltext sparingly — only where the 'details' abstract is not enough, and only for articles that have a pmcId (open-access). " +
+            "fulltext sparingly — only where the 'details' abstract is not enough, and only for articles that have a pmcId. " +
             "A full article is larger than everything else this tool returns combined, so it comes back trimmed to a character budget: take the " +
             "`outline` from the first call and re-request the specific `sections` you need rather than raising maxChars. " +
             "An empty result set and available: false are expected outcomes, not errors — an article with no PMC record simply has no open full text. " +
@@ -213,7 +214,10 @@ export function createPubMedTool(deps: { ncbiApiKey?: string }) {
                     );
                     // "Not open-access" is an expected outcome — a data variant, not an error.
                     if (!parsed) return ok({ pmcId: input.pmcId!, available: false as const });
-                    return ok({ pmcId: input.pmcId!, available: true as const, ...parsed });
+                    // `fullText` already holds each admitted section under its heading, thus the
+                    // `sections` array would send the same text to the model a second time.
+                    const { sections: _sections, ...bounded } = parsed;
+                    return ok({ pmcId: input.pmcId!, available: true as const, ...bounded });
                 }
             }
         },

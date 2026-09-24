@@ -34,7 +34,8 @@ export const searchClinicalTrialsTool = defineTool({
         "protocol prose.\n" +
         "action 'details' takes ONE nctId and returns that study in full: the same trial record plus outcomes[] (each primary/secondary/other outcome " +
         "measure with its numeric effect where the sponsor posted results) and the reported adverse events with their per-arm counts. This is how you " +
-        "read a result, as opposed to finding a trial.\n" +
+        "read a result, as opposed to finding a trial. The 'details' answer is not trimmed: a large trial with posted results carries hundreds of " +
+        "adverse-event terms, each with its per-arm counts, thus one answer can run to tens of thousands of characters.\n" +
         "ACCEPTED IDENTIFIERS: `query` is free text matched across the whole study record, so a gene symbol ('KRAS'), a drug or brand name ('imatinib', " +
         "'Gleevec'), a condition ('melanoma') or an NCT ID ('NCT00000102') all work. `nctId` takes one NCT ID and nothing else.\n" +
         "`status` is an optional server-side filter and `phase` narrows the returned page. Omit both to see the full landscape. totalFound reports the true " +

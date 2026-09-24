@@ -206,15 +206,15 @@ export function createGeneDiseaseEvidenceTool(deps: { ncbiApiKey?: string; disge
         description:
             "Genetic evidence linking a gene to a disease or trait, across the NHGRI-EBI GWAS Catalog, DisGeNET, NCBI ClinVar and cBioPortal in one call " +
             "— 'is there human genetic support for this target in this indication?'. See `sources` for what each corpus carries.\n" +
-            "For the integrated, pre-scored view prefer opentargets({action:'target'}) FIRST — it folds genetic association together with tractability " +
-            "and the drug landscape. Reach here for the underlying records: actual SNPs, effect sizes, scores, pathogenicity calls and somatic mutation " +
-            "frequencies with their studies and PMIDs.\n" +
+            "It returns the underlying records — actual SNPs, effect sizes, scores, pathogenicity calls and somatic mutation frequencies with their " +
+            "studies and PMIDs — not one integrated score across evidence types.\n" +
             "ACCEPTED IDENTIFIERS, each named by its `queryType`: a HUGO gene symbol or an Entrez ID ('PCSK9', '5008'); a disease or trait name or a UMLS " +
             "CUI ('asthma', 'C0006142'); a dbSNP rsID ('rs11591147'); a GWAS Catalog study accession ('GCST000392'); and a ClinVar accession " +
             "('VCV000012345'). The last two read one record back by the accession that an earlier result of this same tool reported. " +
             "The GWAS Catalog matches the EXACT EFO trait label (case-insensitive): 'asthma' resolves, a paraphrase such as 'LDL cholesterol' reads as " +
             "no_data there ('low density lipoprotein cholesterol measurement' is the label) while the other corpora still answer it.\n" +
-            "ALWAYS read `perSource` before concluding anything is absent. 'no_data' means that corpus genuinely has nothing; 'unavailable' means it " +
+            "`perSource` gives the outcome of each corpus, and a conclusion of absence rests on it. 'no_data' means that corpus genuinely has nothing; " +
+            "'unavailable' means it " +
             "could not be reached (a missing DISGENET_API_KEY lands here — tell the user and proceed with the others); 'not_applicable' means that " +
             "corpus has no lookup for this queryType. Only 'no_data' is evidence of absence, and none is worth retrying unchanged.",
         inputSchema,

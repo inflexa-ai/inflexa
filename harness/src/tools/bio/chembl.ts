@@ -44,10 +44,11 @@ const inputSchema = z
                 "Which ChEMBL lookup to run; each names its params and return fields.\n" +
                     "'compounds' (query + searchType) — molecules by target, name or SMILES: resolve a named compound to its ID and structure, or list " +
                     "what was assayed against a target. → chemblId, preferredCompoundName, canonicalSmiles, molecularWeight, alogp, molecularFormula.\n" +
-                    "'drug' (query) — approved drugs by indication or by drug name: 'what treats X?', 'is Y approved, since when?'. → moleculeChemblId, " +
-                    "preferredName, maxPhase (4 = approved), moleculeType, firstApproval, indication. A disease term reads the curated indication " +
-                    "registry, highest phase first; a query that matches no disease term reads the approved molecules (max_phase >= 4) instead, and " +
-                    "their indications come back with them.\n" +
+                    "'drug' (query) — approved drugs by drug name or by indication: 'is Y approved, since when?', 'what treats X?'. → moleculeChemblId, " +
+                    "preferredName, maxPhase (4 = approved), moleculeType, firstApproval, indication. The query is read as a molecule name first: the " +
+                    "approved molecules (max_phase 4) that it names come back with their indications. A query that names no approved molecule is then " +
+                    "read as a disease term against the curated indication registry, highest phase first, and those rows can hold clinical-stage " +
+                    "molecules. Thus a clinical-stage compound queried by name gives an empty array; action 'compounds' resolves it.\n" +
                     "'mechanism' (chemblId, molecule only) — curated mechanism of ONE molecule: 'how does X work?'. → mechanismOfAction, actionType " +
                     "(INHIBITOR, AGONIST, …), targetChemblId + targetName, moleculeChemblId. Curated mainly for clinical/approved molecules, so tool " +
                     "compounds often have none.\n" +
@@ -72,7 +73,9 @@ const inputSchema = z
             .enum(["target", "compound", "smiles"])
             .optional()
             .describe(
-                "Required for 'compounds' — how to read `query`. 'target': resolve to a ChEMBL target, then return what was assayed against it. " +
+                "Required for 'compounds' — how to read `query`. 'target': resolve `query` to the TOP ChEMBL target hit only — the result does not " +
+                    "name that target, and a symbol can hit a non-human ortholog — then return what was assayed against it; a target ChEMBL ID from " +
+                    "action 'targets' pins the target. " +
                     "'compound': free-text over molecule names. 'smiles': flexmatch structure search.",
             ),
         chemblId: z
