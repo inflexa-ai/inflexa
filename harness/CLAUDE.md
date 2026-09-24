@@ -168,6 +168,43 @@ them. These two rules bind the code, and `CONTEXT.md` does not carry them:
    which is a cross-step literature-grounded aggregation, is the final step of the
    parent.
 
+### Append-only agent conversations
+
+Each agent conversation is append-only. The harness never edits, removes, or
+reorders a message that it sent in a conversation. The prompt cache of the
+provider matches only an unchanged prefix. Some models also bind each signed
+thinking block to the exact prefix: the system prompt, the tool set, and the
+earlier messages. A change of that prefix makes the cache miss, and the API drops
+or refuses the later thinking blocks.
+
+Obey these rules:
+
+1. **The system prompt is a function of the agent type only.** A value that
+   changes between requests goes into a message, never into the system prompt or
+   into a tool description. Refer to rule 7 of `Prompt Design Principles`.
+2. **The declared tools stay the same for the whole conversation.** A request
+   never changes `tools` or `toolChoice`. `@ai-sdk/anthropic` removes the tools
+   from a request with `toolChoice: "none"`, thus that value also changes the
+   prefix.
+3. **A tool mask limits the tools that can run.** To stop a tool for one request,
+   give a mask (`loop/tool-mask.ts`). Do not remove the tool. The loop refuses a
+   call outside the mask, or past its budget, with an error result, and the tool
+   does not run.
+4. **A follow-up task continues the conversation.** For a summary, a metadata
+   request, a salvage, or a wrap-up, use `continueAgent`
+   (`loop/continue-agent.ts`). It appends one harness request, and it keeps the
+   system prompt, the tools, the tool choice, the provider, and the effort. Do not
+   start a new call that sends the transcript again under a different system
+   prompt or tool set.
+5. **An unanswered tool call gets a result.** At the exit of the loop, each call
+   without a result gets a "not run" error result. Do not remove the call from the
+   history.
+6. **The effort stays the same for each request of one conversation.** Anthropic
+   discards its message cache when the effort changes.
+
+The history window of the chat thread is the one exception. It drops the oldest
+turns in blocks of 4 turns.
+
 ### Session model
 
 The value objects, the two bundles, and their lifetimes are in
@@ -309,7 +346,8 @@ is an embedder concern.
   steps on their dependencies, and starts one child workflow for each step. For
   each child: the sandbox-agent loop, then `generateFileMetadata`, then
   `generateStepSummary`, then the artifact registration through
-  `ArtifactRegistry`, then the index in the vector store. The final step of the
+  `ArtifactRegistry`, then the index in the vector store. The metadata and the
+  summary continue the conversation of the step agent. The final step of the
   parent is the literature-grounded synthesis.
 - **Chat turn** (`app/chat-turn.ts`): the preparation half of one turn only.
   `prepareChatTurn` resolves the thread ownership, seeds the title, loads the
