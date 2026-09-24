@@ -32,11 +32,13 @@ import { formatAgentCatalog } from "../../agents/sandbox-catalog.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { DEFAULT_SALVAGE_ITERATIONS, runToTerminal, type RunToTerminalResult } from "../../loop/run-to-terminal.js";
 import { passthroughStep } from "../../loop/run-step.js";
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { createReadToolOutputTool } from "../read-tool-output.js";
 import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { createListAvailablePackagesTool } from "../sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
@@ -886,6 +888,8 @@ export interface GeneratePlanDeps extends EnvironmentStorePaths {
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the planner loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the planner loop and of its read tool. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** API keys for the search tools the planner uses to ground a plan. */
     readonly bioKeys: BioToolKeys;
 }
@@ -1136,6 +1140,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             // definitions are identical across invocations, thus the request prefix
             // that the cache keys on does not move.
             const searchTools = buildPlannerSearchTools(deps);
+            const readTools = deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : [];
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),
@@ -1143,7 +1148,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 // The search tools come first, and the terminal tools come last.
                 // The order is the order of the prompt, and it is stable across
                 // every invocation, thus the cached request prefix holds.
-                tools: [...searchTools, ...innerTools.terminal],
+                tools: [...searchTools, ...readTools, ...innerTools.terminal],
                 maxIterations: PLANNER_MAX_ITERATIONS,
             };
 
@@ -1169,6 +1174,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                         // turn below recovers a run that ends on prose.
                         logger,
                         usageRecorder: deps.usageRecorder,
+                        toolOutputStore: deps.toolOutputStore,
                         // Fold the planner's calls into the turn total the root loop reports.
                         turnUsage: ctx.turnUsage,
                         // Keeps the usage record keys of two parallel dispatches disjoint —

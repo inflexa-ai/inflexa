@@ -21,6 +21,7 @@ import type { SynthesisPhase } from "@inflexa-ai/harness/contracts/chat-parts.js
 
 import type { RunSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { EmitFn } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
@@ -60,6 +61,8 @@ export interface SynthesizeRunDeps {
     readonly citationResolver: CitationResolver;
     /** LLM usage-accounting seam for the synthesizer loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the synthesizer and reviewer loops and of their read tools. */
+    readonly toolOutputStore?: ToolOutputStore;
 }
 
 /** Optional fields for a progress update, mirroring the wire part. */
@@ -121,6 +124,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             bioKeys,
             citationResolver,
             usageRecorder,
+            ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
             summaries,
             planNarrative,
             runId,

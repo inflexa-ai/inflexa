@@ -20,12 +20,14 @@ import { z } from "zod";
 
 import { finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import { literatureReviewerPrompt } from "../../prompts/literature-reviewer.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
 import { defineTool, type Tool } from "../define-tool.js";
+import { createReadToolOutputTool } from "../read-tool-output.js";
 import { createChemDbTools, createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 import { genePreclinicalProfileTool } from "../bio/gene-preclinical-profile.js";
 import { lookupAnnotationTool } from "../bio/lookup-annotation.js";
@@ -54,6 +56,8 @@ export interface LiteratureReviewerDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the child loop and of its read tool. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** Shared bibliographic verification service; all agent surfaces share its pacing/cache. */
     readonly citationResolver: CitationResolver;
 }
@@ -71,6 +75,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
         createResolveCitationTool(deps.citationResolver),
         chemDb.drugGeneInteractions,
         genePreclinicalProfileTool,
+        ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
     ];
 
     const agent: AgentDefinition = {
@@ -108,6 +113,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
                 emit: ctx.emit,
                 runStep: passthroughStep,
                 usageRecorder: deps.usageRecorder,
+                toolOutputStore: deps.toolOutputStore,
                 // Fold the child's calls into the turn total the root loop reports.
                 turnUsage: ctx.turnUsage,
                 // Keeps the usage record keys of two parallel reviews disjoint —

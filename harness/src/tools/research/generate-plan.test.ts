@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { createCapturingLogger, type CapturedLog, type CapturingLogger } from ".
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { DataProfileResult } from "../../state/index.js";
 import type { Tool, ToolContext } from "../define-tool.js";
@@ -233,6 +235,20 @@ describe("generatePlan loop-driving tool", () => {
         expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
         // The planner sees the same meaning-bearing labels a sandbox agent does.
         expect(transcript(provider)).toContain("regulon");
+    });
+
+    it("declares read_tool_output after the search tools and before the terminal tools when it has a tool output store", async () => {
+        const provider = refsProbe();
+        const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+
+        await createGeneratePlanTool({ conversation: { provider, model: "claude-test" }, pool, toolOutputStore, bioKeys: TEST_BIO_KEYS }).execute(
+            INPUT,
+            toolContext(),
+        );
+
+        const ids = Object.keys(provider.calls[0]!.tools);
+        expect(ids.slice(-4)).toEqual(["read_tool_output", "submit_plan", "request_clarification", "report_blocker"]);
+        expect(ids.indexOf("list_available_packages")).toBe(ids.indexOf("read_tool_output") - 1);
     });
 
     it("reports no reference store to the planner when none is configured", async () => {

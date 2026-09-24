@@ -20,10 +20,12 @@ import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
 import { passthroughStep } from "../../loop/run-step.js";
 import { runToTerminal } from "../../loop/run-to-terminal.js";
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
+import { createReadToolOutputTool } from "../read-tool-output.js";
 import { createReportBlockerToolFor, type BlockerOutcome } from "../sandbox/report-blocker.js";
 
 // Cross-domain search tools the analogical-reasoner uses.
@@ -162,6 +164,8 @@ export interface GenerateAnalogyReportDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the child loop and of its read tool. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** Logging seam; omitted falls back to no-op. Logs the salvage warning and an accounting error of the reasoner loop. */
     readonly logger?: Logger;
 }
@@ -175,6 +179,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
         searchArxivTool,
         createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
         ncbi.pubmed,
+        ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
     ];
     const systemPrompt = composeSystemPrompt(analogicalReasonerPrompt);
 
@@ -234,6 +239,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                         resolved: () => cell.outcome !== null,
                         logger,
                         usageRecorder: deps.usageRecorder,
+                        toolOutputStore: deps.toolOutputStore,
                         // Fold the child's calls into the turn total the root loop reports.
                         turnUsage: ctx.turnUsage,
                         // Keeps the usage record keys of two parallel dispatches disjoint —

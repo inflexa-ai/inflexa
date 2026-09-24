@@ -50,11 +50,13 @@ import { decodeObjectString } from "../lib/zod-issues.js";
 
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { passthroughStep } from "../loop/run-step.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { RunSession } from "../auth/types.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { createReportBlockerToolFor } from "../tools/sandbox/report-blocker.js";
 import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
@@ -444,6 +446,8 @@ export interface GenerateRunSynthesisInput {
     readonly citationResolver: CitationResolver;
     /** LLM usage-accounting seam for the synthesizer + reviewer loops; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the synthesizer and reviewer loops and of their read tools. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** Step summaries from the completed run. Non-empty. */
     readonly summaries: readonly StepSummary[];
     /** Plan analytical narrative for context. */
@@ -477,12 +481,14 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         bioKeys: input.bioKeys,
         citationResolver: input.citationResolver,
         usageRecorder: input.usageRecorder,
+        ...(input.toolOutputStore ? { toolOutputStore: input.toolOutputStore } : {}),
     });
 
     const validateTool = buildValidateTool(innerCtx);
     const submitTool = buildSubmitTool(holder, innerCtx);
     const blockerTool = buildBlockerTool(holder);
-    const tools: readonly Tool[] = [validateTool, submitTool, blockerTool, reviewer];
+    const readTools = input.toolOutputStore ? [createReadToolOutputTool(input.toolOutputStore)] : [];
+    const tools: readonly Tool[] = [validateTool, submitTool, blockerTool, reviewer, ...readTools];
 
     const agent: AgentDefinition = {
         id: SYNTHESIS_AGENT_ID,
@@ -504,6 +510,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         runStep: passthroughStep,
         resolved: () => holder.outcome !== null,
         usageRecorder: input.usageRecorder,
+        toolOutputStore: input.toolOutputStore,
         toolBudget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET },
     } as const;
 

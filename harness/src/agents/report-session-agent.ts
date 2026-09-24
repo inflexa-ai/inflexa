@@ -27,7 +27,9 @@ import type { Pool } from "pg";
 
 import type { AuthContext } from "../auth/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import type { DeriveTableRunner } from "../tools/report-session/derive-table.js";
 import type { ReportSessionStateStore } from "../state/report-session-state.js";
 import type { Tool } from "../tools/define-tool.js";
@@ -148,6 +150,8 @@ export interface ReportSessionAgentDeps {
     readonly provenance?: ProvenanceSeam;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
+    /** Adds `read_tool_output`. The loop of a report turn must keep its texts in the same store. */
+    readonly toolOutputStore?: ToolOutputStore;
 }
 
 /** Build the report `AgentDefinition` with every tool bound to its deps. */
@@ -165,6 +169,7 @@ export function createReportSessionAgent(deps: ReportSessionAgentDeps): AgentDef
         createListFilesTool(workspaceFs),
         createFileStatTool(workspaceFs),
         createGrepTool(workspaceFs),
+        ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
         createWorkspaceSearchTool(pool, embedding),
         createInspectRunTool(pool),
         createInspectDataProfileTool(pool),

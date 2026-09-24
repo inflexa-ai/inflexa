@@ -31,9 +31,11 @@ import type { EnsureSessionStateResult } from "../app/report-session-runtime.js"
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AcquireEyes } from "../lib/eyes.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -116,6 +118,8 @@ export interface ConversationAgentDeps extends EnvironmentStorePaths {
      * Omitted falls back to the no-op recorder.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** Adds `read_tool_output`, and each loop-driving tool gives the same store to its sub-agent. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** Shared host-side bibliographic verification service. */
     readonly citationResolver: CitationResolver;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
@@ -224,6 +228,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         imagePackagesFile,
         readPoolInventory,
         usageRecorder,
+        toolOutputStore,
         citationResolver,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
@@ -302,6 +307,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             pool,
             resourcePolicy,
             usageRecorder,
+            ...(toolOutputStore ? { toolOutputStore } : {}),
             bioKeys,
             ...(refStorePath ? { refStorePath } : {}),
             ...(farmLockFile ? { farmLockFile } : {}),
@@ -340,13 +346,21 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createShowPlanTool(pool),
         showFileTool,
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder, ...(deps.logger ? { logger: deps.logger } : {}) }),
+        createGenerateAnalogyReportTool({
+            provider,
+            model,
+            bioKeys,
+            usageRecorder,
+            ...(toolOutputStore ? { toolOutputStore } : {}),
+            ...(deps.logger ? { logger: deps.logger } : {}),
+        }),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),
         createReadFileTool(workspaceFs),
         createListFilesTool(workspaceFs),
         createFileStatTool(workspaceFs),
         createGrepTool(workspaceFs),
+        ...(toolOutputStore ? [createReadToolOutputTool(toolOutputStore)] : []),
         // Workspace write pair over the session-scoped mutate seam. The working
         // directory of this agent is the analysis root, so a write lands
         // anywhere inside its own analysis tree; `..`, a foreign analysis, and
