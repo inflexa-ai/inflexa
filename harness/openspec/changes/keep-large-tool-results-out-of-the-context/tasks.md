@@ -171,10 +171,10 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 8. The CLI
 
-- [ ] 8.1 In `cli/src/modules/harness/run_deps.ts`, give `toolOutputStore: ctx.toolOutputStore` to the `SandboxAgentDeps` of `buildStepAgent` when the context has it.
-- [ ] 8.2 In `cli/src/modules/harness/run_deps.test.ts`, add `toolOutputStore: {}` to `fakeBuildContext`. Add a test: the built agent declares `read_tool_output`.
-- [ ] 8.3 In `cli/`, run `bun run harness:local`, `bun run typecheck`, `bun run lint`, and `bun test src/modules/harness/run_deps.test.ts`.
-- [ ] 8.4 In `cli/`, run `bun run format:file src/modules/harness/run_deps.ts src/modules/harness/run_deps.test.ts`.
+- [x] 8.1 In `cli/src/modules/harness/run_deps.ts`, give `toolOutputStore: ctx.toolOutputStore` to the `SandboxAgentDeps` of `buildStepAgent` when the context has it.
+- [x] 8.2 In `cli/src/modules/harness/run_deps.test.ts`, add `toolOutputStore: {}` to `fakeBuildContext`. Add a test: the built agent declares `read_tool_output`.
+- [x] 8.3 In `cli/`, run `bun run harness:local`, `bun run typecheck`, `bun run lint`, and `bun test src/modules/harness/run_deps.test.ts`.
+- [x] 8.4 In `cli/`, run `bun run format:file src/modules/harness/run_deps.ts src/modules/harness/run_deps.test.ts`.
 
 ## 9. Documents and final checks
 
