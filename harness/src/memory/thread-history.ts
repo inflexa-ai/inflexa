@@ -16,9 +16,8 @@
  *
  * The window is always a valid AI SDK model-message sequence: it begins on a
  * `user` message that is genuine user input — never a `tool`-role
- * continuation — and never splits a tool-call/tool-result pair. The turn
- * is the atomic unit; `appendTurn` writes one atomically and `loadRecent`
- * rounds the budget walk to turn boundaries.
+ * continuation — and never splits a tool-call/tool-result pair. `loadRecent`
+ * rounds the budget walk to turn boundaries, and each write of a group is atomic.
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,7 +25,7 @@ import { randomUUID } from "node:crypto";
 import type { ModelMessage } from "ai";
 import { type Histogram, metrics } from "@opentelemetry/api";
 import { ResultAsync, ok, okAsync } from "neverthrow";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { stripNulCharacters } from "../input-sanitization.js";
@@ -62,27 +61,26 @@ export interface StoredMessage {
     readonly envelope: StoredMessageEnvelope;
     readonly message: ModelMessage;
     /**
-     * The display projection of the append this row OPENED — present on the first
-     * row of each `appendTurn` and absent on every other row. A conversation turn
-     * and a host-appended record are both appends, so both carry one.
+     * The display projection of the group this row OPENED — present on the first
+     * row of each written group and absent on every other row. The opening of a
+     * turn, a round, a failure note, and a host-appended record are all groups.
      */
     readonly displayEnvelope?: StoredDisplayEnvelope;
     /**
      * What providers reported for the whole TURN this row completed — present
-     * only on the last assistant row of a turn appended with a rollup, absent
-     * everywhere else. Not a per-row figure, and unrelated to the `tokens` count
-     * `loadRecent` windows by: that is an offline estimate stamped on every row,
-     * this is a provider's own report (see the `reported_usage` column comment in
-     * the state-init DDL).
+     * only on the last assistant row of an older turn that stored a rollup on its
+     * rows. A later turn keeps its rollup on its {@link StoredMessage.turn}. Not a
+     * per-row figure, and unrelated to the `tokens` count `loadRecent` windows by
+     * (see the `reported_usage` column comment in the state-init DDL).
      */
     readonly usage?: TokenUsageRollup;
     /**
      * The time that the whole TURN this row completed took, in milliseconds —
-     * present only on the last assistant row of a turn appended with a duration,
-     * absent everywhere else. It has a column of its own, thus a turn that
-     * reported no quantity still reads back with the duration that it took.
+     * present only beside {@link StoredMessage.usage}, on the row of an older turn.
      */
     readonly durationMs?: number;
+    /** The record of the chat turn that this user row opens. Present only on that row. */
+    readonly turn?: StoredTurnRecord;
     /**
      * Who sent the user message of the append this row OPENED — present only on a
      * genuine-user-start row of a turn appended with one. A row written before the
@@ -100,8 +98,8 @@ export interface StoredMessage {
 }
 
 /**
- * One atomic append: the exact provider-facing history, the display projection of
- * what the user was shown, and what the turn reported spending.
+ * One atomic group of rows: the exact provider-facing history, and the display
+ * projection of what the user was shown.
  *
  * The two message projections are independent by design. `modelMessages` is what
  * the provider sees and the only input to token accounting; `displayMessages` is
@@ -113,22 +111,6 @@ export interface ConversationTurn {
     readonly modelMessages: readonly ModelMessage[];
     /** Complete ordered AI SDK UI messages recorded from the live display event stream. */
     readonly displayMessages: readonly ConversationUIMessage[];
-    /**
-     * The turn's reported rollup, as `AgentFinish.turnUsage` carries it out of the
-     * loop. Stored on the LAST assistant message of the turn — the row a reader
-     * associates with the reply. Omitting it, and supplying one that reports no
-     * quantity at all, both leave the row without one: a turn that reported nothing
-     * must not read back as a turn that cost zero.
-     */
-    readonly turnUsage?: TokenUsageRollup;
-    /**
-     * The time that the turn took, in milliseconds, as the live header measured
-     * it. Stored beside the rollup, on the same last assistant message. A caller
-     * that supplies none leaves the row without one, and nothing reconstructs a
-     * value later. The duration keeps a column of its own, thus a turn that
-     * reported no quantity still keeps the duration that it took.
-     */
-    readonly turnDurationMs?: number;
     /**
      * Who sent the user message of this turn — the identity the host holds at the
      * append site. Stored on the FIRST row of the append, and only when that row
@@ -159,6 +141,42 @@ export function conversationRecordTurn(text: string): ConversationTurn {
     };
 }
 
+/** The status of a chat turn: `open` while it runs, then its outcome. */
+export type TurnStatus = "open" | "done" | "aborted" | "failed";
+
+/** The close of a chat turn. It sets the outcome on the turn record, one time. */
+export interface TurnClose {
+    readonly status: Exclude<TurnStatus, "open">;
+    /** The reason of a failure. */
+    readonly reason?: string;
+    /** A rollup that reports no quantity is stored as absent. */
+    readonly turnUsage?: TokenUsageRollup;
+    readonly turnDurationMs?: number;
+    /** The failure note, stored after the rounds. */
+    readonly note?: ConversationTurn;
+}
+
+/**
+ * One write of a chat turn. The opening adds the turn record, and a later write names the turn by
+ * `startSeq`. The `never` members make a write with both keys fail to compile.
+ */
+export type TurnWrite =
+    | { readonly opening: ConversationTurn; readonly startSeq?: never; readonly rounds: readonly ConversationTurn[]; readonly close?: TurnClose }
+    | { readonly startSeq: number; readonly opening?: never; readonly rounds: readonly ConversationTurn[]; readonly close?: TurnClose };
+
+export interface TurnWriteResult {
+    /** The `seq` of the user row that opens the turn, which keys its turn record. */
+    readonly startSeq: number;
+}
+
+/** The turn record of a chat turn, as the display read gives it. */
+export interface StoredTurnRecord {
+    readonly status: TurnStatus;
+    readonly reason?: string;
+    readonly usage?: TokenUsageRollup;
+    readonly durationMs?: number;
+}
+
 /**
  * The result of `retractLastTurn`. `retracted` carries `messages` — the number
  * of rows removed — so a caller can assert exactly what came off the tail. The
@@ -187,14 +205,15 @@ export interface LoadRecentOptions {
  */
 export interface ThreadHistory {
     /**
-     * Append one {@link ConversationTurn} — every message written in a single
-     * transaction with a `seq` monotonically increasing per thread.
-     *
-     * A turn writing no assistant message stores neither the rollup nor the
-     * duration and still succeeds: there is no row on which the two figures
-     * would mean anything.
+     * Append one group, for example a record of a host — every message written in a
+     * single transaction with a `seq` monotonically increasing per thread.
      */
     appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError>;
+    /**
+     * Write the groups of one chat turn in one transaction, after the rows that the thread holds.
+     * A write with the opening adds the turn record, and a close changes only an `open` record.
+     */
+    writeTurn(threadId: string, write: TurnWrite): ResultAsync<TurnWriteResult, DbError>;
     /**
      * Return a recent-turns window that fits `tokenBudget`, oldest-first,
      * snapped to a valid AI SDK model-message sequence. The window START advances
@@ -233,18 +252,10 @@ export interface ThreadHistory {
     loadAll(threadId: string): ResultAsync<StoredMessage[][], DbError>;
     /**
      * Remove the thread's most recent turn — every row from the last
-     * genuine-user-start `seq` onward — in a single transaction.
+     * genuine-user-start `seq` onward, and its turn record — in a single transaction.
      *
-     * Tail-only by design: removal cuts at the last genuine-user-start `seq` —
-     * a turn boundary, not the last append. Because every conversation turn
-     * opens with the user's message, that boundary starts the most recent turn,
-     * so removing it restores the row set the thread held before that turn and
-     * leaves `loadRecent`'s byte-stable prompt-cache prefix untouched; an
-     * out-of-contract assistant-only follow-up append carries no user-start row
-     * and so folds into the removed tail, exactly as the read side's turn
-     * grouping folds it. Deleting mid-history would shift the window head and
-     * rewrite that prefix, so it is deliberately not offered — only the tail
-     * can come off.
+     * When the last turn goes, each earlier prefix stays byte-identical. A later
+     * request never sees a changed earlier record, and only the last turn can go.
      *
      * Callers are assumed single-writer per thread (the host serializes turns);
      * the outcome's `messages` count lets a caller assert exactly what was
@@ -423,6 +434,150 @@ export function __resetThreadHistoryMetricsForTest(): void {
 export const EVICTION_BLOCK_TURNS = 4;
 
 /**
+ * Serialize the writes of one thread — without the lock, two transactions can
+ * both read the same MAX(seq) and collide on the (thread_id, seq) primary key.
+ * Released automatically at COMMIT/ROLLBACK.
+ */
+function lockThread(client: PoolClient, threadId: string, op: string): ResultAsync<void, DbError> {
+    return tryQuery(`${op}.lock`, () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId])).map(() => undefined);
+}
+
+/** The `seq` of the next row of the thread. Read it under {@link lockThread}. */
+function nextSeq(client: PoolClient, threadId: string, op: string): ResultAsync<number, DbError> {
+    return tryQuery(`${op}.maxSeq`, async () => {
+        const { rows } = await client.query<{ max_seq: string }>("SELECT COALESCE(MAX(seq), -1)::text AS max_seq FROM messages WHERE thread_id = $1", [
+            threadId,
+        ]);
+        return Number(rows[0]!.max_seq) + 1;
+    });
+}
+
+/** Insert the rows of one group, from `startSeq` on. */
+function insertGroup(client: PoolClient, threadId: string, startSeq: number, group: ConversationTurn, op: string): ResultAsync<void, DbError> {
+    const { modelMessages: messages, displayMessages, author } = group;
+    // The display projection rides the group's FIRST row, so one SELECT of a
+    // thread's rows yields every envelope in order with no join and no grouping.
+    // Whichever row that is — a genuine user message opening a turn, or the lone
+    // record row of an out-of-band append — is the row a tail retraction removes
+    // the envelope with, because it is the row the projection describes.
+    const displayEnvelope = displayMessages.length > 0 ? JSON.stringify(envelopeDisplayMessages(displayMessages)) : null;
+    // The author rides the row the display projection rides, and only when that
+    // row is a message a person actually sent — an assistant row, a tool row,
+    // and the synthetic opening row of a record append are not. NUL is dropped
+    // rather than refused: a 0x00 byte in a `text` parameter fails the
+    // statement, and one byte in a label would roll the whole turn back.
+    const turnAuthor = author === undefined ? null : stripNulCharacters(author);
+    const authorRow = messages[0] !== undefined && isGenuineUserStart(messages[0]) ? 0 : -1;
+    // Insert the group's messages in order. Each insert chains off the
+    // prior so the first `err` short-circuits — and `withTransaction`
+    // re-throws it to force ROLLBACK (a returned `err` that does not
+    // reach `withTransaction` would COMMIT silently).
+    return messages.reduce(
+        (chain, message, i) =>
+            chain.andThen(() =>
+                tryMutation(`${op}.insert`, () =>
+                    client.query(
+                        // `message_envelope::json`, never `::jsonb`; `display_envelope::jsonb`,
+                        // never `::json` — see the column comments in the state-init DDL.
+                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, author)
+                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6)
+                     ON CONFLICT (thread_id, seq) DO UPDATE
+                       SET message_envelope = EXCLUDED.message_envelope,
+                           display_envelope = EXCLUDED.display_envelope,
+                           tokens = EXCLUDED.tokens,
+                           author = EXCLUDED.author`,
+                        [
+                            threadId,
+                            startSeq + i,
+                            serializeEnvelope(message),
+                            i === 0 ? displayEnvelope : null,
+                            countTokens(message.content),
+                            i === authorRow ? turnAuthor : null,
+                        ],
+                    ),
+                ).map(() => undefined),
+            ),
+        okVoid<DbError>(),
+    );
+}
+
+/** Move `cortex_analysis_threads.updated_at` forward inside the write transaction. */
+function touchThread(client: PoolClient, threadId: string, op: string): ResultAsync<void, DbError> {
+    // Thread listings sort on `cortex_analysis_threads.updated_at`, and
+    // the only other writer of it is the title update — so without this
+    // touch "most recently updated" degrades to "most recently created
+    // or renamed" and an actively-used older thread sorts last. Writing
+    // it from here (a row the thread store otherwise owns) buys the
+    // guarantee for every host with no wiring, and inside the turn's own
+    // transaction there is no window where the rows exist but the thread
+    // reads stale.
+    //
+    // The breadcrumb is never worth the turn: the touch may fail without
+    // failing the append, and affecting zero rows is equally normal — a
+    // thread with no metadata row, or a soft-deleted one this leaves
+    // alone rather than reviving (every other writer of the table filters
+    // the tombstone too). Tolerating the failure takes the savepoint, not
+    // just the swallowed `err`: Postgres poisons a transaction at its
+    // first failed statement and downgrades the eventual COMMIT to a
+    // ROLLBACK — without a rewind point the turn's inserts would go with
+    // it, and silently, since that COMMIT still reports success.
+    //
+    // `GREATEST(updated_at, clock_timestamp())` because `NOW()` is
+    // transaction-START time while this transaction has since waited on
+    // the advisory lock and spent a round trip per message: a title update
+    // that began later can already have stamped a newer `updated_at`, and
+    // a plain assignment would rewind it. Activity only ever moves the
+    // timestamp forward.
+    return tryMutation(`${op}.touchThread.savepoint`, () => client.query("SAVEPOINT touch_thread"))
+        .andThen(() =>
+            tryMutation(`${op}.touchThread`, () =>
+                client.query(
+                    `UPDATE cortex_analysis_threads
+                        SET updated_at = GREATEST(updated_at, clock_timestamp())
+                      WHERE thread_id = $1 AND deleted_at IS NULL`,
+                    [threadId],
+                ),
+            ),
+        )
+        .map(() => undefined)
+        .orElse(() =>
+            // Rewind to before the touch so the transaction is usable again
+            // and the write commits. Nothing follows in the chain of a caller,
+            // so COMMIT releases the savepoint on the success path.
+            tryMutation(`${op}.touchThread.rewind`, () => client.query("ROLLBACK TO SAVEPOINT touch_thread"))
+                .map(() => undefined)
+                .orElse(() => okVoid<DbError>()),
+        );
+}
+
+/** Add the `open` record of a turn. The upsert replaces a record whose rows are gone, because the opening row holds its key now. */
+function openTurnRecord(client: PoolClient, threadId: string, startSeq: number): ResultAsync<void, DbError> {
+    return tryMutation("thread-history.writeTurn.openRecord", () =>
+        client.query(
+            `INSERT INTO cortex_thread_turns (thread_id, start_seq, status)
+             VALUES ($1, $2, 'open')
+             ON CONFLICT (thread_id, start_seq) DO UPDATE
+               SET status = 'open', reason = NULL, reported_usage = NULL, turn_duration_ms = NULL, opened_at = NOW(), closed_at = NULL`,
+            [threadId, startSeq],
+        ),
+    ).map(() => undefined);
+}
+
+/** Set the outcome of a turn record that is still `open`, thus a second close changes nothing. */
+function closeTurnRecord(client: PoolClient, threadId: string, startSeq: number, close: TurnClose): ResultAsync<void, DbError> {
+    // The predicate of the loop decides whether a rollup reported a quantity, thus the two cannot drift.
+    const rollup = hasReportedUsage(close.turnUsage) ? JSON.stringify(close.turnUsage) : null;
+    return tryMutation("thread-history.writeTurn.closeRecord", () =>
+        client.query(
+            `UPDATE cortex_thread_turns
+                SET status = $3, reason = $4, reported_usage = $5::jsonb, turn_duration_ms = $6, closed_at = NOW()
+              WHERE thread_id = $1 AND start_seq = $2 AND status = 'open'`,
+            [threadId, startSeq, close.status, close.reason === undefined ? null : stripNulCharacters(close.reason), rollup, close.turnDurationMs ?? null],
+        ),
+    ).map(() => undefined);
+}
+
+/**
  * Create a `ThreadHistory` bound to a Postgres pool — a factory closure
  * capturing `pool` (dependency injection per the harness-durable-runtime spec). The `messages` table is
  * provisioned by the project's state-init DDL.
@@ -434,136 +589,35 @@ export const EVICTION_BLOCK_TURNS = 4;
  */
 export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory {
     function appendTurn(threadId: string, turn: ConversationTurn): ResultAsync<void, DbError> {
-        const { modelMessages: messages, displayMessages, turnUsage, turnDurationMs, author } = turn;
-        if (messages.length === 0) return okVoid();
-        // The display projection rides the append's FIRST row, so one SELECT of a
-        // thread's rows yields every envelope in order with no join and no grouping.
-        // Whichever row that is — a genuine user message opening a turn, or the lone
-        // record row of an out-of-band append — is the row a tail retraction removes
-        // the envelope with, because it is the row the projection describes.
-        const displayEnvelope = displayMessages.length > 0 ? JSON.stringify(envelopeDisplayMessages(displayMessages)) : null;
-        // A rollup that reports no quantity is stored as absent, not as a rollup of
-        // absences, so "no figure" has exactly one representation in storage.
-        // `hasReportedUsage` is the loop's own predicate for the same question,
-        // reused rather than restated so the write and the loop cannot drift.
-        const rollup = hasReportedUsage(turnUsage) ? JSON.stringify(turnUsage) : null;
-        // The duration takes no predicate of its own, and it keeps its own column.
-        // A measured zero is a figure, thus only an absent value means that nobody
-        // measured the turn. The rollup goes absent under its own predicate above,
-        // and the duration does not go with it.
-        const duration = turnDurationMs ?? null;
-        // The two figures describe the turn, and the assistant reply is the row a
-        // reader associates with the answer. The LAST assistant row, not any of them: a
-        // serial-tool turn writes one assistant row per step and only the last ends
-        // the turn. -1 (a turn that persisted no reply — an abort before any output)
-        // matches no index below, so nothing is written and the append still succeeds.
-        const lastAssistantRow = messages.reduce((last, m, i) => (m.role === "assistant" ? i : last), -1);
-        // The author rides the row the display projection rides, and only when that
-        // row is a message a person actually sent — an assistant row, a tool row,
-        // and the synthetic opening row of a record append are not. NUL is dropped
-        // rather than refused: a 0x00 byte in a `text` parameter fails the
-        // statement, and one byte in a label would roll the whole turn back.
-        const turnAuthor = author === undefined ? null : stripNulCharacters(author);
-        const authorRow = messages[0] !== undefined && isGenuineUserStart(messages[0]) ? 0 : -1;
+        if (turn.modelMessages.length === 0) return okVoid();
         return withTransaction(pool, "thread-history.appendTurn", (client) =>
-            // Serialize concurrent appends on this thread — without the lock, two
-            // transactions can both read the same MAX(seq) and collide on the
-            // (thread_id, seq) primary key. Released automatically at COMMIT/ROLLBACK.
-            tryQuery("thread-history.appendTurn.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId]))
-                .andThen(() =>
-                    tryQuery("thread-history.appendTurn.maxSeq", async () => {
-                        const { rows } = await client.query<{ max_seq: string }>(
-                            "SELECT COALESCE(MAX(seq), -1)::text AS max_seq FROM messages WHERE thread_id = $1",
-                            [threadId],
-                        );
-                        return Number(rows[0]!.max_seq) + 1;
-                    }),
-                )
-                .andThen((startSeq) =>
-                    // Insert the turn's messages in order. Each insert chains off the
-                    // prior so the first `err` short-circuits — and `withTransaction`
-                    // re-throws it to force ROLLBACK (a returned `err` that does not
-                    // reach `withTransaction` would COMMIT silently).
-                    messages.reduce(
-                        (chain, message, i) =>
-                            chain.andThen(() =>
-                                tryMutation("thread-history.appendTurn.insert", () =>
-                                    client.query(
-                                        // `message_envelope::json`, never `::jsonb`; `display_envelope` and
-                                        // `reported_usage::jsonb`, never `::json` — see the column comments
-                                        // in the state-init DDL.
-                                        `INSERT INTO messages (thread_id, seq, message_envelope, display_envelope, tokens, reported_usage, turn_duration_ms, author)
-                     VALUES ($1, $2, $3::json, $4::jsonb, $5, $6::jsonb, $7, $8)
-                     ON CONFLICT (thread_id, seq) DO UPDATE
-                       SET message_envelope = EXCLUDED.message_envelope,
-                           display_envelope = EXCLUDED.display_envelope,
-                           tokens = EXCLUDED.tokens,
-                           reported_usage = EXCLUDED.reported_usage,
-                           turn_duration_ms = EXCLUDED.turn_duration_ms,
-                           author = EXCLUDED.author`,
-                                        [
-                                            threadId,
-                                            startSeq + i,
-                                            serializeEnvelope(message),
-                                            i === 0 ? displayEnvelope : null,
-                                            countTokens(message.content),
-                                            i === lastAssistantRow ? rollup : null,
-                                            i === lastAssistantRow ? duration : null,
-                                            i === authorRow ? turnAuthor : null,
-                                        ],
-                                    ),
-                                ).map(() => undefined),
-                            ),
-                        okVoid<DbError>(),
-                    ),
-                )
-                .andThen(() =>
-                    // Thread listings sort on `cortex_analysis_threads.updated_at`, and
-                    // the only other writer of it is the title update — so without this
-                    // touch "most recently updated" degrades to "most recently created
-                    // or renamed" and an actively-used older thread sorts last. Writing
-                    // it from here (a row the thread store otherwise owns) buys the
-                    // guarantee for every host with no wiring, and inside the turn's own
-                    // transaction there is no window where the rows exist but the thread
-                    // reads stale.
-                    //
-                    // The breadcrumb is never worth the turn: the touch may fail without
-                    // failing the append, and affecting zero rows is equally normal — a
-                    // thread with no metadata row, or a soft-deleted one this leaves
-                    // alone rather than reviving (every other writer of the table filters
-                    // the tombstone too). Tolerating the failure takes the savepoint, not
-                    // just the swallowed `err`: Postgres poisons a transaction at its
-                    // first failed statement and downgrades the eventual COMMIT to a
-                    // ROLLBACK — without a rewind point the turn's inserts would go with
-                    // it, and silently, since that COMMIT still reports success.
-                    //
-                    // `GREATEST(updated_at, clock_timestamp())` because `NOW()` is
-                    // transaction-START time while this transaction has since waited on
-                    // the advisory lock and spent a round trip per message: a title update
-                    // that began later can already have stamped a newer `updated_at`, and
-                    // a plain assignment would rewind it. Activity only ever moves the
-                    // timestamp forward.
-                    tryMutation("thread-history.appendTurn.touchThread.savepoint", () => client.query("SAVEPOINT touch_thread"))
-                        .andThen(() =>
-                            tryMutation("thread-history.appendTurn.touchThread", () =>
-                                client.query(
-                                    `UPDATE cortex_analysis_threads
-                        SET updated_at = GREATEST(updated_at, clock_timestamp())
-                      WHERE thread_id = $1 AND deleted_at IS NULL`,
-                                    [threadId],
-                                ),
-                            ),
-                        )
-                        .map(() => undefined)
-                        .orElse(() =>
-                            // Rewind to before the touch so the transaction is usable again
-                            // and the turn commits. Nothing follows in this chain, so COMMIT
-                            // releases the savepoint on the success path.
-                            tryMutation("thread-history.appendTurn.touchThread.rewind", () => client.query("ROLLBACK TO SAVEPOINT touch_thread"))
-                                .map(() => undefined)
-                                .orElse(() => okVoid<DbError>()),
-                        ),
-                ),
+            lockThread(client, threadId, "thread-history.appendTurn")
+                .andThen(() => nextSeq(client, threadId, "thread-history.appendTurn"))
+                .andThen((startSeq) => insertGroup(client, threadId, startSeq, turn, "thread-history.appendTurn"))
+                .andThen(() => touchThread(client, threadId, "thread-history.appendTurn")),
+        );
+    }
+
+    function writeTurn(threadId: string, write: TurnWrite): ResultAsync<TurnWriteResult, DbError> {
+        const { close } = write;
+        const groups = [...(write.opening === undefined ? [] : [write.opening]), ...write.rounds, ...(close?.note === undefined ? [] : [close.note])];
+        return withTransaction(pool, "thread-history.writeTurn", (client) =>
+            lockThread(client, threadId, "thread-history.writeTurn")
+                .andThen(() => nextSeq(client, threadId, "thread-history.writeTurn"))
+                .andThen((firstSeq) => {
+                    const startSeq = write.opening === undefined ? write.startSeq : firstSeq;
+                    const steps: (() => ResultAsync<void, DbError>)[] = [];
+                    let seq = firstSeq;
+                    for (const [index, group] of groups.entries()) {
+                        const groupSeq = seq;
+                        seq += group.modelMessages.length;
+                        steps.push(() => insertGroup(client, threadId, groupSeq, group, "thread-history.writeTurn"));
+                        if (index === 0 && write.opening !== undefined) steps.push(() => openTurnRecord(client, threadId, startSeq));
+                    }
+                    if (close !== undefined) steps.push(() => closeTurnRecord(client, threadId, startSeq, close));
+                    steps.push(() => touchThread(client, threadId, "thread-history.writeTurn"));
+                    return steps.reduce((chain, step) => chain.andThen(step), okVoid<DbError>()).map(() => ({ startSeq }));
+                }),
         );
     }
 
@@ -663,9 +717,9 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
             message_envelope: unknown;
             display_envelope: unknown;
             // pg parses a `jsonb` column into a JS value. The cast on the way out is
-            // sound because this column has exactly one writer — `appendTurn` above,
-            // from a `TokenUsageRollup` — and null is preserved as null by the
-            // spread below rather than read as a rollup.
+            // sound because each writer of the two usage columns stores a
+            // `TokenUsageRollup`, and null is preserved as null by the spread below
+            // rather than read as a rollup.
             reported_usage: TokenUsageRollup | null;
             // The driver hands a bigint back as text, and the `::text` cast below
             // says so. `Number` makes the crossing in one place — the way every
@@ -675,13 +729,23 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
             // The driver hands a `TIMESTAMPTZ` back as a `Date`, and the column is
             // NOT NULL, thus every row of this read holds a time.
             created_at: Date;
+            // The CHECK constraint of the column holds the value to the four statuses.
+            turn_status: TurnStatus | null;
+            turn_reason: string | null;
+            turn_usage: TokenUsageRollup | null;
+            turn_record_duration_ms: string | null;
         }>(
             // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
             // `seq::text AS seq` output alias (Postgres resolves an unqualified
             // ORDER BY name to the output column), sorting the bigint as text:
             // "10" before "2". The qualified name forces the bigint column.
-            `SELECT seq::text AS seq, message_envelope, display_envelope, reported_usage, turn_duration_ms::text AS turn_duration_ms, author, created_at
-         FROM messages WHERE thread_id = $1
+            `SELECT messages.seq::text AS seq, messages.message_envelope, messages.display_envelope, messages.reported_usage,
+                messages.turn_duration_ms::text AS turn_duration_ms, messages.author, messages.created_at,
+                turns.status AS turn_status, turns.reason AS turn_reason, turns.reported_usage AS turn_usage,
+                turns.turn_duration_ms::text AS turn_record_duration_ms
+         FROM messages
+         LEFT JOIN cortex_thread_turns turns ON turns.thread_id = messages.thread_id AND turns.start_seq = messages.seq
+         WHERE messages.thread_id = $1
          ORDER BY messages.seq ASC`,
             [threadId],
         );
@@ -696,6 +760,15 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                 const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
                 const displayEnvelope =
                     r.display_envelope == null ? undefined : await parseStoredDisplayEnvelope(r.display_envelope, `${threadId}/${r.seq}/display`, logger);
+                const turn: StoredTurnRecord | undefined =
+                    r.turn_status === null
+                        ? undefined
+                        : {
+                              status: r.turn_status,
+                              ...(r.turn_reason === null ? {} : { reason: r.turn_reason }),
+                              ...(r.turn_usage === null ? {} : { usage: r.turn_usage }),
+                              ...(r.turn_record_duration_ms === null ? {} : { durationMs: Number(r.turn_record_duration_ms) }),
+                          };
                 return {
                     seq: Number(r.seq),
                     envelope,
@@ -703,6 +776,7 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                     ...(displayEnvelope ? { displayEnvelope } : {}),
                     ...(r.reported_usage === null ? {} : { usage: r.reported_usage }),
                     ...(r.turn_duration_ms === null ? {} : { durationMs: Number(r.turn_duration_ms) }),
+                    ...(turn === undefined ? {} : { turn }),
                     ...(r.author === null ? {} : { author: r.author }),
                     createdAt: r.created_at,
                 };
@@ -760,7 +834,11 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                     // text projection, keeping the comparison exact for large seqs.
                     return tryMutation("thread-history.retractLastTurn.delete", () =>
                         client.query("DELETE FROM messages WHERE thread_id = $1 AND seq >= $2::bigint", [threadId, boundary]),
-                    ).map<RetractOutcome>((res) => ({ kind: "retracted", messages: res.rowCount ?? 0 }));
+                    ).andThen((res) =>
+                        tryMutation("thread-history.retractLastTurn.deleteTurnRecords", () =>
+                            client.query("DELETE FROM cortex_thread_turns WHERE thread_id = $1 AND start_seq >= $2::bigint", [threadId, boundary]),
+                        ).map<RetractOutcome>(() => ({ kind: "retracted", messages: res.rowCount ?? 0 })),
+                    );
                 }),
         );
     }
@@ -811,5 +889,5 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
         ).map(({ rows }) => Number(rows[0]!.turns));
     }
 
-    return { appendTurn, loadRecent, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
+    return { appendTurn, writeTurn, loadRecent, loadAll, retractLastTurn, latestSeq, latestTurnAt, countUserTurnsAfter };
 }

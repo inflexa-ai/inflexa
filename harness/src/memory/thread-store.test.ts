@@ -55,6 +55,11 @@ async function messageCount(threadId: string): Promise<number> {
     return Number(rows[0]!.count);
 }
 
+async function turnRecordCount(threadId: string): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_thread_turns WHERE thread_id = $1", [threadId]);
+    return Number(rows[0]!.count);
+}
+
 async function threadRowCount(threadId: string): Promise<number> {
     const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", [threadId]);
     return Number(rows[0]!.count);
@@ -886,6 +891,27 @@ describe("purgeThread across a subtree", () => {
         }
         expect(await threadRowCount("unrelated")).toBe(1);
         expect(await messageCount("unrelated")).toBe(2);
+    });
+
+    it("takes the turn records of every generation, leaving an unrelated thread whole", async () => {
+        await seedGenerations();
+        const history = createThreadHistory(pool);
+        for (const threadId of [...GENERATIONS, "unrelated"]) {
+            (
+                await history.writeTurn(threadId, {
+                    opening: { modelMessages: [{ role: "user", content: [{ type: "text", text: "hi" }] }], displayMessages: [] },
+                    rounds: [{ modelMessages: [{ role: "assistant", content: [{ type: "text", text: "hello" }] }], displayMessages: [] }],
+                    close: { status: "done" },
+                })
+            )._unsafeUnwrap();
+        }
+
+        (await store.purgeThread("root"))._unsafeUnwrap();
+
+        for (const threadId of GENERATIONS) {
+            expect(await turnRecordCount(threadId)).toBe(0);
+        }
+        expect(await turnRecordCount("unrelated")).toBe(1);
     });
 
     it("takes only the named descendant's own subtree", async () => {
