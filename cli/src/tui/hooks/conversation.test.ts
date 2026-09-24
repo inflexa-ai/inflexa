@@ -1286,8 +1286,8 @@ describe("MESSAGE_CAP answers to the display alone", () => {
     });
 });
 
-// A turn's cost and the time it took are both durable — the engine hands them to `appendTurn` and the
-// harness writes them onto the turn's own assistant row — so reload has to carry them back onto the
+// A turn's cost and the time it took are both durable — the harness stores them for the turn and gives
+// them back on its assistant message — so reload has to carry them back onto the
 // message. Without this the transcript reads as a wall of turns nobody measured, which under the
 // absent-is-not-zero rule is a false claim about every one of them rather than a missing decoration.
 describe("a reloaded turn keeps the figures the live header showed", () => {
@@ -1491,7 +1491,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         };
 
         // The post-turn reload seams: the pg thread now holds the prior history AND the just-finished
-        // turn (what appendTurn wrote), so the convergent reconstruction carries all three messages.
+        // turn (what the harness turn wrote), so the convergent reconstruction carries all three messages.
         const reloadSeams: LoadSeams = {
             runtime: () => stubRuntime,
             loadAll: () => okAsync(emptyTurns(3)),
