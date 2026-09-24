@@ -297,7 +297,7 @@ The record of each iteration is the only record whose count grows with the lengt
 
 A conversation MUST send `AgentDefinition.tools` and the `toolChoice` of the run with no change on each request. A conversation is the message list of one agent under one system prompt. It holds the loop requests, the wrap-up requests, the salvage requests, and the requests of each continuation. The loop MUST NOT add, remove, or reorder a declared tool inside a conversation. It MUST NOT change `toolChoice` inside a conversation. A mask limits which tools run, not which tools a request declares.
 
-Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the exact prefix: the system prompt, the tool set, and the earlier messages. A change of the tool set makes each later block invalid, and the prompt cache misses.
+Some models bind each signed thinking block to the exact prefix: the system prompt, the tool set, and the earlier messages. A change of the tool set makes each later block invalid, and the prompt cache misses.
 
 #### Scenario: Each request of a run declares the same tools
 

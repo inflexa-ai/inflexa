@@ -1,6 +1,6 @@
 /**
- * Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the
- * exact prefix of its request, so a request always declares the full tool set
+ * A signed thinking block is bound to the exact prefix of its request, so a
+ * request always declares the full tool set
  * of its agent; the mask and the budget act at dispatch instead. Provider-native
  * masking is out of scope, because the vendors do it differently and an
  * OpenAI-compatible endpoint has neither form.

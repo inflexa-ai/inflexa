@@ -179,8 +179,8 @@ export type AiSdkProviderConfig =
           /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
           /**
-           * How the API handles a signed thinking block whose prefix changed
-           * (Opus 5.5, Fable 5.1). Needs the `thinking-binding-controls-2026-08-01` beta header.
+           * How the API handles a signed thinking block whose prefix changed.
+           * Needs the `thinking-binding-controls-2026-08-01` beta header.
            */
           readonly thinkingBinding?: "drop_block" | "error" | "off";
       }
