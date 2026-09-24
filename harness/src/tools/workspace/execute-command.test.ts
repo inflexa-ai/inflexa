@@ -114,8 +114,28 @@ describe("execute_command tool", () => {
         });
 
         // The text comes from the cap itself, thus the two cannot differ.
-        expect(EXEC_STREAM_BYTE_CAP).toBe(32 * 1024);
-        expect(tool.description).toContain("capped at 32 KiB");
+        expect(EXEC_STREAM_BYTE_CAP).toBe(1024 * 1024);
+        expect(tool.description).toContain("capped at 1 MiB");
+        expect(tool.description).toContain("excerpt");
+        expect(tool.description).toContain("NOT a deliverable");
+    });
+
+    it("gives back a stdout of 200 KiB whole", async () => {
+        const stdout = "r".repeat(200 * 1024);
+        const client = makeFakeClient({ result: { execId: "", exitCode: 0, stdout, stderr: "", durationMs: 5, timedOut: false } });
+        const tool = createExecuteCommandTool({
+            sandboxClient: client,
+            sandbox: makeSandboxRef(),
+            workflowId: "wf1",
+            stepId: "step1",
+            nextFunctionId: () => "fn1",
+            deadlineMs: () => 9_999_999,
+            defaultCwd: DEFAULT_CWD,
+        });
+
+        const out = (await tool.execute({ command: ["cat", "big.txt"] }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(out).toMatchObject({ status: "ok", stdout, stdoutTruncated: false, stdoutTotalLength: 200 * 1024 });
     });
 
     it("forwards intermediate events via ctx.emit", async () => {

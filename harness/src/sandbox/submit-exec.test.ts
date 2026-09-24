@@ -62,6 +62,16 @@ describe("submitExec", () => {
         });
     });
 
+    test("attaches a budget of 1 MiB for each stream to a body that carries none", async () => {
+        const { fn, calls } = fetchResponding([{ status: 202, body: { execId: "wf-1:s-a:fn-0", status: "started" } }]);
+
+        await submitExec(REF, { command: ["echo", "hi"], execId: "wf-1:s-a:fn-0" }, { fetch: fn, runStep: (w) => w() });
+
+        const body = JSON.parse(calls[0]!.init!.body as string) as Record<string, unknown>;
+        expect(body.stdoutByteCap).toBe(1_048_576);
+        expect(body.stderrByteCap).toBe(1_048_576);
+    });
+
     test("sends the configured retention budget instead of the default when given one", async () => {
         const { fn, calls } = fetchResponding([{ status: 202, body: { execId: "wf-1:s-a:fn-0", status: "started" } }]);
 
