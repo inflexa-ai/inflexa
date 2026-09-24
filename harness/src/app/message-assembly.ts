@@ -85,7 +85,10 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
 }
 
 /** The context records of one turn, in the order analysis context, run activity, working memory. */
-async function contextRecordsFor(args: AssembleMessagesArgs, history: readonly ModelMessage[]): Promise<ModelMessage[]> {
+export async function contextRecordsFor(
+    args: Pick<AssembleMessagesArgs, "threadType" | "analysisId" | "analysisContext" | "runActivityContext" | "workingMemory">,
+    history: readonly ModelMessage[],
+): Promise<ModelMessage[]> {
     const texts: [ContextKind, string][] = [];
     if (args.analysisContext && args.analysisContext.trim().length > 0) {
         texts.push(["analysis-context", `[Analysis Context]\n${args.analysisContext}`]);

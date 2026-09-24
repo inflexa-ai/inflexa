@@ -5,13 +5,14 @@ import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import { PART_REGISTRY, type CortexChatPartType } from "../contracts/part-registry.js";
 import { CortexChatPartSchema } from "../contracts/schemas/chat-parts.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
+import { compactionExchangeOf, compactionMarkerOf, type CompactionMarker } from "./ai-sdk-message-storage.js";
 import { conversationDisplayPart, type ConversationUIData, type ConversationUIMessage } from "./conversation-display-storage.js";
 
 export interface ConversationDisplayRecorder {
     readonly emit: EmitFn;
     /** The user message of the turn. */
     takeOpening(): ConversationUIMessage[];
-    /** The assistant message of one round: the parts that the recorder got after the last take, or none. */
+    /** The assistant message of one round, when the recorder got parts after the last take, and the divider of a marker of the round. */
     takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[];
     /** The whole turn in one projection. `runChatTurn` stores each round with `takeOpening` and `takeRound` instead. */
     finish(options?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[];
@@ -55,10 +56,10 @@ function dataPart(event: ChatDataPart): ConversationPart {
     } as ConversationPart;
 }
 
-/** The text of the assistant messages of a round. */
+/** The text of the assistant messages of a round. The text of an exchange is a summary, and no reply. */
 function assistantText(messages: readonly ModelMessage[]): string {
     return messages
-        .filter((message) => message.role === "assistant")
+        .filter((message) => message.role === "assistant" && compactionExchangeOf(message) === undefined)
         .map((message) =>
             typeof message.content === "string"
                 ? message.content
@@ -70,10 +71,23 @@ function assistantText(messages: readonly ModelMessage[]): string {
         .join("");
 }
 
+/** The divider of a compaction marker: a `system` message with the part at the final status of the compaction. */
+function compactionDivider(marker: CompactionMarker): ConversationUIMessage {
+    const part = conversationDisplayPart({
+        type: "data-compaction",
+        id: marker.id,
+        status: marker.kind === "summary" ? "done" : "failed",
+        tokensBefore: marker.tokensBefore,
+        tokensAfter: marker.tokensAfter,
+        durationMs: marker.durationMs,
+    });
+    return { id: marker.id, role: "system", parts: [part] };
+}
+
 export function createConversationDisplayRecorder(options: ConversationDisplayRecorderOptions): ConversationDisplayRecorder {
     // One id for each message of the turn, thus the rounds of a turn replay as one assistant message.
     const userMessageId = options.userMessageId ?? randomUUID();
-    const assistantMessageId = options.assistantMessageId ?? randomUUID();
+    let assistantMessageId = options.assistantMessageId ?? randomUUID();
     const assistantParts: DisplayPart[] = [];
     // Where a reconciling part lives, keyed by `type:id`. Type-qualified because a
     // stable id is only unique within its own family — a plan and a run card may
@@ -185,12 +199,18 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         if (!assistantParts.some((part) => part.type === "text")) appendText(assistantText(messages));
         // Only a round that a throw ends can hold a pending approval.
         closeParts();
-        if (assistantParts.length === 0) return [];
-        const round: ConversationUIMessage = { id: assistantMessageId, role: "assistant", parts: jsonCopy(assistantParts) };
+        const round: ConversationUIMessage[] =
+            assistantParts.length === 0 ? [] : [{ id: assistantMessageId, role: "assistant", parts: jsonCopy(assistantParts) }];
         // A later update of a part lands in the next round, and the replay replaces the earlier copy.
         assistantParts.length = 0;
         reconcileIndexes.clear();
-        return [round];
+        const marker = messages.map(compactionMarkerOf).find((found) => found !== undefined);
+        if (marker !== undefined) {
+            round.push(compactionDivider(marker));
+            // The divider splits the turn into two assistant messages of the replay, and two messages must not share an id.
+            assistantMessageId = randomUUID();
+        }
+        return round;
     }
 
     function finish(finishOptions?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[] {

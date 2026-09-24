@@ -4,7 +4,7 @@ The chat thread keeps its history window under a budget of 120,000 tokens (`src/
 
 - An evicted turn leaves the context with no trace. The agent loses the decisions, the file paths, and the run ids of that turn.
 - Each block shift changes the first message of the window. Thus the next request writes the whole message prefix to the cache again.
-- Claude Opus 5.5 binds each signed thinking block to the exact prefix of its request. After a shift, each kept thinking block is invalid. With the mode `drop_block`, the API drops that block and each later block of the request.
+- The provider binds each signed thinking block to the exact prefix of its request. After a shift, each kept thinking block is invalid. With the mode `drop_block`, the API drops that block and each later block of the request.
 - A report thread keeps its seed with `keepFirstTurn` (line 633). But it loses each turn between the seed and the window, with no trace.
 
 ## What Changes

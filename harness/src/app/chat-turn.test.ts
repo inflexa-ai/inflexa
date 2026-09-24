@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ToolResultPart } from "ai";
+import type { ModelMessage, ToolResultPart } from "ai";
 import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -8,27 +8,30 @@ import { withSchema } from "../__tests__/setup/postgres.js";
 import { forSubAgent } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
+import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../loop/__fixtures__/scripted-provider.js";
 import { runAgent } from "../loop/run-agent.js";
 import type { AgentDefinition } from "../loop/types.js";
-import { contextRecordOf } from "../memory/ai-sdk-message-storage.js";
+import { compactionExchangeOf, compactionMarkerOf, contextRecordOf } from "../memory/ai-sdk-message-storage.js";
 import { storedMessagesToCortex } from "../memory/conversation-display-replay.js";
 import { createThreadStore } from "../memory/thread-store.js";
-import { createThreadHistory, type StoredMessage } from "../memory/thread-history.js";
+import { conversationRecordTurn, createThreadHistory, type StoredMessage } from "../memory/thread-history.js";
 import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ProviderError } from "../providers/errors.js";
-import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../providers/types.js";
+import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../prompts/compaction.js";
+import { createStreamingChat } from "../providers/streaming-chat.js";
+import type { AgentChat, ChatProvider, ChatRequest, ChatResponse, ChatUsage } from "../providers/types.js";
 import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { insertRun, updateRunStatus } from "../state/index.js";
 import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { SessionProvenanceEvent } from "../provenance/seam.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createUpdateWorkingMemoryTool } from "../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
-import { prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
+import { DEFAULT_CONVERSATION_BUDGET, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -664,5 +667,284 @@ describe("runChatTurn", () => {
             "tu-1",
             "tu-2",
         ]);
+    });
+});
+
+// --- runChatTurn compaction ---------------------------------------------------
+
+describe("runChatTurn — compaction", () => {
+    const THREAD = "t-compact";
+    const SUMMARY = "The user compares two groups of samples.";
+
+    const big = (n: number): string => Array.from({ length: n }, () => "word").join(" ");
+
+    function echoTool(): Tool {
+        return defineTool({
+            id: "echo",
+            description: "Echo the label back.",
+            inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
+            execute: async ({ label }) => ok({ label }),
+        });
+    }
+
+    function conversationAgent(): AgentDefinition {
+        return {
+            id: "conversation-agent",
+            systemPrompt: "You are the test conversation agent.",
+            model: "claude-test",
+            tools: [echoTool(), createUpdateWorkingMemoryTool(createWorkingMemory(pool), pool)],
+            maxIterations: 8,
+        };
+    }
+
+    function reportAgent(): AgentDefinition {
+        return { id: "report-session-agent", systemPrompt: "You are the test report agent.", model: "claude-test", tools: [echoTool()], maxIterations: 8 };
+    }
+
+    const agents: () => ThreadAgentResolver = () => ({
+        forThread: (type) => ok(type === "report" ? reportAgent() : conversationAgent()),
+    });
+
+    function isExchangeRequest(request: ChatRequest): boolean {
+        return request.messages.some((message) => message.content === MEMORY_COMPACTION_REQUEST || message.content === SUMMARY_COMPACTION_REQUEST);
+    }
+
+    /** A provider that answers the task requests from `task` and the requests of an exchange from `exchange`. */
+    function compactingProvider(task: readonly ChatResponse[], exchange: readonly ChatResponse[]): ScriptedProvider {
+        let taskCalls = 0;
+        let exchangeCalls = 0;
+        return scriptedProvider((_callIndex, request) => {
+            const reply = isExchangeRequest(request) ? exchange[exchangeCalls++] : task[taskCalls++];
+            if (reply === undefined) throw new Error("no scripted reply");
+            return reply;
+        });
+    }
+
+    const bigCall = (id: string): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: big(1_500) })], "tool_use");
+    const text = (reply: string): ChatResponse => makeMessage([textBlock(reply)], "end_turn");
+
+    function params(provider: ChatProvider, overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
+        return {
+            analysisId: ANALYSIS_A,
+            threadId: THREAD,
+            userInput: "compare the two groups",
+            session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } }),
+            chat: (emit) => createStreamingChat(provider, (delta) => void emit({ type: "text-delta", text: delta })),
+            emit: () => {},
+            signal: new AbortController().signal,
+            usageRecorder: createNoopUsageRecorder(),
+            conversationBudget: 1_000,
+            ...overrides,
+        };
+    }
+
+    async function storedRows(threadId = THREAD): Promise<StoredMessage[]> {
+        return (await createThreadHistory(pool).loadAll(threadId))._unsafeUnwrap().flat();
+    }
+
+    function kindOf(message: ModelMessage): string {
+        const marker = compactionMarkerOf(message);
+        if (marker !== undefined) return `${marker.kind}-marker`;
+        if (compactionExchangeOf(message) !== undefined) return `exchange-${message.role}`;
+        return contextRecordOf(message)?.kind ?? message.role;
+    }
+
+    it("stores the opening, a round, the marked exchange, the marker, the records, and the later rounds", async () => {
+        const provider = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+
+        const result = await runChatTurn({ pool, agents: agents() }, params(provider));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
+        expect((await storedRows()).map((row) => kindOf(row.message))).toEqual([
+            "user",
+            "run-activity",
+            "working-memory",
+            "assistant",
+            "tool",
+            "exchange-user",
+            "exchange-assistant",
+            "summary-marker",
+            "run-activity",
+            "working-memory",
+            "assistant",
+        ]);
+    });
+
+    it("replays the divider between the two assistant messages of the turn, with two ids", async () => {
+        const provider = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+        await runChatTurn({ pool, agents: agents() }, params(provider));
+
+        const replay = storedMessagesToCortex(await storedRows());
+
+        expect(replay.map((message) => message.role)).toEqual(["user", "assistant", "system", "assistant"]);
+        expect(replay[1]!.id).not.toBe(replay[3]!.id);
+        expect(replay[2]!.parts).toEqual([
+            {
+                type: "data-compaction",
+                id: replay[2]!.id,
+                status: "done",
+                tokensBefore: expect.any(Number),
+                tokensAfter: expect.any(Number),
+                durationMs: expect.any(Number),
+            },
+        ]);
+        expect(JSON.stringify(replay)).not.toContain(SUMMARY);
+        expect(replay[3]!.parts).toEqual([{ type: "text", text: "done" }]);
+    });
+
+    it("starts the next turn with the summary marker and its records, then the later rounds, then the new opening", async () => {
+        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)])));
+        const next = scriptedProvider([text("next answer")]);
+
+        await runChatTurn({ pool, agents: agents() }, params(next, { userInput: "and now?", conversationBudget: undefined, promptCache: "off" }));
+
+        const sent = next.calls[0]!.messages;
+        expect(sent.map(kindOf)).toEqual(["summary-marker", "run-activity", "working-memory", "assistant", "user"]);
+        expect(sent[0]!.content).toBe(`[Conversation Summary]\n${SUMMARY}`);
+        expect(sent.at(-1)!.content).toBe("and now?");
+    });
+
+    it("sends no text delta of the exchange to the emit of the host", async () => {
+        const deltas: string[] = [];
+        const provider = compactingProvider([bigCall("tu-1"), text("done")], [text(SUMMARY)]);
+
+        await runChatTurn(
+            { pool, agents: agents() },
+            params(provider, {
+                emit: (event) => {
+                    if (event.type === "text-delta") deltas.push(event.text);
+                },
+            }),
+        );
+
+        expect(deltas).toEqual(["done"]);
+    });
+
+    it("puts a constraint that the exchange added into the working-memory record after the marker", async () => {
+        const memoryEdit = makeMessage(
+            [toolUseBlock("tu-m", "update_working_memory", { section: "constraint", text: "Use an FDR of 0.01.", origin: "user" })],
+            "tool_use",
+        );
+        const provider = compactingProvider([bigCall("tu-1"), text("done")], [memoryEdit, text(SUMMARY)]);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider));
+
+        const rows = (await storedRows()).map((row) => row.message);
+        const afterMarker = rows.slice(rows.findIndex((message) => compactionMarkerOf(message) !== undefined) + 1);
+        const memory = afterMarker.find((message) => contextRecordOf(message)?.kind === "working-memory");
+        expect(String(memory?.content)).toContain("Use an FDR of 0.01.");
+        expect(provider.calls.at(-1)!.messages.some((message) => String(message.content).includes("Use an FDR of 0.01."))).toBe(true);
+    });
+
+    it("keeps the seed and the summary marker first on a report turn, runs no tool in the exchange, and adds no working-memory record", async () => {
+        const store = createThreadStore(pool);
+        (await store.createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
+        (await createThreadHistory(pool).appendTurn(THREAD, conversationRecordTurn("[Report Brief]\nDraft the methods section.")))._unsafeUnwrap();
+        const provider = compactingProvider(
+            [bigCall("tu-1"), text("done")],
+            [makeMessage([toolUseBlock("tu-x", "echo", { label: "x" })], "tool_use"), text(SUMMARY)],
+        );
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: 1_000 }));
+
+        const exchange = provider.calls.filter(isExchangeRequest);
+        expect(exchange[0]!.messages.at(-1)!.content).toBe(SUMMARY_COMPACTION_REQUEST);
+        const refused = exchange[1]!.messages.at(-1)!.content as ToolResultPart[];
+        expect(refused[0]!.output).toMatchObject({ type: "error-text" });
+        expect(JSON.stringify(refused[0]!.output)).toContain("No tool can run for this request");
+        const after = provider.calls.at(-1)!.messages;
+        expect(after.map(kindOf)).toEqual(["user", "summary-marker", "run-activity"]);
+        expect(after[0]!.content).toBe("[Report Brief]\nDraft the methods section.");
+    });
+
+    it("removes the exchange and the marker of the last turn at a retract, and the next turn starts from the earlier marker", async () => {
+        await runChatTurn({ pool, agents: agents() }, params(compactingProvider([bigCall("tu-1"), text("done")], [text("first summary")])));
+        await runChatTurn(
+            { pool, agents: agents() },
+            params(compactingProvider([bigCall("tu-2"), text("done again")], [text("second summary")]), { userInput: "once more" }),
+        );
+        expect((await storedRows()).map((row) => compactionMarkerOf(row.message)?.kind).filter((kind) => kind !== undefined)).toEqual(["summary", "summary"]);
+
+        (await createThreadHistory(pool).retractLastTurn(THREAD))._unsafeUnwrap();
+
+        const rows = (await storedRows()).map((row) => row.message);
+        expect(rows.map(kindOf).filter((kind) => kind.startsWith("exchange") || kind.endsWith("marker"))).toEqual([
+            "exchange-user",
+            "exchange-assistant",
+            "summary-marker",
+        ]);
+        const view = (await createThreadHistory(pool).loadRecent(THREAD))._unsafeUnwrap();
+        expect(view[0]!.content).toBe("[Conversation Summary]\nfirst summary");
+    });
+
+    it("compacts before the first task request when the view passes the budget of the host, after the stored opening", async () => {
+        (
+            await createThreadHistory(pool).appendTurn(THREAD, {
+                modelMessages: [
+                    { role: "user", content: big(3_000) },
+                    { role: "assistant", content: "an earlier answer" },
+                ],
+                displayMessages: [],
+            })
+        )._unsafeUnwrap();
+        const storedAtRequest: string[][] = [];
+        const replies = compactingProvider([text("done")], [text(SUMMARY)]);
+        const provider: ScriptedProvider = {
+            ...replies,
+            chatStream: (request, session, signal) => {
+                const inner = replies.chatStream(request, session, signal);
+                return (async function* () {
+                    storedAtRequest.push((await storedRows()).map((row) => kindOf(row.message)));
+                    yield* inner;
+                })();
+            },
+        };
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: 2_000 }));
+
+        const first = replies.calls[0]!;
+        expect(isExchangeRequest(first)).toBe(true);
+        expect(first.messages.slice(-4).map(kindOf)).toEqual(["user", "run-activity", "working-memory", "user"]);
+        expect(first.messages.at(-1)!.content).toBe(MEMORY_COMPACTION_REQUEST);
+        expect(storedAtRequest[0]).toEqual(["user", "assistant", "user", "run-activity", "working-memory"]);
+    });
+
+    it("runs no exchange under the default budget", async () => {
+        const provider = compactingProvider([bigCall("tu-1"), text("done")], []);
+
+        await runChatTurn({ pool, agents: agents() }, params(provider, { conversationBudget: undefined }));
+
+        expect(DEFAULT_CONVERSATION_BUDGET).toBe(150_000);
+        expect(provider.calls.some(isExchangeRequest)).toBe(false);
+        expect((await storedRows()).some((row) => compactionMarkerOf(row.message) !== undefined)).toBe(false);
+    });
+
+    it("gives no policy to a sub-agent loop of the turn", async () => {
+        const SUB_PROMPT = "You are the test sub-agent.";
+        const provider = scriptedProvider((callIndex, request) => {
+            if (JSON.stringify(request.system).includes(SUB_PROMPT)) return text("sub answer");
+            return callIndex === 0 ? makeMessage([toolUseBlock("tu-1", "delegate", {})], "tool_use") : text("done");
+        });
+        const delegate = defineTool({
+            id: "delegate",
+            description: "Run a sub-agent over a large brief.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async (_input, ctx) => {
+                const sub = await runAgent(
+                    { id: "sub-agent", systemPrompt: SUB_PROMPT, model: "claude-test", tools: [], maxIterations: 2 },
+                    [{ role: "user", content: big(3_000) }],
+                    forSubAgent(ctx.session, "sub-agent"),
+                    { provider, signal: ctx.signal, emit: ctx.emit, runStep: ctx.runStep },
+                );
+                return ok({ answer: sub.finish.reason });
+            },
+        });
+        const resolver: ThreadAgentResolver = { forThread: () => ok({ ...conversationAgent(), tools: [delegate] }) };
+
+        await runChatTurn({ pool, agents: resolver }, params(provider));
+
+        expect(provider.calls.some(isExchangeRequest)).toBe(false);
     });
 });
