@@ -804,6 +804,146 @@ describe("runAgent — max_tokens recovery", () => {
     });
 });
 
+// ── tool mask and tool budget (see the harness-agent-loop spec) ─────
+
+describe("runAgent — tool mask and budget", () => {
+    /** A tool that counts each execution under its own id. */
+    function countingTool(id: string, counts: Map<string, number>): Tool {
+        return defineTool({
+            id,
+            description: `Counts each call of ${id}.`,
+            inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
+            execute: async ({ label }) => {
+                counts.set(id, (counts.get(id) ?? 0) + 1);
+                return ok({ label });
+            },
+        });
+    }
+
+    it("refuses a call outside the mask, names the tool, and continues", async () => {
+        const counts = new Map<string, number>();
+        const events: EmitEvent[] = [];
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-w", "writer", { label: "w" }), toolUseBlock("tu-e", "echo", { label: "e" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages, finish } = await runAgent(
+            agentDef([countingTool("echo", counts), countingTool("writer", counts)]),
+            GO,
+            makeSession(),
+            opts(provider, {
+                toolMask: { allow: ["echo"] },
+                emit: (event) => {
+                    if ("source" in event && (event.type === "tool-started" || event.type === "tool-finished")) events.push(event);
+                },
+            }),
+        );
+
+        expect(counts.get("writer")).toBeUndefined();
+        expect(counts.get("echo")).toBe(1);
+        const [refused, ran] = toolResultParts(messages[2]);
+        expect(refused!.toolCallId).toBe("tu-w");
+        expect(isErrorResult(refused!)).toBe(true);
+        expect(String(outputValue(refused!))).toContain("writer is not available for this request");
+        expect(isErrorResult(ran!)).toBe(false);
+        // Each request still declares both tools: the mask limits what runs, not the prefix.
+        expect(provider.calls.map((call) => Object.keys(call.tools))).toEqual([
+            ["echo", "writer"],
+            ["echo", "writer"],
+        ]);
+        // The refused call keeps its started and finished pair, reported as an error.
+        expect(events.filter((e) => e.type === "tool-finished" && e.toolUseId === "tu-w").map((e) => e.type === "tool-finished" && e.outcome)).toEqual([
+            "error",
+        ]);
+        expect(events.some((e) => e.type === "tool-started" && e.toolUseId === "tu-w")).toBe(true);
+        expect(finish.reason).toBe("stop");
+    });
+
+    it("refuses the fourth call of a tool with a budget of 3", async () => {
+        const counts = new Map<string, number>();
+        const provider = scriptedProvider((i) =>
+            i < 4 ? makeMessage([toolUseBlock(`tu-${i}`, "echo", { label: String(i) })], "tool_use") : makeMessage([textBlock("done")], "end_turn"),
+        );
+
+        const { messages } = await runAgent(agentDef([countingTool("echo", counts)]), GO, makeSession(), opts(provider, { toolBudget: { echo: 3 } }));
+
+        expect(counts.get("echo")).toBe(3);
+        // [user, (assistant, tool) x 4, assistant]: the fourth round's result is the refusal.
+        const fourth = toolResultParts(messages[8])[0]!;
+        expect(fourth.toolCallId).toBe("tu-3");
+        expect(isErrorResult(fourth)).toBe(true);
+        expect(String(outputValue(fourth))).toContain("limit of 3 calls");
+    });
+
+    it("counts the earlier calls of the same round against the budget", async () => {
+        const counts = new Map<string, number>();
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-a", "echo", { label: "a" }), toolUseBlock("tu-b", "echo", { label: "b" })], "tool_use"),
+            makeMessage([toolUseBlock("tu-c", "echo", { label: "c" }), toolUseBlock("tu-d", "echo", { label: "d" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([countingTool("echo", counts)]), GO, makeSession(), opts(provider, { toolBudget: { echo: 3 } }));
+
+        expect(counts.get("echo")).toBe(3);
+        const secondRound = toolResultParts(messages[4]);
+        expect(secondRound.map((r) => [r.toolCallId, isErrorResult(r)])).toEqual([
+            ["tu-c", false],
+            ["tu-d", true],
+        ]);
+    });
+
+    it("runs no step for a refused step-mode call", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const rec = recordingStep();
+
+        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolMask: "none" }));
+
+        expect(rec.names).toEqual(["llm-0", "llm-1"]);
+    });
+
+    it("applies the mask to the earlier calls of a truncated round", async () => {
+        const counts = new Map<string, number>();
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-w", "writer", { label: "w" }), toolUseBlock("tu-cut", "echo", { label: "cut" })], "max_tokens"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(
+            agentDef([countingTool("echo", counts), countingTool("writer", counts)]),
+            GO,
+            makeSession(),
+            opts(provider, { toolMask: { allow: ["echo"] } }),
+        );
+
+        expect(counts.size).toBe(0);
+        const [refused, cut] = toolResultParts(messages[2]);
+        expect(String(outputValue(refused!))).toContain("writer is not available for this request");
+        expect(String(outputValue(cut!))).toContain("cut off");
+    });
+
+    it("dispatches each call as before with no mask and no budget", async () => {
+        const counts = new Map<string, number>();
+        const provider = scriptedProvider([
+            makeMessage(
+                [0, 1, 2, 3].map((n) => toolUseBlock(`tu-${n}`, "echo", { label: String(n) })),
+                "tool_use",
+            ),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+
+        const { messages } = await runAgent(agentDef([countingTool("echo", counts)]), GO, makeSession(), opts(provider));
+
+        expect(counts.get("echo")).toBe(4);
+        expect(toolResultParts(messages[2]).every((r) => !isErrorResult(r))).toBe(true);
+    });
+});
+
 // ── aborted terminal path ───────────────────────────────────────────
 
 /**
