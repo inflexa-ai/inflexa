@@ -183,13 +183,13 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 7. Documents and final checks
 
-- [ ] 7.1 In `CONTEXT.md`, section "Memory", write the item "Thread history" again. Name `runChatTurn`, the append of each round, the turn record with its outcome, and the merge on read.
-- [ ] 7.2 In the same section, write the item "Working memory" again. The render is a context record after the user message, and a turn stores it only when it changed.
-- [ ] 7.3 In `CONTEXT.md`, section "Loop primitives", add `onRound` to the item "The loop". In section "Application service layer", add `runChatTurn` to the members.
-- [ ] 7.4 In `CLAUDE.md`, section "Key Components", write the item "Chat turn" again. A turn is `runChatTurn`, and the host gives only its transport values.
-- [ ] 7.5 In `README.md`, write the sentence on the chat turn again (line 99). A turn is `runChatTurn`.
-- [ ] 7.6 Write each changed sentence of 7.1 to 7.5 in STE. Run `bun ../.claude/hooks/ste-check.ts --file` on each file, and fix each hard finding in the changed text. Do not format a markdown file.
-- [ ] 7.7 Run `grep -rnE 'prepareChatTurn.{0,30}runAgent.{0,30}appendTurn' src README.md CONTEXT.md CLAUDE.md ../cli/src`. Expected result: no match.
+- [x] 7.1 In `CONTEXT.md`, section "Memory", write the item "Thread history" again. Name `runChatTurn`, the append of each round, the turn record with its outcome, and the merge on read.
+- [x] 7.2 In the same section, write the item "Working memory" again. The render is a context record after the user message, and a turn stores it only when it changed.
+- [x] 7.3 In `CONTEXT.md`, section "Loop primitives", add `onRound` to the item "The loop". In section "Application service layer", add `runChatTurn` to the members.
+- [x] 7.4 In `CLAUDE.md`, section "Key Components", write the item "Chat turn" again. A turn is `runChatTurn`, and the host gives only its transport values.
+- [x] 7.5 In `README.md`, write the sentence on the chat turn again (line 99). A turn is `runChatTurn`.
+- [x] 7.6 Write each changed sentence of 7.1 to 7.5 in STE. Run `bun ../.claude/hooks/ste-check.ts --file` on each file, and fix each hard finding in the changed text. Do not format a markdown file.
+- [x] 7.7 Run `grep -rnE 'prepareChatTurn.{0,30}runAgent.{0,30}appendTurn' src README.md CONTEXT.md CLAUDE.md ../cli/src`. Expected result: no match.
 - [ ] 7.8 Run `tsc -p tsconfig.json`. Expected result: no error.
 - [ ] 7.9 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
 - [ ] 7.10 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.

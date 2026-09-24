@@ -96,7 +96,7 @@ function pinoAsHarnessLogger(p: pino.Logger, names: readonly string[] = []): Log
 
 ## How it executes
 
-Chat is a plain in-process turn (`prepareChatTurn` → `runAgent` → `appendTurn`); the harness ships no HTTP layer, so the host owns the route. Compute-heavy work runs as **durable workflows** — `executeAnalysis` starts a child workflow per plan step once its dependencies have completed, and each step drives a sandbox agent inside a container. The same `runAgent` primitive runs in both modes; durability and the event sink are injected, so the loop body is identical.
+Chat is a plain in-process turn. A turn is `runChatTurn`, and the harness stores the opening, each round, and the outcome of the turn. The harness ships no HTTP layer, thus the host owns the route. Compute-heavy work runs as **durable workflows** — `executeAnalysis` starts a child workflow per plan step once its dependencies have completed, and each step drives a sandbox agent inside a container. The same `runAgent` primitive runs in both modes; durability and the event sink are injected, so the loop body is identical.
 
 The sandbox protocol is submit-then-retrieve, which is what lets a long run survive a host restart: the host `POST /exec`s a command and retrieves the result over one of two transports — **poll** (the default: the host asks, the sandbox initiates nothing and needs no network egress) or **callback** (opt-in: the sandbox POSTs signed callbacks to an ingress the embedder runs). Both exec endpoints are HMAC signature-authenticated. See the [`harness-sandbox-exec`](./openspec/specs/harness-sandbox-exec/) spec.
 
