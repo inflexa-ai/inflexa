@@ -23,7 +23,7 @@
  * is the only way to obtain the id it takes, so the recovery is reachable by a
  * host that holds no thread ids it obtained elsewhere.
  * `purgeThread` is not recoverable: it removes the `messages` rows, the turn
- * records, the report session-state rows, and the metadata rows of the whole subtree in one
+ * records, the report session-state rows, the kept tool outputs, and the metadata rows of the whole subtree in one
  * transaction, so a failure partway leaves them all — never a thread stripped of
  * its transcript, nor a transcript with nothing naming it. It is the thread-scoped member of this package's
  * reclamation vocabulary — `purgeAnalysis` reclaims an analysis's whole
@@ -576,6 +576,16 @@ export function createThreadStore(pool: Pool): ThreadStore {
                         client.query(
                             `${SUBTREE_CTE}
          DELETE FROM cortex_report_session_state WHERE thread_id IN (SELECT thread_id FROM subtree)`,
+                            [threadId],
+                        ),
+                    ),
+                )
+                // A kept text of a run names no thread, thus it stays for the analysis purge.
+                .andThen(() =>
+                    tryMutation("thread-store.purgeThread.toolOutputs", () =>
+                        client.query(
+                            `${SUBTREE_CTE}
+         DELETE FROM cortex_tool_outputs WHERE thread_id IN (SELECT thread_id FROM subtree)`,
                             [threadId],
                         ),
                     ),
