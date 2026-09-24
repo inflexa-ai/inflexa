@@ -1,6 +1,6 @@
 // Serialization for durable writes to one conversation thread.
 //
-// The harness's thread store assumes a SINGLE WRITER per thread — `appendTurn` stamps a monotonic
+// The harness's thread store assumes a SINGLE WRITER per thread — each write stamps a monotonic
 // per-thread `seq`, and `retractLastTurn` cuts at the last genuine-user-start row — and it says so
 // explicitly: turn ordering is the host's responsibility. Until now the host had exactly one KIND of
 // writer (a chat turn), so the assumption held for free. A run's outcome record is a second, and a
@@ -15,9 +15,9 @@
 //
 // The relation is ASYMMETRIC, and deliberately so — the two writers are not peers:
 //
-//   - A RECORD waits for every in-flight turn and every earlier record. A turn's own `appendTurn`
-//     lands inside `runChatTurn`, at the very end, so nothing short of the whole turn is a safe
-//     window. This is the "defer until the turn's append has completed" rule, and it costs the
+//   - A RECORD waits for every in-flight turn and every earlier record. The writes of a turn land
+//     inside `runChatTurn`, from the opening to the close, so nothing short of the whole turn is a
+//     safe window. This is the "defer until the turn has closed" rule, and it costs the
 //     reader nothing: the transient toast already fired, and a completion record is not
 //     time-critical.
 //

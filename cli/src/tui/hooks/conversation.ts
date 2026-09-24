@@ -735,7 +735,7 @@ function detailsHint(): string {
     return `${sequenceLabel(leaderSeq("e"))} for details`;
 }
 
-/** Surface an `appendTurn` fault as a non-fatal notice — the turn itself may have succeeded. */
+/** Surface a store fault of the turn as a non-fatal notice — the turn itself may have succeeded. */
 function reportAppendError(e: DbError | undefined): void {
     if (e) notify({ kind: "warn", text: `Could not save the turn to the thread (${e.type}).` });
 }
@@ -1110,8 +1110,8 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
     // Re-derive the live abort flag from the durable field, set only when true (matching the live path,
     // which leaves it absent otherwise) — so a restarted app renders the muted marker the live view showed.
     //
-    // Same treatment for the turn's stored rollup and for its stored duration: `appendTurn` writes both
-    // onto the turn's assistant row and the harness hands them back here, so a reloaded transcript
+    // Same treatment for the turn's stored rollup and for its stored duration: the harness stores both
+    // for the turn and hands them back here on its assistant message, so a reloaded transcript
     // carries the figures the live header showed rather than dropping to the absent state. Each is set
     // only when present, which keeps the ONE meaning absence has on these fields — nothing recorded a
     // value — rather than adding a second (this transcript was reloaded).
@@ -1228,10 +1228,10 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
 // controller's lifetime is owned alongside the state it cancels.
 let abortController: AbortController | null = null;
 
-// The in-flight turn's settlement, retained so a retract can await it: the engine's `appendTurn` runs
-// before the outcome returns, so awaiting the outcome IS awaiting the durable append (the retract must
-// remove the just-appended orphan, never race ahead of it), and the outcome carries the append fault
-// that decides the durable step. Null when no turn is in flight. The RESOLVING side is a local closure
+// The in-flight turn's settlement, retained so a retract can await it: the engine closes the turn
+// before the outcome returns, so awaiting the outcome IS awaiting the last durable write (the retract must
+// remove the just-written orphan, never race ahead of it), and the outcome carries `opened`, which
+// decides the durable step. Null when no turn is in flight. The RESOLVING side is a local closure
 // in `send`, so a swap nulling this module ref never strands a waiter mid-await.
 let turnSettled: Promise<TurnOutcome> | null = null;
 // The in-flight turn's start timestamp, retained so the retract's downgrade path can hand `finishTurn`
@@ -1333,16 +1333,16 @@ const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn, healRet
  *
  * TURN-GENERATION GUARD: the fresh {@link AbortController} instance IS this turn's identity
  * token. A session swap or {@link resetHotState} replaces (or nulls) the module `abortController`
- * mid-flight — while the OLD turn is still unwinding (`appendTurn`'s pg round-trip; a tool ignoring
+ * mid-flight — while the OLD turn is still unwinding (its last pg round-trip; a tool ignoring
  * its signal), a NEW turn can already be streaming into a new session. So every event this turn emits
  * flows through one guarded sink that drops it once the token no longer matches, and the outcome is
  * dropped on the same check — a superseded turn NEVER touches the new turn's streaming signals,
- * status, error, or messages. Its `appendTurn` already ran (correctly) inside the engine on the old
+ * status, error, or messages. Its writes already ran (correctly) inside the engine on the old
  * thread; the only remaining work is UI-visible, so dropping it is exactly right.
  */
 export function send(opts: { sessionId: string; analysisId: string; userText: string }, seams: SendSeams = realSendSeams): Promise<void> {
-    // Held against run-outcome records for the WHOLE turn, not just its append, because the engine's
-    // `appendTurn` lands inside `runChatTurn`: releasing earlier would let a record splice between
+    // Held against run-outcome records for the WHOLE turn, because the engine writes each round
+    // inside `runChatTurn`, from the opening to the close: releasing earlier would let a record splice between
     // this turn's rows. Turns are NOT serialized against each other — that ordering already has an
     // answer in the generation and abort tokens — and with no record pending the body runs
     // synchronously, so the turn's hot state is armed before the first yield exactly as before.
@@ -1405,7 +1405,7 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
     // may be reassigned/nulled by a swap or reset while this turn is in flight.
     const myTurn = abortController;
 
-    // Retain this turn's settlement + duration base so a retract can await the engine (the `appendTurn`
+    // Retain this turn's settlement + duration base so a retract can await the engine (the close
     // lands before the outcome returns) and decide the durable step. `settleTurn` is a LOCAL closure so
     // it resolves the waiter regardless of a swap nulling the module `turnSettled` mid-flight.
     let settleTurn!: (o: TurnOutcome) => void;
@@ -1437,7 +1437,6 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
             pool: runtime.pool,
             agents: runtime.agents,
             chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
-            history: createThreadHistory(runtime.pool),
             session,
             emit: emitForTurn,
             signal: myTurn.signal,
@@ -1462,11 +1461,13 @@ async function sendLocked(opts: { sessionId: string; analysisId: string; userTex
             threadId: opts.sessionId,
             userInput: opts.userText,
         })
-        .catch((cause: unknown): TurnOutcome => ({ kind: "failed", cause }));
+        // A rejection gives no sign that the opening landed, and a durable retract of a turn that did
+        // not land would remove an earlier turn.
+        .catch((cause: unknown): TurnOutcome => ({ kind: "failed", opened: false, cause }));
 
     // Settle the retained turn promise BEFORE the supersession guard: a retract IS a superseding writer
     // (it claimed the token to abort this turn) and must still observe this outcome — it awaits
-    // `turnSettled` to read the append fault and decide the durable step. `settleTurn` is the local
+    // `turnSettled` to read `opened` and decide the durable step. `settleTurn` is the local
     // closure, so this resolves even when a swap has nulled the module `turnSettled`.
     settleTurn(outcome);
 
@@ -1553,10 +1554,9 @@ function closeTurnState(): void {
 
 /**
  * Whether the aborted turn actually LANDED an orphan turn on the thread — the precondition for running
- * the durable retract. `ok`/`filtered`/`aborted`/`failed` reach `runAgent` and append unconditionally, so their
- * orphan is on the tail iff the append did not fault; `prepare_failed`/`thread_gone`/`agent_unresolved`
- * bail BEFORE `appendTurn`, so no orphan exists. Removing the tail when none of this turn's rows are
- * there would delete an EARLIER turn's real history — hence the gate.
+ * the durable retract. A kind that ran carries `opened`, and `prepare_failed`/`thread_gone`/`agent_unresolved`
+ * wrote nothing. Removing the tail when none of this turn's rows are there would delete an EARLIER
+ * turn's real history — hence the gate.
  */
 function turnAppendLanded(outcome: TurnOutcome): boolean {
     switch (outcome.kind) {
@@ -1564,7 +1564,7 @@ function turnAppendLanded(outcome: TurnOutcome): boolean {
         case "filtered":
         case "aborted":
         case "failed":
-            return outcome.appendError === undefined;
+            return outcome.opened;
         case "prepare_failed":
         case "thread_gone":
         case "agent_unresolved":
@@ -1592,7 +1592,7 @@ const realRetractSeams: RetractSeams = { runtime: harnessRuntime, retractTurn: r
 
 /**
  * Run the durable tail removal and reduce its outcome. `retracted` removed the orphan; `empty-thread`/
- * `no-user-turn` removed nothing (the append never landed, or an anomalous tail) — a benign no-op with
+ * `no-user-turn` removed nothing (the opening never landed, or an anomalous tail) — a benign no-op with
  * a debug log, never surfaced. A `DbError` is retained as a pending retry for the thread (the next send
  * heals it) and surfaced as an error notice — token-gated, since a swap that superseded the UI writes
  * has already moved the surface on. The conversation is never blocked on it.
@@ -1628,8 +1628,8 @@ async function runDurableRetract(pool: Pool, threadId: string, myRetract: number
  *
  * Sequence: claim the store-write token → `abort()` → await the turn's settlement → re-validate the
  * no-output window. A racing delta downgrades to a plain interrupt (message kept, notice, nothing
- * removed). Otherwise run the durable tail retract — SKIPPED when no orphan landed (append faulted, or a
- * prepare/thread bail) — and only then splice the live store and seed the composer, so the transcript
+ * removed). Otherwise run the durable tail retract — SKIPPED when no orphan landed (the opening did not
+ * land, or a prepare/thread bail) — and only then splice the live store and seed the composer, so the transcript
  * and the composer move together rather than either side of a database round-trip. Claiming
  * the token makes this a first-class store writer: a session swap that supersedes it mid-sequence drops
  * every remaining store write and the composer seed, while the durable removal — committed at the
@@ -1668,11 +1668,11 @@ export async function retract(seedComposer: (text: string) => void, seams: Retra
         // so the teardown below is the sole writer for this turn.
         const myRetract = ++loadGeneration;
 
-        // Fire the turn's abort so the engine unwinds and its unconditional `appendTurn` lands.
+        // Fire the turn's abort so the engine unwinds and closes the turn.
         abortController?.abort();
 
-        // Await settlement — the append has run by the time the engine returns, so the durable removal below
-        // targets the just-appended orphan rather than racing ahead of it.
+        // Await settlement — the close has run by the time the engine returns, so the durable removal below
+        // targets the just-written orphan rather than racing ahead of it.
         const outcome = await settled;
 
         // A text delta (or any part) can race the keypress. If output landed, DOWNGRADE to a plain

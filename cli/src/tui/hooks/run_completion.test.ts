@@ -526,7 +526,7 @@ describe("thread write serialization", () => {
                 runtime: () => stubRuntime,
                 runChatTurn: async () => {
                     turnStarted = true;
-                    return { kind: "ok", fallbackText: "" };
+                    return { kind: "ok", opened: true, fallbackText: "" };
                 },
             },
         );
@@ -555,7 +555,7 @@ describe("thread write serialization", () => {
                 runChatTurn: async () => {
                     order.push("turn:append");
                     await turnGate;
-                    return { kind: "ok", fallbackText: "" };
+                    return { kind: "ok", opened: true, fallbackText: "" };
                 },
             },
         );

@@ -75,7 +75,7 @@ afterEach(() => resetHotState());
 
 describe("send() null-runtime guard", () => {
     test("no booted runtime surfaces an error banner and does not push a message", async () => {
-        const seams: SendSeams = { runtime: () => null, runChatTurn: async () => ({ kind: "ok", fallbackText: "" }) };
+        const seams: SendSeams = { runtime: () => null, runChatTurn: async () => ({ kind: "ok", opened: true, fallbackText: "" }) };
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
         expect(errorMsg()).toContain("not ready");
         expect(chatStatus()).toBe("error");
@@ -85,7 +85,7 @@ describe("send() null-runtime guard", () => {
 
 describe("send() drives the adapter + engine", () => {
     test("pushes user + assistant messages and passes threadId = sessionId with the TUI session", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" });
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" });
         await send({ sessionId: SID, analysisId: AID, userText: "what's the schema?" }, seams);
 
         expect(messages.length).toBe(2);
@@ -104,7 +104,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("text deltas accumulate live, then flush into the stored part on ok", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "ignored on a streamed turn" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "ignored on a streamed turn" }, (emit) => {
             void emit({ type: "text-delta", text: "Each analysis " });
             void emit({ type: "text-delta", text: "row carries a slug." });
             // Snapshot mid-turn accumulation before the outcome flushes it.
@@ -122,14 +122,14 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("fallbackText renders when the turn produced no deltas", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "no-stream answer" });
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "no-stream answer" });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         const part = messages[1]?.parts[0];
         if (part?.type === "text") expect(part.text).toBe("no-stream answer");
     });
 
     test("tool started/finished pair into one part with an outcome + duration", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
             void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", outcome: "ok" });
         });
@@ -146,7 +146,7 @@ describe("send() drives the adapter + engine", () => {
         // The adapter's own bracket measures the ROUND, because the harness emits
         // every start before it dispatches and every finish after the round
         // settles. Only the harness figure separates the two calls.
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source, toolUseId: "slow", name: "read_file", input: {} });
             void emit({ type: "tool-started", source, toolUseId: "fast", name: "list_files", input: {} });
@@ -163,7 +163,7 @@ describe("send() drives the adapter + engine", () => {
         // The fallback must be `??` and never `||`. A sub-millisecond call reports
         // a real `0`, and `||` would discard it for the round-wide bracket — the
         // exact false figure this requirement removes.
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source, toolUseId: "t0", name: "list_files", input: {} });
             void emit({ type: "tool-finished", source, toolUseId: "t0", name: "list_files", outcome: "ok", durationMs: 0 });
@@ -175,7 +175,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("an event without a duration falls back to the observed elapsed time", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source, toolUseId: "t1", name: "read_file", input: {} });
             void emit({ type: "tool-finished", source, toolUseId: "t1", name: "read_file", outcome: "ok" });
@@ -188,7 +188,7 @@ describe("send() drives the adapter + engine", () => {
 
     test("an unpaired finished event still renders, and carries the event's duration", async () => {
         // No start arrived, thus the adapter has no stamp of its own to bracket.
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const source = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-finished", source, toolUseId: "orphan", name: "grep", outcome: "ok", durationMs: 0 });
         });
@@ -201,7 +201,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("tool error outcome is honored", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t9", name: "write_file", input: {} });
             void emit({
                 type: "tool-finished",
@@ -219,7 +219,7 @@ describe("send() drives the adapter + engine", () => {
     // A denial is the user refusing an approval. Folding it into `error` would report their own
     // decision as a fault of the tool, which is why the harness reports three outcomes and not two.
     test("a denied outcome is distinct from an error", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t7", name: "execute_analysis", input: {} });
             void emit({
                 type: "tool-finished",
@@ -235,7 +235,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("a described call carries its detail from tool-started onward", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source: src, toolUseId: "t2", name: "update_working_memory", input: {}, detail: "hypothesis retire h3" });
             void emit({ type: "tool-finished", source: src, toolUseId: "t2", name: "update_working_memory", outcome: "ok", detail: "hypothesis retire h3" });
@@ -249,7 +249,7 @@ describe("send() drives the adapter + engine", () => {
     // A tool that describes its own result names the outcome on the finish — the page it wrote, the
     // version it recorded. That fact does not exist at dispatch, so the chip must take the newer line.
     test("a present finished detail replaces the one the start showed", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source: src, toolUseId: "t4", name: "preview_report", input: {} });
             void emit({ type: "tool-finished", source: src, toolUseId: "t4", name: "preview_report", outcome: "ok", detail: "page /w/t4/index.html" });
@@ -263,7 +263,7 @@ describe("send() drives the adapter + engine", () => {
     // The finish can only improve the chip. A tool that describes no result finishes with no detail,
     // and blanking the started line there would lose the only description the call ever had.
     test("an absent finished detail never blanks the one the start showed", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source: src, toolUseId: "t5", name: "read_file", input: {}, detail: "output/summary.md" });
             void emit({ type: "tool-finished", source: src, toolUseId: "t5", name: "read_file", outcome: "ok" });
@@ -276,7 +276,7 @@ describe("send() drives the adapter + engine", () => {
     // An error keeps the started detail by construction: the harness runs no result hook on a failed
     // call. The chip must show that line beside the failure, and not fall back to the bare tool name.
     test("a failed call keeps the detail its start showed", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source: src, toolUseId: "t6", name: "add_block", input: {}, detail: 'add section "Summary"' });
             void emit({ type: "tool-finished", source: src, toolUseId: "t6", name: "add_block", outcome: "error", detail: 'add section "Summary"' });
@@ -288,7 +288,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("a call from a tool with no hook carries no detail", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             const src = { agentId: "tui-chat", callPath: ["tui-chat"] };
             void emit({ type: "tool-started", source: src, toolUseId: "t3", name: "search_semantic_scholar", input: {} });
             void emit({ type: "tool-finished", source: src, toolUseId: "t3", name: "search_semantic_scholar", outcome: "ok" });
@@ -311,7 +311,7 @@ describe("send() drives the adapter + engine", () => {
         // read the store from inside the drive, at the moment the sub-agent is working.
         function activityDuring(drive: (emit: EmitFn) => void): Promise<string | undefined> {
             let seen: string | undefined;
-            const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
                 drive(emit);
                 seen = findPart((p): p is ToolCallPart => p.type === "tool-call")?.activity;
             });
@@ -344,7 +344,7 @@ describe("send() drives the adapter + engine", () => {
         });
 
         test("the activity line is cleared when the call finishes", async () => {
-            const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
                 void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "plan_analysis", input: {} });
                 void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
                 void emit({
@@ -365,7 +365,7 @@ describe("send() drives the adapter + engine", () => {
         });
 
         test("a sub-agent event outside any tool call is dropped, not rendered at the root", async () => {
-            const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
                 void emit({ type: "tool-started", source: SUB, toolUseId: "sub-1", name: "search_papers", input: {} });
                 void emit({ type: "iteration", source: SUB, iteration: 1 } as never);
             });
@@ -376,7 +376,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("an unpaired tool-finished appends a finished part (no prior tool-started)", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             // No tool-started for this id — the finish must still render as a finished chip via the
             // fallback append path in updateToolPart, not vanish.
             void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "orphan", name: "grep", outcome: "ok" });
@@ -390,7 +390,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("data-plan becomes a plan-card via readPlanCard", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-plan",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
@@ -408,7 +408,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("data-run-card becomes a run-card via readRunCard", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-run-card",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
@@ -423,7 +423,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("an unknown data part renders a visible tagged mention, not swallowed", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             // A `data-*` type the store has no first-class renderer for still surfaces as a tag.
             void emit({ type: "data-widget", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, data: {} } as never);
         });
@@ -433,7 +433,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("data-presentation (markdown) becomes an inline presentation part", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-presentation",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
@@ -447,7 +447,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("data-presentation (echart) becomes an openable card carrying the spec + analysis scope", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-presentation",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
@@ -467,7 +467,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("data-file-reference becomes an openable gallery card with a folder for multiple files", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({
                 type: "data-file-reference",
                 source: { agentId: "tui-chat", callPath: ["tui-chat"] },
@@ -484,7 +484,7 @@ describe("send() drives the adapter + engine", () => {
 
     test("copy-on-receive: mutating an emitted echart spec after emit does not corrupt the store", async () => {
         let spec: Record<string, unknown> = {};
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             spec = { series: [{ type: "bar" }] };
             void emit({
                 type: "data-presentation",
@@ -500,7 +500,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("sub-agent events (callPath depth > 1) are dropped", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "top-level " });
             // A deeper callPath => sub-agent traffic; its data part must not enter the transcript.
             void emit({ type: "data-plan", source: { agentId: "planner", callPath: ["tui-chat", "planner"] }, data: { planId: "hidden" } });
@@ -523,7 +523,7 @@ describe("send() drives the adapter + engine", () => {
     test("clone-on-receive: mutating the emitted data object after emit does not corrupt the store", async () => {
         // Assigned inside `drive` (below) so the post-emit mutation sees the same reference the store copied.
         let planData: Record<string, unknown> = {};
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             planData = { planId: "plan-x", title: "original", steps: [{ id: "s1", name: "step", agent: "a" }] };
             void emit({ type: "data-plan", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, data: planData });
             // The agent loop reuses+mutates emitted references; the store must already own a copy.
@@ -537,7 +537,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("aborted flushes what streamed, returns to idle, and sets no error", async () => {
-        const seams = fakeSeams({ kind: "aborted" }, (emit) => {
+        const seams = fakeSeams({ kind: "aborted", opened: true }, (emit) => {
             void emit({ type: "text-delta", text: "partial answer" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -548,7 +548,7 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("failed surfaces an actionable error banner and error status", async () => {
-        const seams = fakeSeams({ kind: "failed", cause: new Error("provider exploded") });
+        const seams = fakeSeams({ kind: "failed", opened: true, cause: new Error("provider exploded") });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         expect(errorMsg()).toContain("provider exploded");
         expect(chatStatus()).toBe("error");
@@ -556,7 +556,7 @@ describe("send() drives the adapter + engine", () => {
 
     test("a structured object cause renders its discriminant (not [object Object]) and is retained", async () => {
         const cause = { type: "provider", retryable: true, message: "rate limited" };
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "failed", cause }));
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "failed", opened: true, cause }));
         // The banner names the discriminant + message via describeCause — never the [object Object] hole.
         expect(errorMsg()).toContain("provider: rate limited");
         expect(errorMsg()).not.toContain("[object Object]");
@@ -565,10 +565,13 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("a new send clears the retained failure", async () => {
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "failed", cause: { type: "provider", message: "boom" } }));
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "?" },
+            fakeSeams({ kind: "failed", opened: true, cause: { type: "provider", message: "boom" } }),
+        );
         expect(lastTurnFailure()).not.toBeNull();
         // The next send resets hot error state before running — the stale failure must not linger.
-        await send({ sessionId: SID, analysisId: AID, userText: "again" }, fakeSeams({ kind: "ok", fallbackText: "hi" }));
+        await send({ sessionId: SID, analysisId: AID, userText: "again" }, fakeSeams({ kind: "ok", opened: true, fallbackText: "hi" }));
         expect(lastTurnFailure()).toBeNull();
         expect(errorMsg()).toBeNull();
     });
@@ -601,7 +604,12 @@ describe("send() drives the adapter + engine", () => {
     });
 
     test("an appendError is surfaced non-fatally (turn still ok, no error banner)", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "done", appendError: { type: "mutation_failed", op: "appendTurn", cause: "x" } as never });
+        const seams = fakeSeams({
+            kind: "ok",
+            opened: true,
+            fallbackText: "done",
+            appendError: { type: "mutation_failed", op: "appendTurn", cause: "x" } as never,
+        });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         // A save fault does not fail the turn: status is idle and the banner stays clear.
         expect(chatStatus()).toBe("idle");
@@ -618,7 +626,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     }
 
     test("pending then resolved under one id reconciles to ONE card with the updated status", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run refs", command: "inflexa refs list", status: "pending" } });
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run refs", command: "inflexa refs list", status: "resolved" } });
         });
@@ -633,7 +641,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
     test("a pending ask pushes the store as the head; its terminal re-emit settles it", async () => {
         const seen: { active: string | null; queued: number }[] = [];
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "c", status: "pending" } });
             seen.push({ active: activeAsk()?.askId ?? null, queued: queuedCount() });
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "c", status: "resolved" } });
@@ -648,7 +656,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
     test("two concurrent pending asks queue FIFO; the head answers first", async () => {
         const seen: { active: string | null; queued: number }[] = [];
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t1", command: "c1", status: "pending" } });
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-2", title: "t2", command: "c2", status: "pending" } });
             seen.push({ active: activeAsk()?.askId ?? null, queued: queuedCount() });
@@ -665,7 +673,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     });
 
     test("a terminal-only re-emit with no prior pending appends one settled card (append-if-missing)", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-9", title: "t", command: "c", status: "rejected" } });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -679,7 +687,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     });
 
     test("turn teardown clears the pending store — an abort leaves no stale docked prompt", async () => {
-        const seams = fakeSeams({ kind: "aborted" }, (emit) => {
+        const seams = fakeSeams({ kind: "aborted", opened: true }, (emit) => {
             // A pending ask that never receives its terminal re-emit (the turn aborts first).
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "c", status: "pending" } });
         });
@@ -690,7 +698,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     });
 
     test("a malformed data-ask never pushes a pending entry — a bad status is terminal, not pending", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             // No id, no status → readAskPart yields askId "" and status "expired" (terminal): it settles
             // (a no-op) and never pushes, so the docked prompt store stays empty.
             void emit({ type: "data-ask", source: TOP, data: { title: 5, command: null } } as never);
@@ -707,7 +715,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
 
     test("copy-on-receive: mutating the emitted ask data after emit does not corrupt the card", async () => {
         let askData: Record<string, unknown> = {};
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             askData = { id: "ask-1", title: "orig", command: "inflexa refs list", status: "pending" };
             void emit({ type: "data-ask", source: TOP, data: askData });
             askData.title = "MUTATED";
@@ -725,7 +733,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     // These two cases pin that they CONVERGE — noteAskFeedback spreads + adds `feedback`, reconcile
     // spreads + overrides only `status`, so whichever lands second preserves the other's write.
     test("feedback survives the terminal re-emit — noteAskFeedback THEN reconcile", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "pending" } });
             noteAskFeedback("ask-1", "archive, don't delete");
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "rejected" } });
@@ -739,7 +747,7 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
     });
 
     test("feedback survives the terminal re-emit — reconcile THEN noteAskFeedback", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "pending" } });
             void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "rejected" } });
             noteAskFeedback("ask-1", "archive, don't delete");
@@ -784,7 +792,7 @@ describe("send() binds the ask seam to the turn scope", () => {
                 runtime: () => runtime,
                 runChatTurn: async (args: RunChatTurnArgs): Promise<TurnOutcome> => {
                     captured = args;
-                    return { kind: "ok", fallbackText: "" };
+                    return { kind: "ok", opened: true, fallbackText: "" };
                 },
                 last: () => captured,
             };
@@ -816,7 +824,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
     }
 
     test("text -> tool -> text renders three parts in order [text][tool][text]", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "Reading the schema. " });
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
             void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", outcome: "ok" });
@@ -832,7 +840,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
     });
 
     test("text -> plan-card with no trailing prose renders [text][plan-card] and no empty part", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "Here is the plan." });
             void emit({
                 type: "data-plan",
@@ -848,7 +856,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
     });
 
     test("deltas after a card flow into a NEW text part, not the pre-card one", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "before" });
             void emit({
                 type: "data-plan",
@@ -882,7 +890,7 @@ describe("send() turn-generation guard", () => {
                 await aGate;
                 // Emitted AFTER supersession — must be dropped at the guarded sink.
                 void args.emit({ type: "text-delta", text: "A-late" });
-                return { kind: "ok", fallbackText: "A-done" };
+                return { kind: "ok", opened: true, fallbackText: "A-done" };
             },
         };
         const aPromise = send({ sessionId: SID, analysisId: AID, userText: "A" }, seamsA);
@@ -891,7 +899,7 @@ describe("send() turn-generation guard", () => {
         resetHotState();
 
         // Send B runs to completion in the new session and streams its own answer.
-        const seamsB = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seamsB = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "B-answer" });
         });
         await send({ sessionId: "s2", analysisId: "a2", userText: "B" }, seamsB);
@@ -920,7 +928,7 @@ describe("send() turn-generation guard", () => {
 
 describe("send() turn cleanup", () => {
     test("aborting with an open tool resolves the chip to a terminal state", async () => {
-        const seams = fakeSeams({ kind: "aborted" }, (emit) => {
+        const seams = fakeSeams({ kind: "aborted", opened: true }, (emit) => {
             // A tool-started with no matching tool-finished — still running when the turn aborts.
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
         });
@@ -938,7 +946,7 @@ describe("send() turn cleanup", () => {
     });
 
     test("the assistant turn is stamped with a duration on ok", async () => {
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: "hi" }));
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", opened: true, fallbackText: "hi" }));
         expect(messages[1]?.role).toBe("assistant");
         expect(typeof messages[1]?.durationMs).toBe("number");
         expect(messages[1]?.durationMs).toBeGreaterThanOrEqual(0);
@@ -951,13 +959,13 @@ describe("send() turn cleanup", () => {
         // The cache and reasoning quantities are breakdowns OF the two headline counts, so a store that
         // reduced the rollup to a total would double-count the cached prefix. It is carried verbatim.
         const turnUsage = { inputTokens: 12_400, outputTokens: 3100, cacheReadInputTokens: 9800, reasoningTokens: 900 };
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: "hi", turnUsage }));
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", opened: true, fallbackText: "hi", turnUsage }));
         expect(typeof messages[1]?.durationMs).toBe("number");
         expect(messages[1]?.turnUsage).toEqual(turnUsage);
     });
 
     test("an outcome with no rollup leaves the message without one — the duration alone, never a zeroed usage", async () => {
-        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: "hi" }));
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", opened: true, fallbackText: "hi" }));
         expect(typeof messages[1]?.durationMs).toBe("number");
         expect(messages[1]?.turnUsage).toBeUndefined();
     });
@@ -966,7 +974,7 @@ describe("send() turn cleanup", () => {
         const turnUsage = { inputTokens: 800, outputTokens: 120 };
         // A delta makes this a turn that produced content, so the abort marks the message rather than
         // dropping the empty shell — which is the only abort shape with a message left to stamp.
-        const seams = fakeSeams({ kind: "aborted", turnUsage }, (emit) => void emit({ type: "text-delta", text: "the ans" }));
+        const seams = fakeSeams({ kind: "aborted", opened: true, turnUsage }, (emit) => void emit({ type: "text-delta", text: "the ans" }));
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         expect(messages[1]?.interrupted).toBe(true);
         expect(messages[1]?.turnUsage).toEqual(turnUsage);
@@ -1127,7 +1135,7 @@ describe("a turn supersedes a transcript load in flight", () => {
         const { seams: loadSeams, release } = gatedLoadSeams();
         const load = loadMessages(SID, AID, loadSeams); // parks on its page read
 
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "live answer" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
@@ -1152,7 +1160,7 @@ describe("a turn supersedes a transcript load in flight", () => {
 
         // Release the load mid-turn: its trailing write must not land, so the adapter's later parts
         // still find the assistant message they were minted against.
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "before" });
             release();
         });
@@ -1182,7 +1190,7 @@ describe("a turn supersedes a transcript load in flight", () => {
 // delta-less final answer would sit in `streamText` and never render.
 describe("a delta-less final segment renders after a mid-turn part", () => {
     test("deltas -> tool -> no further deltas: the fallback renders as a trailing part", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "THE FINAL ANSWER" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "THE FINAL ANSWER" }, (emit) => {
             void emit({ type: "text-delta", text: "thinking..." });
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
             void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
@@ -1198,7 +1206,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     });
 
     test("deltas -> plan card -> no further deltas: the fallback renders below the card", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "here is the plan" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "here is the plan" }, (emit) => {
             void emit({ type: "text-delta", text: "drafting" });
             void emit({ type: "data-plan", data: { planId: "p1", title: "T", steps: [] } } as never);
         });
@@ -1212,7 +1220,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // The buffer is non-empty at completion, so the final assistant text DID stream — rendering
         // `fallbackText` on top of it would print the answer twice. The turn's FIRST event is a tool
         // (the common bare-tool_use first iteration), so the prose must render BELOW the chip.
-        const seams = fakeSeams({ kind: "ok", fallbackText: "streamed answer" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "streamed answer" }, (emit) => {
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
             void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
             void emit({ type: "text-delta", text: "streamed answer" });
@@ -1233,7 +1241,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         // The turn's first event is a tool and the final answer never streams — it arrives only as
         // `fallbackText`. Pre-fix, `streamPartId` still named the pre-minted part[0] ahead of the tool,
         // so the fallback landed above the chip; the drop-empty fix reopens a fresh segment after it.
-        const seams = fakeSeams({ kind: "ok", fallbackText: "the answer" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "the answer" }, (emit) => {
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
             void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", outcome: "ok" } as never);
         });
@@ -1246,7 +1254,7 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
     });
 
     test("a turn ending on a card with no fallback leaves no trailing empty part", async () => {
-        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
             void emit({ type: "text-delta", text: "drafting" });
             void emit({ type: "data-plan", data: { planId: "p1", title: "T", steps: [] } } as never);
         });
@@ -1392,7 +1400,10 @@ describe("live emission order matches transcript reload order", () => {
 
     for (const shape of shapes) {
         test(`${shape.name}: live and reload agree on the part sequence`, async () => {
-            await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: shape.fallbackText }, shape.drive));
+            await send(
+                { sessionId: SID, analysisId: AID, userText: "?" },
+                fakeSeams({ kind: "ok", opened: true, fallbackText: shape.fallbackText }, shape.drive),
+            );
             const liveKinds = (messages[1]?.parts ?? []).map((p) => p.type);
 
             const reloaded = cortexToUiMessage(
@@ -1498,7 +1509,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
             runtime: () => stubRuntime,
             runChatTurn: async (args: RunChatTurnArgs): Promise<TurnOutcome> => {
                 void args.emit({ type: "text-delta", text: "live answer" });
-                return { kind: "ok", fallbackText: "" };
+                return { kind: "ok", opened: true, fallbackText: "" };
             },
             reloadTranscript: (sid, aid) => loadMessages(sid, aid, reloadSeams),
         };
@@ -1532,7 +1543,7 @@ describe("a superseded initial load is retried after the turn finishes", () => {
         let reloadFired = false;
         const seams: SendSeams = {
             runtime: () => stubRuntime,
-            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "done" }),
+            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", opened: true, fallbackText: "done" }),
             reloadTranscript: async () => {
                 reloadFired = true;
             },
@@ -1551,7 +1562,7 @@ describe("send() closes the emit sink at turn completion", () => {
         // that ignored its abort signal and emits past the outcome. The supersession guard would not
         // catch it (this turn was never superseded); the closed sink must.
         let lateEmit!: RunChatTurnArgs["emit"];
-        const seams = fakeSeams({ kind: "ok", fallbackText: "done" }, (emit) => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "done" }, (emit) => {
             lateEmit = emit;
             void emit({ type: "text-delta", text: "answer" });
         });
@@ -1576,7 +1587,7 @@ describe("display-card parts map identically live and on reload", () => {
         const data = { id: "pres-1", title: "Finding", content: { kind: "markdown", body: "**TP53** up" } };
         await send(
             { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-presentation", source: TOP, data })),
+            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit({ type: "data-presentation", source: TOP, data })),
         );
         const live = messages[1]?.parts.find((p) => p.type === "presentation");
 
@@ -1591,7 +1602,7 @@ describe("display-card parts map identically live and on reload", () => {
         const data = { id: "pres-g", title: "Figures", files: [{ path: "runs/r/a.png" }, { path: "runs/r/b.png", caption: "heatmap" }] };
         await send(
             { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-file-reference", source: TOP, data })),
+            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit({ type: "data-file-reference", source: TOP, data })),
         );
         const live = messages[1]?.parts.find((p) => p.type === "openable-card");
 
@@ -1612,7 +1623,7 @@ describe("display-card parts map identically live and on reload", () => {
         const data = { threadId: "child-1", parentThreadId: SID, threadType: "report" };
         await send(
             { sessionId: SID, analysisId: AID, userText: "?" },
-            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-child-session-started", source: TOP, data })),
+            fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => void emit({ type: "data-child-session-started", source: TOP, data })),
         );
         const live = messages[1]?.parts.find((p) => p.type === "report-session");
 

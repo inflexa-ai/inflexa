@@ -68,7 +68,7 @@ describe("plan.explore-steps", () => {
                         ],
                     },
                 });
-                return { kind: "ok", fallbackText: "" };
+                return { kind: "ok", opened: true, fallbackText: "" };
             },
         };
         await send({ sessionId: "session-1", analysisId: "analysis-1", userText: "show plan" }, seams);

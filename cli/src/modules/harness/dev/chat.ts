@@ -1,6 +1,6 @@
 // TODO(extend): `inflexa chat` is a dev/E2E surface — a clack/stdout REPL that
-// drives the harness conversation agent so the whole embedded loop
-// (assemble → prepareChatTurn → runAgent → appendTurn) can be exercised
+// drives the harness conversation agent so the whole chat turn of the harness
+// (`runChatTurn`: the opening, each round, and the outcome) can be exercised
 // end-to-end WITHOUT a TUI. Its product replacement is the TUI chat (capability
 // `tui-harness-chat`), the landed user-facing conversation surface; this command
 // is kept only to exercise the harness loop headlessly. Its standing disposition is
@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner, text, isCancel } from "@clack/prompts";
 import { type ResultAsync } from "neverthrow";
-import { createStreamingChat, createThreadHistory, createThreadStore, type AgentSession, type DbError, type EmitFn, type Thread } from "@inflexa-ai/harness";
+import { createStreamingChat, createThreadStore, type AgentSession, type DbError, type EmitFn, type Thread } from "@inflexa-ai/harness";
 import type { OpenableEntry, OpenTarget, PresentationBody } from "../../../types/session.ts";
 
 import { describeCause } from "../../../lib/cause.ts";
@@ -154,17 +154,15 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
 }
 
 /**
- * The REPL. One `ThreadHistory`, one printer, and one `AgentSession` are built
- * ONCE and reused every turn (the thread is fixed for the invocation). Each turn
- * is the harness's transport-free sequence — `prepareChatTurn → runAgent →
- * appendTurn` — under a turn-scoped abort signal. The loop ends two
+ * The REPL. One printer and one `AgentSession` are built ONCE and reused every
+ * turn (the thread is fixed for the invocation). Each turn is one `runChatTurn`
+ * of the harness under a turn-scoped abort signal. The loop ends two
  * ways, both draining through `shutdown` from HERE (never from a signal handler):
  * a cancelled prompt (Ctrl+C / Ctrl+D at idle → `shutdown(0)`), or a turn that
  * returns `"stop"` because a second SIGINT arrived mid-turn (→ `shutdown(130)`,
  * after the turn has fully unwound).
  */
 async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: string): Promise<void> {
-    const history = createThreadHistory(runtime.pool);
     const sink: ChatSink = { out: (str) => void process.stdout.write(str), errLine: (str) => console.error(str) };
     // The analysis scopes openable references so `show_file`/`show_user` cards resolve to workspace
     // paths for their OSC 8 `file://` links.
@@ -186,9 +184,9 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
         }
         const userInput = answer.trim();
         if (userInput.length === 0) continue;
-        const outcome = await runTurn(runtime, history, printer, sink, session, analysisId, threadId, userInput);
+        const outcome = await runTurn(runtime, printer, sink, session, analysisId, threadId, userInput);
         // A second SIGINT during the turn requested a stop. The turn has fully
-        // unwound (its `appendTurn` ran against a still-live pool), so drain and
+        // unwound (its writes ran against a still-live pool), so drain and
         // exit here — once, deterministically (130 = terminated by SIGINT).
         if (outcome === "stop") {
             outro("Ended chat");
@@ -201,7 +199,7 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * One chat turn under a turn-scoped `AbortController`. Returns
  * `"continue"` to keep the REPL prompting or `"stop"` to end it — the loop, not
  * this function, owns teardown, which is exactly what makes the second-SIGINT
- * path race-free. The prepare→run→append body itself is the shared headless
+ * path race-free. The turn body itself is the shared headless
  * engine (`runChatTurn` in `turn.ts`); this function owns only the REPL-specific
  * shell around it: the turn-scoped SIGINT wiring and the mapping of the engine's
  * `TurnOutcome` onto the sink's user-visible lines.
@@ -210,12 +208,12 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * prompt keeps clack's own Ctrl+C handling (isCancel → clean exit):
  *
  *   - FIRST SIGINT: abort the turn. `runChatTurn` sees the aborted signal, returns
- *     an `aborted` outcome (having persisted `[userMessage, ...partial]`), and we return
+ *     an `aborted` outcome (the harness keeps the stored rounds and closes the turn), and we return
  *     `"continue"` — back to the prompt.
  *   - SECOND SIGINT (while the first is still unwinding): flag `forceStop` and do
  *     nothing else. We deliberately do NOT call `shutdown()` from the handler:
  *     `shutdown()` runs `pool.end()` in an onShutdown hook, and a fire-and-forget
- *     `shutdown()` would race the still-unwinding turn — `appendTurn` writing to a
+ *     `shutdown()` would race the still-unwinding turn — its last write going to a
  *     pool being torn down ("Could not save the turn"), or the loop starting a
  *     fresh turn mid-teardown, until `process.exit(130)` finally wins. Instead the
  *     turn finishes unwinding with the pool still alive, then we return `"stop"`
@@ -225,18 +223,16 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * it returns on its own, so a stuck turn delays the stop — a harness/tool concern,
  * out of scope here.
  *
- * Outcome mapping renders the shared engine contract — kept in lockstep with the TUI so both surfaces describe the same outcome identically. The engine persists
- * `[userMessage, ...loopOutput]` on a clean turn and `[userMessage, ...partial]` on a
- * resolved abort; only a thrown failure (or the defensive thrown-abort path) persists
- * `[userMessage]` alone. Any `appendTurn` fault surfaces as `outcome.appendError` —
- * reported here on every `runAgent`-reaching branch.
+ * Outcome mapping renders the shared engine contract — kept in lockstep with the TUI so both surfaces
+ * describe the same outcome identically. The harness stores the opening, each round, and the outcome,
+ * and a failed turn keeps its rounds with a failure note. A store fault surfaces as `outcome.appendError`
+ * on each branch that ran.
  * On a clean turn the answer already streamed live through `chat`'s onText, so
  * `finishTurn(fallbackText)` suppresses its duplicate final render; the fallback
  * prints only for a turn that produced no deltas at all.
  */
 async function runTurn(
     runtime: HarnessRuntime,
-    history: ReturnType<typeof createThreadHistory>,
     printer: ReturnType<typeof createChatPrinter>,
     sink: ChatSink,
     session: AgentSession,
@@ -258,8 +254,8 @@ async function runTurn(
         controller.abort();
     };
     process.on("SIGINT", onSigint);
-    // Report an `appendTurn` fault identically on each runAgent-reaching branch —
-    // a single closure so the three sites cannot drift.
+    // Report a store fault identically on each branch that ran —
+    // a single closure so the four sites cannot drift.
     const reportAppendError = (e: DbError | undefined): void => {
         if (e) sink.errLine(`Could not save the turn to the thread (${e.type}).`);
     };
@@ -268,7 +264,6 @@ async function runTurn(
             pool: runtime.pool,
             agents: runtime.agents,
             chat: (emit) => createStreamingChat(runtime.conversation.provider, (text) => void emit({ type: "text-delta", text })),
-            history,
             session,
             emit: printer.emit,
             signal: controller.signal,

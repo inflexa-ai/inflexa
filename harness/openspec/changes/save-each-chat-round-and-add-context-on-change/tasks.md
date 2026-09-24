@@ -160,26 +160,26 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 6. The CLI
 
-- [ ] 6.1 In `cli/src/modules/harness/turn.ts`, import the `runChatTurn` of the harness as `runHarnessChatTurn`. Make the `runChatTurn` of the CLI call it with the values of the surface.
-- [ ] 6.2 Give the harness the deps `pool`, `agents`, `logger: harnessLogger("harness")`, and `provenance: provenanceSeam()`. These are the values that the prepare step gets now.
-- [ ] 6.3 Remove `history` from `RunChatTurnArgs`. Change `ChatTurnSeams` to `turn` and `readAuthor`. Set `realTurnSeams` to `{ turn: runHarnessChatTurn, readAuthor: currentUserEmail }`.
-- [ ] 6.4 Map `prepare_failed`, `not_found`, and `agent_unresolved` to the current kinds `prepare_failed`, `thread_gone`, and `agent_unresolved`.
-- [ ] 6.5 Map `ran` by its outcome. `done` with the finish reason `content-filter` gives `filtered`, and a different `done` gives `ok`. `aborted` gives `aborted`, and `failed` gives `failed` with its cause.
-- [ ] 6.6 Add `readonly opened: boolean` to the four kinds that ran. Carry `storeError` as `appendError`, and carry `turnUsage`, `fallbackText`, and `rawFinishReason`.
-- [ ] 6.7 Keep `enterChatTurn`, the read of the author at the top, and each log record of the kinds. Give the harness `startedAtMs: turnStartedAt`, and give no `promptCache`, thus the root loop uses 1 hour.
-- [ ] 6.8 Write the doc comments of `TurnOutcome`, `RunChatTurnArgs`, and `runChatTurn` again. The harness stores the opening, each round, and the outcome, and a throw keeps the stored rounds.
-- [ ] 6.9 In `healTailOrphan`, remove the tail turn when it holds no row with the role `assistant`. Expected result: a tail of a user message and its context records goes, and an answered turn stays.
-- [ ] 6.10 In `cli/src/tui/hooks/conversation.ts`, make `turnAppendLanded` give `outcome.opened` for the four kinds that ran. Remove `history` from the call of `runChatTurn`.
-- [ ] 6.11 In `cli/src/modules/harness/dev/chat.ts`, remove the `history` argument of `runChatTurn`. Write the header comment again for the new sequence.
-- [ ] 6.12 In `cli/src/tui/hooks/thread_write.ts`, write the header comment again. The writes of a turn land inside `runChatTurn`, from the opening to the close.
-- [ ] 6.13 In `cli/src/modules/harness/turn.test.ts`, replace the fakes of `prepare` and `run` with a fake `turn`. Add a test of each map of 6.4 and 6.5, of `opened`, and of the author.
-- [ ] 6.14 In the same file, add a test. Expected result: `healTailOrphan` removes a tail of a user message and two context records.
-- [ ] 6.15 Add `writeTurn` to each fake `ThreadHistory`, in `turn.test.ts`, `usage_ledger.test.ts`, and `agent_switch.test.ts` of `cli/src/modules/harness/`.
-- [ ] 6.16 Add `opened: true` to each fake `TurnOutcome` of a kind that ran. The fakes are in `conversation.test.ts`, `conversation.render.test.tsx`, `conversation.usage_recorder.test.ts`, and `run_completion.test.ts` of `cli/src/tui/hooks/`.
-- [ ] 6.17 Do the same in `cli/src/tui/hooks/conversation.interrupt_retract.test.ts` and `cli/src/tui/plan_steps_command.test.tsx`. Expected result: each test that passed before still passes.
-- [ ] 6.18 In `cli/src/tui/hooks/conversation.interrupt_retract.test.ts`, add a test. Expected result: the retract skips the durable step when `opened` is false, and it runs the step when `opened` is true.
-- [ ] 6.19 In `cli/`, run `bun run harness:local`. Run `tsc -p tsconfig.json`. Run `bun test src/modules/harness src/tui/hooks src/tui/plan_steps_command.test.tsx`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
-- [ ] 6.20 In `cli/`, run `openspec validate adopt-the-harness-chat-turn --strict`. Mark the tasks of that change.
+- [x] 6.1 In `cli/src/modules/harness/turn.ts`, import the `runChatTurn` of the harness as `runHarnessChatTurn`. Make the `runChatTurn` of the CLI call it with the values of the surface.
+- [x] 6.2 Give the harness the deps `pool`, `agents`, `logger: harnessLogger("harness")`, and `provenance: provenanceSeam()`. These are the values that the prepare step gets now.
+- [x] 6.3 Remove `history` from `RunChatTurnArgs`. Change `ChatTurnSeams` to `turn` and `readAuthor`. Set `realTurnSeams` to `{ turn: runHarnessChatTurn, readAuthor: currentUserEmail }`.
+- [x] 6.4 Map `prepare_failed`, `not_found`, and `agent_unresolved` to the current kinds `prepare_failed`, `thread_gone`, and `agent_unresolved`.
+- [x] 6.5 Map `ran` by its outcome. `done` with the finish reason `content-filter` gives `filtered`, and a different `done` gives `ok`. `aborted` gives `aborted`, and `failed` gives `failed` with its cause.
+- [x] 6.6 Add `readonly opened: boolean` to the four kinds that ran. Carry `storeError` as `appendError`, and carry `turnUsage`, `fallbackText`, and `rawFinishReason`.
+- [x] 6.7 Keep `enterChatTurn`, the read of the author at the top, and each log record of the kinds. Give the harness `startedAtMs: turnStartedAt`, and give no `promptCache`, thus the root loop uses 1 hour.
+- [x] 6.8 Write the doc comments of `TurnOutcome`, `RunChatTurnArgs`, and `runChatTurn` again. The harness stores the opening, each round, and the outcome, and a throw keeps the stored rounds.
+- [x] 6.9 In `healTailOrphan`, remove the tail turn when it holds no row with the role `assistant`. Expected result: a tail of a user message and its context records goes, and an answered turn stays.
+- [x] 6.10 In `cli/src/tui/hooks/conversation.ts`, make `turnAppendLanded` give `outcome.opened` for the four kinds that ran. Remove `history` from the call of `runChatTurn`.
+- [x] 6.11 In `cli/src/modules/harness/dev/chat.ts`, remove the `history` argument of `runChatTurn`. Write the header comment again for the new sequence.
+- [x] 6.12 In `cli/src/tui/hooks/thread_write.ts`, write the header comment again. The writes of a turn land inside `runChatTurn`, from the opening to the close.
+- [x] 6.13 In `cli/src/modules/harness/turn.test.ts`, replace the fakes of `prepare` and `run` with a fake `turn`. Add a test of each map of 6.4 and 6.5, of `opened`, and of the author.
+- [x] 6.14 In the same file, add a test. Expected result: `healTailOrphan` removes a tail of a user message and two context records.
+- [x] 6.15 Add `writeTurn` to each fake `ThreadHistory`, in `turn.test.ts`, `usage_ledger.test.ts`, and `agent_switch.test.ts` of `cli/src/modules/harness/`.
+- [x] 6.16 Add `opened: true` to each fake `TurnOutcome` of a kind that ran. The fakes are in `conversation.test.ts`, `conversation.render.test.tsx`, `conversation.usage_recorder.test.ts`, and `run_completion.test.ts` of `cli/src/tui/hooks/`.
+- [x] 6.17 Do the same in `cli/src/tui/hooks/conversation.interrupt_retract.test.ts` and `cli/src/tui/plan_steps_command.test.tsx`. Expected result: each test that passed before still passes.
+- [x] 6.18 In `cli/src/tui/hooks/conversation.interrupt_retract.test.ts`, add a test. Expected result: the retract skips the durable step when `opened` is false, and it runs the step when `opened` is true.
+- [x] 6.19 In `cli/`, run `bun run harness:local`. Run `tsc -p tsconfig.json`. Run `bun test src/modules/harness src/tui/hooks src/tui/plan_steps_command.test.tsx`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 6.20 In `cli/`, run `openspec validate adopt-the-harness-chat-turn --strict`. Mark the tasks of that change.
 
 ## 7. Documents and final checks
 
