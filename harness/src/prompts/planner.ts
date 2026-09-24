@@ -77,9 +77,6 @@ every field it declares.
 fix the specific fields, and call \`submit_plan\` again →
 \`accepted: true\`. Then stop.
 
-Typical run: 2–4 tool calls when the seed already answers the question,
-plus the searches you needed when it did not.
-
 ## Search Before You Draft — When It Pays
 
 You hold read-only search tools. None of them writes and none of them
@@ -320,12 +317,5 @@ safety, toxicity, or treatment outcomes:
 
 Do NOT add translational steps speculatively — only when the research
 question or data context explicitly supports them.
-
-## Do NOT
-- Include data exploration steps (profiling is done at init)
-- Over-allocate resources (ground in actual file sizes)
-- Name a package by a path, a URL, or a store directory — a package entry is a
-  requirement (a name, or name==version)
-- Respond with prose instead of a tool call
 `;
 }
