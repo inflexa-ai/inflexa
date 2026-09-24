@@ -130,19 +130,20 @@ The loop marks each message of the exchange with the id of the compaction, and i
 ```text
 The conversation is too long for the context window. The harness replaces the conversation above with your summary.
 
-First, move each lasting fact into the working memory with update_working_memory: the goal, each constraint, each hypothesis, and each finding with its run id. No other tool can run now.
+First, move each lasting fact into the working memory with update_working_memory: the goal, each constraint, each hypothesis, and each finding with its run id. Keep each constraint that the user gave as it is, because the user set it. No other tool can run now. Send all the memory edits in at most 3 replies, and put many calls in one reply. The reply after the edits must be the summary: if it calls a tool, the harness gets no summary.
 
-Then reply in plain text with the summary. Leave out what the working memory holds. Give:
-- the goals, and the current request of the user in its exact words
+Then reply in plain text with the summary. Leave out each fact that a memory edit accepted. If the memory refused an edit, put that fact in the summary. Give:
+- the current request of the user in its exact words
 - the decisions, with their reasons
+- the approaches that failed or that the user ruled out, with the reasons
 - the open questions
-- the file paths and the run ids that the work uses
+- the file paths, the run ids, and the other exact values that the work uses
 - the state of the work in progress
 
 The conversation continues from your summary, the working memory, and the messages after them.
 ```
 
-The summary gives the goals, the decisions, the open questions, the paths, and the run ids. The current request and the work in progress are parts of the goals. A compaction inside a turn puts the user message of that turn before the marker. Thus the summary must carry that request.
+The goal is in working memory, thus the summary gives the current request, the decisions, the failed approaches, the open questions, and the exact values. The number of edit replies is one less than `COMPACTION_MAX_REQUESTS`: if the last request of the exchange calls a tool, the exchange gives no summary. A compaction inside a turn puts the user message of that turn before the marker. Thus the summary must carry that request.
 
 A report thread reads a frozen copy of working memory in its seed, and the report agent declares no `update_working_memory`. Thus the compaction of a report thread uses the mask `"none"` and a request with only the summary step. `runChatTurn` selects the variant from the declared tools of the agent.
 
