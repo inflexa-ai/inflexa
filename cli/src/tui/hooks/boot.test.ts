@@ -155,7 +155,11 @@ describe("agent-models store (watchAgentModels)", () => {
             rebuildProvider: () => fakeProvider(),
             swapSandboxEmitters: () => {},
             modelProvider: "anthropic",
-            initialModels: models,
+            initialSelections: {
+                conversation: { model: models.conversation, effort: "high" },
+                sandbox: { model: models.sandbox, effort: "medium" },
+                utility: { model: models.utility, effort: "medium" },
+            },
         });
     }
 
@@ -168,8 +172,10 @@ describe("agent-models store (watchAgentModels)", () => {
         });
         try {
             expect(agentModels().current).toEqual({ conversation: "", sandbox: "", utility: "" });
+            expect(agentModels().efforts).toBeNull();
             await startHarnessBoot(cfg, undefined, readyDriver("claude-opus-4-8"));
             expect(agentModels().current).toEqual({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" });
+            expect(agentModels().efforts).toEqual({ conversation: "high", sandbox: "medium", utility: "medium" });
         } finally {
             dispose();
         }
@@ -186,14 +192,14 @@ describe("agent-models store (watchAgentModels)", () => {
             await startHarnessBoot(cfg, undefined, readyDriver("claude-opus-4-8"));
 
             // Idle → the sandbox swap applies immediately and the store follows.
-            requestAgentModelChange("sandbox", "claude-haiku-4-5");
+            requestAgentModelChange("sandbox", { model: "claude-haiku-4-5", effort: "medium" });
             expect(agentModels().current.sandbox).toBe("claude-haiku-4-5");
             expect(agentModels().pending.size).toBe(0);
 
             // Busy (a chat turn) → the chat switch schedules and shows pending without changing current.
             const leaveTurn = enterChatTurn();
-            requestAgentModelChange("conversation", "claude-sonnet-4-5");
-            expect(agentModels().pending.get("conversation")).toBe("claude-sonnet-4-5");
+            requestAgentModelChange("conversation", { model: "claude-sonnet-4-5", effort: "high" });
+            expect(agentModels().pending.get("conversation")).toEqual({ model: "claude-sonnet-4-5", effort: "high" });
             expect(agentModels().current.conversation).toBe("claude-opus-4-8");
 
             // The turn settles → the pending switch lands and clears.

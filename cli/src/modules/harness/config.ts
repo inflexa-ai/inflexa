@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { type Result } from "neverthrow";
-import { modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
+import { AGENT_EFFORTS, modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { SANDBOX_IMAGE } from "../libs/images.ts";
 
@@ -226,6 +226,40 @@ export function writeAgentModel(agent: AgentName, model: string): Result<void, C
     const models = (config.models ?? {}) as Record<string, unknown>;
     const agents = { ...(models.agents as Record<string, unknown> | undefined), [agent]: model };
     return writeConfig({ ...config, models: { ...models, agents } });
+}
+
+/** A reasoning effort an agent can run at: one rung of {@link AGENT_EFFORTS}. */
+export type AgentEffort = (typeof AGENT_EFFORTS)[number];
+
+/**
+ * The effort of each role when `models.efforts` names none. The conversation agent talks to a person and
+ * plans the analysis, thus it reasons deeper. The sandbox and utility agents do many bounded calls, where
+ * `medium` costs less for each call.
+ */
+export const DEFAULT_AGENT_EFFORTS: Readonly<Record<AgentName, AgentEffort>> = { conversation: "high", sandbox: "medium", utility: "medium" };
+
+/**
+ * Each agent's reasoning effort: `models.efforts.<agent>`, else {@link DEFAULT_AGENT_EFFORTS}. A malformed
+ * `models` block gives the defaults. `resolveModelConnection` reports that block, thus this resolver adds
+ * no second report.
+ */
+export function resolveAgentEfforts(): Record<AgentName, AgentEffort> {
+    const parsed = modelsConfigSchema.safeParse(readConfig().models ?? {});
+    const efforts = parsed.success ? (parsed.data.efforts ?? {}) : {};
+    return { ...DEFAULT_AGENT_EFFORTS, ...efforts };
+}
+
+/**
+ * Persist one agent's effort to `models.efforts.<agent>`, spread-preserving like {@link writeAgentModel}:
+ * each other key of the config, and the effort of each other agent, stay as they are.
+ */
+export function writeAgentEffort(agent: AgentName, effort: AgentEffort): Result<void, ConfigError> {
+    const config = readConfig();
+    // `config.models` is `unknown` in lib/config.ts, thus spread it and its nested `efforts` as plain
+    // records, the same as `writeAgentModel`.
+    const models = (config.models ?? {}) as Record<string, unknown>;
+    const efforts = { ...(models.efforts as Record<string, unknown> | undefined), [agent]: effort };
+    return writeConfig({ ...config, models: { ...models, efforts } });
 }
 
 /**

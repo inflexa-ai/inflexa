@@ -3,6 +3,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import "../../extensions/index.ts"; // installs Response.prototype.jsonWith, which listConnectionModels uses
 import type { ChatSetupError, ModelAccess } from "../proxy/models.ts";
+import { AGENT_EFFORTS } from "../../lib/config.ts";
 import type { ResolvedModelConnection } from "./config.ts";
 import { listConnectionModels, validateModelSelection, type ListModelsSeams, type ValidateSelectionSeams } from "./model_listing.ts";
 
@@ -38,6 +39,11 @@ function modelsResponse(ids: string[], init?: ResponseInit): Response {
     return new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }), init);
 }
 
+/** A models body whose entries carry a raw `capabilities` block, as Anthropic's GET /v1/models reports it. */
+function capabilityResponse(models: { id: string; capabilities: unknown }[]): Response {
+    return new Response(JSON.stringify({ data: models }));
+}
+
 /** A fetch that records its call and answers with `res`. */
 function recordingFetch(res: () => Promise<Response>): { fetch: ListModelsSeams["fetch"]; calls: { url: string; headers: Record<string, string> }[] } {
     const calls: { url: string; headers: Record<string, string> }[] = [];
@@ -55,7 +61,11 @@ describe("listConnectionModels — per-mode request shape", () => {
         const rec = recordingFetch(() => Promise.resolve(modelsResponse(["claude-sonnet-4-5", "claude-opus-4-8"])));
         const result = await listConnectionModels(seamsFor({ connection: { mode: "cliproxy", provider: "anthropic", agents: {} }, fetch: rec.fetch }));
 
-        expect(result._unsafeUnwrap()).toEqual(["claude-sonnet-4-5", "claude-opus-4-8"]);
+        // The proxy reports no capability and serves Claude only, thus each model gets the full ladder.
+        expect(result._unsafeUnwrap()).toEqual([
+            { id: "claude-sonnet-4-5", efforts: AGENT_EFFORTS },
+            { id: "claude-opus-4-8", efforts: AGENT_EFFORTS },
+        ]);
         expect(rec.calls).toHaveLength(1);
         expect(rec.calls[0]?.url).toContain("/v1/models");
         expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer sk-proxy" });
@@ -71,7 +81,11 @@ describe("listConnectionModels — per-mode request shape", () => {
             }),
         );
 
-        expect(result._unsafeUnwrap()).toEqual(["gpt-4o", "gpt-4o-mini"]);
+        // An OpenAI-compatible wire sends the effort name as it is, thus an unreported model gets no ladder.
+        expect(result._unsafeUnwrap()).toEqual([
+            { id: "gpt-4o", efforts: [] },
+            { id: "gpt-4o-mini", efforts: [] },
+        ]);
         expect(rec.calls[0]?.url).toBe("https://api.example.com/v1/models");
         expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer sk-direct" });
     });
@@ -88,7 +102,7 @@ describe("listConnectionModels — per-mode request shape", () => {
             }),
         );
 
-        expect(result._unsafeUnwrap()).toEqual(["claude-sonnet-4-5"]);
+        expect(result._unsafeUnwrap()).toEqual([{ id: "claude-sonnet-4-5", efforts: AGENT_EFFORTS }]);
         expect(rec.calls[0]?.url).toBe("https://api.anthropic.com/v1/models");
         expect(rec.calls[0]?.headers).toEqual({ "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" });
     });
@@ -111,7 +125,7 @@ describe("listConnectionModels — per-mode request shape", () => {
                 fetch: rec.fetch,
             }),
         );
-        expect(result._unsafeUnwrap()).toEqual(["claude-sonnet-5"]);
+        expect(result._unsafeUnwrap()).toEqual([{ id: "claude-sonnet-5", efforts: AGENT_EFFORTS }]);
         expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer gw-jwt", "anthropic-version": "2023-06-01" });
     });
 
@@ -133,6 +147,55 @@ describe("listConnectionModels — per-mode request shape", () => {
         );
         expect(result._unsafeUnwrapErr()).toEqual({ type: "key_missing" });
         expect(rec.calls).toHaveLength(0);
+    });
+});
+
+describe("listConnectionModels — the effort ladder of each model", () => {
+    const direct: ResolvedModelConnection = {
+        mode: "direct",
+        provider: "anthropic",
+        baseURL: "https://api.anthropic.com/v1",
+        protocol: "anthropic",
+        agents: {},
+    };
+    const yes = { supported: true };
+    const no = { supported: false };
+
+    async function effortsFor(capabilities: unknown, connection: ResolvedModelConnection = direct): Promise<readonly string[] | undefined> {
+        const rec = recordingFetch(() => Promise.resolve(capabilityResponse([{ id: "claude-x", capabilities }])));
+        const result = await listConnectionModels(seamsFor({ connection, modelApiKey: "sk-ant", fetch: rec.fetch }));
+        return result._unsafeUnwrap()[0]?.efforts;
+    }
+
+    test("a reported capability gives each rung the model supports, in ladder order", async () => {
+        expect(await effortsFor({ effort: { supported: true, low: yes, medium: no, high: yes, xhigh: no, max: no } })).toEqual(["low", "high"]);
+    });
+
+    test("a model with max but no xhigh gets xhigh, because the provider sends xhigh as max", async () => {
+        expect(await effortsFor({ effort: { supported: true, low: yes, medium: yes, high: yes, xhigh: null, max: yes } })).toEqual(AGENT_EFFORTS);
+        expect(await effortsFor({ effort: { supported: true, low: yes, medium: yes, high: yes, xhigh: yes, max: no } })).toEqual(AGENT_EFFORTS);
+    });
+
+    test("a model that reports effort as unsupported gets no ladder", async () => {
+        expect(await effortsFor({ effort: { supported: false } })).toEqual([]);
+    });
+
+    test("no capability block falls back by wire: the full ladder for cliproxy and anthropic, none for openai-compatible", async () => {
+        expect(await effortsFor(undefined, { mode: "cliproxy", provider: "anthropic", agents: {} })).toEqual(AGENT_EFFORTS);
+        expect(await effortsFor({ effort: null })).toEqual(AGENT_EFFORTS);
+        expect(
+            await effortsFor(undefined, {
+                mode: "direct",
+                provider: "openai",
+                baseURL: "https://api.example.com/v1",
+                protocol: "openai-compatible",
+                agents: {},
+            }),
+        ).toEqual([]);
+    });
+
+    test("a capability block of an unknown shape costs that model its report only, never the listing", async () => {
+        expect(await effortsFor({ effort: { supported: "maybe" } })).toEqual(AGENT_EFFORTS);
     });
 });
 

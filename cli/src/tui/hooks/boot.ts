@@ -2,9 +2,16 @@ import { createEffect, createSignal, onCleanup } from "solid-js";
 
 import { env } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
-import type { ModelConnectionIdentity, ResolvedHarnessConfig } from "../../modules/harness/config.ts";
+import type { AgentEffort, ModelConnectionIdentity, ResolvedHarnessConfig } from "../../modules/harness/config.ts";
 import { bootHarnessRuntime, describeBootError, type HarnessRuntime } from "../../modules/harness/runtime.ts";
-import { currentAgentModels, onAgentStateChange, pendingAgentSelections, type AgentName } from "../../modules/harness/agent_switch.ts";
+import {
+    currentAgentEfforts,
+    currentAgentModels,
+    onAgentStateChange,
+    pendingAgentSelections,
+    type AgentName,
+    type AgentSelection,
+} from "../../modules/harness/agent_switch.ts";
 import { collectStoreDebris } from "../../modules/libs/store.ts";
 
 // The embedded harness runtime's boot lifecycle as seen by the chat UI, held here (not inside
@@ -122,11 +129,13 @@ export function __resetBootForTest(): void {
 export type AgentModelsState = {
     /** Each user-facing agent's model as it is RUNNING right now — empty strings until the runtime installs the switch. */
     readonly current: Readonly<Record<AgentName, string>>;
+    /** Each agent's effort as it is RUNNING right now — `null` until the runtime installs the switch. */
+    readonly efforts: Readonly<Record<AgentName, AgentEffort>> | null;
     /** Agents with a persisted selection not yet applied to the live runtime (a switch scheduled behind agent work). */
-    readonly pending: ReadonlyMap<AgentName, string>;
+    readonly pending: ReadonlyMap<AgentName, AgentSelection>;
 };
 
-const EMPTY_AGENT_MODELS: AgentModelsState = { current: { conversation: "", sandbox: "", utility: "" }, pending: new Map() };
+const EMPTY_AGENT_MODELS: AgentModelsState = { current: { conversation: "", sandbox: "", utility: "" }, efforts: null, pending: new Map() };
 
 const [agentModelsState, setAgentModels] = createSignal<AgentModelsState>(EMPTY_AGENT_MODELS);
 
@@ -142,7 +151,7 @@ export const agentModels = agentModelsState;
  */
 export function watchAgentModels(): void {
     const refresh = (): void => {
-        setAgentModels({ current: currentAgentModels(), pending: pendingAgentSelections() });
+        setAgentModels({ current: currentAgentModels(), efforts: currentAgentEfforts(), pending: pendingAgentSelections() });
     };
     const unsub = onAgentStateChange(refresh);
     onCleanup(unsub);

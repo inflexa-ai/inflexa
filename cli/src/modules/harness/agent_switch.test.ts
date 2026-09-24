@@ -10,6 +10,7 @@ import {
     __resetGaugeForTest,
     clearAgentSwitch,
     createSwappableProvider,
+    currentAgentEfforts,
     currentAgentModels,
     enterChatTurn,
     installAgentSwitch,
@@ -19,15 +20,18 @@ import {
     pendingAgentSelections,
     requestAgentModelChange,
     agentProviderInner,
+    type AgentSelection,
     type SwappableChatProvider,
 } from "./agent_switch.ts";
+import type { AgentEffort } from "./config.ts";
 
-// A provider stub tagged with its bound model so a swap is observable by identity — its `chat`/
+// A provider stub tagged with its bound model and effort so a swap is observable by identity — its `chat`/
 // `chatStream` are never reached (the switch only rebuilds and swaps handles, never calls the wire).
-type TaggedProvider = ChatProvider & { readonly __model: string };
-function fakeProvider(model: string): TaggedProvider {
+type TaggedProvider = ChatProvider & { readonly __model: string; readonly __effort: AgentEffort };
+function fakeProvider({ model, effort }: AgentSelection): TaggedProvider {
     return {
         __model: model,
+        __effort: effort,
         capabilities: { toolCalling: true },
         chat: () => {
             throw new Error("chat must not be called in switch tests");
@@ -43,6 +47,16 @@ function fakeProvider(model: string): TaggedProvider {
 /** Read the bound model of the inner provider an agent's swappable handle currently delegates to. */
 function agentModel(handle: SwappableChatProvider): string {
     return (agentProviderInner(handle) as TaggedProvider).__model;
+}
+
+/** Read the bound effort of the inner provider an agent's swappable handle currently delegates to. */
+function agentEffort(handle: SwappableChatProvider): AgentEffort {
+    return (agentProviderInner(handle) as TaggedProvider).__effort;
+}
+
+/** A selection at the effort `setup` boots each agent on, unless the case names another. */
+function sel(model: string, effort: AgentEffort = "medium"): AgentSelection {
+    return { model, effort };
 }
 
 // Install a switch over faked wiring. `swapSandboxEmitters` matches `runtime.ts`'s realization: it
@@ -64,9 +78,9 @@ function setup(
     emitStepCompleted: () => void;
 } {
     const swappable = {
-        conversation: createSwappableProvider(fakeProvider(models.conversation)),
-        sandbox: createSwappableProvider(fakeProvider(models.sandbox)),
-        utility: createSwappableProvider(fakeProvider(models.utility)),
+        conversation: createSwappableProvider(fakeProvider(sel(models.conversation))),
+        sandbox: createSwappableProvider(fakeProvider(sel(models.sandbox))),
+        utility: createSwappableProvider(fakeProvider(sel(models.utility))),
     };
     const emitters = createSwappableSandboxEmitters(`anthropic/${models.sandbox}`);
     const emitterSwapNames: string[] = [];
@@ -74,9 +88,9 @@ function setup(
 
     installAgentSwitch({
         swappable,
-        rebuildProvider: (model) => {
+        rebuildProvider: (selection) => {
             rebuilds += 1;
-            return fakeProvider(model);
+            return fakeProvider(selection);
         },
         // `runtime.ts` realizes this seam as `emitters.swap(name)`; the fake delegates to the SAME real
         // holder so the emit helpers below read through the stable delegating handle the boot injects.
@@ -87,7 +101,7 @@ function setup(
             emitters.swap(name);
         },
         modelProvider: "anthropic",
-        initialModels: { conversation: models.conversation, sandbox: models.sandbox, utility: models.utility },
+        initialSelections: { conversation: sel(models.conversation), sandbox: sel(models.sandbox), utility: sel(models.utility) },
     });
 
     const runStarted = (runId: string): RunProvenanceEvent => ({ type: "run_started", analysisId: "an-1", runId, planSummary: "p", stepCount: 1, atMs: 1 });
@@ -169,7 +183,7 @@ describe("agent-work gauge", () => {
 describe("agent switch — idle applies immediately", () => {
     test("switching the sandbox model while idle applies now, rebuilds the provider, and re-stamps the emitters", () => {
         const h = setup();
-        const result = requestAgentModelChange("sandbox", "claude-new");
+        const result = requestAgentModelChange("sandbox", sel("claude-new"));
 
         expect(result).toEqual({ status: "applied" });
         expect(agentModel(h.swappable.sandbox)).toBe("claude-new");
@@ -184,7 +198,7 @@ describe("agent switch — idle applies immediately", () => {
         const h = setup({ conversation: "same-model", sandbox: "same-model", utility: "same-model" });
         const sandboxInnerBefore = agentProviderInner(h.swappable.sandbox);
 
-        const result = requestAgentModelChange("conversation", "claude-chat-new");
+        const result = requestAgentModelChange("conversation", sel("claude-chat-new"));
 
         expect(result).toEqual({ status: "applied" });
         expect(agentModel(h.swappable.conversation)).toBe("claude-chat-new");
@@ -199,7 +213,7 @@ describe("agent switch — idle applies immediately", () => {
         const conversationBefore = agentProviderInner(h.swappable.conversation);
         const sandboxBefore = agentProviderInner(h.swappable.sandbox);
 
-        expect(requestAgentModelChange("utility", "claude-utility-new")).toEqual({ status: "applied" });
+        expect(requestAgentModelChange("utility", sel("claude-utility-new"))).toEqual({ status: "applied" });
 
         expect(agentModel(h.swappable.utility)).toBe("claude-utility-new");
         expect(agentProviderInner(h.swappable.conversation)).toBe(conversationBefore);
@@ -209,11 +223,24 @@ describe("agent switch — idle applies immediately", () => {
 
     test("selecting the model an agent already runs is a no-op that reports applied without a rebuild", () => {
         const h = setup();
-        const result = requestAgentModelChange("sandbox", "claude-sand");
+        const result = requestAgentModelChange("sandbox", sel("claude-sand"));
 
         expect(result).toEqual({ status: "applied" });
         expect(h.rebuildCount()).toBe(0);
         expect(pendingAgentSelections().size).toBe(0);
+    });
+
+    test("an effort-only change while idle rebuilds the provider at the new effort and keeps the provenance emitters", () => {
+        const h = setup();
+        const result = requestAgentModelChange("sandbox", sel("claude-sand", "high"));
+
+        expect(result).toEqual({ status: "applied" });
+        expect(h.rebuildCount()).toBe(1);
+        expect(agentModel(h.swappable.sandbox)).toBe("claude-sand");
+        expect(agentEffort(h.swappable.sandbox)).toBe("high");
+        expect(currentAgentEfforts()).toEqual({ conversation: "medium", sandbox: "high", utility: "medium" });
+        // The provenance name carries the model only, thus the emitters stay.
+        expect(h.emitterSwapNames).toEqual([]);
     });
 });
 
@@ -226,9 +253,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         h.emitStepCompleted();
         expect(lastStepModel()).toBe("anthropic/claude-sand");
 
-        const result = requestAgentModelChange("sandbox", "claude-next");
+        const result = requestAgentModelChange("sandbox", sel("claude-next"));
         expect(result).toEqual({ status: "scheduled" });
-        expect(pendingAgentSelections().get("sandbox")).toBe("claude-next");
+        expect(pendingAgentSelections().get("sandbox")).toEqual(sel("claude-next"));
         // Not yet applied — the provider still delegates to the old inner and no emitter re-stamped.
         expect(agentModel(h.swappable.sandbox)).toBe("claude-sand");
         expect(h.emitterSwapNames).toEqual([]);
@@ -247,7 +274,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const h = setup();
         const leaveTurn = enterChatTurn();
 
-        const result = requestAgentModelChange("conversation", "claude-chat-next");
+        const result = requestAgentModelChange("conversation", sel("claude-chat-next"));
         expect(result).toEqual({ status: "scheduled" });
         expect(agentModel(h.swappable.conversation)).toBe("claude-conv");
 
@@ -261,9 +288,9 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const h = setup();
         const leaveTurn = enterChatTurn();
 
-        expect(requestAgentModelChange("utility", "claude-utility-next")).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("utility", sel("claude-utility-next"))).toEqual({ status: "scheduled" });
         expect(agentModel(h.swappable.utility)).toBe("claude-utility");
-        expect(pendingAgentSelections().get("utility")).toBe("claude-utility-next");
+        expect(pendingAgentSelections().get("utility")).toEqual(sel("claude-utility-next"));
 
         leaveTurn();
         expect(agentModel(h.swappable.utility)).toBe("claude-utility-next");
@@ -297,7 +324,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 void params.emit({ type: "text-delta", text: chunks[i]! });
                 emitted.push(chunks[i]!);
                 if (i === 2) {
-                    const result = requestAgentModelChange("conversation", "claude-mid-stream");
+                    const result = requestAgentModelChange("conversation", sel("claude-mid-stream"));
                     midStream.push({ status: result.status, idle: isAgentWorkIdle(), innerModel: agentModel(h.swappable.conversation) });
                 }
             }
@@ -347,8 +374,8 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const leaveTurn = enterChatTurn();
         h.emitRunStarted("run-1");
 
-        requestAgentModelChange("sandbox", "claude-last");
-        expect(pendingAgentSelections().get("sandbox")).toBe("claude-last");
+        requestAgentModelChange("sandbox", sel("claude-last"));
+        expect(pendingAgentSelections().get("sandbox")).toEqual(sel("claude-last"));
 
         // Chat turn ends, but the run is still in flight → still pending.
         leaveTurn();
@@ -365,11 +392,25 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         const h = setup();
         noteDataProfileState("an-1", true);
 
-        expect(requestAgentModelChange("sandbox", "claude-after-profile")).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("sandbox", sel("claude-after-profile"))).toEqual({ status: "scheduled" });
         expect(agentModel(h.swappable.sandbox)).toBe("claude-sand");
 
         noteDataProfileState("an-1", false);
         expect(agentModel(h.swappable.sandbox)).toBe("claude-after-profile");
+    });
+
+    test("an effort-only change behind a chat turn is scheduled, then lands at the turn boundary", () => {
+        const h = setup();
+        const leaveTurn = enterChatTurn();
+
+        expect(requestAgentModelChange("conversation", sel("claude-conv", "xhigh"))).toEqual({ status: "scheduled" });
+        expect(pendingAgentSelections().get("conversation")).toEqual(sel("claude-conv", "xhigh"));
+        expect(agentEffort(h.swappable.conversation)).toBe("medium");
+
+        leaveTurn();
+        expect(agentEffort(h.swappable.conversation)).toBe("xhigh");
+        expect(currentAgentEfforts()?.conversation).toBe("xhigh");
+        expect(pendingAgentSelections().size).toBe(0);
     });
 });
 
@@ -382,20 +423,21 @@ describe("agent switch — state notifications + no active runtime", () => {
         });
 
         h.emitRunStarted("run-1");
-        requestAgentModelChange("sandbox", "claude-x"); // scheduled → 1 notify
+        requestAgentModelChange("sandbox", sel("claude-x")); // scheduled → 1 notify
         expect(notifications).toBe(1);
         h.emitRunCompleted("run-1"); // applied at idle → 1 notify
         expect(notifications).toBe(2);
 
         unsub();
-        requestAgentModelChange("conversation", "claude-y"); // idle apply, but unsubscribed
+        requestAgentModelChange("conversation", sel("claude-y")); // idle apply, but unsubscribed
         expect(notifications).toBe(2);
     });
 
     test("a change requested with no live runtime reports scheduled (config persists it for next boot)", () => {
         // No `installAgentSwitch` this test — the beforeEach cleared any prior controller.
-        expect(requestAgentModelChange("sandbox", "whatever")).toEqual({ status: "scheduled" });
+        expect(requestAgentModelChange("sandbox", sel("whatever"))).toEqual({ status: "scheduled" });
         expect(currentAgentModels()).toEqual({ conversation: "", sandbox: "", utility: "" });
+        expect(currentAgentEfforts()).toBeNull();
         expect(pendingAgentSelections().size).toBe(0);
     });
 });
