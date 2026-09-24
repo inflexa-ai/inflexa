@@ -353,6 +353,9 @@ is an embedder concern.
   only its transport values: the emit sink, the signal, the provider factory, the
   usage recorder, and the approval binding. `runChatTurn` prepares the turn with
   `prepareChatTurn`, resolves the agent of the thread type, and stores the opening.
+  A host that must know the agent, or answer a refusal before it streams, calls
+  `openChatTurn` and then the `run` of the open turn. The host gives the session
+  with no provenance. The harness sets the provenance from the resolved agent.
   Then it runs `runAgent` with a round sink that stores each round, and it closes
   the turn with its outcome. The root loop compacts its view at the conversation
   budget. The host wraps this in its own request handler, because the harness
