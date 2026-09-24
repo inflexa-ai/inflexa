@@ -155,6 +155,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         };
 
         expect(result.error.kind).toBe("extraction-failed");
+        expect(result.error.message).toContain("submitted no report and no blocker");
         // The first run and one salvage request. No conversion call follows.
         expect(provider.calls).toHaveLength(2);
     });

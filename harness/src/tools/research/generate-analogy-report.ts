@@ -284,13 +284,13 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
     });
 }
 
-/** Single source of truth for the wrapper's terminal "could not recover" envelope. */
+/** The envelope of a run that recorded no outcome, also after its salvage. */
 function buildExtractionFailedEnvelope(): AnalogicalReasonerOutput {
     return {
         schemaVersion: "1",
         error: {
             kind: "extraction-failed",
-            message: "The analogical reasoner returned malformed output that could not " + "be recovered. Try narrowing the problem statement.",
+            message: "The analogical reasoner submitted no report and no blocker, also after a corrective request. Try narrowing the problem statement.",
         },
     };
 }
