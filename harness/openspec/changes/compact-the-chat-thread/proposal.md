@@ -1,11 +1,11 @@
 ## Why
 
-The chat thread keeps its history window under a budget of 120,000 tokens (`src/app/message-assembly.ts` line 55). `loadRecent` evicts the oldest turns in blocks of 4 turns (`src/memory/thread-history.ts` lines 597-650). The eviction has these costs:
+The chat thread keeps its history window under a budget of 120,000 tokens (`src/app/message-assembly.ts` line 27). `loadRecent` evicts the oldest turns in blocks of 4 turns (`src/memory/thread-history.ts` lines 624-706). The eviction has these costs:
 
 - An evicted turn leaves the context with no trace. The agent loses the decisions, the file paths, and the run ids of that turn.
 - Each block shift changes the first message of the window. Thus the next request writes the whole message prefix to the cache again.
 - The provider binds each signed thinking block to the exact prefix of its request. After a shift, each kept thinking block is invalid. With the mode `drop_block`, the API drops that block and each later block of the request.
-- A report thread keeps its seed with `keepFirstTurn` (line 633). But it loses each turn between the seed and the window, with no trace.
+- A report thread keeps its seed with `keepFirstTurn` (line 687). But it loses each turn between the seed and the window, with no trace.
 
 ## What Changes
 

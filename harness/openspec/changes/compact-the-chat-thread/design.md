@@ -1,11 +1,11 @@
 ## Context
 
-A chat turn sends a window of the stored history of its thread. `prepareChatTurn` calls `assembleMessages` (`src/app/message-assembly.ts` line 95). The assembly reads `loadRecent(threadId, 120_000, { keepFirstTurn })` (line 98). `loadRecent` (`src/memory/thread-history.ts` line 570) does these steps:
+A chat turn sends a window of the stored history of its thread. `prepareChatTurn` calls `assembleMessages` (`src/app/chat-turn.ts` line 126). The assembly reads `loadRecent(threadId, 120_000, { keepFirstTurn })` (`src/app/message-assembly.ts` line 68). `loadRecent` (`src/memory/thread-history.ts` line 624) does these steps:
 
 1. It groups the rows into turns at each genuine user start.
-2. It walks from the newest turn, and it keeps each older turn while the sum of the `tokens` column fits the budget (lines 613-620).
-3. It snaps the count of evicted turns up to a multiple of `EVICTION_BLOCK_TURNS`, which is 4 (lines 423 and 625).
-4. For a report thread, it puts the first turn in front of the kept turns (line 633).
+2. It walks from the newest turn, and it keeps each older turn while the sum of the `tokens` column fits the budget (lines 669-673).
+3. It snaps the count of evicted turns up to a multiple of `EVICTION_BLOCK_TURNS`, which is 4 (lines 434 and 679).
+4. For a report thread, it puts the first turn in front of the kept turns (line 687).
 
 The snap holds the first message of the window still for 4 turns, and then it moves by 4 turns. Each move writes the message prefix to the cache again, and it makes each kept thinking block invalid. The evicted turns leave no summary.
 

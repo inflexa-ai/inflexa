@@ -354,8 +354,9 @@ is an embedder concern.
   usage recorder, and the approval binding. `runChatTurn` prepares the turn with
   `prepareChatTurn`, resolves the agent of the thread type, and stores the opening.
   Then it runs `runAgent` with a round sink that stores each round, and it closes
-  the turn with its outcome. The host wraps this in its own request handler,
-  because the harness ships no HTTP route layer.
+  the turn with its outcome. The root loop compacts its view at the conversation
+  budget. The host wraps this in its own request handler, because the harness
+  ships no HTTP route layer.
 - **Run-event stream**: a single DBOS-backed stream for each workflow. The
   workflow bodies produce it, and a reader of the typed run-event parts of the
   harness (`harness/src/contracts/`) consumes it. There is no standalone route file

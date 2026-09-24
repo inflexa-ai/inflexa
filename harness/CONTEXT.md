@@ -685,6 +685,13 @@ Other facts:
   no store. A durable loop passes no sink, because a DBOS replay runs the loop body
   again.
 
+  `RunAgentOptions.compaction` is an optional compaction policy. With a policy,
+  each request sends the view of the transcript. Before each task request, the
+  loop estimates the view. When the view exceeds the budget, the loop runs an
+  exchange: a continuation that asks for memory edits and a summary. Then it
+  appends a summary marker, or a drop marker when the exchange gives no summary,
+  and the next request starts at the marker. A durable loop passes no policy.
+
   A `finishReason: "length"` truncation is a
   **recoverable soft-error, not a stop**. Only the final content part can be
   truncated. Thus the loop does **not** execute a truncated trailing tool call,
@@ -759,17 +766,20 @@ Other facts:
   turn runs, and then `done`, `aborted`, or `failed`. The transcript read merges
   the rounds of a turn into one assistant message.
 
-  `loadRecent` walks newest-first to a token budget, and it snaps the
-  window to a valid turn boundary, thus it never gives an orphan tool-result
-  continuation. It is conversation-scoped.
+  The store deletes no row, and stored markers decide what a turn sends.
+  `loadRecent` gives the view of the latest marker: the seed of a report thread,
+  then the latest summary marker, then each later message. A compaction exchange
+  never joins the view. A drop marker keeps the newest turns after the summary.
+  The view never holds an orphan tool result. It is conversation-scoped.
 - **Working memory** — `cortex_working_memory`, one JSONB row for each analysis.
   It has four sections: `goal`, `constraints`, and `hypotheses` are analysis-flat,
   and `findings` is run-scoped, keyed by `runId`. The agent maintains it section by
   section with one `updateWorkingMemory` tool, and it does not rewrite the whole
   blob. Its Markdown render is a context record after the user message of a turn.
-  A turn stores a new record only when the render changed.
-- **There is no semantic recall.** A conversation operates inside the
-  token-bounded thread window only. Refer to
+  A turn stores a new record only when the render changed. A compaction moves the
+  lasting facts into working memory, and a new record comes after the summary.
+- **There is no semantic recall.** A conversation operates inside the view of
+  its latest marker only. Refer to
   [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
 - **Workflow and sandbox agent loops** — no `messages` table. The durability is
   the DBOS step cache, and the debug method is read-side reconstruction from
