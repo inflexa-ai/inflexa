@@ -185,6 +185,63 @@ export function isSyntheticRecordMessage(message: ModelMessage): boolean {
     return message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[SYNTHETIC_RECORD_KEY] === true;
 }
 
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key that holds the compaction id on each message of its exchange, which the view rule skips. */
+export const COMPACTION_EXCHANGE_KEY = "compactionExchange";
+
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key that holds the figures of a compaction marker, which the view rule reads. */
+export const COMPACTION_MARKER_KEY = "compactionMarker";
+
+const compactionFigures = { id: z.string(), tokensBefore: z.number(), tokensAfter: z.number(), durationMs: z.number() };
+
+const CompactionMarkerSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("summary"), ...compactionFigures }),
+    z.object({ kind: z.literal("drop"), ...compactionFigures, keptTurns: z.number() }),
+]);
+
+export type CompactionMarker = z.infer<typeof CompactionMarkerSchema>;
+
+/** A copy of `message` whose harness namespace, which no provider reads, holds the compaction id. */
+export function markCompactionExchange(message: ModelMessage, id: string): ModelMessage {
+    const existingOptions = message.providerOptions ?? {};
+    return {
+        ...message,
+        providerOptions: {
+            ...existingOptions,
+            [HARNESS_PROVIDER_NAMESPACE]: { ...existingOptions[HARNESS_PROVIDER_NAMESPACE], [COMPACTION_EXCHANGE_KEY]: id },
+        },
+    };
+}
+
+export function compactionExchangeOf(message: ModelMessage): string | undefined {
+    const id = message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[COMPACTION_EXCHANGE_KEY];
+    return typeof id === "string" ? id : undefined;
+}
+
+// A marker is synthetic, thus it opens no turn. It is no host record, because its divider shows it.
+function compactionMarkerMessage(text: string, marker: CompactionMarker): ModelMessage {
+    return {
+        role: "user",
+        content: text,
+        providerOptions: { [HARNESS_PROVIDER_NAMESPACE]: { [SYNTHETIC_MESSAGE_KEY]: true, [COMPACTION_MARKER_KEY]: marker } },
+    };
+}
+
+export function summaryMarkerMessage(summary: string, marker: Extract<CompactionMarker, { kind: "summary" }>): ModelMessage {
+    return compactionMarkerMessage(`[Conversation Summary]\n${summary}`, marker);
+}
+
+/** The marker of a compaction that gave no summary. No view holds it. */
+export function dropMarkerMessage(marker: Extract<CompactionMarker, { kind: "drop" }>): ModelMessage {
+    return compactionMarkerMessage("[Compaction Failed]", marker);
+}
+
+export function compactionMarkerOf(message: ModelMessage): CompactionMarker | undefined {
+    const value = message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[COMPACTION_MARKER_KEY];
+    if (value === undefined) return undefined;
+    const parsed = CompactionMarkerSchema.safeParse(value);
+    return parsed.success ? parsed.data : undefined;
+}
+
 type LegacyContent = string | Array<Record<string, unknown>>;
 
 export interface LegacyMessageRow {

@@ -4,7 +4,17 @@ import { createHash } from "node:crypto";
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
 
-import { CONTEXT_HASH_KEY, CONTEXT_KIND_KEY, contextRecordMessage, HARNESS_PROVIDER_NAMESPACE } from "../memory/ai-sdk-message-storage.js";
+import {
+    COMPACTION_EXCHANGE_KEY,
+    COMPACTION_MARKER_KEY,
+    CONTEXT_HASH_KEY,
+    CONTEXT_KIND_KEY,
+    contextRecordMessage,
+    HARNESS_PROVIDER_NAMESPACE,
+    markCompactionExchange,
+    summaryMarkerMessage,
+    syntheticUserMessage,
+} from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "./__fixtures__/session.js";
 import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "./prompt-cache.js";
 import type { FetchLike } from "./types.js";
@@ -398,6 +408,28 @@ describe("a context record on the wire", () => {
         expect(body).toContain("The working memory is empty.");
         expect(body).not.toContain(CONTEXT_KIND_KEY);
         expect(body).not.toContain(CONTEXT_HASH_KEY);
+        expect(body).not.toContain(`"${HARNESS_PROVIDER_NAMESPACE}"`);
+    });
+});
+
+describe("compaction marks on the wire", () => {
+    it("sends the text of a marker and of an exchange message on the anthropic arm, and no key of the harness namespace", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
+        });
+        const exchangeRequest = markCompactionExchange(syntheticUserMessage("Reply with the summary."), "c-1");
+        const reply = markCompactionExchange({ role: "assistant", content: [{ type: "text", text: "The groups differ." }] }, "c-1");
+        const marker = summaryMarkerMessage("The groups differ.", { kind: "summary", id: "c-1", tokensBefore: 10, tokensAfter: 5, durationMs: 1 });
+
+        const result = await provider.chat({ ...request, messages: [...request.messages, exchangeRequest, reply, marker] }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        const body = JSON.stringify(cap.requests[0]?.body);
+        expect(body).toContain("Reply with the summary.");
+        expect(body).toContain("[Conversation Summary]");
+        expect(body).not.toContain(COMPACTION_EXCHANGE_KEY);
+        expect(body).not.toContain(COMPACTION_MARKER_KEY);
         expect(body).not.toContain(`"${HARNESS_PROVIDER_NAMESPACE}"`);
     });
 });
