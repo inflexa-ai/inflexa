@@ -207,15 +207,15 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 8. Documents and final checks
 
-- [ ] 8.1 In `CONTEXT.md`, section "Memory", write the item "Thread history" again. Name the markers, the view of the latest marker, and the compaction. Say that the store deletes nothing.
-- [ ] 8.2 In the same section, write the item "Working memory" again. The compaction moves the lasting facts into it, and its record comes after the summary.
-- [ ] 8.3 In the same section, write the item on semantic recall again. A conversation operates inside the view of its latest marker.
-- [ ] 8.4 In `CONTEXT.md`, section "Loop primitives", add the compaction policy to the item "The loop": the view, the check before a task request, the exchange, and the markers.
-- [ ] 8.5 In `CLAUDE.md`, section "Key Components", add one sentence to the item "Chat turn": the root loop compacts at the conversation budget.
-- [ ] 8.6 Write each changed sentence of 8.1 to 8.5 in STE. Run `bun ../.claude/hooks/ste-check.ts --file` on each file, and fix each hard finding in the changed text. Do not format a markdown file.
-- [ ] 8.7 Run `grep -rnE 'EVICTION_BLOCK_TURNS|DEFAULT_HISTORY_TOKEN_BUDGET|tokenBudget' src CONTEXT.md CLAUDE.md README.md`. Expected result: no match.
-- [ ] 8.8 Run `tsc -p tsconfig.json`. Expected result: no error.
-- [ ] 8.9 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
-- [ ] 8.10 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.
-- [ ] 8.11 In `harness/`, run `openspec validate compact-the-chat-thread --strict`. Expected result: the change is valid.
-- [ ] 8.12 In `cli/`, run `bun run harness:local`, `tsc -p tsconfig.json`, `bun test`, and `bun run lint`. Expected result: no error and no failed test.
+- [x] 8.1 In `CONTEXT.md`, section "Memory", write the item "Thread history" again. Name the markers, the view of the latest marker, and the compaction. Say that the store deletes nothing.
+- [x] 8.2 In the same section, write the item "Working memory" again. The compaction moves the lasting facts into it, and its record comes after the summary.
+- [x] 8.3 In the same section, write the item on semantic recall again. A conversation operates inside the view of its latest marker.
+- [x] 8.4 In `CONTEXT.md`, section "Loop primitives", add the compaction policy to the item "The loop": the view, the check before a task request, the exchange, and the markers.
+- [x] 8.5 In `CLAUDE.md`, section "Key Components", add one sentence to the item "Chat turn": the root loop compacts at the conversation budget.
+- [x] 8.6 Write each changed sentence of 8.1 to 8.5 in STE. Run `bun ../.claude/hooks/ste-check.ts --file` on each file, and fix each hard finding in the changed text. Do not format a markdown file.
+- [x] 8.7 Run `grep -rnE 'EVICTION_BLOCK_TURNS|DEFAULT_HISTORY_TOKEN_BUDGET|tokenBudget' src CONTEXT.md CLAUDE.md README.md`. Expected result: no match.
+- [x] 8.8 Run `tsc -p tsconfig.json`. Expected result: no error.
+- [x] 8.9 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
+- [x] 8.10 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.
+- [x] 8.11 In `harness/`, run `openspec validate compact-the-chat-thread --strict`. Expected result: the change is valid.
+- [x] 8.12 In `cli/`, run `bun run harness:local`, `tsc -p tsconfig.json`, `bun test`, and `bun run lint`. Expected result: no error and no failed test.

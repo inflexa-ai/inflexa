@@ -133,7 +133,7 @@ export function isInterruptedMessage(message: ModelMessage): boolean {
  * It has to carry the `user` role because the wire format requires a user turn after a truncated
  * assistant message, but it is not user input, and the difference is load-bearing: a `user` message is
  * what OPENS a conversation turn, so an unmarked synthetic one reads as a spurious turn boundary —
- * splitting one turn into two for the token window and, worse, giving a tail-turn removal a cut point in
+ * splitting one turn into two for the view and, worse, giving a tail-turn removal a cut point in
  * the middle of a turn. Marking it is what lets {@link isSyntheticUserMessage} keep those readers honest.
  *
  * `content` takes prose or the parts of a user message, because a picture rides a file part and no
@@ -157,7 +157,7 @@ export function syntheticUserMessage(content: UserContent): ModelMessage {
  * outcome, which the model should read on its next turn but which nobody said.
  *
  * Synthetic in every sense that matters to a turn-boundary reader ({@link isSyntheticUserMessage} is
- * true of it), so it cannot split a turn for the token window nor hand a tail retraction a mid-turn
+ * true of it), so it cannot split a turn for the view nor hand a tail retraction a mid-turn
  * cut point. It differs from {@link syntheticUserMessage} in exactly one respect, and it is the
  * decisive one: this is a fact the reader is entitled to see, so the display reconstruction emits it
  * — as a `system` message, which is what it is — rather than dropping it as loop machinery.
