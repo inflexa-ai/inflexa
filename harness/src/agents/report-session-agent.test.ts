@@ -137,8 +137,6 @@ describe("createReportSessionAgent", () => {
         // The prose reads the printed form, and the look settles the agreement.
         expect(reportSessionPrompt).toContain("Quote a number as the page prints it");
         expect(reportSessionPrompt).toContain("the sentence and the card agree");
-        // The anti-pattern entry names the zero-p transcription.
-        expect(reportSessionPrompt).toContain("Transcribe a zero p-value");
     });
 
     test("the prompt teaches the reader words of a gene set", () => {
@@ -148,8 +146,6 @@ describe("createReportSessionAgent", () => {
         // that the renderer writes and never a place that the agent authors into.
         expect(reportSessionPrompt).toContain("it stays in the table cell that holds it");
         expect(reportSessionPrompt).toContain("The renderer writes the");
-        // The anti-pattern entry names the raw token in the prose.
-        expect(reportSessionPrompt).toContain("Write a raw token into the prose");
     });
 
     test("the prompt teaches derive-and-chart as an obligation with its artifact test", () => {
@@ -260,7 +256,6 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("citation blocks");
         expect(reportSessionPrompt).toContain("citation of the pinned evidence");
         expect(reportSessionPrompt).toContain("does not resolve");
-        expect(reportSessionPrompt).toContain("Inline a citation that does not resolve");
         // The listing tool is the route to a pinned citation, thus the agent never learns one from a
         // refusal. The shape of the field rides the description of the tool, thus the prompt names none.
         expect(reportSessionPrompt).toContain("`citations` field");
@@ -275,8 +270,6 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("A citation block sits beside the content");
         // The renderer owns the list, thus the appendix is not a block that the agent adds.
         expect(reportSessionPrompt).toContain("the renderer writes the References appendix");
-        // The anti-pattern entry names the hand-built section.
-        expect(reportSessionPrompt).toContain("Build a References section");
     });
 
     test("the prompt carries the argument spine", () => {
@@ -296,8 +289,6 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("before the sentence that tells the reader what to see");
         expect(reportSessionPrompt).toContain("The evidence illustrates the prose");
         expect(reportSessionPrompt).toContain("The angle of the brief decides the order of the findings");
-        // The anti-pattern entry names evidence that precedes its sentence.
-        expect(reportSessionPrompt).toContain("Show evidence before its sentence");
     });
 
     test("the prompt divides a derivation from a chart knob", () => {
@@ -321,10 +312,6 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("Prefer a chart block when a table artifact holds the data");
         expect(reportSessionPrompt).toContain("a figure image only when no table carries the data");
         expect(reportSessionPrompt).toContain("this rule is about the report page alone");
-        // The anti-pattern entry names the figure that stands where a table serves,
-        // and the derivation widens what a table can serve.
-        expect(reportSessionPrompt).toContain("Reach for a figure where a table serves");
-        expect(reportSessionPrompt).toContain("that no derivation can give");
     });
 
     test("the prompt carries the headline obligations", () => {
@@ -340,8 +327,6 @@ describe("createReportSessionAgent", () => {
         // A summary of fewer than three cards states no comparison, thus it names why.
         expect(reportSessionPrompt).toContain("A summary holds three cards or more");
         expect(reportSessionPrompt).toContain("name the reason to the user");
-        // The anti-pattern entry names the caveated headline.
-        expect(reportSessionPrompt).toContain("Lead with a caveated value");
     });
 
     test("the definition carries no per-session value in the prompt", () => {

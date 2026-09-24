@@ -118,7 +118,7 @@ export function renderTask(step: AnalysisStep): string {
         parts.push(section("Context", step.context.trim()));
     }
     if (step.constraints && step.constraints.length > 0) {
-        parts.push(section("Constraints (these are requirements, not suggestions — follow them exactly)", bullets(step.constraints)));
+        parts.push(section("Constraints (each one is a requirement of this step)", bullets(step.constraints)));
     }
     if (step.acceptance_criteria && step.acceptance_criteria.length > 0) {
         parts.push(section("Acceptance criteria (the result must satisfy all of these)", bullets(step.acceptance_criteria)));
