@@ -13,14 +13,21 @@
  * one input schema and one terminal contract via `createReportBlockerToolFor`.
  * What differs per loop is only what a blocker *means* there, so each call site
  * injects its own `blockedWhen` prose and its own capture closure. The tool
- * records the reason and tells the agent to stop; the driving body reads its
- * own outcome cell after the loop and decides the terminal status.
+ * records the reason and tells the agent to stop; the driving body reads the
+ * outcome after the loop and decides the terminal status. The sandbox step body
+ * runs its tools in durable steps, thus it reads the blocker from the transcript
+ * (`recordedBlocker`), which a replay rebuilds, and not only from its cell.
  */
 
+import type { ModelMessage } from "ai";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { repairToolInput } from "../../lib/zod-issues.js";
+import { toolOutcomeForOutputType } from "../../loop/tool-outcome.js";
 import { defineTool, type Tool } from "../define-tool.js";
+
+export const REPORT_BLOCKER_TOOL_ID = "report_blocker";
 
 export interface BlockerOutcome {
     readonly kind: "blocker";
@@ -62,7 +69,7 @@ export interface ReportBlockerDeps {
  */
 export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
     return defineTool({
-        id: "report_blocker",
+        id: REPORT_BLOCKER_TOOL_ID,
         description: `Terminal. ${deps.blockedWhen} Pass a clear reason. Stop immediately after calling — take no further actions.`,
         inputSchema: ReportBlockerInputSchema,
         describeCall: "none",
@@ -74,6 +81,48 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
             });
         },
     });
+}
+
+/**
+ * The blocker that a run recorded, read from its transcript: the reason of the
+ * first `report_blocker` call, in call order, whose result is ok.
+ *
+ * A durable replay returns the cached result of each tool step and runs no
+ * `execute`, thus the cell of a replayed run stays empty. The transcript holds
+ * each call and its result on the first run and on each replay alike, thus a
+ * blocker read from it is the same on both. An ok result means that `execute`
+ * ran, thus the input passed the schema of the tool, after a repair when the
+ * dispatch repaired it.
+ */
+export function recordedBlocker(messages: readonly ModelMessage[]): BlockerOutcome | null {
+    const recorded = new Set<string>();
+    for (const message of messages) {
+        if (message.role !== "tool") continue;
+        for (const part of message.content) {
+            if (part.type === "tool-result" && part.toolName === REPORT_BLOCKER_TOOL_ID && toolOutcomeForOutputType(part.output.type) === "ok") {
+                recorded.add(part.toolCallId);
+            }
+        }
+    }
+    for (const message of messages) {
+        if (message.role !== "assistant" || typeof message.content === "string") continue;
+        for (const part of message.content) {
+            if (part.type !== "tool-call" || part.toolName !== REPORT_BLOCKER_TOOL_ID || !recorded.has(part.toolCallId)) continue;
+            const reason = blockerReason(part.input);
+            if (reason !== undefined) return { kind: "blocker", reason };
+        }
+    }
+    return null;
+}
+
+/** The reason of a `report_blocker` input, validated as the dispatch validates it. */
+function blockerReason(input: unknown): string | undefined {
+    const parsed = ReportBlockerInputSchema.safeParse(input);
+    if (parsed.success) return parsed.data.reason;
+    const repaired = repairToolInput(input, parsed.error);
+    if (repaired === undefined) return undefined;
+    const reparsed = ReportBlockerInputSchema.safeParse(repaired);
+    return reparsed.success ? reparsed.data.reason : undefined;
 }
 
 /**

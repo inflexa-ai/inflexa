@@ -132,6 +132,12 @@ This design rejects one tool for the whole envelope. `AnalogicalReasonerOutputSc
 
 `generateRunSynthesis` gives `toolBudget: { literature_reviewer: 3 }`. The iteration budget of the synthesizer plans for 1 to 3 delegations, and each delegation runs a full sub-agent loop. Thus the budget makes that plan a rule of the harness. The prompt names no count, because a model takes a number in a prompt as a target. The refusal gives the limit to the model, thus the prompt does not change.
 
+### The step body reads a blocker from the transcript
+
+The step agent runs `report_blocker` in a durable step. A replay returns the cached result of that step and runs no `execute`, thus the blocker cell stays empty. After the loop, the body reads the blocker from the transcript: the reason of the first `report_blocker` call whose result is ok. The transcript holds each call and its result on the first run and on each replay. The cell stays the fallback for an agent whose blocker tool is not the tool of the harness.
+
+The data profiler has the same pattern with `submit_profile`. Its loop reads the cell during the run through `resolved`, thus a read after the loop cannot fix it. This change does not fix the data profiler.
+
 ## Risks / Trade-offs
 
 - [A model calls a tool in each wrap-up request] → The run ends with no final text. The literature reviewer already gives an error for an empty report. The terminal record of the run is a warn, thus an operator sees the count.

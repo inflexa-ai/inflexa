@@ -42,7 +42,7 @@ Harness source:
 - `src/providers/types.ts` and `src/providers/prompt-cache.ts`, for the comments only.
 - The new `src/tools/sandbox/submit-file-metadata.ts`, and `src/agents/sandbox/shared.ts`, `src/workflows/sandbox-step.ts`, and `src/execution/post-step-pipeline.ts`.
 - `src/execution/artifact-metadata.ts` and `src/execution/step-summary.ts`.
-- `src/tools/research/generate-analogy-report.ts`, `src/prompts/analogical-reasoner.ts`, and the header of `src/tools/sandbox/report-blocker.ts`.
+- `src/tools/research/generate-analogy-report.ts`, `src/prompts/analogical-reasoner.ts`, and `src/tools/sandbox/report-blocker.ts`: its header, and the read of a recorded blocker from a transcript.
 - `src/execution/run-synthesis.ts`.
 - `CONTEXT.md`.
 

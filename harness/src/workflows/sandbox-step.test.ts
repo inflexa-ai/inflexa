@@ -42,6 +42,7 @@ import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createReportBlockerTool, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "./sandbox-step.js";
 
@@ -510,6 +511,66 @@ describe("sandbox-step post-step continuations", () => {
         expect(provider.calls).toHaveLength(2);
         expect(provider.calls[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "cached description" })]);
+    });
+});
+
+// ── a blocker on a durable replay ───────────────────────────────────
+
+describe("sandbox-step blocker replay", () => {
+    it("keeps the blocked status on a replay, which returns the cached report_blocker step and runs no execute", async () => {
+        const dbos = await import("@dbos-inc/dbos-sdk");
+        const cache = new Map<string, unknown>();
+        // The first run: each step runs its body, and the store keeps its value by name.
+        (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
+            const value = await fn();
+            cache.set(config!.name!, value);
+            return value;
+        });
+        const reason = "The input has no batch column.";
+        const replies = [makeMessage([toolUseBlock("b1", "report_blocker", { reason })], "tool_use"), makeMessage([textBlock("blocked")], "end_turn")];
+        const holders: BlockerHolder[] = [];
+        const blockerDeps = (provider: AgentChat): SandboxStepDeps => ({
+            ...usageStepDeps(undefined),
+            provider,
+            buildAgent: ({ blockerHolder, fileMetadata }) => {
+                holders.push(blockerHolder);
+                return stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]);
+            },
+        });
+
+        const first = await runSandboxStepBody(usageStepInput(), blockerDeps(scriptedProvider((i) => replies[i]!)));
+
+        // The replay: a step that the first run recorded returns its value and runs no body.
+        (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
+            cache.has(config!.name!) ? cache.get(config!.name!) : fn(),
+        );
+        const replayProvider = scriptedProvider(() => {
+            throw new Error("the replay called the provider");
+        });
+        const replayed = await runSandboxStepBody(usageStepInput(), blockerDeps(replayProvider));
+
+        expect(first).toMatchObject({ status: "blocked", error: reason });
+        expect(replayed).toMatchObject({ status: "blocked", error: reason });
+        expect(replayProvider.calls).toHaveLength(0);
+        // The replay ran no `execute` of report_blocker, thus its cell stayed empty.
+        expect(holders.map((holder) => holder.outcome)).toEqual([{ kind: "blocker", reason }, null]);
+    });
+
+    it("takes the reason of the first report_blocker call whose result is ok, not of a call that failed its input schema", async () => {
+        const replies = [
+            makeMessage([toolUseBlock("b0", "report_blocker", { reason: "" }), toolUseBlock("b1", "report_blocker", { reason: "first recorded" })], "tool_use"),
+            makeMessage([toolUseBlock("b2", "report_blocker", { reason: "second recorded" })], "tool_use"),
+            makeMessage([textBlock("blocked")], "end_turn"),
+        ];
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            provider: scriptedProvider((i) => replies[i]!),
+            buildAgent: ({ blockerHolder, fileMetadata }) => stepAgent(fileMetadata, [createReportBlockerTool(blockerHolder)]),
+        };
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result).toMatchObject({ status: "blocked", error: "first recorded" });
     });
 });
 
