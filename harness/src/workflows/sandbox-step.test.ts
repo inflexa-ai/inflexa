@@ -447,6 +447,72 @@ describe("sandbox-step file-metadata output tool", () => {
     });
 });
 
+// ── the post-step continuations of the step agent ───────────────────
+
+describe("sandbox-step post-step continuations", () => {
+    /** A real file under the step's write prefix, thus the manifest is not empty and the metadata stage runs. */
+    async function seedStepOutput(): Promise<void> {
+        const dir = join(workspaceRoot, "runs", USAGE_RUN_ID, USAGE_STEP_ID, "output");
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "result.csv"), "gene,count\nTP53,7\n");
+    }
+
+    function outputFiles(): unknown {
+        return dbosState.emittedParts.find((part) => part.type === "data-step-output")?.files;
+    }
+
+    it("gives the summary the messages of the metadata exchange after the transcript of the task", async () => {
+        await seedStepOutput();
+        const submit = makeMessage(
+            [
+                toolUseBlock("m1", "submit_file_metadata", {
+                    files: [{ path: "output/result.csv", description: "gene counts", dataType: "count matrix", format: "csv" }],
+                }),
+            ],
+            "tool_use",
+        );
+        const described = makeMessage([textBlock("described")], "end_turn");
+        // The task, the two requests of the metadata exchange, then the summary.
+        const replies = [makeMessage([textBlock("done")], "end_turn"), submit, described, makeMessage([textBlock("## Summary")], "end_turn")];
+        const provider = scriptedProvider((i) => replies[i]!);
+
+        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
+
+        expect(result.status).toBe("complete");
+        expect(provider.calls).toHaveLength(4);
+        const metadataRequest = provider.calls[1]!;
+        const summaryRequest = provider.calls[3]!;
+        // [briefing, assistant(done), metadata request, assistant(submit), tool(result), assistant(described), summary request]
+        expect(summaryRequest.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool", "assistant", "user"]);
+        expect(JSON.stringify(summaryRequest.messages.slice(0, 2))).toBe(JSON.stringify(metadataRequest.messages.slice(0, 2)));
+        expect(summaryRequest.messages[2]!.content).toBe(metadataRequest.messages[2]!.content);
+        expect(summaryRequest.messages[3]).toEqual(submit.message);
+        expect(summaryRequest.messages[5]).toEqual(described.message);
+        expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "gene counts" })]);
+    });
+
+    it("reads a cached metadata array of an earlier version as entries, and the summary continues the transcript directly", async () => {
+        await seedStepOutput();
+        const dbos = await import("@dbos-inc/dbos-sdk");
+        const runInline = dbos.DBOS.runStep as unknown as (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown>;
+        const cached = [{ dbPath: `runs/${USAGE_RUN_ID}/${USAGE_STEP_ID}/output/result.csv`, description: "cached description", metadata: { format: "csv" } }];
+        // The checkpoint of the earlier version: a bare array of entries, which the replay returns with no call.
+        (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
+            config?.name === "post-step.generate-file-metadata" ? cached : runInline(fn, config),
+        );
+        const replies = [makeMessage([textBlock("done")], "end_turn"), makeMessage([textBlock("## Summary")], "end_turn")];
+        const provider = scriptedProvider((i) => replies[i]!);
+
+        const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
+
+        expect(result.status).toBe("complete");
+        // The task and the summary only. The summary request follows the transcript directly.
+        expect(provider.calls).toHaveLength(2);
+        expect(provider.calls[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+        expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "cached description" })]);
+    });
+});
+
 // ── the spawn of the step sandbox ───────────────────────────────────
 
 describe("sandbox-step spawn", () => {

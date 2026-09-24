@@ -9,8 +9,9 @@
  *  2. `createSandbox`       — provision the sandbox; persist its handle.
  *  3. `runAgent`            — the harness agent loop. Every LLM and tool
  *                             call inside is its own durableStep.
- *  4. `generateFileMetadata`— post-step LLM call (chunked, slice-to-length).
- *  5. `generateStepSummary` — post-step LLM call producing `output/summary.md`.
+ *  4. `generateFileMetadata`— the file-metadata continuation of the step agent.
+ *  5. `generateStepSummary` — the summary continuation of the step agent,
+ *                             producing `output/summary.md`.
  *  6. `reconcile + register`— write artifact manifest entries to cortex_artifacts.
  *  7. `syncArtifacts`       — register provenance + upload missing file_ids
  *                             via the managed root (scoped to this run+step).
@@ -64,6 +65,7 @@ import {
     generateStepSummaryAndWrite,
     reconcileAndRegisterStepArtifacts,
     vectorIndexStepOutputs,
+    type StepFileMetadata,
 } from "../execution/post-step-pipeline.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import type { ResourceSpec } from "../config/resource-limits.js";
@@ -255,6 +257,8 @@ export interface SandboxAgentBuildContext {
      * harness-sandbox-agents spec). The agent factory gives it to
      * `SandboxAgentDeps.fileMetadata`, thus the agent declares
      * `submit_file_metadata` from its first request. The task masks the tool.
+     * The post-step pipeline arms the cell, and the continuation lets the tool
+     * run.
      */
     readonly fileMetadata: FileMetadataCell;
     /** Shared host-side citation resolver for allowlisted sandbox agents. */
@@ -279,12 +283,12 @@ export interface SandboxStepDeps {
     readonly logger?: Logger;
     /**
      * LLM usage-accounting seam. Covers this step's agent loop and the
-     * post-step sub-agent loops alike; omitted falls back to the no-op recorder.
+     * post-step continuations alike; omitted falls back to the no-op recorder.
      */
     readonly usageRecorder?: UsageRecorder;
     /** Shared resolver threaded from `assembleCoreRuntime`. */
     readonly citationResolver: CitationResolver;
-    /** Non-streaming chat — drives the agent loop + the post-step sub-agents. */
+    /** Non-streaming chat — drives the agent loop + the post-step continuations. */
     readonly provider: AgentChat;
     /** Write-side embedder for the post-step vector index. */
     readonly embedding: EmbeddingProvider;
@@ -295,11 +299,18 @@ export interface SandboxStepDeps {
      * cloud-free build, external provenance ledger in the managed build).
      */
     readonly artifactRegistry: ArtifactRegistry;
-    /** Workspace read seam — backs `read_file` in the metadata + summary loops. */
+    /**
+     * Workspace read seam. No stage of the step body reads it: the metadata
+     * and summary continuations run the `read_file` and `grep` of the step
+     * agent, which the agent factory wires.
+     */
     readonly workspaceFs: WorkspaceFilesystem;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    /** Sandbox model id — provenance label for metadata + summary generation. */
+    /**
+     * Sandbox model id. No stage of the step body reads it: the step agent
+     * carries its own model id, and the continuations run that agent.
+     */
     readonly model: string;
     /**
      * Build the agent definition for this step. The parent resolves the
@@ -321,11 +332,17 @@ export interface SandboxStepDeps {
  * absolute path each post-step dep walks to discover artifacts;
  * `lineageCollector` carries the runtime-observed input/script edges the
  * step loop accumulated, which registration translates into managed-root parents.
+ * `agent` and `fileMetadata` are what the metadata and summary continuations
+ * extend the conversation of the task with.
  */
 export interface PostStepContext {
     readonly input: SandboxStepInput;
     readonly session: RunSession;
     readonly transcript: readonly LoopMessage[];
+    /** The step agent of the task: the continuations send its system prompt and its declared tools. */
+    readonly agent: AgentDefinition;
+    /** The cell that the `submit_file_metadata` tool of `agent` records into. */
+    readonly fileMetadata: FileMetadataCell;
     /** Absolute path to the step's writable artifact directory. */
     readonly writePrefix: string;
     /** Sandbox handle id — informational only, used in log lines. */
@@ -339,6 +356,24 @@ export interface PostStepContext {
 function nextFunctionIdFactory(): () => string {
     let n = 0;
     return () => `fn-${(n++).toString(36)}`;
+}
+
+/** The file-metadata product of a stage that degraded: no entries, and no exchange. */
+const NO_STEP_FILE_METADATA: StepFileMetadata = { entries: [], messages: [] };
+
+/**
+ * Read the checkpoint of the file-metadata stage. A workflow that started on
+ * an earlier version checkpointed a bare array of entries, with no messages.
+ * A replay of it gets those entries, and the summary then continues the
+ * transcript of the task directly.
+ */
+export function readStepFileMetadata(checkpoint: StepFileMetadata | readonly FileMetadataEntry[]): StepFileMetadata {
+    return isBareEntries(checkpoint) ? { entries: checkpoint, messages: [] } : checkpoint;
+}
+
+/** `Array.isArray` as a guard that also narrows a readonly array. */
+function isBareEntries(checkpoint: StepFileMetadata | readonly FileMetadataEntry[]): checkpoint is readonly FileMetadataEntry[] {
+    return Array.isArray(checkpoint);
 }
 
 /**
@@ -798,6 +833,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         input,
         session,
         transcript,
+        agent,
+        fileMetadata,
         writePrefix,
         sandboxId: sandbox.sandboxId,
         lineageCollector,
@@ -808,21 +845,25 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // outputs are checkpointed (see the harness-durable-runtime spec): the conditional terminal emits they
     // gate (`data-step-summary`, file-tree) stay replay-stable and the billed
     // LLM calls are not re-issued on recovery. The remaining stages (walk /
-    // reconcile / sync / index) stay inline — a separate follow-up.
-    const metadataEntries = await safeRunValue(
-        logger,
-        () =>
-            DBOS.runStep(() => generateStepFileMetadata(deps, postCtx, manifest), {
-                name: "post-step.generate-file-metadata",
-            }),
-        "post-step.metadata",
-        [] as readonly FileMetadataEntry[],
+    // reconcile / sync / index) stay inline — a separate follow-up. The
+    // metadata checkpoint carries the messages of its exchange, thus a replay
+    // gives the summary continuation the same prefix.
+    const { entries: metadataEntries, messages: metadataMessages } = readStepFileMetadata(
+        await safeRunValue(
+            logger,
+            () =>
+                DBOS.runStep(() => generateStepFileMetadata(deps, postCtx, manifest), {
+                    name: "post-step.generate-file-metadata",
+                }),
+            "post-step.metadata",
+            NO_STEP_FILE_METADATA,
+        ),
     );
     await emitActivity("generating-summary", "Summarizing step results");
     const summary = await safeRunValue(
         logger,
         () =>
-            DBOS.runStep(() => generateStepSummaryAndWrite(deps, postCtx, manifest), {
+            DBOS.runStep(() => generateStepSummaryAndWrite(deps, postCtx, manifest, metadataMessages), {
                 name: "post-step.generate-step-summary",
             }),
         "post-step.summary",
