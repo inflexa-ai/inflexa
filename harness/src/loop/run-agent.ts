@@ -35,6 +35,7 @@ import { isToolError, readToolResultImages, type Tool, type ToolContext, type To
 import { labelToolFailure, labelToolValidationFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
 import { addChatUsage, countChatTokens, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
+import { refusalsFor, type ToolBudget, type ToolMask } from "./tool-mask.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
@@ -106,6 +107,19 @@ export interface RunAgentOptions {
      * dispatch round, once every sibling tool result has been appended.
      */
     readonly resolved?: () => boolean;
+    /**
+     * The tools that can run for each loop request. Each request still declares
+     * every tool of the agent: the tool set is part of the prefix that the prompt
+     * cache and a signed thinking block bind to. A call outside the mask gets an
+     * error result, and its tool does not run. Absent lets each declared tool run.
+     */
+    readonly toolMask?: ToolMask;
+    /**
+     * The maximum count of calls of each tool in this run. A call past the budget
+     * of its tool, an earlier call of the same round included, gets an error
+     * result, and its tool does not run.
+     */
+    readonly toolBudget?: ToolBudget;
     /**
      * Prompt-cache policy for every LLM call this run makes. Defaults to
      * `DEFAULT_PROMPT_CACHE` (5m) — an agent loop always re-sends its prefix, so
@@ -378,6 +392,42 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         return errored;
     };
 
+    // The calls of each tool that passed the mask and the budget in this run.
+    const used = new Map<string, number>();
+
+    /**
+     * Dispatch one round under a mask and the budget of the run. A refused call
+     * gets its error result at its own index, with no step and no span, and the
+     * calls that pass dispatch as usual. `results`, `durations` and
+     * `resultDetails` stay positionally aligned with `calls`.
+     */
+    const dispatchRound = async (
+        calls: readonly ToolCallPart[],
+        mask: ToolMask | undefined,
+    ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> => {
+        const refusals = refusalsFor(calls, mask, opts.toolBudget, used);
+        const admitted = calls.filter((_, idx) => refusals[idx] === undefined);
+        const dispatched = await dispatchTools(admitted, toolsById, toolCtx, isFatalLoopError, callStep, formatStepName.tool, encoding);
+        const results: ToolResultPart[] = [];
+        const durations: (number | undefined)[] = [];
+        const resultDetails: (ToolCallDetail | undefined)[] = [];
+        let next = 0;
+        for (const [idx, tu] of calls.entries()) {
+            const refused = refusals[idx];
+            if (refused !== undefined) {
+                results.push(errorResult(tu, refused));
+                durations.push(undefined);
+                resultDetails.push(undefined);
+                continue;
+            }
+            results.push(dispatched.results[next]!);
+            durations.push(dispatched.durations[next]);
+            resultDetails.push(dispatched.resultDetails[next]);
+            next++;
+        }
+        return { results, durations, resultDetails };
+    };
+
     const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
         settleTranscript();
         await emit({ type: "iteration", source, index: i, final: true });
@@ -435,15 +485,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             for (const [idx, tu] of earlier.entries()) {
                 await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(earlierDetails[idx]) });
             }
-            const { results, durations, resultDetails } = await dispatchTools(
-                earlier,
-                toolsById,
-                toolCtx,
-                isFatalLoopError,
-                callStep,
-                formatStepName.tool,
-                encoding,
-            );
+            const { results, durations, resultDetails } = await dispatchRound(earlier, opts.toolMask);
             const errored = await settleRound(earlier, results, earlierDetails, resultDetails, durations);
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             // The trailing call was never dispatched, but it reaches the model as an error
@@ -494,15 +536,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         for (const [idx, tu] of toolCalls.entries()) {
             await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
         }
-        const { results, durations, resultDetails } = await dispatchTools(
-            toolCalls,
-            toolsById,
-            toolCtx,
-            isFatalLoopError,
-            callStep,
-            formatStepName.tool,
-            encoding,
-        );
+        const { results, durations, resultDetails } = await dispatchRound(toolCalls, opts.toolMask);
         const errored = await settleRound(toolCalls, results, details, resultDetails, durations);
         if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
         messages.push({ role: "tool", content: results });

@@ -8,23 +8,23 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 1. The tool mask and the tool budget
 
-- [ ] 1.1 Add `src/loop/tool-mask.ts`. Export `type ToolMask = "none" | { readonly allow: readonly string[] }` and `type ToolBudget = Readonly<Record<string, number>>`. The module header says that a request always declares the full tool set.
-- [ ] 1.2 In `src/loop/tool-mask.ts`, export `refusalsFor(calls, mask, budget, used): (string | undefined)[]`. For each call in call order, it gives `undefined` when the call passes, or the text of the refusal.
-- [ ] 1.3 In `refusalsFor`, a call passes when the mask names its tool and `used` is below the budget of the tool. Add 1 to `used` for each call that passes, whatever its later result.
-- [ ] 1.4 Give each refusal as the JSON text `{ error, retryable: false }`, the shape that `toolErrorContent` gives. The mask refusal names the tool. The budget refusal names the tool and the limit.
-- [ ] 1.5 In the same file, export `maskExcept(tools: readonly Tool[], ids: readonly string[]): ToolMask`. It gives a mask of each tool id except `ids`.
-- [ ] 1.6 In `src/loop/run-agent.ts`, add `readonly toolMask?: ToolMask` and `readonly toolBudget?: ToolBudget` to `RunAgentOptions`, each with a doc comment. Without a mask, each declared tool can run.
-- [ ] 1.7 In `runAgentLoop`, keep one `used` map for each run. On both dispatch paths, call `refusalsFor` on the calls of the round before `dispatchTools`.
-- [ ] 1.8 Give each refused call `errorResult(tu, refusal)` at its index, and dispatch only the calls that pass. Expected result: a refused call runs no tool and no step, and the results keep the order of the calls.
-- [ ] 1.9 Keep the `tool-started` event of each call before the dispatch. Give the refused results to `settleRound` with the dispatched results. Expected result: each refused call gets `tool-finished` with the outcome `error`, and it counts as a tool error.
-- [ ] 1.10 In `src/loop/run-agent.test.ts`, add `describe("runAgent — tool mask and budget")` with these tests:
+- [x] 1.1 Add `src/loop/tool-mask.ts`. Export `type ToolMask = "none" | { readonly allow: readonly string[] }` and `type ToolBudget = Readonly<Record<string, number>>`. The module header says that a request always declares the full tool set.
+- [x] 1.2 In `src/loop/tool-mask.ts`, export `refusalsFor(calls, mask, budget, used): (string | undefined)[]`. For each call in call order, it gives `undefined` when the call passes, or the text of the refusal.
+- [x] 1.3 In `refusalsFor`, a call passes when the mask names its tool and `used` is below the budget of the tool. Add 1 to `used` for each call that passes, whatever its later result.
+- [x] 1.4 Give each refusal as the JSON text `{ error, retryable: false }`, the shape that `toolErrorContent` gives. The mask refusal names the tool. The budget refusal names the tool and the limit.
+- [x] 1.5 In the same file, export `maskExcept(tools: readonly Tool[], ids: readonly string[]): ToolMask`. It gives a mask of each tool id except `ids`.
+- [x] 1.6 In `src/loop/run-agent.ts`, add `readonly toolMask?: ToolMask` and `readonly toolBudget?: ToolBudget` to `RunAgentOptions`, each with a doc comment. Without a mask, each declared tool can run.
+- [x] 1.7 In `runAgentLoop`, keep one `used` map for each run. On both dispatch paths, call `refusalsFor` on the calls of the round before `dispatchTools`.
+- [x] 1.8 Give each refused call `errorResult(tu, refusal)` at its index, and dispatch only the calls that pass. Expected result: a refused call runs no tool and no step, and the results keep the order of the calls.
+- [x] 1.9 Keep the `tool-started` event of each call before the dispatch. Give the refused results to `settleRound` with the dispatched results. Expected result: each refused call gets `tool-finished` with the outcome `error`, and it counts as a tool error.
+- [x] 1.10 In `src/loop/run-agent.test.ts`, add `describe("runAgent — tool mask and budget")` with these tests:
   - A call outside the mask does not run, and its result names the mask.
   - The budget refuses the fourth call of a tool.
   - The budget counts the earlier calls of the same round.
   - A refused step-mode call records no step name.
   - The round of a truncation applies the mask to its earlier calls.
   - A run with no mask dispatches each call as before.
-- [ ] 1.11 Run `tsc -p tsconfig.json`. Run `bun test src/loop/run-agent.test.ts`. Run `bun run lint`. Run `bun run format:file src/loop/tool-mask.ts src/loop/run-agent.ts src/loop/run-agent.test.ts`.
+- [x] 1.11 Run `tsc -p tsconfig.json`. Run `bun test src/loop/run-agent.test.ts`. Run `bun run lint`. Run `bun run format:file src/loop/tool-mask.ts src/loop/run-agent.ts src/loop/run-agent.test.ts`.
 
 ## 2. The answer to an unanswered tool call
 
