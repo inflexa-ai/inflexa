@@ -30,11 +30,7 @@ export interface AgentDefinition {
     readonly systemPrompt: string;
     readonly model: string;
     readonly tools: readonly Tool[];
-    /**
-     * Runaway guard. At the cap the loop runs a wrap-up of at most two requests
-     * that ask for a text answer. The requests keep the tools and the tool choice
-     * of the loop, and a mask refuses each call.
-     */
+    /** Runaway guard: at the cap the loop runs up to two masked wrap-up requests, until it gets a text answer. */
     readonly maxIterations: number;
 }
 
@@ -64,16 +60,11 @@ export type EmitEvent =
     | {
           readonly type: "iteration";
           readonly source: EventSource;
-          /**
-           * Zero-based iteration index. Wrap-up request `k` has the index
-           * `maxIterations + k`. The wrap-up keeps the tools and the tool choice
-           * of the loop, and a mask refuses each call. A continuation counts
-           * from 0.
-           */
+          /** Zero-based. Wrap-up request `k` has index `maxIterations + k`; a continuation counts from 0. */
           readonly index: number;
           /**
-           * True when this iteration produced the loop's terminal reply. The last
-           * wrap-up request is final also when its reply called a tool.
+           * True when this iteration produced the loop's terminal reply, including
+           * the last wrap-up even when its reply called a tool.
            */
           readonly final: boolean;
       }

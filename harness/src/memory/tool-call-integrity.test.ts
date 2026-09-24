@@ -83,7 +83,6 @@ describe("answerUnansweredToolCalls", () => {
 
         expect(answered).toEqual([{ toolCallId: "tu-2", toolName: "echo" }]);
         expect(assistantContent(messages[1])).toEqual([toolCall("tu-1"), toolCall("tu-2")]);
-        // [user, assistant, tool(tu-1), tool(tu-2 not run), user, assistant]
         expect(messages.length).toBe(6);
         expect(toolParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-1"]);
         expect(toolParts(messages[3]).map((r) => [r.toolCallId, r.output.type])).toEqual([["tu-2", "error-text"]]);
@@ -131,7 +130,6 @@ describe("answerUnansweredToolCalls", () => {
         const answered = answerUnansweredToolCalls(messages);
 
         expect(answered.map((d) => d.toolCallId)).toEqual(["tu-1", "tu-2", "tu-3"]);
-        // Each answer goes directly after its own assistant message.
         expect(messages.map((m) => m.role)).toEqual(["assistant", "tool", "assistant", "tool"]);
     });
 

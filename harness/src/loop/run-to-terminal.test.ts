@@ -28,7 +28,6 @@ function submitTool(cell: { value: string | null }): Tool {
     });
 }
 
-/** A tool that is not terminal, and that counts its runs. */
 function countedTool(id: string): { tool: Tool; runs: () => number } {
     let runs = 0;
     const tool = defineTool({
@@ -269,7 +268,6 @@ describe("runToTerminal", () => {
         const nudge = messages[2]!;
         expect(nudge.content).toBe(NUDGE);
         expect(isSyntheticUserMessage(nudge)).toBe(true);
-        // [user, assistant(prose), nudge, assistant(submit), tool(result)]
         expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool"]);
         expect(salvage?.firstFinish.reason).toBe("stop");
     });

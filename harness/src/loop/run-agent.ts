@@ -99,11 +99,8 @@ export interface RunAgentOptions {
     readonly formatStepName?: StepNameFormatter;
     readonly isFatalLoopError?: (err: unknown) => boolean;
     /**
-     * The tool choice of each request of this run. The loop sends the same value
-     * on each request, because the tool choice is part of the prefix that the
-     * prompt cache and a signed thinking block bind to. The wrap-up at the
-     * iteration cap keeps the tools and this tool choice, and its mask refuses
-     * each call.
+     * Tool choice for every request of this run: part of the prefix that the
+     * prompt cache and a signed thinking block bind to.
      */
     readonly toolChoice?: ChatRequest["toolChoice"];
     /**
@@ -113,17 +110,11 @@ export interface RunAgentOptions {
      */
     readonly resolved?: () => boolean;
     /**
-     * The tools that can run for each loop request. Each request still declares
-     * every tool of the agent: the tool set is part of the prefix that the prompt
-     * cache and a signed thinking block bind to. A call outside the mask gets an
-     * error result, and its tool does not run. Absent lets each declared tool run.
+     * Tools allowed to run per request. The full tool set stays declared either
+     * way, since it is part of the cache/thinking-block prefix.
      */
     readonly toolMask?: ToolMask;
-    /**
-     * The maximum count of calls of each tool in this run. A call past the budget
-     * of its tool, an earlier call of the same round included, gets an error
-     * result, and its tool does not run.
-     */
+    /** Max calls per tool for this run; a call in the same round counts against the budget too. */
     readonly toolBudget?: ToolBudget;
     /**
      * Prompt-cache policy for every LLM call this run makes. Defaults to
@@ -197,13 +188,9 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0 });
     if (task !== "capped") return task;
 
-    // The wrap-up is a continuation of the same conversation: the requests keep
-    // the tool set and the tool choice of the loop, and the mask `"none"` refuses
-    // each call. A tool choice that forbids a call is not an option: the CAUTION
-    // of `ChatRequest.toolChoice` gives the reason. Request `k` keeps the step
-    // name `llm(maxIterations + k)`, thus the first one keeps the name of the
-    // single wrap-up call of an earlier version, and a replay finds its stored
-    // reply.
+    // The wrap-up refuses calls through the mask, not `toolChoice` (see its
+    // CAUTION), and keeps step name `llm(maxIterations + k)` so replay finds the
+    // reply an earlier, single-call wrap-up stored under the same name.
     const wrapUp = await loop.runSegment({
         mask: "none",
         maxRequests: WRAP_UP_MAX_REQUESTS,
@@ -219,41 +206,33 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 export interface LoopSegment {
     /** The tools that can run for each request of the segment. Absent lets each declared tool run. */
     readonly mask: ToolMask | undefined;
-    /** The cap of model requests in the segment. */
     readonly maxRequests: number;
-    /** The names of the durable steps of the segment. */
     readonly stepNames: StepNameFormatter;
     /** The `index` of the first request of the segment in its `iteration` events. */
     readonly firstIndex: number;
     /** A harness request that the segment appends, as a synthetic user message, before its first request. */
     readonly requestText?: string;
     /**
-     * The segment runs after the run used its iteration cap: a reply that ends it
-     * gives the capped finish, `max_iterations` or `aborted`, and its requests do
-     * not count as iterations of the run. Its last request emits the final
-     * `iteration` event, whatever its reply.
+     * The segment runs after the iteration cap: its requests do not count as
+     * iterations, and the last one always ends the run, whatever its reply.
      */
     readonly closesCappedRun?: boolean;
 }
 
 /**
- * One conversation of an agent, open for its segments. Each segment extends the
- * same message list under the same system prompt, the same declared tools, and
- * the same tool choice, thus each request extends the prefix of the one before
- * it. The segments of one run share the usage rollups, the counters, the budget,
- * and the terminal record.
+ * One conversation, open for its segments. Each segment extends the same
+ * prefix (system prompt, tools, tool choice) as the one before it.
  */
 export interface OpenLoop {
     /** Run one segment: the result of the run when a reply ends it, or `"capped"` when the segment used its cap. */
     runSegment(segment: LoopSegment): Promise<RunAgentResult | "capped">;
-    /** End a run whose last segment used its cap: settle the transcript, record the run, and give the capped finish. */
+    /** End a run after its last segment used its cap. */
     endCapped(): Promise<RunAgentResult>;
 }
 
 /**
- * Open the loop over one conversation. `metricAgentId` names the agent that the
- * token counters and the run metrics count under: `agent.id` for a run, or the
- * accounting agent id of a continuation.
+ * Open the loop over one conversation. `metricAgentId` is the id that usage
+ * and run metrics count under, which is not always `agent.id`.
  */
 export function openLoop(
     agent: AgentDefinition,
@@ -362,12 +341,10 @@ export function openLoop(
      * carry a complete tool call beside ANY finish reason, because the call
      * streams before the stop reason arrives, and only the dispatching branches
      * (`tool-calls`, a call-carrying `stop`, and `length`) run one. A call this
-     * run never dispatched is not executed (a filtered or aborted reply must not
-     * act): it gets the not-run result, which states that the call did not run.
-     * Without an answer, the unanswered call violates the wire contract — every
-     * tool call carries a result — and the provider boundary then refuses the
-     * whole transcript on every later turn of the thread. The answer removes and
-     * changes no message, because the transcript is append-only. Scoped past
+     * run never dispatched gets a not-run result instead of being executed or
+     * dropped: every tool call needs a result, or the provider refuses the
+     * transcript on the next turn. The fix only appends; it never edits or
+     * removes a message. Scoped past
      * `initial`: the caller's prefix is not this run's to repair.
      */
     const settleTranscript = (): void => {
@@ -398,11 +375,8 @@ export function openLoop(
     });
 
     /**
-     * One model request over the transcript so far, under the prefix of the
-     * conversation: the same system prompt, the same tool set, and the same tool
-     * choice on each request of each segment. The token counters grow inside the
-     * step body, thus a replayed step, which returns the stored reply, does not
-     * count the call again.
+     * One model request over the transcript so far. Token counters grow inside
+     * the step body, so a replayed step (a stored reply) does not double-count.
      */
     const callModel = async (stepName: string): Promise<ChatResponse> => {
         const request: ChatRequest = {
@@ -496,10 +470,8 @@ export function openLoop(
     const used = new Map<string, number>();
 
     /**
-     * Dispatch one round under a mask and the budget of the run. A refused call
-     * gets its error result at its own index, inside the step wrapper of its
-     * tool, and the calls that pass dispatch as usual. `results`, `durations`
-     * and `resultDetails` stay positionally aligned with `calls`.
+     * Dispatch one round under the run's mask and budget. A refused call still
+     * gets its own step slot, with an error result instead of running.
      */
     const dispatchRound = (
         calls: readonly ToolCallPart[],
@@ -598,9 +570,8 @@ export function openLoop(
                 settleTranscript();
                 await emit({ type: "iteration", source, index, final: true });
                 if (segment.closesCappedRun === true) {
-                    // The run used its cap before this reply, thus it reports the
-                    // cap. An abort is still the user cutting the turn, and the
-                    // reason carries it beside `cappedOut`.
+                    // The cap was already reached; `reason` still distinguishes an
+                    // abort (user cut the turn) from a plain `max_iterations` cap-out.
                     const reason = reply.finishReason === "aborted" ? "aborted" : "max_iterations";
                     recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
                     logFinish("warn", reason, true);
@@ -870,23 +841,16 @@ function appendDeferredImages(messages: LoopMessage[], results: readonly ToolRes
 /**
  * Dispatch one round of tool calls, and measure the time of each call.
  *
- * `refusals`, `results`, `durations` and `resultDetails` are positionally aligned with
- * `toolUses`. A refusal is the model-visible text of a call that the mask or the budget
- * refused, and `undefined` for a call that runs.
+ * `refusals`, `results`, `durations` and `resultDetails` are positionally aligned
+ * with `toolUses`; `refusals[i]` is the refusal text, or `undefined` if the call runs.
  *
- * A refused call runs inside the same wrapper, and under the same step name, as a
- * dispatched call of its tool id: a durable step for a step-mode tool or an unknown
- * id, and no wrapper for a workflow-mode or an inline-mode tool. Its body gives the
- * refusal, and the tool does not run. Thus the step sequence of a round is the same
- * with and without the mask. A replay also finds the step that an earlier build
- * recorded for the call when that build dispatched it as an unknown tool, because the
- * agent of that build did not declare the tool.
+ * A refused call still runs inside the same step wrapper and step name as a
+ * dispatched one, keeping a round's step sequence identical for replay.
  *
  * Each measurement brackets the same unit that the loop awaits for that call. For a
  * step-mode call that unit is `runStep`, thus the figure includes the durable-step
  * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
  * is genuinely fast. A bracket inside the step would report a body that did not run.
- * A refused call gets no measurement, because nothing ran.
  */
 async function dispatchTools(
     toolUses: readonly ToolCallPart[],

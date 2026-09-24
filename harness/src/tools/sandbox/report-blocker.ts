@@ -15,8 +15,8 @@
  * injects its own `blockedWhen` prose and its own capture closure. The tool
  * records the reason and tells the agent to stop; the driving body reads the
  * outcome after the loop and decides the terminal status. The sandbox step body
- * runs its tools in durable steps, thus it reads the blocker from the transcript
- * (`recordedBlocker`), which a replay rebuilds, and not only from its cell.
+ * runs in durable steps, so it reads the blocker back from the transcript
+ * (`recordedBlocker`) on replay, not only from its cell.
  */
 
 import type { ModelMessage } from "ai";
@@ -87,12 +87,8 @@ export function createReportBlockerToolFor(deps: ReportBlockerDeps): Tool {
  * The blocker that a run recorded, read from its transcript: the reason of the
  * first `report_blocker` call, in call order, whose result is ok.
  *
- * A durable replay returns the cached result of each tool step and runs no
- * `execute`, thus the cell of a replayed run stays empty. The transcript holds
- * each call and its result on the first run and on each replay alike, thus a
- * blocker read from it is the same on both. An ok result means that `execute`
- * ran, thus the input passed the schema of the tool, after a repair when the
- * dispatch repaired it.
+ * A replay returns each tool step's cached result without re-running
+ * `execute`, so the in-memory cell is empty on replay; the transcript is not.
  */
 export function recordedBlocker(messages: readonly ModelMessage[]): BlockerOutcome | null {
     const recorded = new Set<string>();

@@ -12,12 +12,6 @@
  * `WorkspaceFilesystem`, `inspect_data_profile` over the shared `Pool`, and the
  * bio/literature/context7/run-inspection tools its `meta.tools` allowlist names.
  *
- * Two cells of the step body each add one tool after every other tool: a
- * blocker cell adds `report_blocker`, and a file-metadata cell adds
- * `submit_file_metadata`, the output tool of the file-metadata continuation
- * after the task. The data profiler gets neither cell, because it declares no
- * blocked status and runs no post-step pipeline.
- *
  * Tool resolution is a single registry lookup — every name in `meta.tools`
  * must map to a concrete `Tool`; unknown names throw at composition time
  * so misconfigured agents fail at startup, not at the first LLM call.
@@ -141,19 +135,13 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
     /**
      * Per-run blocker cell (see the harness-sandbox-agents spec). When present, the agent gets a
      * `report_blocker` tool that records `{ kind: "blocker", reason }` into it;
-     * the sandbox-step body reads the blocker from the transcript after the
-     * loop, with the cell as its fallback. Omit for agents that have no
-     * terminal status to declare (such as the data profiler).
+     * the sandbox-step body reads the blocker from the transcript, falling back to
+     * the cell. Omit for agents that have no terminal status to declare (such as the data profiler).
      */
     readonly blockerHolder?: BlockerHolder;
     /**
-     * The per-step cell of the file-metadata continuation (see the
-     * harness-sandbox-agents spec). When present, the agent declares
-     * `submit_file_metadata` as its last tool from its first request, thus the
-     * task and the continuations after it declare the same tools. The task
-     * masks the tool, and only the file-metadata continuation lets it run. Omit
-     * it for an agent that runs no post-step pipeline, such as the data
-     * profiler.
+     * When present, the agent declares `submit_file_metadata` from its first request so the
+     * tool list stays stable across continuations; the task masks it, the continuation unmasks it.
      */
     readonly fileMetadata?: FileMetadataCell;
     /**

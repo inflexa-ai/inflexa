@@ -36,7 +36,6 @@ const VALID_ENVELOPE = {
     ],
 };
 
-/** The tools of each request of the reasoner: the search tools, then the two terminal tools. */
 const REASONER_TOOLS = ["search_semantic_scholar", "search_arxiv", "search_github_repos", "pubmed", "submit_analogy_report", "report_blocker"];
 
 const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
@@ -53,7 +52,6 @@ const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
 
 const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(id, "submit_analogy_report", report)], "tool_use");
 
-/** The tool result of one call in the messages of a request. */
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
     return request.messages
         .flatMap((message) => (message.role === "tool" ? message.content : []))
@@ -71,7 +69,6 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(result).toEqual(VALID_ENVELOPE);
         // The terminal tool ends the loop itself: no call follows the submit.
         expect(provider.calls).toHaveLength(1);
-        // The search tools come first, and the two terminal tools come last.
         expect(Object.keys(provider.calls[0]!.tools)).toEqual(REASONER_TOOLS);
 
         // Child loop ran on a Session derived via forSubAgent — callPath
@@ -114,9 +111,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
     it("salvages a run that ends on prose, and the mask of the salvage lets only the two terminal tools run", async () => {
         const provider = scriptedProvider([
-            // The first run ends on prose, with no outcome.
             makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn"),
-            // The salvage: a search call, which the mask refuses, then the submit.
             makeMessage([toolUseBlock("s1", "search_arxiv", { query: "adaptive control" })], "tool_use"),
             submitReport("t1", VALID_ENVELOPE),
         ]);
@@ -156,7 +151,6 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
         expect(result.error.kind).toBe("extraction-failed");
         expect(result.error.message).toContain("submitted no report and no blocker");
-        // The first run and one salvage request. No conversion call follows.
         expect(provider.calls).toHaveLength(2);
     });
 

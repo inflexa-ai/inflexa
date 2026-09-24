@@ -74,7 +74,6 @@ const TRANSCRIPT: ModelMessage[] = [
     },
 ];
 
-/** The messages of a file-metadata exchange that ran before the summary. */
 const METADATA_MESSAGES: ModelMessage[] = [
     { role: "user", content: "Describe the output files." },
     { role: "assistant", content: [{ type: "tool-call", toolCallId: "m1", toolName: "submit_file_metadata", input: { files: [] } }] },
@@ -87,7 +86,6 @@ const METADATA_MESSAGES: ModelMessage[] = [
 
 const ARTIFACT_PATHS = ["output/de-results.csv", "figures/volcano.png", "scripts/de.py"];
 
-/** A step agent with the declared read tools of a real one, over `fs` and `stepDir`, plus `extra`. */
 function stepAgent(fs: WorkspaceFilesystem, stepDir: string, extra: readonly Tool[] = []): AgentDefinition {
     return {
         id: "bulk-transcriptomics-agent",
@@ -98,7 +96,6 @@ function stepAgent(fs: WorkspaceFilesystem, stepDir: string, extra: readonly Too
     };
 }
 
-/** The options of one summary over the default conversation and agent. */
 function options(provider: ChatProvider, over: Partial<GenerateStepSummaryOptions> = {}): GenerateStepSummaryOptions {
     return {
         provider,
@@ -160,7 +157,6 @@ describe("generateStepSummary", () => {
         await writeFile(join(outDir, "de-results.csv"), "gene,log2fc,padj\nTP53,2.3,0.001\nMYC,-1.8,0.004\n");
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
 
-        // Continuation: read the persisted file, then write the summary using its contents.
         const { provider, calls } = makeProvider([readFileCall("t1", "output/de-results.csv"), textMessage("# DE\n\n- 2 significant genes: TP53, MYC")]);
 
         const out = await generateStepSummary(options(provider, { agent: stepAgent(fs, stepDir), artifactPaths: ["output/de-results.csv"] }));
@@ -180,7 +176,6 @@ describe("generateStepSummary", () => {
         await writeFile(join(stepDir, "output", "de-results.csv"), "gene,padj\nTP53,0.001\n");
         const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
         const target = join(stepDir, "output", "notes.md");
-        // A write tool with the id of the real one, thus only the mask stands between the call and the disk.
         const writeProbe = defineTool({
             id: "write_file",
             description: "Write a file.",

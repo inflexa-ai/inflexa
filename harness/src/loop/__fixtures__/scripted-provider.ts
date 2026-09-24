@@ -38,11 +38,7 @@ export function makeMessage(
     };
 }
 
-/**
- * Whether a request belongs to the wrap-up of a run at its iteration cap: its
- * messages carry the wrap-up request of the loop. The wrap-up keeps the tools and
- * the tool choice of the loop, thus only the messages tell its requests apart.
- */
+/** Wrap-up requests reuse the loop's tools and tool choice, so only the messages tell them apart. */
 export function isWrapUpRequest(request: ChatRequest): boolean {
     return request.messages.some((message) => message.role === "user" && message.content === WRAP_UP_REQUEST);
 }

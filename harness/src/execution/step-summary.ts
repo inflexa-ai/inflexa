@@ -1,25 +1,15 @@
 /**
- * Per-step interpretive markdown summary — a continuation of the conversation
- * of the step agent (`continueAgent`) on the harness `ChatProvider`. The
- * conversation is the step's in-memory transcript (the `runAgent` `messages`
- * array the workflow body already holds), then the messages of the
- * file-metadata exchange when one ran. Thus the continuation reads back the
- * prefix that the task and the exchange cached, and each signed thinking block
- * of the task stays valid.
+ * Per-step interpretive summary. Continues the step agent's conversation
+ * (`continueAgent`) so the request reuses the cached prefix and keeps
+ * signed thinking blocks valid.
  *
  * Contract:
- *   - The continuation sends the system prompt and the declared tools of the
- *     step agent. Its mask lets only `read_file` and `grep` run, and their
- *     working directory is the step's writable output tree, thus the agent
- *     grounds every quantitative claim in the persisted output files rather
- *     than confabulating from `execute_command` stdout. It emits the markdown
+ *   - Sends the step agent's system prompt and tools, masked to `read_file`
+ *     and `grep` in the step's output tree, and emits the markdown
  *     summary as its final assistant text.
  *   - Returns `{ stepId, agentId, markdown }` on non-empty final text;
- *     `undefined` on empty/empty-after-trim, on a continuation throw, or on no
- *     text in the final assistant turn. A continuation that uses its cap on
- *     reads ends with no final text, because a continuation runs no wrap-up.
- *     Non-fatal — the workflow body decides whether to write
- *     `output/summary.md`.
+ *     `undefined` on empty text, on a throw, or when the request cap is hit
+ *     before a final answer (a continuation runs no wrap-up). Non-fatal.
  *   - `Session` is taken explicitly (see the harness-durable-runtime spec).
  *
  * Honest empty: with no output artifacts the request directs the model to
@@ -28,9 +18,8 @@
  *
  * Transcript-from-memory: per the harness-thread-store spec, workflow loops have no `messages`
  * table; reconstruction from `operation_outputs` is read-side only. At
- * step time the workflow body already holds the array — pass it in. The loop
- * answers each unanswered call of the task at its exit, thus the transcript is
- * valid as it is.
+ * step time the workflow body already holds the array — pass it in. The task
+ * always closes its unanswered calls, so the transcript needs no repair.
  */
 
 import type { AgentSession } from "../auth/types.js";
@@ -55,16 +44,14 @@ Ground every quantitative claim in a PERSISTED output file: open it with the rea
 
 When finished, write the markdown summary as your final message. It is stored as the step summary exactly as you write it.`;
 
-/** The agent that the calls of the continuation are accounted under. */
 const SUMMARY_AGENT_ID = "step-summary-writer";
 
-/** The cap of requests: a handful of read_file reads plus the final write-up. */
+/** A handful of read_file reads plus the final write-up. */
 const SUMMARY_MAX_REQUESTS = 12;
 
-/** The tools that the continuation lets run. Each one is a declared tool of the step agent. */
+/** Must already be declared tools of the step agent — the mask only narrows. */
 const SUMMARY_TOOLS = ["read_file", "grep"];
 
-/** The harness request of the continuation: the summary instructions and the list of the output files. */
 function summaryRequest(artifactPaths: readonly string[]): string {
     return `${SYSTEM_PROMPT}\n\n${stepSummaryPrompt(artifactPaths.join("\n"))}`;
 }
@@ -79,10 +66,7 @@ export interface GenerateStepSummaryOptions {
     readonly session: AgentSession;
     /** The step agent: the continuation sends its system prompt and its declared tools. */
     readonly agent: AgentDefinition;
-    /**
-     * The conversation that the continuation extends: the transcript of the
-     * task, then the messages of the file-metadata exchange when one ran.
-     */
+    /** Task transcript, then the file-metadata exchange messages if one ran. */
     readonly conversation: readonly LoopMessage[];
     readonly artifactPaths: readonly string[];
     readonly stepId: string;
@@ -91,12 +75,7 @@ export interface GenerateStepSummaryOptions {
     readonly signal?: AbortSignal;
 }
 
-/**
- * Run the summary continuation over the conversation of the step agent,
- * grounding claims in persisted files via `read_file`. Returns `undefined` on
- * any non-fatal failure mode; the workflow body proceeds without `summary.md`
- * in that case.
- */
+/** Returns `undefined` on non-fatal failure instead of throwing. */
 export async function generateStepSummary(opts: GenerateStepSummaryOptions): Promise<StepSummary | undefined> {
     const logger = (opts.logger ?? createNoopLogger()).named("step-summary").with({ runId: opts.runId, stepId: opts.stepId, agentId: opts.agentId });
 

@@ -10,21 +10,15 @@
  * streams before the stop reason arrives, and only a `tool-calls` (and, for its
  * leading calls, a `length`) finish dispatches it.
  *
- * The repair is an ANSWER: one error result that states that the call did not
- * run. It removes no message and changes none, because the transcript is
- * append-only. A signed thinking block binds to the exact prefix that made it,
- * and the prompt cache keys on the same prefix, thus an edit of an earlier
- * message breaks both. The answer invents no execution: it states a fact that
- * the model can read. It is one constant text, thus the loop and the history
- * load give byte-identical answers, and each turn sends the same prefix.
+ * The repair only appends an answer; it never edits or removes a message,
+ * because a signed thinking block and the prompt cache both key on the exact
+ * prior prefix.
  */
 
 import type { ModelMessage, ToolCallPart, ToolResultPart } from "ai";
 
-/** The text of the result that answers a call that never ran. */
 export const NOT_RUN_TOOL_RESULT = "Not run: the turn ended before this call ran.";
 
-/** The error result that answers a call that never ran. */
 export function notRunResult(call: Pick<ToolCallPart, "toolCallId" | "toolName">): ToolResultPart {
     return {
         type: "tool-result",
@@ -52,12 +46,9 @@ function needsClientResult(part: ToolCallPart): boolean {
 
 /**
  * Answer, in place, every tool call at or past `fromIndex` that has no matching
- * tool result anywhere in `messages`. For each assistant message with such calls,
- * one `tool` message with a {@link notRunResult} for each call goes directly
- * after the assistant message and the `tool` messages that follow it. No message
- * is removed or changed. Returns the answered calls in transcript order — empty
- * on the healthy path — so the caller can log what a reader of the stored thread
- * would otherwise never learn.
+ * tool result anywhere in `messages`. No message is removed or changed. Returns
+ * the answered calls in transcript order — empty on the healthy path — so the
+ * caller can log what a reader of the stored thread would otherwise never learn.
  *
  * Results are matched by id across the whole array, not by adjacency: the loop
  * appends a round's results directly after its assistant message, but a

@@ -1,30 +1,17 @@
 /**
  * Per-step artifact metadata generation — describes a step's output files
- * through a continuation of the conversation of the step agent
- * (`continueAgent`), on the harness `ChatProvider`.
+ * through a continuation of the step agent's conversation (`continueAgent`)
+ * on the harness `ChatProvider`.
  *
- * The continuation extends the prefix that the task cached: the same system
- * prompt, the same declared tools, the same tool choice, and each message of
- * the task. Thus it reads that prefix back from the prompt cache, and each
- * signed thinking block of the task stays valid. Its request gives the
- * describer instructions and the list of the files, and its mask lets only
- * `submit_file_metadata`, `read_file`, and `grep` run.
+ * The continuation extends the prefix that the task cached, so each signed
+ * thinking block of the task must stay valid across the extension.
  *
- * The step agent declares `submit_file_metadata` from its first request
- * (`tools/sandbox/submit-file-metadata.ts`). The tool validates every entry's
- * `path` against the known artifact set that `cell.expect` sets. Unknown paths
- * (hallucinated files) are rejected with feedback; uncovered files are reported
- * as `remaining` so the model resubmits. Descriptions are matched to files BY
- * PATH — there is no positional array-index alignment, so a dropped,
- * reordered, or extra entry can never attach a description to the wrong file.
+ * Descriptions match files BY PATH, not by array index, so a dropped,
+ * reordered, or extra entry can never attach to the wrong file.
  *
  * Lossless contract: every input artifact appears in the result exactly
- * once. A file the model never describes (the cap exhausted, persistent tool
- * errors, model refusal) gets a deterministic fallback description
- * synthesised from its path + inferred type + size. Fallbacks are logged —
- * never silently dropped, never silently chunked out. A step agent that
- * declares no `submit_file_metadata` (an embedder that gives no cell to its
- * agent) gets the fallback for each file, with no model call.
+ * once. A file the model never describes gets a deterministic fallback
+ * description, logged, never silently dropped.
  *
  * `Session` is taken explicitly (see the harness-durable-runtime spec) — billing is a compile-time
  * obligation on every provider call.
@@ -68,8 +55,8 @@ export interface GenerateFileMetadataOptions {
     /** The cell that the `submit_file_metadata` tool of `agent` records into. */
     readonly cell: FileMetadataCell;
     /**
-     * The in-memory transcript of the task from `runAgent`: the conversation
-     * that the continuation extends. It gives the agent the intent of each file.
+     * The transcript from `runAgent` that the continuation extends, to
+     * ground each file's description in why the step produced it.
      */
     readonly transcript: readonly LoopMessage[];
     readonly signal?: AbortSignal;
@@ -86,24 +73,16 @@ export interface FileMetadataResult {
     readonly indexed: number;
     /** One entry per input artifact (described or fallback), input order. */
     readonly entries: readonly FileMetadataEntry[];
-    /**
-     * The new messages of the continuation: the request, then each message
-     * after it. Empty when no continuation ran.
-     */
+    /** The continuation's new messages: the request, then its replies. Empty when no continuation ran. */
     readonly messages: readonly LoopMessage[];
 }
 
-/** The agent that the calls of the continuation are accounted under. */
 const DESCRIBER_AGENT_ID = "file-metadata-describer";
 
-/**
- * The cap of requests: one full submission + a few correction rounds. The
- * fallback backstop means an exhausted cap degrades gracefully rather than
- * dropping files, so the cap stays small.
- */
+/** Request cap: one submission plus a few correction rounds; an exhausted cap falls back safely. */
 const DESCRIBER_MAX_REQUESTS = 8;
 
-/** The tools that the continuation lets run. Each one is a declared tool of the step agent. */
+/** Tool ids the continuation's mask allows; each must be a tool the step agent already declares. */
 const DESCRIBER_TOOLS = [SUBMIT_FILE_METADATA_TOOL_ID, "read_file", "grep"];
 
 const DESCRIBER_INSTRUCTIONS = `Your work on this step has ended. Now describe its output files.
@@ -128,7 +107,6 @@ Rules:
   - Do not guess file contents you cannot infer; a terse, honest description is
     better than a confident wrong one.`;
 
-/** The harness request of the continuation: the describer instructions and the list of the files. */
 function describerRequest(artifacts: readonly ArtifactForMetadata[]): string {
     const list = artifacts.map((a) => `- ${a.displayPath}`).join("\n");
     return `${DESCRIBER_INSTRUCTIONS}\n\nDescribe the following output files by calling submit_file_metadata. Copy each \`path\` EXACTLY from this list. Read a file with read_file when its path alone is not enough to describe it accurately:\n\n${list}`;
@@ -171,12 +149,7 @@ function fallbackEntry(artifact: ArtifactForMetadata, extra: Record<string, unkn
     };
 }
 
-/**
- * Describe a step's known artifacts through a continuation of the conversation
- * of the step agent. Non-fatal: a continuation failure or partial coverage
- * degrades to deterministic fallbacks, so the result always carries exactly
- * one entry per input artifact.
- */
+/** Describes a step's known artifacts; a continuation failure degrades to per-file fallbacks rather than throwing. */
 export async function generateFileMetadata(opts: GenerateFileMetadataOptions): Promise<FileMetadataResult> {
     const logger = (opts.logger ?? createNoopLogger()).named("artifact-metadata").with({ resourceId: opts.resourceId });
     if (opts.artifacts.length === 0) {
