@@ -36,6 +36,7 @@ export const PART_REGISTRY: Record<CortexChatPartType, PartDescriptor> = {
     "data-run-failed": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: false },
     "data-child-session-started": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-report-rendered": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
+    "data-compaction": { emitter: "conversation", consumer: "conversation", transient: true, reconciling: true },
 };
 
 export function isTransient(type: CortexChatPartType): boolean {

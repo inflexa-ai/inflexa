@@ -6,6 +6,7 @@
  *   Presentation:    data-presentation (agent-synthesized content),
  *                    data-plan (plan by id), data-file-reference (files by path)
  *   Approval:        data-ask (a tool's pending user-approval prompt)
+ *   Compaction:      data-compaction (a compaction of the conversation thread)
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
@@ -437,6 +438,18 @@ export interface ReportRenderedPart {
     title?: string;
 }
 
+// ── Compaction (reconciling) ────────────────────────────────────────
+
+/** One compaction of the thread: `running`, then `done` or `failed` under the same id. A reload shows it as a divider. */
+export interface CompactionPart {
+    type: "data-compaction";
+    id: string;
+    status: "running" | "done" | "failed";
+    tokensBefore: number;
+    tokensAfter?: number;
+    durationMs?: number;
+}
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export type CortexChatPart =
@@ -458,4 +471,5 @@ export type CortexChatPart =
     | RunCompletedPart
     | RunFailedPart
     | ChildSessionStartedPart
-    | ReportRenderedPart;
+    | ReportRenderedPart
+    | CompactionPart;

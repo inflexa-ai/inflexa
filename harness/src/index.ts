@@ -429,6 +429,7 @@ export type {
     RunCompletedPart,
     RunCompletedFinding,
     RunFailedPart,
+    CompactionPart,
 } from "./contracts/chat-parts.js";
 export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
 export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";

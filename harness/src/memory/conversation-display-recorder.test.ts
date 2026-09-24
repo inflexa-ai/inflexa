@@ -96,6 +96,20 @@ describe("conversation display recorder", () => {
         ]);
     });
 
+    it("keeps an emitted compaction part out of the assistant message, and forwards it", async () => {
+        const { recorder, forwarded } = harness();
+        await recorder.emit({ type: "text-delta", text: "before" });
+        await recorder.emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "running", tokensBefore: 162_000 } });
+        await recorder.emit({
+            type: "data-compaction",
+            source: TOP,
+            data: { id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+        });
+
+        expect(recorder.takeRound([])).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "before", state: "done" }] }]);
+        expect(forwarded.filter((event) => event.type === "data-compaction")).toHaveLength(2);
+    });
+
     it("records each call's outcome and detail as shown, denial distinct from failure", async () => {
         const { recorder } = harness();
         await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "r", name: "read_file", input: {}, detail: "scripts/run.py" });
