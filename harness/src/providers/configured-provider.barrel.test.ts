@@ -321,6 +321,37 @@ describe("the thinking binding on the wire", () => {
     });
 });
 
+describe("the provider id on the response", () => {
+    it("names the provider of each arm, as the AI SDK names it", async () => {
+        const anthropic = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-4-7",
+                fetch: capturingFetch(anthropicSse).fetch,
+            },
+        });
+        const openai = createConfiguredAiSdkProvider({
+            config: { kind: "openai", apiKey: "test-key", model: "gpt-5.1", fetch: capturingFetch(responsesSse).fetch },
+        });
+        const compatible = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: capturingFetch(openaiSse).fetch,
+            },
+        });
+
+        expect((await anthropic.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("anthropic.messages");
+        expect((await openai.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("openai.responses");
+        expect((await compatible.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("self-hosted.chat");
+    });
+});
+
 describe("the system prompt breakpoint on the wire", () => {
     it("renders cache_control on the text block of the system prompt", async () => {
         const cap = capturingFetch(anthropicSse);

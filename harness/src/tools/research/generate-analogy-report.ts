@@ -21,8 +21,10 @@ import { AnalogicalReasonerOutputSchema, type AnalogicalReasonerOutput } from "@
 import { analogicalReasonerPrompt } from "../../prompts/analogical-reasoner.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
+import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { finalText, runAgent } from "../../loop/run-agent.js";
+import { accountForChatCall, finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider } from "../../providers/types.js";
@@ -39,6 +41,9 @@ import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "analogical-reasoner";
+
+/** The fixed call name of the conversion call in its usage record key. It cannot collide with a loop step name such as `llm-0`. */
+const CONVERSION_CALL_NAME = "analogy-conversion";
 
 /** Tool-call budget for the inner research agent. */
 const RESEARCH_MAX_ITERATIONS = 40;
@@ -288,6 +293,20 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                         ctx.signal,
                     ),
                 );
+                // The conversion call reaches the counters, the recorder, and the
+                // turn total through the accounting path of the loop. Its fixed
+                // call name keeps its record key apart from each key of the
+                // research loop.
+                accountForChatCall(reply, {
+                    session: childSession,
+                    agentId: AGENT_ID,
+                    callPath: childSession.provenance.callPath,
+                    stepName: CONVERSION_CALL_NAME,
+                    invocationId: ctx.invocationId,
+                    usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
+                    logger: createNoopLogger(),
+                    rollups: ctx.turnUsage === undefined ? [] : [ctx.turnUsage],
+                });
 
                 const content = reply.message.content;
                 const convertedText =

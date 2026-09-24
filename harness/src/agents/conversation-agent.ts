@@ -322,6 +322,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             ...(readPoolInventory ? { readPoolInventory } : {}),
             ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
+            ...(usageRecorder ? { usageRecorder } : {}),
         }),
         // The one report path. The tool starts a report thread as a child of the
         // conversation, and the user composes the report there with the Report

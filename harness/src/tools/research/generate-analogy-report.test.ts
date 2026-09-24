@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 
+import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
+import type { AgentRunUsage } from "../../loop/metrics.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
+import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { ToolContext } from "../define-tool.js";
 import { buildResearchPrompt, createGenerateAnalogyReportTool, tryParseEnvelope } from "./generate-analogy-report.js";
 
@@ -145,6 +149,41 @@ describe("generateAnalogyReport sub-agent tool", () => {
         };
 
         expect(result.error.kind).toBe("extraction-failed");
+    });
+
+    it("accounts the conversion call under its own key, and folds each call into the turn total", async () => {
+        const provider = scriptedProvider([
+            // The research agent returns prose, thus the conversion call runs.
+            makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn", { inputTokens: 100, outputTokens: 10 }),
+            makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn", { inputTokens: 20, outputTokens: 5 }),
+        ]);
+        const records: LlmUsageRecord[] = [];
+        const tool = createGenerateAnalogyReportTool({
+            provider,
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            usageRecorder: {
+                record: (record) => {
+                    records.push(record);
+                    return okAsync(undefined);
+                },
+            },
+        });
+        const turnUsage: AgentRunUsage = {};
+        const { ctx } = makeToolContext();
+        const stepCtx: ToolContext = { ...ctx, session: { ...ctx.session, runFrame: { runId: "run-1", stepId: "step-1" } }, turnUsage };
+
+        (await tool.execute({ problem: "Diagnose oscillation." }, stepCtx))._unsafeUnwrap();
+
+        const conversion = records.filter((record) => record.recordKey.endsWith(":analogy-conversion"));
+        expect(conversion).toHaveLength(1);
+        expect(conversion[0]).toMatchObject({ agentId: "analogical-reasoner", runId: "run-1", stepId: "step-1", usage: { inputTokens: 20, outputTokens: 5 } });
+        // The research loop names its calls `llm-{n}` under the same frame and
+        // call path, thus only the call name keeps the two keys apart.
+        const researchKeys = records.filter((record) => record !== conversion[0]).map((record) => record.recordKey);
+        expect(researchKeys).toEqual(["run-1:step-1:conversation-agent>analogical-reasoner:test-tool-call:llm-0"]);
+        expect(conversion[0]!.recordKey).toBe("run-1:step-1:conversation-agent>analogical-reasoner:test-tool-call:analogy-conversion");
+        expect(turnUsage).toEqual({ inputTokens: 120, outputTokens: 15 });
     });
 
     it("rejects empty problem at the input-schema boundary", async () => {

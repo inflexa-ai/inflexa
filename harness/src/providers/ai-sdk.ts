@@ -622,6 +622,11 @@ function requestedModelIdOf(model: LanguageModel): string | undefined {
     return typeof model === "string" ? model : model.modelId;
 }
 
+/** The provider id of the model bound into this provider, as the AI SDK names it — a bare id string names no provider. */
+function providerIdOf(model: LanguageModel): string | undefined {
+    return typeof model === "string" ? undefined : model.provider;
+}
+
 /**
  * A per-call view of the model that also records the model id the endpoint
  * itself reported, if any.
@@ -684,14 +689,15 @@ function responseFromMessages(input: {
     readonly usage?: LanguageModelUsage;
     readonly requestedModelId?: string;
     readonly servedModelId?: string;
+    readonly provider?: string;
 }): ChatResponse {
-    const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId } = input;
+    const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId, provider } = input;
     const usage = toChatUsage(input.usage);
     const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
-        return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
+        return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
     }
-    return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
+    return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
 }
 
 /**
@@ -838,6 +844,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const suspendOn = deps.suspendOn ?? DEFAULT_SUSPEND_ON;
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
+    const providerId = providerIdOf(deps.model);
     /** The effort of one call: the value of the request, then the value of the configuration, then the default. */
     const effortOf = (req: ChatRequest): ReasoningPolicy => req.reasoning ?? deps.reasoning ?? DEFAULT_REASONING;
     // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
@@ -963,6 +970,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // Read after the drain: the metadata chunk that carries the
                         // served id reaches the capture only as the stream is consumed.
                         servedModelId: capture.servedModelId(),
+                        provider: providerId,
                     }),
                 );
             } catch (e) {
@@ -1053,6 +1061,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     usage: opened.usage,
                     requestedModelId,
                     servedModelId: capture.servedModelId(),
+                    provider: providerId,
                 });
                 yield { type: "done", response };
                 return;
@@ -1082,6 +1091,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 // Read after the drain: the metadata chunk carrying the served id
                 // reaches the capture only as the stream is consumed.
                 servedModelId: capture.servedModelId(),
+                provider: providerId,
             });
             logDroppedThinkingBlocks(session, (await result.finalStep).providerMetadata);
             yield { type: "done", response };

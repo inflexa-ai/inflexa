@@ -159,6 +159,12 @@ export interface ChatResponse {
      * diagnostics, never as an invariant.
      */
     readonly servedModelId?: string;
+    /**
+     * The provider id of the bound model, as the AI SDK names it in
+     * `LanguageModel.provider`, for example `anthropic.messages`. Absent for a
+     * bare model-id string, which names no provider.
+     */
+    readonly provider?: string;
 }
 
 export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };
