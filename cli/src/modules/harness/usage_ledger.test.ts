@@ -13,7 +13,6 @@ import {
     type ChatResponse,
     type ChatUsage,
     type Pool,
-    type ThreadHistory,
     type Tool,
 } from "@inflexa-ai/harness";
 
@@ -198,42 +197,18 @@ describe("a chat turn's calls land in the local ledger", () => {
         expect(getAnalysisUsageTotals("ana-nested")._unsafeUnwrap()).toMatchObject({ calls: 3, inputTokens: 250, outputTokens: 57 });
     });
 
-    // The one test in this file that does NOT hand `runAgent` an options bag of its own making, and
-    // the reason it exists: for a whole release the conversation agent recorded nothing, because
-    // production built that bag without a `usageRecorder` while every test here built one with it.
-    // `runAgent` reads the recorder from its OPTIONS and silently falls back to the no-op, so the
-    // omission cost nothing at runtime — the turn succeeded, the header still showed a figure from the
-    // finish rollup, and no row was written. A test that substitutes `runAgent` and asserts the
-    // substitute was called cannot see that; only the production bag can be asked.
-    //
-    // So `run` here is the REAL `runAgent` and the options it receives are the ones `runChatTurn`
-    // composes. Only `prepare` (Postgres) and the thread store are stood in for, and neither is on the
-    // path between a completed call and a persisted row. A `turn.ts` that dropped the field again
-    // produces zero rows below rather than a green test.
+    // The harness turn needs Postgres, thus a stand-in runs the real `runAgent` with the recorder that
+    // the production engine handed it. An engine that dropped the field writes no row below.
     test("the conversation agent's own calls reach the ledger through the production chat-turn path", async () => {
         const session = buildChatSession("tui-chat", "ana-chat-turn", "thr-chat-turn");
         const chat = scriptedChat([reply([{ type: "text", text: "answered" }], "stop", { inputTokens: 320, outputTokens: 44 })]);
-        const userMessage = { role: "user", content: "go" } as const;
-        // The thread store is Postgres-backed; the append is orthogonal to accounting (the turn carries
-        // its fault separately), so a store that records nothing keeps this test offline without
-        // touching the path under test.
-        const history: ThreadHistory = {
-            appendTurn: () => okAsync(undefined),
-            loadRecent: () => okAsync([]),
-            loadAll: () => okAsync([]),
-            retractLastTurn: () => okAsync({ kind: "empty-thread" }),
-            latestSeq: () => okAsync(null),
-            latestTurnAt: () => okAsync(null),
-            countUserTurnsAfter: () => okAsync(0),
-        };
 
         const outcome = await runChatTurn(
             {
-                // `prepare` is the only thing that would dereference it, and it is stood in for below.
+                // Only the harness turn reads the pool, and a stand-in replaces that turn below.
                 pool: {} as unknown as Pool,
                 agents: { forThread: () => ok(agent("tui-chat", [])) },
                 chat: () => chat,
-                history,
                 session,
                 emit: () => {},
                 signal: new AbortController().signal,
@@ -243,8 +218,16 @@ describe("a chat turn's calls land in the local ledger", () => {
                 userInput: "go",
             },
             {
-                prepare: () => Promise.resolve({ kind: "ok", threadType: "conversation", messages: [userMessage], userMessage }),
-                run: runAgent,
+                turn: async (_deps, params) => {
+                    const run = await runAgent(agent("tui-chat", []), [{ role: "user", content: params.userInput }], params.session, {
+                        provider: params.chat(params.emit),
+                        signal: params.signal,
+                        emit: params.emit,
+                        runStep: passthroughStep,
+                        usageRecorder: params.usageRecorder,
+                    });
+                    return { kind: "ran", outcome: { status: "done", finish: run.finish }, opened: true, durationMs: 0 };
+                },
                 // No identity: this case is about the usage ledger, thus the turn stamps no author.
                 readAuthor: () => null,
             },

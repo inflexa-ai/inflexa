@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ok, okAsync } from "neverthrow";
-import type { AgentChat, AgentDefinition, ChatProvider, EmitFn, ModelMessage, Pool, RunProvenanceEvent, ThreadHistory } from "@inflexa-ai/harness";
+import type { AgentChat, AgentDefinition, ChatProvider, EmitFn, Pool, RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -286,15 +286,15 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         // (not a `let … | null`) so control-flow narrowing doesn't collapse the closure-written value to null.
         const midStream: { status: string; idle: boolean; innerModel: string }[] = [];
 
-        // A `run` seam standing in for `runAgent`: it streams several text deltas with an await between
-        // each (a real network stream yields to the loop), and at the third delta requests the chat-model
-        // switch — the reported gesture. The awaits ensure the switch is requested while the turn is
-        // genuinely mid-flight, inside `runChatTurn`'s gauge bracket.
+        // A `turn` seam standing in for the harness turn: it streams several text deltas with an await
+        // between each (a real network stream yields to the loop), and at the third delta requests the
+        // chat-model switch — the reported gesture. The awaits ensure the switch is requested while the
+        // turn is genuinely mid-flight, inside `runChatTurn`'s gauge bracket.
         const chunks = ["Each ", "analysis ", "row ", "carries ", "a slug."];
-        const streamingRun: ChatTurnSeams["run"] = async (_agent, initial, _session, ctx) => {
+        const streamingTurn: ChatTurnSeams["turn"] = async (_deps, params) => {
             for (let i = 0; i < chunks.length; i++) {
                 await Promise.resolve();
-                void (ctx.emit as EmitFn)({ type: "text-delta", text: chunks[i]! } as never);
+                void params.emit({ type: "text-delta", text: chunks[i]! });
                 emitted.push(chunks[i]!);
                 if (i === 2) {
                     const result = requestAgentModelChange("conversation", "claude-mid-stream");
@@ -302,33 +302,23 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 }
             }
             return {
-                messages: [...initial, { role: "assistant", content: chunks.join("") } as ModelMessage],
-                finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 },
+                kind: "ran",
+                outcome: { status: "done", finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 } },
+                opened: true,
+                durationMs: 0,
+                fallbackText: chunks.join(""),
             };
         };
-        const prepareOk: ChatTurnSeams["prepare"] = () =>
-            Promise.resolve({
-                kind: "ok",
-                threadType: "conversation",
-                messages: [{ role: "user", content: "?" }],
-                userMessage: { role: "user", content: "?" },
-            });
-        const history: ThreadHistory = {
-            appendTurn: () => okAsync(undefined),
-            loadRecent: () => okAsync([]),
-            loadAll: () => okAsync([]),
-        } as unknown as ThreadHistory;
 
         const outcome = await runChatTurn(
             {
                 pool: {} as unknown as Pool,
                 agents: { forThread: () => ok({ id: "conv" } as unknown as AgentDefinition) },
                 chat: () => ({}) as AgentChat,
-                history,
                 session: buildChatSession("tui-chat", "an-1", "t-1"),
                 emit: (() => {}) as EmitFn,
                 signal: new AbortController().signal,
-                // The turn's accounting seam. Nothing here records — the `run` seam never completes a
+                // The turn's accounting seam. Nothing here records — the `turn` seam never completes a
                 // model call — but the engine requires it, which is what stops a call site forgetting it.
                 usageRecorder: { record: () => okAsync(undefined) },
                 analysisId: "an-1",
@@ -336,7 +326,7 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
                 userInput: "?",
             },
             // No identity: this case is about the model switch, thus the turn stamps no author.
-            { prepare: prepareOk, run: streamingRun, readAuthor: () => null },
+            { turn: streamingTurn, readAuthor: () => null },
         );
 
         // The stream ran to completion — every chunk delivered, none dropped.

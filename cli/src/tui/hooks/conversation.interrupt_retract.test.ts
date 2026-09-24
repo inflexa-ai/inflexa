@@ -114,7 +114,7 @@ afterEach(() => {
 describe("canRetract gates the retract window", () => {
     test("false before any turn, true during a busy no-output turn", async () => {
         expect(canRetract()).toBe(false);
-        const { sendP, release } = startBusyTurn({ kind: "ok", fallbackText: "" });
+        const { sendP, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
         expect(canRetract()).toBe(true);
         release();
         await sendP;
@@ -123,7 +123,7 @@ describe("canRetract gates the retract window", () => {
     });
 
     test("flips false the instant a text delta lands", async () => {
-        const { sendP, emit, release } = startBusyTurn({ kind: "ok", fallbackText: "" });
+        const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
         expect(canRetract()).toBe(true);
         void emit()({ type: "text-delta", text: "answering" });
         expect(canRetract()).toBe(false);
@@ -132,7 +132,7 @@ describe("canRetract gates the retract window", () => {
     });
 
     test("flips false the instant a tool part starts", async () => {
-        const { sendP, emit, release } = startBusyTurn({ kind: "ok", fallbackText: "" });
+        const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
         expect(canRetract()).toBe(true);
         void emit()({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file", input: {} });
         expect(canRetract()).toBe(false);
@@ -141,7 +141,7 @@ describe("canRetract gates the retract window", () => {
     });
 
     test("flips false the instant a card part lands", async () => {
-        const { sendP, emit, release } = startBusyTurn({ kind: "ok", fallbackText: "" });
+        const { sendP, emit, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "" });
         expect(canRetract()).toBe(true);
         void emit()({ type: "data-plan", source: TOP, data: { planId: "p1", title: "t", steps: [] } });
         expect(canRetract()).toBe(false);
@@ -159,7 +159,7 @@ describe("retract during the no-output window", () => {
         // notice singleton is not cleared between cases, so we assert the retract left whatever was showing
         // untouched rather than asserting an absolute null a prior case could have populated.
         const noticeBefore = currentNotice();
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -187,7 +187,7 @@ describe("retract during the no-output window", () => {
         // Prompt-history recall derives its entries from this same store, so an unsent message must not be
         // recallable: retract means UNSEND, and the text is handed back to the composer anyway. Nothing in
         // `promptHistory` filters retracts — this holds only because the splice below is a real removal.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(promptHistory()).toEqual(["original text"]);
 
         const seed = seedCell();
@@ -208,7 +208,7 @@ describe("retract during the no-output window", () => {
         // return to idle are one perceptual event; a database round-trip between any two of them leaves the
         // user looking at a half-applied state (message gone, composer empty, still spinning) with no clue
         // which way it will resolve. Park the durable removal and assert NOTHING visible has moved yet.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -249,7 +249,7 @@ describe("retract during the no-output window", () => {
     test("a delta racing the abort settlement downgrades to a plain interrupt", async () => {
         // The engine aborts, but a delta lands AFTER the retract fired the abort and BEFORE the turn
         // settles — so the re-validation sees produced output and keeps the message.
-        const { sendP, emit, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, emit, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -284,11 +284,10 @@ describe("retract during the no-output window", () => {
         expect(currentNotice()?.text).toContain("Kept your message");
     });
 
-    test("an append fault skips the durable retract but still splices and seeds", async () => {
-        // The aborted turn's appendTurn faulted, so the thread's tail is an EARLIER turn — the durable
-        // removal must be skipped, while the live store is still spliced and the composer seeded.
-        const appendError: DbError = { type: "mutation_failed", op: "appendTurn", cause: "boom" };
-        const { sendP, release } = startBusyTurn({ kind: "aborted", appendError });
+    test("an opening that did not land skips the durable retract but still splices and seeds", async () => {
+        // The tail of the thread is an EARLIER turn, thus the durable removal must be skipped.
+        const appendError: DbError = { type: "mutation_failed", op: "writeTurn", cause: "boom" };
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: false, appendError });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -311,11 +310,35 @@ describe("retract during the no-output window", () => {
         expect(chatStatus()).toBe("idle");
     });
 
+    test("a fault after the opening keeps the durable retract", async () => {
+        const appendError: DbError = { type: "mutation_failed", op: "writeTurn", cause: "boom" };
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true, appendError });
+        expect(canRetract()).toBe(true);
+
+        const seed = seedCell();
+        let durableCalls = 0;
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => {
+                durableCalls++;
+                return okAsync({ kind: "retracted" as const, messages: 3 });
+            },
+        };
+        const retractP = retract(seed.set, retractSeams);
+        release();
+        await retractP;
+        await sendP;
+
+        expect(messages.length).toBe(0);
+        expect(durableCalls).toBe(1);
+        expect(seed.get()).toBe("original text");
+    });
+
     test("a swap mid-retract drops the store writes and seed but still removes the thread orphan", async () => {
         // The durable removal is committed at the keypress and thread-scoped, so a session swap that
         // supersedes the retract while the removal is in flight still lets it complete — while every
         // remaining UI write (the composer seed) is dropped, and the cleared store stays cleared.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);
 
         let releaseDurable!: () => void;
@@ -357,7 +380,7 @@ describe("retract during the no-output window", () => {
         const dbErr: DbError = { type: "mutation_failed", op: "retractLastTurn", cause: "transient" };
 
         // Phase 1: the durable retract faults.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" }, THREAD);
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true }, THREAD);
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -380,7 +403,7 @@ describe("retract during the no-output window", () => {
         let healCalls = 0;
         const healSeams: SendSeams = {
             runtime: () => stubRuntime,
-            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "answer" }),
+            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", opened: true, fallbackText: "answer" }),
             healRetract: (_pool, threadId) => {
                 healCalls++;
                 expect(threadId).toBe(THREAD);
@@ -405,7 +428,7 @@ describe("retract during the no-output window", () => {
         const dbErr: DbError = { type: "mutation_failed", op: "retractLastTurn", cause: "transient" };
 
         // Phase 1: a durable retract faults, leaving the pending-heal flag on THREAD (as in the case above).
-        const { sendP: faultSendP, release: faultRelease } = startBusyTurn({ kind: "aborted" }, THREAD);
+        const { sendP: faultSendP, release: faultRelease } = startBusyTurn({ kind: "aborted", opened: true }, THREAD);
         expect(canRetract()).toBe(true);
         const faultSeed = seedCell();
         const retractP = retract(faultSeed.set, { runtime: () => stubRuntime, retractTurn: () => errAsync(dbErr) });
@@ -425,7 +448,7 @@ describe("retract during the no-output window", () => {
         });
         const healSeams: SendSeams = {
             runtime: () => stubRuntime,
-            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "answer" }),
+            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", opened: true, fallbackText: "answer" }),
             healRetract: () => {
                 healReached();
                 return ResultAsync.fromSafePromise(healGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
@@ -463,7 +486,7 @@ describe("retract during the no-output window", () => {
         // and bail. The durable removal is deliberately un-token-gated (a swap must not cancel it), so
         // without the guard the second retract would reach it too — deleting the thread's NEW, already-
         // answered tail after the first press removed the orphan. The guard, not the token, keeps it once-only.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();
@@ -551,7 +574,9 @@ describe("a rejecting turn engine still settles the turn", () => {
         await sendP;
 
         expect(chatStatus()).not.toBe("busy");
-        expect(durableCalls).toBe(1); // the settled failed outcome still drove the durable removal once
+        // A rejection gives no sign that the opening landed, thus the durable removal does not run.
+        expect(durableCalls).toBe(0);
+        expect(seed.get()).toBe("original text");
     });
 });
 
@@ -584,7 +609,7 @@ describe("the interrupt arm window", () => {
     });
 
     test("a turn ending disarms a window armed mid-turn", async () => {
-        const { sendP, release } = startBusyTurn({ kind: "ok", fallbackText: "done" });
+        const { sendP, release } = startBusyTurn({ kind: "ok", opened: true, fallbackText: "done" });
         armInterrupt();
         expect(interruptArmed()).toBe(true);
         release();
@@ -596,7 +621,7 @@ describe("the interrupt arm window", () => {
     test("firing the abort disarms the armed window immediately", async () => {
         // The second interrupt press fires `abort`, and there is nothing left to interrupt — so the window
         // disarms on the abort path itself, not only later when the engine's unwind reaches finishTurn.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         armInterrupt();
         expect(interruptArmed()).toBe(true);
         abort();
@@ -609,7 +634,7 @@ describe("the interrupt arm window", () => {
         // The turn stays "busy" until settlement, so the interrupt layer stays enabled and a third esc
         // press calls armInterrupt again. With the abort already fired there is nothing left to interrupt,
         // so the re-arm is a no-op — the hint never flips back to armed while the turn is unwinding.
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         armInterrupt();
         abort();
         expect(interruptArmed()).toBe(false);
@@ -622,7 +647,7 @@ describe("the interrupt arm window", () => {
 
 describe("the interrupted marker on an aborted turn", () => {
     test("a turn that streamed output keeps its assistant message with the muted marker", async () => {
-        const seams = fakeSeams({ kind: "aborted" }, (emit) => {
+        const seams = fakeSeams({ kind: "aborted", opened: true }, (emit) => {
             void emit({ type: "text-delta", text: "partial answer" });
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
@@ -638,7 +663,7 @@ describe("the interrupted marker on an aborted turn", () => {
     });
 
     test("a turn that produced nothing leaves only the user message and no marker", async () => {
-        const seams = fakeSeams({ kind: "aborted" });
+        const seams = fakeSeams({ kind: "aborted", opened: true });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
 
         expect(messages.length).toBe(1);
@@ -731,7 +756,7 @@ describe("a transcript load resolving mid-retract", () => {
         };
         const load = loadMessages(SID, AID, loadSeams); // parks at its page read
 
-        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        const { sendP, release } = startBusyTurn({ kind: "aborted", opened: true });
         expect(canRetract()).toBe(true);
 
         const seed = seedCell();

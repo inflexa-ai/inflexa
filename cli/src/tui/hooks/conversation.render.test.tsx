@@ -61,7 +61,7 @@ describe("streamed assistant text survives finalization (rendered)", () => {
                 runChatTurn: async (args) => {
                     void args.emit({ type: "text-delta", text: "streamed reply" });
                     await gate;
-                    return { kind: "ok", fallbackText: "" };
+                    return { kind: "ok", opened: true, fallbackText: "" };
                 },
             };
             const pending = send({ sessionId: SID, analysisId: AID, userText: "hello" }, seams);
