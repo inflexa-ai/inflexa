@@ -8,7 +8,9 @@
 
 import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET, TSPROV_ASSET } from "./assets.js";
 import { CHART_SOURCE_MEMBER, POINT_LABEL } from "./chart.js";
+import { CHART_RENDERERS_SOURCE } from "./chart-renderers.js";
 import {
+    CHART_EXPORT_SIZES,
     ECHARTS_THEME_NAME,
     GRID_HEADER_BORDER_PX,
     GRID_HEADER_HEIGHT_PX,
@@ -110,8 +112,9 @@ const SPY_BOTTOM_MARGIN_PERCENT = 70;
  *
  * The fragment writes its own constants, because a page script reads no module binding. Each rule here is
  * the twin of one rule of the server derivation: the number read of a cell, the four transforms, the
- * competition rank, the compare of a sort, and the three-way classification of a preset. A shared test
- * vector runs the transforms of both sides over one set of cells, thus the two cannot drift in silence.
+ * competition rank, the compare of a sort, the three-way classification of a preset, and the item that adds
+ * the member of a continuous color and of a size after the pair. A shared test vector runs the transforms
+ * and the items of both sides over one set of cells, thus the two cannot drift in silence.
  *
  * The build reads the decoded rows of the payload. The decoder runs before this script, thus a row is a
  * record and a cell reads by its column name.
@@ -228,6 +231,8 @@ function reportCategory(rule, xValue, yValue) {
 function reportSeriesData(payload, source, rule) {
   var x = reportChannel(payload, source.x);
   var y = reportChannel(payload, source.y);
+  var color = source.color === undefined ? null : reportChannel(payload, source.color);
+  var size = source.size === undefined ? null : reportChannel(payload, source.size);
   var group = source.group === undefined ? null : reportChannel(payload, source.group);
   var labels = source.label === undefined ? null : reportColumn(payload, source.label);
   var flags = Object.create(null);
@@ -246,7 +251,12 @@ function reportSeriesData(payload, source, rule) {
     if (source.category !== undefined && reportCategory(rule, x[r], y[r]) !== source.category) {
       continue;
     }
-    points.push({ index: r, x: x[r], y: y[r] });
+    var shade = color === null ? null : reportNumber(color[r]);
+    var weight = size === null ? null : reportNumber(size[r]);
+    if ((color !== null && shade === null) || (size !== null && weight === null)) {
+      continue;
+    }
+    points.push({ index: r, x: x[r], y: y[r], color: shade, size: weight });
   }
   if (source.sort) {
     points.sort(function (a, b) {
@@ -257,6 +267,12 @@ function reportSeriesData(payload, source, rule) {
   for (var p = 0; p < points.length; p++) {
     var point = points[p];
     var pair = source.swap ? [point.y, point.x] : [point.x, point.y];
+    if (point.color !== null) {
+      pair.push(point.color);
+    }
+    if (point.size !== null) {
+      pair.push(point.size);
+    }
     var label = labels === null ? null : labels[point.index];
     var named = label !== null && label !== undefined;
     if (!named && flags[point.index] !== true) {
@@ -273,10 +289,36 @@ function reportSeriesData(payload, source, rule) {
 }`;
 
 /**
+ * The window global that holds the option of each chart, keyed by the id of its container.
+ *
+ * The option is plain data: its rows are built, and each renderer is still a name. The export of a chart
+ * draws it again from this entry, thus the page and each exported file read one option.
+ */
+export const CHART_OPTIONS_GLOBAL = "__REPORT_CHART_OPTIONS";
+
+/**
+ * The PNG sizes that the page draws, keyed by the name of the control: the theme, the text size, the CSS
+ * box, and the pixel ratio of each export.
+ */
+const PNG_EXPORT_SIZES = Object.fromEntries(
+    Object.entries(CHART_EXPORT_SIZES).map(([kind, size]) => [
+        kind,
+        { theme: size.theme, textPx: size.textPx, width: size.widthPx, height: size.heightPx, pixelRatio: size.pixelRatio },
+    ]),
+);
+
+/**
  * The page-side script that wires each chart. It finds every chart container, reads the option JSON from
  * the sibling `<script type="application/json">` element, and initializes ECharts with the registered
  * theme. The skeleton registers the theme before this script runs. A resize handler keeps each chart
  * fit to the window.
+ *
+ * A custom series names its renderer as a string, because the option is JSON. The script binds each name to
+ * its function before `setOption`, and it keeps the unbound option under the container id.
+ *
+ * A click on a PNG control of a chart card draws the kept option again on a detached element, at the CSS
+ * size of the export and its pixel ratio, in the theme of its text size. Then the script reads the PNG and
+ * downloads it through an anchor. A control that names no kept chart, or no export size, draws nothing.
  *
  * An option that carries the data-source member holds no row. The script then reads the registered payload
  * of the artifact and builds the data of each series from the descriptors. A mount whose payload the
@@ -296,6 +338,7 @@ function reportSeriesData(payload, source, rule) {
  */
 export const CHART_BOOTSTRAP = `(function () {
   ${CHART_SERIES_BUILDER}
+  ${CHART_RENDERERS_SOURCE}
   function signalReady() {
     window.${THEME_READY_SENTINEL} = true;
     document.dispatchEvent(new Event(${JSON.stringify(THEME_READY_EVENT)}));
@@ -313,6 +356,7 @@ export const CHART_BOOTSTRAP = `(function () {
     return;
   }
   var registry = window.${TABLE_DATA_GLOBAL};
+  var kept = window.${CHART_OPTIONS_GLOBAL} = window.${CHART_OPTIONS_GLOBAL} || Object.create(null);
   var containers = document.querySelectorAll("[data-echarts-id]");
   for (var i = 0; i < containers.length; i++) {
     var container = containers[i];
@@ -336,7 +380,8 @@ export const CHART_BOOTSTRAP = `(function () {
         }
       }
       var chart = echarts.init(container, ${JSON.stringify(ECHARTS_THEME_NAME)});
-      chart.setOption(option);
+      kept[container.getAttribute("id") || ""] = option;
+      chart.setOption(reportBindRenderers(option));
     } catch (cause) {
       console.error("chart bootstrap failed for " + (container.getAttribute("data-echarts-id") || "(no id)") + ": " + (cause && cause.message ? cause.message : cause));
     }
@@ -348,6 +393,35 @@ export const CHART_BOOTSTRAP = `(function () {
       if (instance) {
         instance.resize();
       }
+    }
+  });
+  var exportSizes = ${JSON.stringify(PNG_EXPORT_SIZES)};
+  function reportExportPng(control) {
+    var kind = control.getAttribute("data-export") || "";
+    var chartId = control.getAttribute("data-chart") || "";
+    if (!Object.prototype.hasOwnProperty.call(exportSizes, kind) || !Object.prototype.hasOwnProperty.call(kept, chartId)) {
+      return;
+    }
+    var size = exportSizes[kind];
+    var host = document.createElement("div");
+    var offscreen = echarts.init(host, size.theme, { renderer: "canvas", width: size.width, height: size.height, devicePixelRatio: size.pixelRatio });
+    try {
+      offscreen.setOption(reportBindRenderers(reportExportOption(kept[chartId], size.textPx, size.width)));
+      var link = document.createElement("a");
+      link.href = offscreen.getDataURL({ type: "png", pixelRatio: size.pixelRatio, backgroundColor: "#ffffff" });
+      link.download = control.getAttribute("data-file") || "chart.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } finally {
+      offscreen.dispose();
+    }
+  }
+  document.addEventListener("click", function (event) {
+    var target = event.target;
+    var control = target && typeof target.closest === "function" ? target.closest("[data-export]") : null;
+    if (control) {
+      reportExportPng(control);
     }
   });
   whenRevealed(signalReady);

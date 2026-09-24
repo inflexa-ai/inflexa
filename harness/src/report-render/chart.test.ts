@@ -63,6 +63,14 @@ function asArr(value: unknown): unknown[] {
     return value as unknown[];
 }
 
+/**
+ * The plotted pairs of one series. A bar of a small chart carries a value label, thus its item is an object
+ * whose value is the pair. Every other item is the pair itself.
+ */
+function pairsOf(data: unknown): unknown[] {
+    return asArr(data).map((item) => (typeof item === "object" && item !== null && !Array.isArray(item) ? asObj(item).value : item));
+}
+
 /** Derive an option and unwrap the ok value, or fail the test on a refusal. */
 function derive(block: ChartBlock, rows: ChartRow[], columns?: string[]): EchartOption {
     return deriveChartOption(block, rows, columns)._unsafeUnwrap();
@@ -95,11 +103,11 @@ describe("deriveChartOption bar", () => {
         expect(asObj(series[0]).name).toBe("A");
         expect(asObj(series[1]).name).toBe("B");
         expect(asObj(series[0]).barGap).toBe(0);
-        expect(asObj(series[0]).data).toEqual([
+        expect(pairsOf(asObj(series[0]).data)).toEqual([
             ["Mon", 5],
             ["Tue", 7],
         ]);
-        expect(asObj(series[1]).data).toEqual([
+        expect(pairsOf(asObj(series[1]).data)).toEqual([
             ["Mon", 3],
             ["Tue", 9],
         ]);
@@ -170,7 +178,7 @@ describe("the bar orientation", () => {
 
     it("leads each pair with the value, because the runtime reads the first member on x", () => {
         const option = derive(chartBlock("bar", { x: "set", y: "nes" }, { orientation: "horizontal" }), nesRows);
-        expect(asObj(asArr(option.series)[0]).data).toEqual([
+        expect(pairsOf(asObj(asArr(option.series)[0]).data)).toEqual([
             [2.41, "HALLMARK_HYPOXIA"],
             [-1.74, "HALLMARK_G2M_CHECKPOINT"],
             [2.18, "HALLMARK_GLYCOLYSIS"],
@@ -210,21 +218,21 @@ describe("the bar orientation", () => {
                     nameGap: 34,
                     axisLabel: { interval: 0 },
                 },
-                yAxis: { type: "value", name: "nes", axisLabel: { interval: 0 } },
+                yAxis: { type: "value", boundaryGap: ["15%", "15%"], name: "nes", axisLabel: { interval: 0 } },
                 series: [
                     {
                         type: "bar",
                         barGap: 0,
+                        barCategoryGap: "20%",
                         data: [
-                            ["HALLMARK_HYPOXIA", 2.41],
-                            ["HALLMARK_G2M_CHECKPOINT", -1.74],
-                            ["HALLMARK_GLYCOLYSIS", 2.18],
+                            { value: ["HALLMARK_HYPOXIA", 2.41], label: { show: true, position: "top", formatter: "2.41" } },
+                            { value: ["HALLMARK_G2M_CHECKPOINT", -1.74], label: { show: true, position: "bottom", formatter: "−1.74" } },
+                            { value: ["HALLMARK_GLYCOLYSIS", 2.18], label: { show: true, position: "top", formatter: "2.18" } },
                         ],
                     },
                 ],
                 legend: { show: false },
                 grid: { top: "8%", bottom: "20%", left: "10%", right: "5%" },
-                toolbox: { right: 0, top: 0, feature: { saveAsImage: { type: "png", name: "chart" } } },
             }),
         );
     });
@@ -259,7 +267,7 @@ describe("the bar orientation", () => {
             nesRows,
         );
         const data = asArr(asObj(asArr(option.series)[0]).data);
-        expect(data[1]).toEqual([-1.74, "HALLMARK_G2M_CHECKPOINT"]);
+        expect(pairsOf(data)[1]).toEqual([-1.74, "HALLMARK_G2M_CHECKPOINT"]);
         // The name of a bar is what it counts, thus the marked point still reads the category cell.
         expect(asObj(data[0]).name).toBe("HALLMARK_HYPOXIA");
         expect(asObj(data[0]).value).toEqual([2.41, "HALLMARK_HYPOXIA"]);
@@ -634,7 +642,7 @@ describe("the composition derivation", () => {
             [2, 20],
             [3, 30],
         ]);
-        expect(asObj(asArr(bar.series)[0]).data).toEqual([
+        expect(pairsOf(asObj(asArr(bar.series)[0]).data)).toEqual([
             [3, 30],
             [1, 10],
             [2, 20],
@@ -697,7 +705,7 @@ describe("the composition transforms", () => {
             { g: "B", v: 4 },
         ];
         const option = derive(composedBlock({ series: [{ form: "bar", encoding: { x: "g", y: { column: "v", transform: "abs" } } }] }), rows);
-        expect(asObj(asArr(option.series)[0]).data).toEqual([
+        expect(pairsOf(asObj(asArr(option.series)[0]).data)).toEqual([
             ["A", 3],
             ["B", 4],
         ]);
@@ -712,7 +720,7 @@ describe("the composition transforms", () => {
         ];
         const option = derive(composedBlock({ series: [{ form: "bar", encoding: { x: "g", y: { column: "v", transform: "rank" } } }] }), rows);
         // The two ties both take the place 2, thus the next value takes the place 4.
-        expect(asObj(asArr(option.series)[0]).data).toEqual([
+        expect(pairsOf(asObj(asArr(option.series)[0]).data)).toEqual([
             ["a", 4],
             ["b", 1],
             ["c", 2],
@@ -1410,7 +1418,7 @@ describe("the chart text", () => {
         const series = asArr(option.series);
         expect(asObj(series[0]).name).toBe("up in nonresponders");
         // The legend text is presentation. The plotted pair keeps the cells of the row.
-        expect(asObj(series[0]).data).toEqual([["A", 2.9]]);
+        expect(pairsOf(asObj(series[0]).data)).toEqual([["A", 2.9]]);
         expect(asObj(option.xAxis).data).toEqual(["A", "B", "C"]);
     });
 
@@ -1442,7 +1450,6 @@ describe("the chart text", () => {
                 ],
                 legend: { show: false },
                 grid: { top: "8%", bottom: "20%", left: "10%", right: "5%" },
-                toolbox: { right: 0, top: 0, feature: { saveAsImage: { type: "png", name: "chart" } } },
             }),
         );
     });
@@ -1459,7 +1466,7 @@ describe("the quick-path transform", () => {
         expect(asObj(option.yAxis).name).toBe("log10(v)");
         // The zero cell takes no logarithm, thus its row drops and no substitute value appears.
         expect(asObj(option.xAxis).data).toEqual(["A", "C"]);
-        expect(asObj(asArr(option.series)[0]).data).toEqual([
+        expect(pairsOf(asObj(asArr(option.series)[0]).data)).toEqual([
             ["A", 2],
             ["C", 3],
         ]);

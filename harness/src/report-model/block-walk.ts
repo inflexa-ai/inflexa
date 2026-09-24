@@ -14,7 +14,7 @@
  * which part it needs.
  */
 
-import { channelColumn, type Block, type ChartBlock, type ChartChannel } from "../contracts/report-blocks.js";
+import { channelColumn, channelOrder, type Block, type ChartBlock, type ChartChannel } from "../contracts/report-blocks.js";
 import type { Reference } from "../contracts/report-reference.js";
 import { holdsADriftedExponent } from "../report-render/number-format.js";
 import type { DraftBlock } from "./draft.js";
@@ -137,9 +137,10 @@ function proseWarnings(blockId: string, prose: string): ProseWarning[] {
 /**
  * Each column that the grammar of one chart names.
  *
- * The quick path names its four channels and its label. A composition names the channels of each series,
- * the lower bound of a band, the label of each series, and the column of each rank rule. A transform rides
- * beside its column, thus a transformed channel names the same column as a plain one.
+ * The quick path names its channels and its label. A composition names the channels of each series, the
+ * lower bound of a band, the label of each series, the column of each rank rule, and its facet. A transform
+ * rides beside its column, thus a transformed channel names the same column as a plain one. A channel that
+ * sorts its categories names its sort column right after its own column.
  *
  * A name comes back one time, in the order that the grammar states it. Thus a refusal names each absent
  * column one time.
@@ -150,7 +151,9 @@ function chartColumns(block: ChartBlock): string[] {
         if (column !== undefined && !columns.includes(column)) columns.push(column);
     };
     const addChannel = (channel: ChartChannel | undefined): void => {
-        if (channel !== undefined) add(channelColumn(channel));
+        if (channel === undefined) return;
+        add(channelColumn(channel));
+        add(channelOrder(channel)?.by);
     };
 
     const encoding = block.encoding;
@@ -160,6 +163,11 @@ function chartColumns(block: ChartBlock): string[] {
         addChannel(encoding.group);
         addChannel(encoding.value);
         add(encoding.label);
+        addChannel(encoding.color);
+        addChannel(encoding.size);
+        addChannel(encoding.low);
+        addChannel(encoding.high);
+        addChannel(encoding.facet);
     }
 
     const composition = block.composition;
@@ -170,10 +178,15 @@ function chartColumns(block: ChartBlock): string[] {
             addChannel(series.encoding.y0);
             addChannel(series.encoding.group);
             add(series.encoding.label);
+            addChannel(series.encoding.color);
+            addChannel(series.encoding.size);
+            addChannel(series.encoding.low);
+            addChannel(series.encoding.high);
         }
         for (const annotation of composition.annotations ?? []) {
             if (annotation.kind === "point-labels") add(annotation.column);
         }
+        addChannel(composition.facet);
     }
     return columns;
 }

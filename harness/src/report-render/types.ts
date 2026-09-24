@@ -43,8 +43,8 @@ export type RenderValues = Record<string, RenderValue>;
  * The renderer writes no file. Thus it gives the asset bytes back to the caller, and the caller stages
  * them beside the page. A document with no table gives an empty list, and its page references none.
  *
- * The list holds the provenance assets of the render beside the table payloads, thus one stage writes each
- * file that the page loads and the caller sorts nothing.
+ * The list holds the provenance assets of the render beside the table payloads and the SVG files of each
+ * chart, thus one stage writes each file that the page loads or links, and the caller sorts nothing.
  */
 export interface RenderedPage {
     html: string;

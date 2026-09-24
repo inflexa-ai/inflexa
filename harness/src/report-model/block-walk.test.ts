@@ -75,3 +75,47 @@ describe("referencedPaths", () => {
         expect(referencedPaths(walkBlocks([{ kind: "text", id: "t1", content: { prose: "Body." } }]).references).size).toBe(0);
     });
 });
+
+describe("the columns of a chart grammar", () => {
+    const binding = { kind: "artifact-table" as const, path: CHART_PATH, hash: HASH };
+
+    /** The grammar columns that the walk collects for one chart block. */
+    function columnsOf(block: Block): string[] | undefined {
+        return walkBlocks([block]).references[0]?.encodingColumns;
+    }
+
+    it("names each new channel of the quick path and the sort column of each channel", () => {
+        const block: Block = {
+            kind: "chart",
+            id: "ch1",
+            binding,
+            chartType: "scatter",
+            encoding: {
+                x: { column: "ratio", orderBy: "rank_x" },
+                y: { column: "pathway", orderBy: "rank_y", order: "desc" },
+                color: "padj",
+                size: "count",
+                low: "lo",
+                high: "hi",
+                facet: "cohort",
+            },
+        };
+
+        // An invented column in any channel must reach the structural match, thus the walk names each one.
+        expect(columnsOf(block)).toEqual(["ratio", "rank_x", "pathway", "rank_y", "padj", "count", "lo", "hi", "cohort"]);
+    });
+
+    it("names the new channels of each series and the facet of a composition", () => {
+        const block: Block = {
+            kind: "chart",
+            id: "ch1",
+            binding,
+            composition: {
+                series: [{ form: "bar", encoding: { x: { column: "arm", orderBy: "arm_rank" }, y: "mean", color: "score", low: "lo", high: "hi" } }],
+                facet: "cohort",
+            },
+        };
+
+        expect(columnsOf(block)).toEqual(["arm", "arm_rank", "mean", "score", "lo", "hi", "cohort"]);
+    });
+});

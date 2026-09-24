@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { ChartBlockSchema, ClaimBlockSchema, TextBlockSchema, channelColumn, channelTransform, type ChartComposition } from "./report-blocks.js";
+import { ChartBlockSchema, ClaimBlockSchema, TextBlockSchema, channelColumn, channelOrder, channelTransform, type ChartComposition } from "./report-blocks.js";
 
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -66,7 +66,7 @@ describe("the quick path", () => {
     });
 
     it("refuses a channel that the encoding does not declare", () => {
-        expect(parses({ chartType: "scatter", encoding: { x: "gene", y: "padj", size: "baseMean" } })).toBe(false);
+        expect(parses({ chartType: "scatter", encoding: { x: "gene", y: "padj", shape: "baseMean" } })).toBe(false);
     });
 });
 
@@ -336,5 +336,134 @@ describe("the text list", () => {
         };
 
         expect(ClaimBlockSchema.safeParse(claim).success).toBe(false);
+    });
+});
+
+describe("the wide grammar", () => {
+    it("takes an enrichment dot plot, and the size and the color channels ride the parsed block", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "scatter", encoding: { x: "ratio", y: "pathway", size: "count", color: "padj" } }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.encoding?.size).toBe("count");
+        expect(parsed.success && parsed.data.encoding?.color).toBe("padj");
+    });
+
+    it("takes an interval pair and a facet on the quick path", () => {
+        expect(parses({ chartType: "scatter", encoding: { x: "hr", y: "study", low: "hr_low", high: "hr_high", facet: "cohort" } })).toBe(true);
+    });
+
+    it("refuses a lone interval bound, because an interval has two bounds", () => {
+        expect(parses({ chartType: "scatter", encoding: { x: "hr", y: "study", low: "hr_low" } })).toBe(false);
+        expect(parses({ chartType: "bar", encoding: { x: "arm", y: "mean", high: "mean_high" } })).toBe(false);
+    });
+
+    it("takes the color, the size, and the interval on a composition series", () => {
+        const series = { form: "scatter", encoding: { x: "umap1", y: "umap2", color: "expr", size: "depth", low: "lo", high: "hi" } };
+        expect(parses({ composition: { series: [series] } })).toBe(true);
+    });
+
+    it("refuses a lone interval bound on a composition series", () => {
+        expect(parses({ composition: { series: [{ form: "bar", encoding: { x: "arm", y: "mean", low: "lo" } }] } })).toBe(false);
+    });
+
+    it("takes a facet beside the series of a composition", () => {
+        expect(parses({ composition: { ...scatterComposition(), facet: "cohort" } })).toBe(true);
+    });
+
+    it("takes an ordered channel with no transform, and the order rides the parsed block", () => {
+        const parsed = ChartBlockSchema.safeParse(
+            chart({
+                chartType: "heatmap",
+                encoding: { x: { column: "sample", orderBy: "leaf_x" }, y: { column: "gene", orderBy: "leaf_y", order: "desc" }, value: "z" },
+            }),
+        );
+        expect(parsed.success).toBe(true);
+        const x = parsed.success ? parsed.data.encoding?.x : undefined;
+        const y = parsed.success ? parsed.data.encoding?.y : undefined;
+        expect(x !== undefined && channelOrder(x)).toEqual({ by: "leaf_x", order: "asc" });
+        expect(y !== undefined && channelOrder(y)).toEqual({ by: "leaf_y", order: "desc" });
+        expect(channelOrder("gene")).toBeUndefined();
+    });
+
+    it("takes a transform and an order on one channel", () => {
+        expect(parses({ chartType: "bar", encoding: { x: { column: "pathway", orderBy: "nes" }, y: { column: "padj", transform: "neg_log10" } } })).toBe(true);
+    });
+
+    it("refuses an order that names no column to sort by", () => {
+        expect(parses({ chartType: "bar", encoding: { x: { column: "pathway", order: "desc" }, y: "nes" } })).toBe(false);
+    });
+
+    it("refuses an order outside the two directions", () => {
+        expect(parses({ chartType: "bar", encoding: { x: { column: "pathway", orderBy: "nes", order: "up" }, y: "nes" } })).toBe(false);
+    });
+
+    it("takes a focus list, and the list rides the parsed block", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "bar", encoding: { x: "pathway", y: "nes" }, focus: ["Hypoxia", "Glycolysis"] }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.focus).toEqual(["Hypoxia", "Glycolysis"]);
+    });
+
+    it("refuses an empty focus list", () => {
+        expect(parses({ chartType: "bar", encoding: { x: "pathway", y: "nes" }, focus: [] })).toBe(false);
+    });
+
+    it("takes a focus beside a composition", () => {
+        expect(parses({ composition: { series: [{ form: "line", encoding: { x: "day", y: "size", group: "arm" } }] }, focus: ["treated"] })).toBe(true);
+    });
+
+    it("takes each of the four new chart types", () => {
+        for (const chartType of ["violin", "stacked-bar", "normalized-bar", "radar"]) {
+            expect(parses({ chartType, encoding: { x: "cluster", y: "score", group: "sample" } })).toBe(true);
+        }
+    });
+
+    it("takes the orientation beside a stacked form", () => {
+        for (const chartType of ["stacked-bar", "normalized-bar"]) {
+            expect(parses({ chartType, encoding: { x: "cluster", y: "count", group: "sample" }, orientation: "horizontal" })).toBe(true);
+        }
+    });
+
+    it("keeps the fabrication holes closed on the new members", () => {
+        // A focus names a category, and never a styled item. A channel names a column, and never a value.
+        expect(parses({ chartType: "bar", encoding: { x: "pathway", y: "nes" }, focus: [{ name: "Hypoxia", color: "#ff0000" }] })).toBe(false);
+        expect(parses({ chartType: "scatter", encoding: { x: "a", y: "b", color: { column: "c", values: [1, 2] } } })).toBe(false);
+        expect(parses({ chartType: "scatter", encoding: { x: "a", y: "b", color: { column: "c", formatter: "function () {}" } } })).toBe(false);
+        expect(parses({ chartType: "scatter", encoding: { x: "a", y: "b" }, renderItem: "outline" })).toBe(false);
+    });
+});
+
+describe("the teaching text of the wide grammar", () => {
+    /** The description of one member of an object schema. An optional wrapper carries the text. */
+    function describedMember(shape: Record<string, { description?: string }>, member: string): string | undefined {
+        return shape[member]?.description;
+    }
+
+    const quickPath = ChartBlockSchema.shape.encoding.unwrap().shape;
+    const series = ChartBlockSchema.shape.composition.unwrap().shape.series.element.shape.encoding.shape;
+    const composition = ChartBlockSchema.shape.composition.unwrap().shape;
+
+    it("describes each new channel of the quick path by what it plots", () => {
+        for (const member of ["color", "size", "low", "high", "facet"]) {
+            expect(describedMember(quickPath, member)?.length ?? 0).toBeGreaterThan(40);
+        }
+        expect(describedMember(quickPath, "color")).toContain("diverging");
+        expect(describedMember(quickPath, "size")).toContain("scatter");
+        expect(describedMember(quickPath, "low")).toContain("high");
+        expect(describedMember(quickPath, "facet")).toContain("12");
+    });
+
+    it("describes each new channel of a series and the facet of a composition", () => {
+        for (const member of ["color", "size", "low", "high"]) {
+            expect(describedMember(series, member)?.length ?? 0).toBeGreaterThan(40);
+        }
+        expect(describedMember(composition, "facet")?.length ?? 0).toBeGreaterThan(40);
+    });
+
+    it("describes the focus, the order members, and the new chart types", () => {
+        expect(ChartBlockSchema.shape.focus.description).toContain("category");
+        expect(ChartBlockSchema.shape.chartType.description).toContain("violin");
+        expect(ChartBlockSchema.shape.chartType.description).toContain("radar");
+        const objectForm = ChartBlockSchema.shape.encoding.unwrap().shape.x.unwrap().options[1];
+        expect(objectForm.shape.orderBy.description).toContain("column");
+        expect(objectForm.shape.order.description).toContain("desc");
     });
 });
