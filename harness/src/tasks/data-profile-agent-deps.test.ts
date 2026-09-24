@@ -16,6 +16,7 @@ import {
 } from "../agents/sandbox/__fixtures__/deps.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { EmbeddingProvider } from "../providers/types.js";
 import { sandboxPackageLinkPrompt } from "../prompts/sandbox-standards.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
@@ -53,5 +54,19 @@ describe("profilerSandboxAgentDeps — the farm-extension seam", () => {
         const def = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps(), step));
         expect(def.tools.map((t) => t.id)).not.toContain("link_packages");
         expect(def.systemPrompt).not.toContain(sandboxPackageLinkPrompt.trim());
+    });
+});
+
+describe("profilerSandboxAgentDeps — the tool output store", () => {
+    const step = makeFakeSandboxAgentDeps().step;
+
+    it("a store gives the profiler roster read_tool_output, and no store gives none", () => {
+        const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+
+        const withStore = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps({ toolOutputStore }), step));
+        const withoutStore = createDataProfilerAgent(profilerSandboxAgentDeps(makeProfileDeps(), step));
+
+        expect(withStore.tools.map((t) => t.id)).toContain("read_tool_output");
+        expect(withoutStore.tools.map((t) => t.id)).not.toContain("read_tool_output");
     });
 });

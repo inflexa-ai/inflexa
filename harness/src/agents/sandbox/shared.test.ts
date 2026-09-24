@@ -12,6 +12,7 @@ import {
     sandboxPackageLinkPrompt,
     sandboxAnalysisStepStandardsPrompt,
 } from "../../prompts/sandbox-standards.js";
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SubmitExecBody } from "../../sandbox/types.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
@@ -424,5 +425,37 @@ describe("createSandboxAgent — the toolchain keying of the orient core", () =>
         const def = createSandboxAgent({ ...deps, sandboxClient: { ...deps.sandboxClient, toolchainSource: "image" } }, meta, body);
         expect(def.systemPrompt).toContain("An acquisition of a new package is a host action");
         expect(def.systemPrompt).not.toContain(sandboxOrientCorePrompt.trim());
+    });
+});
+
+describe("createSandboxAgent — the read tool of a kept text", () => {
+    const store: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+    const WORKSPACE_TOOLS = ["execute_command", "write_file", "edit_file", "read_file", "list_files", "file_stat", "grep", "workspace_search"];
+
+    function lastWorkspaceIndex(ids: readonly string[]): number {
+        return Math.max(...ids.map((id, index) => (WORKSPACE_TOOLS.includes(id) ? index : -1)));
+    }
+
+    it("a store adds read_tool_output directly after the workspace tools", () => {
+        const withStore = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolOutputStore: store }, meta, body);
+        const withoutStore = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+
+        const ids = withStore.tools.map((t) => t.id);
+        expect(ids.indexOf("read_tool_output")).toBe(lastWorkspaceIndex(ids) + 1);
+        expect(ids.filter((id) => id !== "read_tool_output")).toEqual(withoutStore.tools.map((t) => t.id));
+    });
+
+    it("a read-only agent with a store keeps read_tool_output", () => {
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), toolOutputStore: store }, meta, body, { readOnly: true });
+
+        const ids = def.tools.map((t) => t.id);
+        expect(ids).not.toContain("write_file");
+        expect(ids.indexOf("read_tool_output")).toBe(lastWorkspaceIndex(ids) + 1);
+    });
+
+    it("the same deps with no store give no read_tool_output", () => {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, { readOnly: true });
+
+        expect(def.tools.map((t) => t.id)).not.toContain("read_tool_output");
     });
 });

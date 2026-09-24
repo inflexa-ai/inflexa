@@ -101,28 +101,28 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 4. The sandbox agents and the step body
 
-- [ ] 4.1 In `src/agents/sandbox/shared.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `SandboxAgentDeps`, with a doc comment.
-- [ ] 4.2 In `createSandboxAgent`, add `createReadToolOutputTool(deps.toolOutputStore)` directly after `buildWorkspaceTools(...)` when the store is present. Keep it in read-only mode.
-- [ ] 4.3 In `src/workflows/sandbox-step.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `SandboxStepDeps` and to `SandboxAgentBuildContext`.
-- [ ] 4.4 In the step body, give `deps.toolOutputStore` to the build context, the options of the task, and the post-step pipeline.
-- [ ] 4.5 After `buildAgent`, log one warn when the step has a store and `agent.tools` holds no `read_tool_output`.
-- [ ] 4.6 In `src/execution/post-step-pipeline.ts`, add the field to the deps, beside `usageRecorder`. Give it to `generateFileMetadata` and to `generateStepSummary`.
-- [ ] 4.7 In `src/execution/artifact-metadata.ts`, add the field to `GenerateFileMetadataOptions`, and give it to the options of `continueAgent`.
-- [ ] 4.8 In the same file, add `READ_TOOL_OUTPUT_TOOL_ID` to `DESCRIBER_TOOLS`. Write the doc comment of the mask again.
-- [ ] 4.9 In `src/execution/step-summary.ts`, add the field to the options, and give it to `continueAgent`. Add `READ_TOOL_OUTPUT_TOOL_ID` to `SUMMARY_TOOLS`.
-- [ ] 4.10 In `src/tasks/data-profile.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `DataProfileDeps`. Give it to `sandboxAgentDeps` and to the options of `runToTerminal`.
-- [ ] 4.11 In `src/agents/sandbox/shared.test.ts`, add these tests:
+- [x] 4.1 In `src/agents/sandbox/shared.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `SandboxAgentDeps`, with a doc comment.
+- [x] 4.2 In `createSandboxAgent`, add `createReadToolOutputTool(deps.toolOutputStore)` directly after `buildWorkspaceTools(...)` when the store is present. Keep it in read-only mode.
+- [x] 4.3 In `src/workflows/sandbox-step.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `SandboxStepDeps` and to `SandboxAgentBuildContext`.
+- [x] 4.4 In the step body, give `deps.toolOutputStore` to the build context, the options of the task, and the post-step pipeline.
+- [x] 4.5 After `buildAgent`, log one warn when the step has a store and `agent.tools` holds no `read_tool_output`.
+- [x] 4.6 In `src/execution/post-step-pipeline.ts`, add the field to the deps, beside `usageRecorder`. Give it to `generateFileMetadata` and to `generateStepSummary`.
+- [x] 4.7 In `src/execution/artifact-metadata.ts`, add the field to `GenerateFileMetadataOptions`, and give it to the options of `continueAgent`.
+- [x] 4.8 In the same file, add `READ_TOOL_OUTPUT_TOOL_ID` to `DESCRIBER_TOOLS`.
+- [x] 4.9 In `src/execution/step-summary.ts`, add the field to the options, and give it to `continueAgent`. Add `READ_TOOL_OUTPUT_TOOL_ID` to `SUMMARY_TOOLS`.
+- [x] 4.10 In `src/tasks/data-profile.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `DataProfileDeps`. Give it to `sandboxAgentDeps` and to the options of `runToTerminal`.
+- [x] 4.11 In `src/agents/sandbox/shared.test.ts`, add these tests:
   - A store adds `read_tool_output` directly after the workspace tools.
   - A read-only agent with a store keeps the tool.
   - The same deps with no store give the same tools without it.
-- [ ] 4.12 In `src/workflows/sandbox-step.test.ts`, give a store to the rigs. Add these tests:
+- [x] 4.12 In `src/workflows/sandbox-step.test.ts`, give a store to the rigs. Add these tests:
   - The task keeps the text of a long `execute_command` result in the store.
   - The summary continuation can run `read_tool_output`.
   - An agent with no read tool gives one warn.
-- [ ] 4.13 In `src/execution/artifact-metadata.test.ts` and `src/execution/step-summary.test.ts`, change each assertion of a mask. Expected result: each mask names `read_tool_output`.
-- [ ] 4.14 In `src/tasks/data-profile-agent-deps.test.ts`, add a test. Expected result: the profiler declares `read_tool_output` when its deps have a store.
-- [ ] 4.15 Run `tsc -p tsconfig.json`. Run `bun test src/agents/sandbox/shared.test.ts src/workflows/sandbox-step.test.ts src/execution/artifact-metadata.test.ts src/execution/step-summary.test.ts src/tasks/data-profile-agent-deps.test.ts`.
-- [ ] 4.16 Run `bun test src/execution/post-step-pipeline.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 4.13 In `src/execution/artifact-metadata.test.ts` and `src/execution/step-summary.test.ts`, change each assertion of a mask. Expected result: each mask names `read_tool_output`.
+- [x] 4.14 In `src/tasks/data-profile-agent-deps.test.ts`, add a test. Expected result: the profiler declares `read_tool_output` when its deps have a store.
+- [x] 4.15 Run `tsc -p tsconfig.json`. Run `bun test src/agents/sandbox/shared.test.ts src/workflows/sandbox-step.test.ts src/execution/artifact-metadata.test.ts src/execution/step-summary.test.ts src/tasks/data-profile-agent-deps.test.ts`.
+- [x] 4.16 Run `bun test src/execution/post-step-pipeline.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 5. The other agents
 

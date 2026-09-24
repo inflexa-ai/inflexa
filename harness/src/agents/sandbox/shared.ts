@@ -19,6 +19,7 @@
 
 import type { Pool } from "pg";
 
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
@@ -68,6 +69,7 @@ import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, c
 // Skills (declared per agent via meta.skills).
 import { createSkillTools } from "../../tools/sandbox/skills.js";
 
+import { createReadToolOutputTool } from "../../tools/read-tool-output.js";
 import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 
@@ -144,6 +146,8 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * tool list stays stable across continuations; the task masks it, the continuation unmasks it.
      */
     readonly fileMetadata?: FileMetadataCell;
+    /** Adds `read_tool_output`. The loop of the agent must keep its texts in the same store. */
+    readonly toolOutputStore?: ToolOutputStore;
     /**
      * The farm-extension seam of the embedder. When it is bound, every
      * sandbox agent gets the `link_packages` tool in its always-on substrate,
@@ -327,6 +331,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     const skillTools = deps.skillsDir ? Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: meta.skills })) : [];
     const tools: Tool[] = [
         ...buildWorkspaceTools(deps, opts.readOnly ?? false),
+        ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
         // Always-on, not in the `meta.tools` allowlist: the data profile is the only
         // record of what the analysis's input dataset IS, and no file carries it (the
         // profiler's scratch tree is deleted on completion). An agent that cannot pull

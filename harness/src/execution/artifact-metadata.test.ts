@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage } from "ai";
-import { okAsync } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import type { AgentSession } from "../auth/types.js";
@@ -14,7 +15,7 @@ import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, ChatRequest, ChatResponse } from "../providers/types.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { makeMessage, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
-import type { Tool } from "../tools/define-tool.js";
+import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createFileMetadataCell, createSubmitFileMetadataTool } from "../tools/sandbox/submit-file-metadata.js";
 import { createGrepTool, createReadFileTool } from "../tools/workspace/index.js";
 import { createWorkspaceFilesystem } from "../workspace/filesystem.js";
@@ -242,6 +243,32 @@ describe("generateFileMetadata", () => {
         // Undescribed files still get a deterministic fallback (lossless guarantee).
         const b = out.entries.find((e) => e.dbPath === "p/b.csv")!;
         expect(b.description).toContain("automated description unavailable");
+    });
+
+    it("refuses a tool outside the mask, and the refusal names the four tools that can run", async () => {
+        let ran = false;
+        const execProbe = defineTool({
+            id: "execute_command",
+            description: "Run a command.",
+            inputSchema: z.object({ command: z.array(z.string()) }),
+            describeCall: "none",
+            execute: async () => {
+                ran = true;
+                return ok({ exitCode: 0 });
+            },
+        });
+        const { provider, calls } = makeProvider([
+            makeMessage([toolUseBlock("x1", "execute_command", { command: ["ls"] })], "tool_use"),
+            submitCall("t1", [desc("a.csv"), desc("b.csv"), desc("c.csv")]),
+            stopTurn(),
+        ]);
+
+        await generateFileMetadata(options(provider, ARTIFACTS_3, stepAgent([execProbe])));
+
+        const refusal = calls[1]!.req.messages.flatMap((m) => (m.role === "tool" ? m.content : [])).find((part) => part.type === "tool-result");
+        expect(refusal?.type === "tool-result" ? refusal.output.type : undefined).toBe("error-text");
+        expect(JSON.stringify(refusal)).toContain("The tools that can run now: submit_file_metadata, read_file, grep, read_tool_output.");
+        expect(ran).toBe(false);
     });
 
     it("falls back for all files when the model never calls the tool", async () => {
