@@ -144,12 +144,12 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 6. The composition
 
-- [ ] 6.1 In `src/runtime/assemble.ts`, make `const toolOutputStore = createToolOutputStore(conversation.pool)` one time in `assembleCoreRuntime`.
-- [ ] 6.2 Give it to `registerSandboxStep`, `registerExecuteAnalysis`, `registerDataProfileWorkflow`, `createConversationAgent`, and `createReportSessionAgent`.
-- [ ] 6.3 Add `"toolOutputStore"` to the `Omit` of each bag of `CoreWorkflowDeps` and of `ConversationAssemblyDeps`. Write their doc comments again.
+- [x] 6.1 In `src/runtime/assemble.ts`, make `const toolOutputStore = createToolOutputStore(conversation.pool)` one time in `assembleCoreRuntime`.
+- [x] 6.2 Give it to `registerSandboxStep`, `registerExecuteAnalysis`, `registerDataProfileWorkflow`, `createConversationAgent`, and `createReportSessionAgent`.
+- [x] 6.3 Add `"toolOutputStore"` to the `Omit` of each bag of `CoreWorkflowDeps` and of `ConversationAssemblyDeps`. Write their doc comments again.
 - [ ] 6.4 In `src/app/chat-turn.ts`, give the root loop of `runChatTurn` the option `toolOutputStore: createToolOutputStore(deps.pool)`.
-- [ ] 6.5 In `src/index.ts`, export the types `ToolOutputStore` and `KeptToolOutput` beside `RunAgentOptions`.
-- [ ] 6.6 In `src/runtime/assemble.test.ts`, add a test. Expected result: the conversation agent and the report agent declare `read_tool_output`.
+- [x] 6.5 In `src/index.ts`, export the types `ToolOutputStore` and `KeptToolOutput` beside `RunAgentOptions`.
+- [x] 6.6 In `src/runtime/assemble.test.ts`, add a test. Expected result: the conversation agent and the report agent declare `read_tool_output`.
 - [ ] 6.7 In `src/app/chat-turn.test.ts`, add a test with a tool that gives 50,000 characters. Expected result: the stored round holds the excerpt.
 - [ ] 6.8 In the same test, read `cortex_tool_outputs`. Expected result: the table holds the whole text under the reference of the excerpt.
 - [ ] 6.9 Run `tsc -p tsconfig.json`. Run `bun test src/runtime/assemble.test.ts src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.

@@ -49,6 +49,7 @@ import { createThreadStore } from "../memory/thread-store.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
+import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { ProvenanceSeam } from "../provenance/seam.js";
 import type { MakeSessionPagePublisher, ResolvePageAsset, ResolvePageUrl } from "../tools/report-session/index.js";
 
@@ -66,12 +67,13 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * here would let an embedder wire a recorder the workflows use and the
  * conversation agent does not — a half-wired ledger that reads as a complete
  * one. The protection has to hold on both sides of the assembly, not just the
- * conversation side.
+ * conversation side. Each bag omits `toolOutputStore` for the same reason: each
+ * loop must keep its texts in the one store that each read tool reads.
  */
 export interface CoreWorkflowDeps {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver">;
-    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver">;
-    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
+    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
+    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
 }
 
 /** The registered, callable workflow handles. */
@@ -85,15 +87,16 @@ export interface RegisteredWorkflows {
 
 /**
  * Conversation-agent deps minus the workflow callable, the resource policy, the
- * usage recorder, the report-session anchor, and the eyes.
+ * usage recorder, the report-session anchor, the eyes, and the tool output store.
  * `assembleCoreRuntime` supplies each of those itself. Thus a caller cannot wire
- * one of these five values:
+ * one of these six values:
  *
  * - a stale callable
  * - a policy that diverges from the one the workflows see
  * - a recorder that only half the agent tree reports to
  * - an anchor over a different session runtime
  * - a seam that only half the agent tree looks through
+ * - a store that only half the agent tree keeps its texts in
  *
  * The assembly resolves the eyes one time, from `CoreRuntimeDeps.eyes` and the
  * chrome config. A caller that bound the eyes here would give the conversation
@@ -101,7 +104,7 @@ export interface RegisteredWorkflows {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes"
+    "executeAnalysisWorkflow" | "resourcePolicy" | "usageRecorder" | "citationResolver" | "anchorReportSession" | "eyes" | "toolOutputStore"
 >;
 
 /**
@@ -307,9 +310,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
             : { semanticScholarApiKey: conversation.bioKeys.semanticScholar }),
     });
 
-    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder });
-    const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder });
-    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder });
+    const toolOutputStore = createToolOutputStore(conversation.pool);
+
+    const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, toolOutputStore });
+    const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder, toolOutputStore });
+    const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, toolOutputStore });
     // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
     // three seams from the profile deps. The report resolver factory binds the extraction arm over this
     // callable, thus a fall-through report reference reads its file out of process on the profile rails.
@@ -347,6 +352,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         anchorReportSession: reportSession.ensureSessionState,
         resourcePolicy,
         usageRecorder,
+        toolOutputStore,
         citationResolver,
         ...(eyes ? { eyes } : {}),
         // The start tool passes it to the spawn, which emits the creation of a
@@ -409,6 +415,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         ...(deps.resolveReportPageUrl ? { resolvePageUrl: deps.resolveReportPageUrl } : {}),
         ...(deps.provenance ? { provenance: deps.provenance } : {}),
         ...(conversation.logger ? { logger: conversation.logger } : {}),
+        toolOutputStore,
     });
 
     // The single registration point for every typed agent. A future thread type's
