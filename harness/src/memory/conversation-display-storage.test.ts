@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import { envelopeDisplayMessages, parseStoredDisplayEnvelope, type ConversationUIMessage } from "./conversation-display-storage.js";
+import {
+    conversationUIToCortexMessages,
+    envelopeDisplayMessages,
+    parseStoredDisplayEnvelope,
+    type ConversationUIMessage,
+} from "./conversation-display-storage.js";
 
 const messages: ConversationUIMessage[] = [
     { id: "u1", role: "user", parts: [{ type: "text", text: "show results" }] },
@@ -103,5 +108,17 @@ describe("a stored display part the vocabulary can no longer render", () => {
     it("leaves structural corruption to fail, having no part it can identify", async () => {
         const value = { ...envelopeDisplayMessages(messages), messages: [{ id: "a1", role: "assistant", parts: [{ data: { x: 1 } }] }] };
         expect(parseStoredDisplayEnvelope(value, "t/0/display")).rejects.toThrow(/Invalid stored conversation display envelope/);
+    });
+});
+
+describe("a stored compaction divider", () => {
+    it("round-trips a system message with a data-compaction part and reads it back as the part", async () => {
+        const figures = { id: "c-1", status: "done" as const, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+        const divider: ConversationUIMessage = { id: "c-1", role: "system", parts: [{ type: "data-compaction", id: "c-1", data: figures }] };
+
+        const parsed = await parseStoredDisplayEnvelope(JSON.parse(JSON.stringify(envelopeDisplayMessages([divider]))) as unknown, "t/0/display");
+
+        expect(parsed.messages).toEqual([divider]);
+        expect(conversationUIToCortexMessages(parsed.messages)).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", ...figures }] }]);
     });
 });

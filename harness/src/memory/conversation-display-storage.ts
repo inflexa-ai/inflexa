@@ -21,6 +21,7 @@ import { z } from "zod";
 import type {
     AskPart,
     ChildSessionStartedPart,
+    CompactionPart,
     FileReferencePart,
     PlanPart,
     PresentationPart,
@@ -30,6 +31,7 @@ import type {
 import {
     AskPartSchema,
     ChildSessionStartedPartSchema,
+    CompactionPartSchema,
     FileReferencePartSchema,
     PlanPartSchema,
     PresentationPartSchema,
@@ -61,6 +63,7 @@ export type ConversationUIData = {
     ask: Payload<AskPart>;
     "child-session-started": Payload<ChildSessionStartedPart>;
     "report-rendered": Payload<ReportRenderedPart>;
+    compaction: Payload<CompactionPart>;
 };
 
 export interface ConversationDisplayMetadata {
@@ -120,6 +123,7 @@ const dataSchemas = {
     ask: AskPartSchema.omit({ type: true }),
     "child-session-started": ChildSessionStartedPartSchema.omit({ type: true }),
     "report-rendered": ReportRenderedPartSchema.omit({ type: true }),
+    compaction: CompactionPartSchema.omit({ type: true }),
 };
 
 export interface StoredDisplayEnvelope {

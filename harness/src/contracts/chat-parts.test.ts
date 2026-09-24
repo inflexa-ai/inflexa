@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { CortexChatPartSchema, PresentationContentSchema, PresentationPartSchema } from "./schemas/chat-parts.js";
+import { PART_REGISTRY } from "./part-registry.js";
+import { CompactionPartSchema, CortexChatPartSchema, PresentationContentSchema, PresentationPartSchema } from "./schemas/chat-parts.js";
 
 describe("PresentationContentSchema — echart dataPath", () => {
     test("accepts an echart content carrying dataPath and round-trips it (does not strip it)", () => {
@@ -58,5 +59,26 @@ describe("PresentationContentSchema — structure", () => {
         expect(PresentationContentSchema.safeParse(noAccession).success).toBe(false);
         expect(PresentationContentSchema.safeParse(noVersion).success).toBe(false);
         expect(PresentationContentSchema.safeParse({ ...structure, version: 0 }).success).toBe(false);
+    });
+});
+
+describe("CompactionPartSchema", () => {
+    test("accepts a running part and a done part through the union schema", () => {
+        const running = { type: "data-compaction" as const, id: "c-1", status: "running" as const, tokensBefore: 162_000 };
+        const done = { ...running, status: "done" as const, tokensAfter: 14_000, durationMs: 21_000 };
+
+        expect(CortexChatPartSchema.parse(running)).toEqual(running);
+        expect(CortexChatPartSchema.parse(done)).toEqual(done);
+    });
+
+    test("is a transient reconciling part of the conversation in the registry", () => {
+        expect(PART_REGISTRY["data-compaction"]).toEqual({ emitter: "conversation", consumer: "conversation", transient: true, reconciling: true });
+    });
+
+    test("refuses an unknown status and a negative figure", () => {
+        const running = { type: "data-compaction" as const, id: "c-1", status: "running" as const, tokensBefore: 162_000 };
+
+        expect(CompactionPartSchema.safeParse({ ...running, status: "paused" }).success).toBe(false);
+        expect(CompactionPartSchema.safeParse({ ...running, tokensBefore: -1 }).success).toBe(false);
     });
 });

@@ -77,16 +77,16 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 4. The data part and the divider vocabulary
 
-- [ ] 4.1 In `src/contracts/chat-parts.ts`, add `interface CompactionPart` with the fields of the design. Add it to `CortexChatPart`, and name it in the header comment of the module.
-- [ ] 4.2 The doc comment of `CompactionPart` says: one id for each compaction, `running` and then `done` or `failed`, and a divider after a reload.
-- [ ] 4.3 In `src/contracts/schemas/chat-parts.ts`, add `CompactionPartSchema`, and add it to `CortexChatPartSchema`. `tokensBefore`, `tokensAfter`, and `durationMs` are non-negative integers.
-- [ ] 4.4 In `src/contracts/part-registry.ts`, add `"data-compaction": { emitter: "conversation", consumer: "conversation", transient: true, reconciling: true }`.
-- [ ] 4.5 In `src/memory/conversation-display-storage.ts`, add `compaction: Payload<CompactionPart>` to `ConversationUIData`. Add `compaction: CompactionPartSchema.omit({ type: true })` to `dataSchemas`.
-- [ ] 4.6 In `src/index.ts`, export the type `CompactionPart` beside the other chat parts.
-- [ ] 4.7 In `src/contracts/chat-parts.test.ts`, add tests. Expected result: the schema accepts a `running` part and a `done` part, and it refuses an unknown status.
-- [ ] 4.8 In `src/memory/conversation-display-storage.test.ts`, add a test. Expected result: a `system` message with a `data-compaction` part round-trips, and `conversationUIToCortexMessages` gives the part.
-- [ ] 4.9 In `src/memory/conversation-display-recorder.test.ts`, add a test. Expected result: an emitted `data-compaction` part does not join the assistant message.
-- [ ] 4.10 Run `tsc -p tsconfig.json`. Run `bun test src/contracts/chat-parts.test.ts src/memory/conversation-display-storage.test.ts src/memory/conversation-display-recorder.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 4.1 In `src/contracts/chat-parts.ts`, add `interface CompactionPart` with the fields of the design. Add it to `CortexChatPart`, and name it in the header comment of the module.
+- [x] 4.2 The doc comment of `CompactionPart` says: one id for each compaction, `running` and then `done` or `failed`, and a divider after a reload.
+- [x] 4.3 In `src/contracts/schemas/chat-parts.ts`, add `CompactionPartSchema`, and add it to `CortexChatPartSchema`. `tokensBefore`, `tokensAfter`, and `durationMs` are non-negative integers.
+- [x] 4.4 In `src/contracts/part-registry.ts`, add `"data-compaction": { emitter: "conversation", consumer: "conversation", transient: true, reconciling: true }`.
+- [x] 4.5 In `src/memory/conversation-display-storage.ts`, add `compaction: Payload<CompactionPart>` to `ConversationUIData`. Add `compaction: CompactionPartSchema.omit({ type: true })` to `dataSchemas`.
+- [x] 4.6 In `src/index.ts`, export the type `CompactionPart` beside the other chat parts.
+- [x] 4.7 In `src/contracts/chat-parts.test.ts`, add tests. Expected result: the schema accepts a `running` part and a `done` part, and it refuses an unknown status.
+- [x] 4.8 In `src/memory/conversation-display-storage.test.ts`, add a test. Expected result: a `system` message with a `data-compaction` part round-trips, and `conversationUIToCortexMessages` gives the part.
+- [x] 4.9 In `src/memory/conversation-display-recorder.test.ts`, add a test. Expected result: an emitted `data-compaction` part does not join the assistant message.
+- [x] 4.10 Run `tsc -p tsconfig.json`. Run `bun test src/contracts/chat-parts.test.ts src/memory/conversation-display-storage.test.ts src/memory/conversation-display-recorder.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 5. The compaction of the loop
 

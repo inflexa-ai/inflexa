@@ -354,6 +354,17 @@ export const ReportRenderedPartSchema = z.object({
     title: z.string().optional(),
 });
 
+// ── Compaction ──────────────────────────────────────────────────────
+
+export const CompactionPartSchema = z.object({
+    type: z.literal("data-compaction"),
+    id: z.string(),
+    status: z.enum(["running", "done", "failed"]),
+    tokensBefore: z.number().int().nonnegative(),
+    tokensAfter: z.number().int().nonnegative().optional(),
+    durationMs: z.number().int().nonnegative().optional(),
+});
+
 // ── Union ───────────────────────────────────────────────────────────
 
 export const CortexChatPartSchema = z.discriminatedUnion("type", [
@@ -376,4 +387,5 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     RunFailedPartSchema,
     ChildSessionStartedPartSchema,
     ReportRenderedPartSchema,
+    CompactionPartSchema,
 ]);
