@@ -14,6 +14,7 @@ import type { CompactionPolicy } from "../loop/compaction.js";
 import { finalText, runAgent, type AgentFinish } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, EmitFn } from "../loop/types.js";
+import { compactionExchangeOf } from "../memory/ai-sdk-message-storage.js";
 import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { conversationRecordTurn, createThreadHistory, type ConversationTurn, type TurnClose } from "../memory/thread-history.js";
@@ -268,7 +269,8 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
             },
         });
         outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
-        fallbackText = finalText(run.messages);
+        // An abort can end the run inside an exchange, and the text of an exchange is a summary, and no reply.
+        fallbackText = finalText(run.messages.filter((message) => compactionExchangeOf(message) === undefined));
     } catch (cause) {
         // A provider failure that races an abort stays a failure, thus both facts must hold.
         const aborted = params.signal.aborted && cause instanceof Error && cause.name === "AbortError";

@@ -910,6 +910,28 @@ describe("runChatTurn — compaction", () => {
         expect(storedAtRequest[0]).toEqual(["user", "assistant", "user", "run-activity", "working-memory"]);
     });
 
+    it("closes the turn aborted with the stored exchange and no marker when an abort ends the exchange", async () => {
+        const partial: ChatResponse = { message: { role: "assistant", content: "The user compares" }, finishReason: "aborted" };
+        const provider = compactingProvider([bigCall("tu-1")], [partial]);
+
+        const result = await runChatTurn({ pool, agents: agents() }, params(provider));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" } });
+        if (result.kind !== "ran") throw new Error("unreachable");
+        expect(result.fallbackText ?? "").not.toContain("The user compares");
+        const rows = await storedRows();
+        expect(rows.map((row) => kindOf(row.message))).toEqual([
+            "user",
+            "run-activity",
+            "working-memory",
+            "assistant",
+            "tool",
+            "exchange-user",
+            "exchange-assistant",
+        ]);
+        expect(rows[0]!.turn?.status).toBe("aborted");
+    });
+
     it("runs no exchange under the default budget", async () => {
         const provider = compactingProvider([bigCall("tu-1"), text("done")], []);
 
