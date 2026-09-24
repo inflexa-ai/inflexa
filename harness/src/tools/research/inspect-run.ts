@@ -151,9 +151,13 @@ export function createInspectRunTool(pool: Pool, clock: InspectRunClock = system
     return defineTool({
         id: "inspect_run",
         description:
-            "Inspect workflow runs for this analysis. Without a runId, returns an active-first paged list (running, suspended, then terminal history). " +
-            "With a runId, returns an explicit inspectionState and advertises output paths only after the run is terminal. " +
+            "Inspect workflow runs for this analysis. A run never posts its completion into the conversation; this tool is how you read it. " +
+            "Without a runId, returns an active-first paged list (running, suspended, then terminal history) with total and hasMore. " +
+            "With a runId, returns the run, its steps, and an inspectionState: not_found; in_progress; suspended (the run does not progress until it is resumed); " +
+            "or terminal (run.status completed, partial, failed, or canceled). " +
+            "Output paths appear only on a terminal run: run.synthesisPath when synthesisStatus is produced, and the summaryPath of each step that ran. " +
             "For a user-directed check, waitForTerminalSeconds can wait once for 1-30 seconds; if the cutoff returns in_progress, stop polling for that turn. " +
+            "A wait on the run that the caller itself runs inside returns at once with selfWaitPrevented. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry.",
         inputSchema,
         // The two calls do different work: one inspects a named run, the other

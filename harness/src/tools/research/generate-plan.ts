@@ -509,7 +509,8 @@ function buildInnerTools(
         id: "submit_plan",
         description:
             "Submit the final plan for persistence. Re-validates the plan; on " +
-            "success returns {accepted: true, planId} — STOP after this. On " +
+            "success returns {accepted: true, planId}, and an accepted call ends " +
+            "the planning session. On " +
             "rejection returns {accepted: false, issues} — fix and call again, " +
             "or switch to report_blocker if the plan cannot be made valid. This " +
             "arg schema is the authoritative plan contract.",
@@ -594,11 +595,12 @@ function buildInnerTools(
         id: "request_clarification",
         description:
             "Terminal. Use when a specific fact you need is missing from the " +
-            "input and cannot be inferred. Pass a short question and optional " +
-            "context. Stop after calling.",
+            "input and cannot be inferred. The question reaches the user through " +
+            "the conversation agent. A call ends the planning session with no " +
+            "plan saved.",
         inputSchema: z.object({
-            question: z.string().min(1),
-            questionContext: z.string().optional(),
+            question: z.string().min(1).describe("One short question that names each missing fact, and the step that needs it."),
+            questionContext: z.string().optional().describe("Optional context: why the plan needs the fact, and what the inputs already say about it."),
         }),
         describeCall: "none",
         execute: async (input) => {
@@ -951,8 +953,11 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             "to the planner directly. Do NOT summarize or re-type them into this call; you cannot restate that " +
             "record more faithfully than the record itself. Pass only what the profile cannot hold: the research " +
             "question, facts the user told you (analystNotes), prior run results, and their constraints. " +
-            "Returns a structured plan ready for show_plan and execute_analysis plan mode, or a clarification question if " +
-            "the planner is missing something it cannot infer.",
+            "The planner is a multi-step sub-agent, thus a call can take many minutes. " +
+            "The result carries an `event`: `plan_complete` with {planId, plan} — the plan is saved and ready for show_plan and " +
+            "execute_analysis plan mode, and this call neither shows nor runs it; `clarification_needed` with {question, questionContext?} " +
+            "when the planner is missing a fact it cannot infer; or `error` with {error} when no plan was saved (the planner reported " +
+            "a blocker, the save failed, the call timed out or was cancelled, or parentPlanId is not a plan of this analysis).",
         inputSchema: z.object({
             researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),
             analystNotes: z
