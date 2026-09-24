@@ -239,7 +239,7 @@ export type { Ask, AskRequest, AskReply, AskApproval } from "./tools/approval/co
 
 // Agent loop.
 export { runAgent, finalText } from "./loop/run-agent.js";
-export type { RunAgentOptions, RunAgentResult, AgentFinish } from "./loop/run-agent.js";
+export type { RunAgentOptions, RunAgentResult, AgentFinish, AgentRound } from "./loop/run-agent.js";
 export type { AgentDefinition, RunStep, EmitFn, EmitEvent, EventSource } from "./loop/types.js";
 // `passthroughStep` is the in-process `RunStep`: the host request/chat path runs
 // the loop with no durability wrapper (workflow contexts use the durable step).
