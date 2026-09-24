@@ -43,6 +43,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
+import { maskExcept } from "../loop/tool-mask.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
@@ -70,6 +71,7 @@ import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
 import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { createBlockerHolder, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
+import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "./suspension.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
@@ -248,6 +250,13 @@ export interface SandboxAgentBuildContext {
      * bound to this holder.
      */
     readonly blockerHolder: BlockerHolder;
+    /**
+     * The per-step cell of the file-metadata continuation (see the
+     * harness-sandbox-agents spec). The agent factory gives it to
+     * `SandboxAgentDeps.fileMetadata`, thus the agent declares
+     * `submit_file_metadata` from its first request. The task masks the tool.
+     */
+    readonly fileMetadata: FileMetadataCell;
     /** Shared host-side citation resolver for allowlisted sandbox agents. */
     readonly citationResolver: CitationResolver;
 }
@@ -500,6 +509,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // for up to N × `timeoutSeconds`.
     const stepDeadlineMs = (await DBOS.now()) + (input.timeoutSeconds ?? DEFAULT_STEP_TIMEOUT_SECONDS) * 1000;
     const blockerHolder = createBlockerHolder();
+    const fileMetadata = createFileMetadataCell();
     const agent = deps.buildAgent({
         input,
         session,
@@ -510,6 +520,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         deadlineMs: () => stepDeadlineMs,
         lineageCollector,
         blockerHolder,
+        fileMetadata,
         citationResolver: deps.citationResolver,
     });
 
@@ -669,6 +680,9 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                 llm: (iteration) => `llm:${iteration}`,
                 tool: (toolName, toolUseId) => `tool:${toolName}:${toolUseId}`,
             },
+            // The agent declares the output tool of the file-metadata
+            // continuation from its first request, and the task must not use it.
+            toolMask: maskExcept(agent.tools, [SUBMIT_FILE_METADATA_TOOL_ID]),
             isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
         });
         transcript = agentResult.messages;

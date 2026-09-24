@@ -107,22 +107,22 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 7. The file-metadata output tool
 
-- [ ] 7.1 Add `src/tools/sandbox/submit-file-metadata.ts`. Export `SUBMIT_FILE_METADATA_TOOL_ID = "submit_file_metadata"`, `FileMetadataCell`, `createFileMetadataCell()`, and `createSubmitFileMetadataTool(cell)`.
-- [ ] 7.2 `FileMetadataCell` holds the known paths, set by `expect(paths)`, and the accepted descriptions by path.
-- [ ] 7.3 Move the validation of `buildSubmitTool` from `src/execution/artifact-metadata.ts` into the tool. Keep the match by path, the rejection of an unknown path, and the report of the remaining files.
-- [ ] 7.4 The `description` of the tool does not depend on the step. It says that the harness asks for the tool after the task. A call before `expect` gives a `ToolError`.
-- [ ] 7.5 In `src/agents/sandbox/shared.ts`, add `readonly fileMetadata?: FileMetadataCell` to `SandboxAgentDeps`. When the cell is present, add `createSubmitFileMetadataTool(deps.fileMetadata)` as the last tool.
-- [ ] 7.6 In the same file, write the module header and the doc comment of the field. The data profiler gets no cell, because it runs no post-step pipeline.
-- [ ] 7.7 In `src/workflows/sandbox-step.ts`, add `readonly fileMetadata: FileMetadataCell` to `SandboxAgentBuildContext`. Make the cell beside `blockerHolder`, and give it to `deps.buildAgent`.
-- [ ] 7.8 In the same file, run the task with `toolMask: maskExcept(agent.tools, [SUBMIT_FILE_METADATA_TOOL_ID])`. Expected result: a call of `submit_file_metadata` during the task gets the error result of the mask.
-- [ ] 7.9 In `cli/src/modules/harness/run_deps.ts`, give `fileMetadata: ctx.fileMetadata` to the `SandboxAgentDeps` of `buildStepAgent`. In `cli/src/modules/harness/run_deps.test.ts`, add the field to the build context of the test.
-- [ ] 7.10 In `src/agents/sandbox/shared.test.ts`, add these tests:
+- [x] 7.1 Add `src/tools/sandbox/submit-file-metadata.ts`. Export `SUBMIT_FILE_METADATA_TOOL_ID = "submit_file_metadata"`, `FileMetadataCell`, `createFileMetadataCell()`, and `createSubmitFileMetadataTool(cell)`.
+- [x] 7.2 `FileMetadataCell` holds the known paths, set by `expect(paths)`, and the accepted descriptions by path.
+- [x] 7.3 Move the validation of `buildSubmitTool` from `src/execution/artifact-metadata.ts` into the tool. Keep the match by path, the rejection of an unknown path, and the report of the remaining files.
+- [x] 7.4 The `description` of the tool does not depend on the step. It says that the harness asks for the tool after the task. A call before `expect` gives a `ToolError`.
+- [x] 7.5 In `src/agents/sandbox/shared.ts`, add `readonly fileMetadata?: FileMetadataCell` to `SandboxAgentDeps`. When the cell is present, add `createSubmitFileMetadataTool(deps.fileMetadata)` as the last tool.
+- [x] 7.6 In the same file, write the module header and the doc comment of the field. The data profiler gets no cell, because it runs no post-step pipeline.
+- [x] 7.7 In `src/workflows/sandbox-step.ts`, add `readonly fileMetadata: FileMetadataCell` to `SandboxAgentBuildContext`. Make the cell beside `blockerHolder`, and give it to `deps.buildAgent`.
+- [x] 7.8 In the same file, run the task with `toolMask: maskExcept(agent.tools, [SUBMIT_FILE_METADATA_TOOL_ID])`. Expected result: a call of `submit_file_metadata` during the task gets the error result of the mask.
+- [x] 7.9 In `cli/src/modules/harness/run_deps.ts`, give `fileMetadata: ctx.fileMetadata` to the `SandboxAgentDeps` of `buildStepAgent`. In `cli/src/modules/harness/run_deps.test.ts`, add the field to the build context of the test.
+- [x] 7.10 In `src/agents/sandbox/shared.test.ts`, add these tests:
   - A cell adds `submit_file_metadata` as the last tool.
   - An agent with no cell has no such tool.
   - The system prompt is byte-identical with and without the cell.
-- [ ] 7.11 In `src/workflows/sandbox-step.test.ts`, give the output tool to the agent of each test rig through `fileMetadata`. Add a test that the task masks `submit_file_metadata`.
-- [ ] 7.12 Run `tsc -p tsconfig.json`. Run `bun test src/agents/sandbox/shared.test.ts src/workflows/sandbox-step.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
-- [ ] 7.13 In `cli/`, run `bun run harness:local`, `bun run typecheck`, `bun run lint`, and `bun test src/modules/harness/run_deps.test.ts`. Then run `bun run format:file src/modules/harness/run_deps.ts src/modules/harness/run_deps.test.ts`.
+- [x] 7.11 In `src/workflows/sandbox-step.test.ts`, give the output tool to the agent of each test rig through `fileMetadata`. Add a test that the task masks `submit_file_metadata`.
+- [x] 7.12 Run `tsc -p tsconfig.json`. Run `bun test src/agents/sandbox/shared.test.ts src/workflows/sandbox-step.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 7.13 In `cli/`, run `bun run harness:local`, `bun run typecheck`, `bun run lint`, and `bun test src/modules/harness/run_deps.test.ts`. Then run `bun run format:file src/modules/harness/run_deps.ts src/modules/harness/run_deps.test.ts`.
 
 ## 8. The post-step continuations
 
