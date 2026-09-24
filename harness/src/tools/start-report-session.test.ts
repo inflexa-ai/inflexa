@@ -370,13 +370,13 @@ describe("the refusals of the spawn", () => {
         expect(await reportThreadCount()).toBe(1);
     });
 
-    it("passes empty_parent_transcript through, and writes no row", async () => {
+    it("starts a session on a conversation that holds no messages", async () => {
         (await store.createThread({ threadId: "p1", analysisId: ANALYSIS, title: "Empty" }))._unsafeUnwrap();
 
         const result = await run(INPUT, ctxForThread("p1"));
 
-        expect(result.outcome).toBe("empty_parent_transcript");
-        expect(await reportThreadCount()).toBe(0);
+        expect(result.outcome).toBe("started");
+        expect(await reportThreadCount()).toBe(1);
     });
 });
 

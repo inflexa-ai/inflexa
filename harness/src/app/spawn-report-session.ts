@@ -86,11 +86,10 @@ import type { EnsureSessionStateResult } from "./report-session-runtime.js";
  * The set is closed. `parent_not_found` covers an absent parent and an archived
  * one alike, because `getThread` filters the tombstone and a spawn into hidden
  * state is not permitted. `parent_not_a_conversation` keeps the tree flat: a
- * report session cannot spawn another. `empty_parent_transcript` refuses a
- * report on a parent that holds no messages, because such a report reports
- * nothing. `no_browser` refuses every spawn under a composition that gives no
- * route to a look: no eyes seam, no capture seam, and no configured browser
- * endpoint. It carries the line that explains the absent capability.
+ * report session cannot spawn another. `no_browser` refuses every spawn under
+ * a composition that gives no route to a look: no eyes seam, no capture seam,
+ * and no configured browser endpoint. It carries the line that explains the
+ * absent capability.
  */
 export type SpawnRefusal =
     | {
@@ -109,11 +108,6 @@ export type SpawnRefusal =
           readonly op: string;
           readonly parentThreadId: string;
           readonly threadType: ThreadType;
-      }
-    | {
-          readonly type: "empty_parent_transcript";
-          readonly op: string;
-          readonly parentThreadId: string;
       };
 
 // SpawnRefusal is a `DomainError` (string `type`) — the compile-time check keeps
@@ -264,8 +258,8 @@ export interface ReportSessionSpawn {
      * result on the ok channel, thus the outcome vocabulary holds no pin arm.
      *
      * Refused with a `SpawnRefusal`, no row written: a composition with no
-     * eyes, an absent or archived parent, a parent that is not a conversation,
-     * and a parent with no messages. A store refusal (`DbError`,
+     * eyes, an absent or archived parent, and a parent that is not a
+     * conversation. A store refusal (`DbError`,
      * `ThreadInputError`) passes through unchanged. A failed seed write purges
      * the child and returns the fault, thus no context-less thread survives.
      */
@@ -481,12 +475,11 @@ export function createReportSessionSpawn(deps: ReportSessionSpawnDeps): ReportSe
             if (parent.threadType !== "conversation") {
                 return errAsync({ type: "parent_not_a_conversation", op: OP, parentThreadId, threadType: parent.threadType });
             }
-            return history.latestSeq(parentThreadId).andThen((anchor): ResultAsync<Thread, SpawnRefusal | DbError | ThreadInputError> => {
-                // `null` is a parent with no messages. A report on an empty transcript
-                // reports nothing, so the refusal is the correct answer.
-                if (anchor === null) {
-                    return errAsync({ type: "empty_parent_transcript", op: OP, parentThreadId });
-                }
+            return history.latestSeq(parentThreadId).andThen((latest): ResultAsync<Thread, DbError | ThreadInputError> => {
+                // A turn appends after its loop, thus the first ask of a chat finds
+                // no row. The seed and the tail carry the context, not the parent
+                // transcript. `-1` is the point before seq 0.
+                const anchor = latest ?? -1;
                 // `total`, not the page length: N counts every existing report child,
                 // not the count on one page. Two concurrent spawns can compose one N.
                 // The result is two titles a user renames, and no identifier collides.
