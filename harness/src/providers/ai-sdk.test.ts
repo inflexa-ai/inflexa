@@ -570,22 +570,6 @@ describe("usage reporting", () => {
         if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
         expect(done.response.usage?.reasoningTokens).toBe(40);
     });
-
-    it("forwards the request's providerOptions verbatim to the model", async () => {
-        const calls: LanguageModelV4CallOptions[] = [];
-        const provider = createAiSdkProvider({
-            model: fakeModel(async (options) => {
-                calls.push(options);
-                return okResult();
-            }),
-        });
-
-        (
-            await provider.chat({ ...request, providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } }, makeSession())
-        )._unsafeUnwrap();
-
-        expect(calls[0]!.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } });
-    });
 });
 
 describe("the order of the reasoning effort", () => {

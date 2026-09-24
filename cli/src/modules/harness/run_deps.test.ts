@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { okAsync } from "neverthrow";
 import { join } from "node:path";
 import {
-    createAnthropicProvider,
+    createConfiguredAiSdkProvider,
     createEmbeddingProvider,
     createNoopLogger,
     createPool,
@@ -38,7 +38,8 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
     // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
     // produced, so every expected path below stays literal and readable.
     const resolveWorkspaceRoot = (analysisId: string): string => join("/tmp/sessions", analysisId);
-    const makeProvider = (model: string): ChatProvider => createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model });
+    const makeProvider = (model: string): ChatProvider =>
+        createConfiguredAiSdkProvider({ config: { kind: "anthropic", baseURL: "http://proxy.test", apiKey: "t", model } });
     const sandboxModel = overrides.sandbox ?? "claude-test";
     const modelProvider = overrides.modelProvider ?? "anthropic";
     return {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { makeSession } from "./__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, type AiSdkProviderConfig } from "./ai-sdk.js";
+import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "./prompt-cache.js";
 import type { ChatRequest, ChatStreamEvent, FetchLike } from "./types.js";
 
 const request: ChatRequest = {
@@ -27,7 +28,6 @@ interface ResponsesInputItem {
 interface ResponsesRequestBody {
     readonly model?: string;
     readonly store?: boolean;
-    readonly user?: string;
     readonly prompt_cache_key?: string;
     readonly max_output_tokens?: number;
     readonly input?: readonly ResponsesInputItem[];
@@ -220,23 +220,27 @@ describe("openai arm store directive", () => {
     });
 
     it("keeps the other provider options beside the store value", async () => {
-        // The cache namespace of a different vendor is inert on this wire, thus
-        // the `user` key carries the proof: the merge adds, and it does not
-        // replace.
+        // The session key of the provider rides the `openai` namespace of the
+        // call, thus it carries the proof: the merge adds, and it does not
+        // replace. The cache markers of the other vendors ride the system prompt
+        // and the last message, and they are inert on this wire.
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
-        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }) });
 
         const result = await provider.chat(
             {
                 ...request,
-                providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } }, openai: { user: "user-001" } },
+                system: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE),
+                messages: withPromptCacheBreakpoint(request.messages, DEFAULT_PROMPT_CACHE),
             },
-            makeSession(),
+            makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } }),
         );
 
         expect(result.isOk()).toBe(true);
-        expect(cap.bodies[0]?.store).toBe(false);
-        expect(cap.bodies[0]?.user).toBe("user-001");
+        expect(cap.bodies[0]?.store).toBe(true);
+        expect(cap.bodies[0]?.prompt_cache_key).toBe("a1:t1");
+        expect(JSON.stringify(cap.bodies[0])).not.toContain("cache_control");
+        expect(JSON.stringify(cap.bodies[0])).not.toContain("cachePoint");
     });
 
     it("keeps the session key beside the store value", async () => {

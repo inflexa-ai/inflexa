@@ -70,17 +70,27 @@
  * ## Cache defeaters — what silently kills the hit rate
  *
  * The cache keys on an *exact prefix*. Anything that perturbs the head of the
- * request invalidates everything after it. One known defeater remains in this
- * codebase, flagged at its own site as a separate change:
+ * request invalidates everything after it. These defeaters remain in this
+ * codebase:
  *
- *  1. `runAgent`'s forced wrap-up swaps the tool set to `{}` — tools sit at the
- *     very front of the prefix, so that one call reads nothing back and rewrites
- *     the cache from scratch (`loop/run-agent.ts`).
+ *  1. The forced wrap-up of `runAgent` on the Anthropic arm. The loop sends the
+ *     same tool set with `toolChoice: "none"`, but `@ai-sdk/anthropic`
+ *     implements `none` by removing the tools from the request. Tools sit at the
+ *     very front of the prefix, thus that one call reads nothing back and writes
+ *     the cache again (`loop/run-agent.ts`). The openai arm keeps the tools on
+ *     the wire.
+ *  2. The salvage run of `runToTerminal` swaps the tool set for the terminal
+ *     tools of the salvage (`loop/run-to-terminal.ts`), thus its first call
+ *     writes the prefix again.
+ *  3. The step summary and the file metadata replay the transcript of a step
+ *     under their own system prompt and their own tools
+ *     (`execution/step-summary.ts`, `execution/artifact-metadata.ts`), thus they
+ *     read nothing back from the cache of the step.
  *
- * `loadRecent`'s history eviction used to be a second defeater — it advanced the
- * window one turn per turn, shifting the message prefix every request. It now
- * evicts in whole blocks so the prefix holds still between block boundaries
- * (`memory/thread-history.ts`).
+ * `loadRecent` moves the window start of the thread history in whole
+ * `EVICTION_BLOCK_TURNS` blocks (`memory/thread-history.ts`). Thus the message
+ * prefix shifts one time for each block, and it holds still between two block
+ * boundaries.
  *
  * A sandbox agent's system prompt is NOT one of them: it is a pure function of
  * its agent type, byte-identical across every step of every run, and the per-step

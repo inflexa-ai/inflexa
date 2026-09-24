@@ -5,9 +5,9 @@
  * shape is uniform across the surface and the cap can be tuned in one
  * place.
  *
- * The cap is well below the loop's overall result budget so a chatty
- * command cannot blow the context window even when stdout AND stderr both
- * cap out at the limit.
+ * The cap of each stream alone bounds a tool result: stdout and stderr together
+ * carry at most two caps of bytes, thus a chatty command cannot fill the context
+ * window.
  *
  * The same value is sent to the sandbox as a retention budget, so the bytes are
  * dropped at the producer and never cross the wire. Capping here as well is not
@@ -17,7 +17,7 @@
 
 import type { ExecResult } from "../../sandbox/types.js";
 
-/** Per-stream cap. 32 KiB — roomy for real output, well under the loop result budget. */
+/** Per-stream cap. 32 KiB — roomy for real output. The cap of each stream alone bounds a tool result. */
 export const EXEC_STREAM_BYTE_CAP = 32 * 1024;
 
 export interface BoundedStream {

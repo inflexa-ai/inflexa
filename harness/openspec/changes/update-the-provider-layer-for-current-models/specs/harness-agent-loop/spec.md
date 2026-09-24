@@ -26,8 +26,9 @@ the tool messages makes each iteration send the whole tool transcript uncached.
 The breakpoint at the end of the system prompt caches the tools and the system prompt as one entry. A new thread reads
 that entry back. The first call after a shift of the message prefix also reads it back.
 
-The forced wrap-up call MUST carry the same two breakpoints. It keeps the tool set of the loop, and it forbids a tool
-call with `toolChoice: "none"`. Thus it keeps the prefix, and it reads the cached prefix back.
+The forced wrap-up call MUST carry the same two breakpoints. The loop sends the same tool set with `toolChoice: "none"`.
+The OpenAI arm keeps the tools on the wire. The Anthropic package removes the tools for `none`. Thus on the Anthropic
+arm, the wrap-up request still changes the prefix.
 
 #### Scenario: A run with no policy still caches
 

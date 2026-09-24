@@ -16,7 +16,7 @@ This change is the first of three. The second change makes each agent conversati
 
 **Non-Goals:**
 
-- The cache lifetime of each role. The second change sets it, together with the append-only chat turn.
+- The cache lifetime of each role. A later change sets it.
 - The history budget. The third change adds it.
 - The removal of the prefix changes in the loop. The second change removes them.
 

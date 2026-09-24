@@ -38,6 +38,12 @@ export interface ProviderCapabilities {
     readonly imageUserMessages?: boolean;
 }
 
+/**
+ * One model call, in harness-neutral terms. The request carries no provider
+ * options: the provider makes the options of each call itself, and a cache
+ * marker rides a message or the system prompt. A free bag would let a caller
+ * write a vendor key that turns a table of the provider package off.
+ */
 export interface ChatRequest {
     /**
      * The system prompt: a plain string, or a system message that carries the
@@ -51,7 +57,6 @@ export interface ChatRequest {
      * Claude models reject it with a 400, and the model is chosen at run time.
      */
     readonly toolChoice?: "auto" | "none";
-    readonly providerOptions?: ProviderOptions;
     /**
      * How deep the model reasons on this call. The provider selects the effort
      * of a call in this order: this value, the `reasoning` of the provider
