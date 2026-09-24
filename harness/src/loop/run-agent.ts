@@ -28,7 +28,6 @@ import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-m
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
-import { DEFAULT_REASONING } from "../providers/reasoning.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
@@ -120,16 +119,17 @@ export interface RunAgentOptions {
      */
     readonly promptCache?: PromptCachePolicy;
     /**
-     * Reasoning policy for every LLM call this run makes. Defaults to
-     * `DEFAULT_REASONING` (`xhigh`) — an agent loop drives tools over many
-     * iterations, and a shallow turn there costs more in wasted calls than the
-     * deeper turn costs in tokens. The provider package resolves the name for
-     * the model that it is bound to.
+     * The reasoning effort of each LLM call of this run, the forced wrap-up
+     * included. The provider selects the effort of a call in this order: the
+     * value of the request, the `reasoning` of the provider configuration, then
+     * `DEFAULT_REASONING` (`xhigh`). Thus a value here wins for this run, and an
+     * absent value lets the configuration of the provider apply. The loop
+     * applies no default of its own, because a default here would hide that
+     * configuration.
      *
-     * The policy lives here, on the run, rather than on the provider, for the
-     * same reason that the cache policy does: a one-shot LLM call elsewhere has
-     * its own depth needs and must not inherit the depth of a loop. A host on a
-     * model with no reasoning support passes `"provider-default"`.
+     * The loop sends one value, or no value, on each call of a run, thus the
+     * effort stays the same across the conversation. Anthropic discards its
+     * message cache when the top-level effort changes.
      */
     readonly reasoning?: ReasoningPolicy;
     /**
@@ -259,9 +259,10 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     // byte-identical to be read back. The breakpoint it places is re-derived per
     // call, because it rides the last message and the transcript grows.
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
-    // The depth is a neutral name, and the provider package resolves it for the
-    // model. A vendor key here would turn that resolution off.
-    const reasoning = opts.reasoning ?? DEFAULT_REASONING;
+    // The loop sends the effort of its caller on each call, or no effort at all.
+    // With no effort on the request, the provider applies the effort of its
+    // configuration. A default here would hide that configuration.
+    const reasoningField: Pick<ChatRequest, "reasoning"> = opts.reasoning === undefined ? {} : { reasoning: opts.reasoning };
     const usage: AgentRunUsage = {};
 
     // Exactly one record per completed run — never one per iteration. That bound is
@@ -427,7 +428,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             messages: withPromptCacheBreakpoint(messages, promptCache),
             tools: toolDefs,
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
-            reasoning,
+            ...reasoningField,
         };
         const llmStepName = formatStepName.llm(i);
         const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal));
@@ -551,7 +552,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
         provider.chat(
-            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", reasoning },
+            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
             session,
             signal,
         ),

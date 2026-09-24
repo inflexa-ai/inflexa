@@ -23,8 +23,9 @@ import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughTracer } from "../lib/otel-spans.js";
 import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
+import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
-import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
+import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities, ReasoningPolicy } from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -104,6 +105,12 @@ export interface AiSdkProviderDeps extends ProviderHostPolicy {
      * hands the SDK no bound.
      */
     readonly requestTimeoutMs?: number;
+    /**
+     * The reasoning effort of each call whose request sets no `reasoning`. The
+     * value of a request wins over this value. When the field is absent, such a
+     * call runs at {@link DEFAULT_REASONING}.
+     */
+    readonly reasoning?: ReasoningPolicy;
 }
 
 /**
@@ -147,6 +154,13 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+          /**
+           * The reasoning effort of each call whose request sets no `reasoning`.
+           * A host sets the effort of a role here, beside the model of that
+           * role. When the field is absent, such a call runs at
+           * {@link DEFAULT_REASONING}.
+           */
+          readonly reasoning?: ReasoningPolicy;
       }
     | {
           readonly kind: "openai";
@@ -183,6 +197,13 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+          /**
+           * The reasoning effort of each call whose request sets no `reasoning`.
+           * A host sets the effort of a role here, beside the model of that
+           * role. When the field is absent, such a call runs at
+           * {@link DEFAULT_REASONING}.
+           */
+          readonly reasoning?: ReasoningPolicy;
           /**
            * NOTICE: this value is the retention directive of the Responses wire.
            *
@@ -247,6 +268,13 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+          /**
+           * The reasoning effort of each call whose request sets no `reasoning`.
+           * A host sets the effort of a role here, beside the model of that
+           * role. When the field is absent, such a call runs at
+           * {@link DEFAULT_REASONING}.
+           */
+          readonly reasoning?: ReasoningPolicy;
       };
 
 export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
@@ -669,6 +697,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const suspendOn = deps.suspendOn ?? DEFAULT_SUSPEND_ON;
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
+    /** The effort of one call: the value of the request, then the value of the configuration, then the default. */
+    const effortOf = (req: ChatRequest): ReasoningPolicy => req.reasoning ?? deps.reasoning ?? DEFAULT_REASONING;
     // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
     // prompt or completion text on them. The integration rides on each call
     // instead of the global registry, so the harness never traces the embedder's
@@ -698,6 +728,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
+        const reasoning = effortOf(req);
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
             const hookCall: HookCall = { unsettled: false };
             const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
@@ -741,7 +772,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // steadily runs as long as it needs.
                         ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
                         providerOptions: req.providerOptions,
-                        reasoning: req.reasoning,
+                        reasoning,
                     });
                     // The drain sits inside the retried closure, thus a failure at any
                     // point of the stream re-runs the whole attempt and the envelope
@@ -786,6 +817,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
+        const reasoning = effortOf(req);
         const hookCall: HookCall = { unsettled: false };
         const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
         const capture = captureServedModelId(deps.model);
@@ -819,7 +851,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // thus it feeds neither bound.
                     ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
                     providerOptions: req.providerOptions,
-                    reasoning: req.reasoning,
+                    reasoning,
                 });
                 const iterator = result.fullStream[Symbol.asyncIterator]();
                 const first = await pullNextDelta(iterator);
@@ -1030,6 +1062,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
         });
     }
 
@@ -1063,6 +1096,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             maxOutputTokens: config.maxOutputTokens ?? "provider-maximum",
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
         });
     }
 
@@ -1082,5 +1116,6 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
         ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
         ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+        ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
     });
 }

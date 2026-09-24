@@ -49,8 +49,9 @@ export interface ChatRequest {
     readonly toolChoice?: "auto" | "none";
     readonly providerOptions?: ProviderOptions;
     /**
-     * How deep the model reasons on this call. Absent sends no directive, thus
-     * the model applies its own default. Refer to `ReasoningPolicy`.
+     * How deep the model reasons on this call. The provider selects the effort
+     * of a call in this order: this value, the `reasoning` of the provider
+     * configuration, then `DEFAULT_REASONING`. Refer to `ReasoningPolicy`.
      */
     readonly reasoning?: ReasoningPolicy;
 }

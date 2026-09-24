@@ -24,7 +24,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { LogFields, Logger } from "../lib/logger.js";
 import type { GateFailure } from "../lib/hooks.js";
 import { isProviderError } from "./errors.js";
-import type { ChatRequest } from "./types.js";
+import type { ChatProvider, ChatRequest, ReasoningPolicy } from "./types.js";
 
 const usage: LanguageModelV4Usage = {
     inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
@@ -582,6 +582,57 @@ describe("usage reporting", () => {
         )._unsafeUnwrap();
 
         expect(calls[0]!.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } });
+    });
+});
+
+describe("the order of the reasoning effort", () => {
+    /**
+     * A provider over a model that records the `reasoning` of each model call.
+     * `chat` and `chatStream` both reach the model through `doStream`, thus one
+     * record holds the calls of the two paths.
+     */
+    function recordingProvider(configured?: ReasoningPolicy): { provider: ChatProvider; sent: (ReasoningPolicy | undefined)[] } {
+        const sent: (ReasoningPolicy | undefined)[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                sent.push(options.reasoning);
+                return okResult();
+            }),
+            ...(configured !== undefined ? { reasoning: configured } : {}),
+        });
+        return { provider, sent };
+    }
+
+    /** One `chat` call and one drained `chatStream` call with the same request. */
+    async function callBothPaths(provider: ChatProvider, req: ChatRequest): Promise<void> {
+        (await provider.chat(req, makeSession()))._unsafeUnwrap();
+        for await (const _event of provider.chatStream(req, makeSession())) {
+            // Drain the stream, thus the model call completes.
+        }
+    }
+
+    it("sends the value of the request over the configured value", async () => {
+        const { provider, sent } = recordingProvider("high");
+
+        await callBothPaths(provider, { ...request, reasoning: "low" });
+
+        expect(sent).toEqual(["low", "low"]);
+    });
+
+    it("applies the configured value to a request that sets none", async () => {
+        const { provider, sent } = recordingProvider("high");
+
+        await callBothPaths(provider, request);
+
+        expect(sent).toEqual(["high", "high"]);
+    });
+
+    it("applies xhigh when neither the request nor the configuration sets a value", async () => {
+        const { provider, sent } = recordingProvider();
+
+        await callBothPaths(provider, request);
+
+        expect(sent).toEqual(["xhigh", "xhigh"]);
     });
 });
 

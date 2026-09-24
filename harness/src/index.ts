@@ -303,13 +303,14 @@ export type {
 // Anthropic's cap of four breakpoints then sends five.
 export { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "./providers/prompt-cache.js";
 // Reasoning depth. `ReasoningPolicy` is the vendor-neutral name for how deep a
-// model reasons; a composition root sets it per run through
-// `RunAgentOptions.reasoning`. It defaults to `DEFAULT_REASONING` — `xhigh` —
-// because an agent loop drives tools over many iterations, and a shallow turn
-// there wastes more calls than the deeper turn costs in tokens. The provider
-// package resolves the name for the model that it is bound to, thus a model
-// that accepts no `xhigh` gets the nearest name that it accepts. A host on a
-// model with no reasoning support passes `"provider-default"`.
+// model reasons. The provider selects the effort of each call in this order:
+// `ChatRequest.reasoning` (which `runAgent` sets only from
+// `RunAgentOptions.reasoning`), the `reasoning` of the provider configuration,
+// then `DEFAULT_REASONING` — `xhigh`. A composition root sets the effort of a
+// role on the provider configuration of that role. The provider package
+// resolves the name for the model that it is bound to, thus a model that
+// accepts no `xhigh` gets the nearest name that it accepts. A host on a model
+// with no reasoning support sets `"provider-default"`.
 export { DEFAULT_REASONING } from "./providers/reasoning.js";
 // Provider error channel. `ProviderError` is the value `chat`/`embed` fail
 // with; `toProviderError` is its sole constructor. Exposed so an embedder
