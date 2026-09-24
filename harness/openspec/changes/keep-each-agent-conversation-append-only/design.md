@@ -16,7 +16,7 @@ Two more sites make calls that are not necessary:
 
 This change is the second of three. The first change, `update-the-provider-layer-for-current-models`, prepares the provider layer. It adds the session key, the effort on the provider configuration, and the metrics of each call. This change builds on its code and on the text of two of its deltas.
 
-The first change states that the wrap-up keeps the prefix with `toolChoice: "none"`. The statement is in its `harness-agent-loop` delta and in its task 7.11. It is not true on the Anthropic arm, thus this change writes that text again.
+The first change states that the wrap-up still changes the prefix on the Anthropic arm. Its header of `src/providers/prompt-cache.ts` lists three defeaters of the cache: the wrap-up, the salvage run, and the two post-step forks. This change removes all three. The first change also grows the token counters inside the step body of each call, under `agent.id`.
 
 ## Goals / Non-Goals
 
@@ -62,7 +62,7 @@ The loop core runs segments. A segment has a mask, a cap of requests, a step-nam
 
 A continuation names each step `<namespace>:<name>`, for example `salvage:llm-0` or `file-metadata:llm-0`. The namespace keeps the durable cache keys of a continuation apart from the keys of its conversation.
 
-With an accounting agent id, the continuation runs under `forSubAgent(session, id)`. Thus its usage records, its token counters, and its run metrics carry that id. The first change makes the session key from the scope and the run frame only. Thus a continuation stays on the gateway account of its conversation.
+With an accounting agent id, the continuation runs under `forSubAgent(session, id)`, thus its usage records carry that id. The loop core gives the same id to `countChatTokens`, `recordAgentRun`, and `traceAgentRun`, in place of `agent.id`. The first change makes the session key from the scope and the run frame only. Thus a continuation stays on the gateway account of its conversation.
 
 ### The wrap-up is a continuation with the mask "none"
 

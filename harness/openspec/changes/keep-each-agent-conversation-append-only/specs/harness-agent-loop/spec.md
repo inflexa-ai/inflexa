@@ -135,6 +135,100 @@ Each wrap-up request MUST carry the same two breakpoints. It sends the tool set 
 - **WHEN** `runAgent` is invoked with `promptCache: "off"`
 - **THEN** no LLM call it makes MUST carry a cache directive, on the system prompt, on a message, or on the request
 
+### Requirement: Token usage is recorded for each call
+
+The loop MUST record the token counters of each LLM call when that call completes, the forced wrap-up included. It MUST NOT wait for the end of the run. Thus a run that throws keeps the count of the calls that completed before the throw.
+
+The loop MUST grow the counters inside the step body of the call. A step that a recovery replays returns its stored reply and does not run its body. Thus the replay does not count the call again. A counter is cumulative, and no sink can remove a second count from it. The usage record keeps its idempotency key, thus the replay delivers the same record again, and an upserting sink counts it one time.
+
+The loop MUST record these counters:
+
+- `cortex.harness.agent.input_tokens`
+- `cortex.harness.agent.output_tokens`
+- `cortex.harness.agent.cache_read_tokens`
+- `cortex.harness.agent.cache_write_tokens`
+- `cortex.harness.agent.reasoning_tokens`
+
+Each counter MUST carry these labels:
+
+- `agent_id`: the id of the agent that makes the call. The loop uses the `id` of its `AgentDefinition`, or the accounting agent id of a continuation, the same as the iteration histogram. A direct call uses the id of its own agent. The label MUST NOT come from the provenance of the session. A host can give one root provenance to different agents, and their tokens would then merge.
+- `model`: the `servedModelId` of the response. The label is absent when the response reports no served model.
+- `provider`: the `provider` of the response. The label is absent when the response names no provider.
+
+The loop MUST record only what a provider reports. A provider that reports no usage contributes nothing, not zero. The reasoning counter counts `ChatUsage.reasoningTokens`. Providers do not agree on whether reasoning tokens are inside `outputTokens`. The `provider` label keeps each series to one provider, thus one series sums figures of one meaning.
+
+The iteration histogram and the cap-hit counter stay per run, with the `agent_id` label only. They describe a run, not a call.
+
+The loop MUST also deliver each LLM call to the injected `UsageRecorder` as an attributed usage record when the call completes. It MUST surface its accumulated usage on its finish event. The root loop of a turn also surfaces the turn total, with the descendant loops. The llm-usage-accounting capability gives the details. The counters, the records, and the finish rollups are three surfaces over the same capture of each call. No surface replaces another, and the rule that absent means "not reported" holds on all three.
+
+The ad hoc router calls `provider.chat` directly. It MUST grow the counters in the body that makes the call, under its own agent id. It MUST also use the same accounting path as the loop. Thus its call reaches the counters and the recorder.
+
+The two cache counters make prompt caching observable. The hit rate of an agent type is `cache_read_tokens / input_tokens`, because `inputTokens` is the total billed prefix. A read counter at zero beside a write counter above zero shows a defeated cache. The cause is a prefix that shifts, or an endpoint that ignores cache directives.
+
+The loop MUST deliver each record through the notice helper of the host-hooks capability. The loop MUST NOT wait for the result of `UsageRecorder.record`. When the result is an `err`, the loop MUST log the reason at the error level through its `Logger`. The `err` MUST NOT change the outcome of the run.
+
+#### Scenario: A cached run records reads and writes separately
+
+- **GIVEN** a run of some iterations whose provider reports a cache write on the first call and cache reads on the other calls
+- **WHEN** the run completes
+- **THEN** both the cache-read counter and the cache-write counter MUST hold the reported figures for that `agent_id`
+
+#### Scenario: A provider reporting no usage records no tokens
+
+- **GIVEN** a provider that reports no `usage`
+- **WHEN** the run completes
+- **THEN** no token counter MUST grow for it, not even by zero
+
+#### Scenario: A run that throws keeps its completed calls
+
+- **GIVEN** a run whose third LLM call fails fatally
+- **WHEN** the run throws
+- **THEN** the token counters MUST already hold the figures of the first two calls
+
+#### Scenario: The counters carry the model and the provider
+
+- **GIVEN** a response with the `servedModelId` `claude-opus-5-5` and the `provider` `anthropic.messages`
+- **WHEN** the loop records the call
+- **THEN** each token counter MUST carry `agent_id`, `model: "claude-opus-5-5"`, and `provider: "anthropic.messages"`
+
+#### Scenario: Two agents of one root provenance stay apart
+
+- **GIVEN** two loops of different agents, whose sessions carry the same provenance, for example `tui-chat`
+- **WHEN** each loop records a call
+- **THEN** the token counters MUST carry the id of the agent of each loop as `agent_id`, thus the two series stay apart
+
+#### Scenario: A continuation counts under its accounting id
+
+- **GIVEN** a continuation of a step agent with the accounting agent id `step-summary-writer`
+- **WHEN** the continuation records a call and ends
+- **THEN** the token counters and the iteration histogram MUST carry `agent_id: "step-summary-writer"`, not the id of the step agent
+
+#### Scenario: A replayed step does not count again
+
+- **GIVEN** a run whose steps a recovery replays from the step store
+- **WHEN** each replayed step returns its stored reply
+- **THEN** the token counters MUST NOT grow for the replayed calls
+- **AND** the usage records of the replayed calls MUST carry the same keys as the records of the first run
+
+#### Scenario: Reasoning tokens reach their counter
+
+- **GIVEN** a response whose usage reports 40 reasoning tokens
+- **WHEN** the loop records the call
+- **THEN** `cortex.harness.agent.reasoning_tokens` MUST grow by 40
+
+#### Scenario: Every call reaches the recorder
+
+- **GIVEN** a run of some LLM calls that ends in a forced wrap-up
+- **WHEN** the run completes
+- **THEN** the injected `UsageRecorder` MUST hold one attributed record for each call, the wrap-up calls included
+
+#### Scenario: A recorder err does not change the run
+
+- **GIVEN** a run whose `UsageRecorder` gives an `err` for each record
+- **WHEN** the run completes
+- **THEN** the loop logs the reason of each `err` at the error level
+- **AND** the run has the same finish reason and the same usage rollups as a run whose recorder succeeds
+
 ## ADDED Requirements
 
 ### Requirement: The declared tools stay fixed for each request of a conversation
@@ -209,7 +303,7 @@ The operation MUST append the text as a synthetic user message. Thus the request
 
 The operation MUST return only the new messages, from the request to the end, and its finish. It MUST NOT change a message of the conversation. It MUST NOT run a wrap-up at its own cap. At the cap, its finish MUST report `"max_iterations"` with `cappedOut: true`.
 
-A continuation MUST name each step `<namespace>:<name>`, where `<name>` is the name that the step formatter of the caller gives. Thus a durable cache key of a continuation cannot match a key of its conversation. With an accounting agent id, the continuation MUST run under `forSubAgent(session, id)`. Its usage records, its token counters, and its run metrics then carry that id.
+A continuation MUST name each step `<namespace>:<name>`, where `<name>` is the name that the step formatter of the caller gives. Thus a durable cache key of a continuation cannot match a key of its conversation. With an accounting agent id, the continuation MUST run under `forSubAgent(session, id)`, thus its usage records carry that id. Its token counters and its run metrics MUST carry that id in place of the `id` of the agent definition.
 
 #### Scenario: The request extends the prefix of the conversation
 
