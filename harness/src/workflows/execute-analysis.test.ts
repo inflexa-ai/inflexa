@@ -33,6 +33,7 @@ import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
+import { createWorkingMemory } from "../memory/working-memory.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunChargeOutcome } from "../billing/run-charge.js";
 
@@ -314,6 +315,7 @@ function makeDeps(opts: {
             throw new Error("sandboxStepCallable should not be invoked directly");
         },
         resolveWorkspaceRoot: (id: string) => join("/tmp/cortex-execute-analysis-test", id),
+        workingMemory: createWorkingMemory({ query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool),
         synthesisModel: "test-synthesis-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         runCharge: {

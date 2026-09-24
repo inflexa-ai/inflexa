@@ -23,6 +23,7 @@
  */
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
+import { WORKING_MEMORY_LIMITS, type WorkingMemory } from "../memory/working-memory.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 
@@ -128,6 +129,56 @@ export function renderTask(step: AnalysisStep): string {
     }
 
     return parts.join("\n\n");
+}
+
+// ── (1b) Analysis memory ──────────────────────────────────────────────
+
+/**
+ * The heading of the analysis-memory section. The orient core of the sandbox
+ * prompt names this same text, thus a test pins the two together.
+ */
+export const ANALYSIS_MEMORY_HEADING = "Analysis memory (read only)";
+
+/**
+ * The part of the working memory a step agent sees: the goal and the
+ * constraints. Hypotheses and findings stay out — they are the interpretive
+ * state of the conversation, not a rule for a step.
+ */
+export type StepMemory = Pick<WorkingMemory, "goal" | "constraints">;
+
+/** A memory with no goal and no constraints — the section renders nothing. */
+export function emptyStepMemory(): StepMemory {
+    return { goal: "", constraints: [] };
+}
+
+/**
+ * The goal and the constraints of the analysis, frozen at dispatch. The heading
+ * differs from the "Constraints" section of {@link renderTask}: those are the
+ * requirements of this plan step, these are the rules of the whole analysis.
+ *
+ * Bounded to `WORKING_MEMORY_LIMITS` the same way the chat render is: a row
+ * written before the caps existed degrades to its newest constraints, and each
+ * text is clamped. No id is rendered, because the step agent cannot address an
+ * entry — it has no memory tool.
+ */
+export function renderMemory(memory: StepMemory): string {
+    const goal = clamp(memory.goal.trim(), WORKING_MEMORY_LIMITS.goalChars);
+    const all = memory.constraints.filter((c) => c.text.trim().length > 0);
+    const shown = all.slice(Math.max(0, all.length - WORKING_MEMORY_LIMITS.constraints));
+    if (goal.length === 0 && shown.length === 0) return "";
+
+    const parts = [
+        "These entries come from the working memory of the analysis, read when this step was dispatched. " +
+            "A constraint from the user is binding. A constraint from the agent is context.",
+    ];
+    if (goal.length > 0) parts.push(`Goal: ${goal}`);
+    if (shown.length > 0) {
+        const lines = shown.map((c) => `(${c.origin}) ${clamp(c.text.trim(), WORKING_MEMORY_LIMITS.entryChars)}`);
+        const omitted = all.length - shown.length;
+        if (omitted > 0) lines.push(`(+${omitted} older ${omitted === 1 ? "constraint" : "constraints"} not shown)`);
+        parts.push(`Constraints:\n${bullets(lines)}`);
+    }
+    return section(ANALYSIS_MEMORY_HEADING, parts.join("\n\n"));
 }
 
 // ── (2) Workspace ─────────────────────────────────────────────────────
@@ -264,11 +315,13 @@ export interface StepBriefing {
     readonly profile: DataProfileResult | null;
     /** The step's completed dependencies, in the plan's declared `depends_on` order. */
     readonly upstream: readonly UpstreamHandoff[];
+    /** The goal and the constraints of the analysis, read from the working memory at dispatch. */
+    readonly memory: StepMemory;
 }
 
 /**
  * Compose the seed. Absent sections collapse out entirely — an independent step
- * with no profile yields exactly the task and workspace sections, byte-identical
+ * with no profile and an empty memory yields exactly the task and workspace sections, byte-identical
  * to what a step got before any of this existed plus its paths.
  *
  * Pure: the same briefing composes to the same string, which is what makes the
@@ -277,6 +330,7 @@ export interface StepBriefing {
 export function composeStepBriefing(briefing: StepBriefing): string {
     return [
         renderTask(briefing.step),
+        renderMemory(briefing.memory),
         renderWorkspace(briefing.workspace),
         renderResources(briefing.step.resources),
         renderOrientation(briefing.profile, briefing.workspace.analysisId),

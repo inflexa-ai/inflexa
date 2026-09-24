@@ -31,6 +31,7 @@ import { DBOS, Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import { okAsync } from "neverthrow";
 
 import type { ChatProvider, EmbeddingProvider } from "../../../providers/types.js";
+import { createWorkingMemory } from "../../../memory/working-memory.js";
 import { upsertAnalysis } from "../../../state/index.js";
 
 /** Writable sessions root the in-body `init-run-filesystem` mkdir targets. */
@@ -214,6 +215,7 @@ describe("the suspension cascade — parent self-cancel", () => {
             embedding: {} as unknown as EmbeddingProvider,
             sandboxStepCallable: testCChild,
             resolveWorkspaceRoot: (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
+            workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             runCharge: {
@@ -280,6 +282,7 @@ describe("the suspension cascade — parent self-cancel", () => {
             embedding: {} as unknown as EmbeddingProvider,
             sandboxStepCallable: testDChild,
             resolveWorkspaceRoot: (id: string) => join(SUSPENSION_TEST_SESSIONS_DIR, id),
+            workingMemory: createWorkingMemory(rig.pool),
             synthesisModel: "test-model",
             bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
             runCharge: {
