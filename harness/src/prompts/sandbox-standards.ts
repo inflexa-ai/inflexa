@@ -3,14 +3,14 @@
  *
  * - `sandboxOrientCorePrompt` — universal guidance for any agent that talks to
  *   a sandbox (plannable steps and the data profiler). Covers the workspace
- *   path model, the environment's hard limits,
- *   the output contract, and tool-use discipline. Always appended by
- *   `createSandboxAgent`.
+ *   path model, the environment's hard limits, and tool-use discipline.
+ *   Always appended by `createSandboxAgent`.
  *
  * - `sandboxAnalysisStepStandardsPrompt` — conventions for plannable analysis
  *   steps that produce reproducible script + output + figure artifacts in their
- *   working directory. Opt out via `appendAnalysisStepStandards: false` for
- *   agents that don't fit this mold (for example data-profiler).
+ *   working directory: the output contract, the skills, and the code standards.
+ *   Opt out via `appendAnalysisStepStandards: false` for agents that don't fit
+ *   this mold (for example data-profiler).
  *
  * Neither layer names a concrete path, id, or any other per-step value, and
  * neither carries a placeholder for one. That is load-bearing rather than
@@ -171,51 +171,6 @@ Exceeding the quota does not kill the step — the cgroup throttles it — but a
 oversubscribed step runs slower and can starve the exec server that runs your
 commands.
 
-## Output Contract — Persisted Files Are the Deliverable
-
-This is a hard requirement, not a convention. **Your deliverable is persisted
-files**, nothing else:
-
-- the **script** you wrote, in \`scripts/\`,
-- the **data it computed** (derived from the input data), in \`output/\`,
-- any **figures**, in \`figures/\`.
-
-Conclusions are drawn from those computed output files — never narrated from
-\`execute_command\` stdout. stdout/stderr are ephemeral; they are gone the
-moment the command returns. **A step that ends without persisted
-scripts + outputs has produced nothing**, even if its transcript reads as if
-work was done. In particular: running the analysis as an inline \`python -c\` /
-\`Rscript -e\` one-liner and reporting the numbers it printed produces nothing —
-write the script to \`scripts/\` and persist what it computes to \`output/\`.
-
-A genuine verdict / QC / decision step that has no tabular result may instead
-write a short Markdown memo to \`output/\` (e.g. \`output/qc-verdict.md\`) stating
-the finding and the evidence it rests on — a real persisted artifact. Do not
-fabricate a CSV just to have one.
-
-If you genuinely cannot fulfill the step — required input data is missing, a
-tool you need is unavailable, or the environment is broken — call
-\`report_blocker({ reason })\` with a clear, specific reason. Do NOT improvise an
-inline result, fabricate outputs, or end on a prose narrative pretending the
-work was done. \`report_blocker\` is the honest exit; an empty step that claims
-success is not.
-
-## Skills — Method Selection and API Details
-
-Skills hold the full decision trees, API references, contrast syntax, worked
-examples, and domain anti-patterns that do not fit in prompts. Use them
-actively — they are your authoritative source on methods.
-
-- \`skill_search(query)\` — keyword search across the skills available to you.
-  Start here when picking a method or verifying an API detail. Examples:
-  \`skill_search("PyDESeq2 contrast syntax")\`,
-  \`skill_search("Leiden clustering resolution")\`.
-- \`skill_read(skill, path)\` — read a file from one of your skills, e.g.
-  \`skill_read("bulk-transcriptomics", "SKILL.md")\` or
-  \`skill_read("bulk-transcriptomics", "references/pydeseq2-api.md")\`.
-
-The skills you have access to are listed in your agent instructions.
-
 ## Context7 — Documentation Lookup
 
 When you are not certain of a function's signature or behavior, look it up
@@ -349,6 +304,51 @@ script + output + figure artifacts. They do NOT apply to data profiling or
 report building (those agents opt out via
 \`appendAnalysisStepStandards: false\`).
 
+## Output Contract — Persisted Files Are the Deliverable
+
+This is a hard requirement, not a convention. **Your deliverable is persisted
+files**, nothing else:
+
+- the **script** you wrote, in \`scripts/\`,
+- the **data it computed** (derived from the input data), in \`output/\`,
+- any **figures**, in \`figures/\`.
+
+Conclusions are drawn from those computed output files — never narrated from
+\`execute_command\` stdout. stdout/stderr are ephemeral; they are gone the
+moment the command returns. **A step that ends without persisted
+scripts + outputs has produced nothing**, even if its transcript reads as if
+work was done. In particular: running the analysis as an inline \`python -c\` /
+\`Rscript -e\` one-liner and reporting the numbers it printed produces nothing —
+write the script to \`scripts/\` and persist what it computes to \`output/\`.
+
+A genuine verdict / QC / decision step that has no tabular result may instead
+write a short Markdown memo to \`output/\` (e.g. \`output/qc-verdict.md\`) stating
+the finding and the evidence it rests on — a real persisted artifact. Do not
+fabricate a CSV just to have one.
+
+If you genuinely cannot fulfill the step — required input data is missing, a
+tool you need is unavailable, or the environment is broken — call
+\`report_blocker({ reason })\` with a clear, specific reason. Do NOT improvise an
+inline result, fabricate outputs, or end on a prose narrative pretending the
+work was done. \`report_blocker\` is the honest exit; an empty step that claims
+success is not.
+
+## Skills — Method Selection and API Details
+
+Skills hold the full decision trees, API references, contrast syntax, worked
+examples, and domain anti-patterns that do not fit in prompts. Use them
+actively — they are your authoritative source on methods.
+
+- \`skill_search(query)\` — keyword search across the skills available to you.
+  Start here when picking a method or verifying an API detail. Examples:
+  \`skill_search("PyDESeq2 contrast syntax")\`,
+  \`skill_search("Leiden clustering resolution")\`.
+- \`skill_read(skill, path)\` — read a file from one of your skills, e.g.
+  \`skill_read("bulk-transcriptomics", "SKILL.md")\` or
+  \`skill_read("bulk-transcriptomics", "references/pydeseq2-api.md")\`.
+
+The skills you have access to are listed in your agent instructions.
+
 ## Language Policy
 
 Python is the DEFAULT language. Use R when:
@@ -371,17 +371,20 @@ as CSV (and optionally AnnData) for cross-agent consumption.
 
 ## Data Format Standards
 
-- **AnnData (.h5ad)** is the UNIVERSAL container for sample-by-feature
-  data across ALL modalities — bulk RNA-seq, proteomics, metabolomics,
-  microarray, methylation, single-cell. Samples in \`.obs\`, features in
-  \`.var\`, values in \`.X\`, layers in \`.layers\`, embeddings in \`.obsm\`,
+The downstream agents read AnnData, MuData, and CSV, so every step writes
+its results in those containers:
+
+- **AnnData (.h5ad)** is the container for sample-by-feature data in every
+  modality — bulk RNA-seq, proteomics, metabolomics, microarray,
+  methylation, single-cell. Samples in \`.obs\`, features in \`.var\`,
+  values in \`.X\`, layers in \`.layers\`, embeddings in \`.obsm\`,
   unstructured results in \`.uns\`.
 - **MuData (.h5mu)** for multi-modal data (CITE-seq, Multiome,
   multi-omics integration).
-- Store sample metadata in \`.obs\`, feature annotations in \`.var\`. Do
-  NOT write separate metadata CSV files unless explicitly needed.
-- **Intermediate analysis objects**: save as \`.h5ad\` or \`.h5mu\`. Do
-  NOT save as \`.rds\` or \`.pkl\`. When R packages produce R objects
+- Store sample metadata in \`.obs\` and feature annotations in \`.var\`,
+  not in a separate metadata CSV, unless a downstream step needs one.
+- **Intermediate analysis objects**: save as \`.h5ad\` or \`.h5mu\`, not
+  \`.rds\` or \`.pkl\`. When R packages produce R objects
   (DESeqDataSet, phyloseq, SingleCellExperiment), convert key results
   back to AnnData or pandas.
 - **Tabular results**: CSV with human-readable column names
@@ -505,21 +508,14 @@ final step:
 4. Document the search even when no references are found. "Novel"
    means you looked and found nothing — not that you didn't look.
 
-Your structured output captures this interpretation. It is your
-scientific assessment of what the results mean.
+The step summary is written after you finish, from your transcript and
+your persisted files. State each assessment and its citations in your work,
+so the summary can carry them.
 
 ## Analysis-Step Anti-Patterns
 
 - **Ignoring script errors.** Read the error, diagnose the root
   cause, fix the script. Do not move on.
-- **Placeholder or dummy output.** If an analysis cannot produce
-  meaningful results, report the reason clearly instead of faking
-  results.
 - **Monolithic scripts.** Keep scripts under 300 lines. Split into
   logical sections with markdown annotations.
-- **\`print()\` for logging.** Use \`logging\` (Python) or \`message()\`
-  (R). \`print()\` is for intentional data display only.
-- **Inline logic without functions.** Wrap non-trivial operations in
-  functions with docstrings and typed parameters.
-- **Magic numbers.** Define thresholds and cutoffs as named constants.
 `;
