@@ -94,8 +94,8 @@ Time and tool budget:
 ## Output — return EXACTLY this JSON shape, nothing else
 
 Return a single JSON object matching the \`AnalogyReportSchema\`. No
-prose, no markdown fences, no commentary, no preamble. A UI card renderer
-runs \`JSON.parse()\` on your response.
+prose, no markdown fences, no commentary, no preamble. The wrapper parses
+and validates your response against the schema before the UI renders it.
 
 \`\`\`json
 {

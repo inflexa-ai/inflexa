@@ -22,7 +22,7 @@ GSVA via rpy2, clusterProfiler via rpy2.
   expressed/detected genes).
 - **Per-sample pathway scores** — ssGSEA via \`gseapy.ssgsea()\` or GSVA
   via rpy2 when downstream expects continuous scores.
-- **Pathway activity on AnnData** — decoupler \`run_ulm()\` / \`run_mlm()\`
+- **Pathway activity on AnnData** — decoupler \`dc.mt.ulm()\` / \`dc.mt.mlm()\`
   with PROGENy. Store in \`adata.obsm\`.
 - **TF activity inference** — decoupler with CollecTRI regulons. Frame
   as TF activity, not pathway enrichment.

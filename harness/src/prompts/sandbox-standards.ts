@@ -300,9 +300,7 @@ not missing until the pool has answered:
 export const sandboxAnalysisStepStandardsPrompt = `# Sandbox Analysis-Step Conventions
 
 These apply to plannable analysis steps — agents that produce reproducible
-script + output + figure artifacts. They do NOT apply to data profiling or
-report building (those agents opt out via
-\`appendAnalysisStepStandards: false\`).
+script + output + figure artifacts.
 
 ## Output Contract — Persisted Files Are the Deliverable
 
@@ -489,7 +487,7 @@ Use \`<-\` for assignment. Use \`message()\` / \`warning()\` not \`cat()\` /
 
 When a script fails, delete the failed script from \`scripts/\` and any
 partial output files before writing a corrected version. Only final
-working scripts should remain. Use \`list_files\` to verify.
+working scripts should remain.
 
 ## Interpretation & Literature Grounding
 
