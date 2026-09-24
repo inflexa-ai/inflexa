@@ -7,7 +7,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { unwrapOrThrow } from "../lib/result.js";
-import { pairSafeIndex, READ_TOOL_OUTPUT_TOOL_ID, TOOL_RESULT_CAP, type ToolOutputStore } from "../loop/tool-output.js";
+import { pairSafeIndex, READ_TOOL_OUTPUT_TOOL_ID, TOOL_OUTPUT_KEEP_MAX, TOOL_RESULT_CAP, type ToolOutputStore } from "../loop/tool-output.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
 
 const DEFAULT_PAGE_CHARS = 8 * 1024;
@@ -127,9 +127,12 @@ export function createReadToolOutputTool(store: ToolOutputStore): Tool {
     return defineTool({
         id: READ_TOOL_OUTPUT_TOOL_ID,
         description:
-            "Read the full text of a tool result that came back as an excerpt. A result longer than the limit of the context " +
-            "comes back as its start and its end, and the excerpt gives a reference when the harness kept the whole text. " +
-            "Pass that reference as `ref`. Read a window with `offset` and `limit`: an offset counts the characters " +
+            "Read the kept text of a tool result that came back as an excerpt. A tool result longer than " +
+            `${TOOL_RESULT_CAP} characters comes back as its start and its end, and the excerpt gives a reference when the harness kept the text. ` +
+            `Pass that reference as \`ref\`. The harness keeps at most ${TOOL_OUTPUT_KEEP_MAX} characters. Of a longer text, it keeps the first ` +
+            "half and the last half of that bound, with a line between them that gives the count of characters not kept. " +
+            "A reference that the harness did not keep gives the status `not_found`, and the rest of that result cannot be read. " +
+            "Read a window with `offset` and `limit`: an offset counts the characters " +
             `(UTF-16 code units) of the kept text from 0, and a page has at most ${MAX_PAGE_CHARS} characters, ` +
             `${DEFAULT_PAGE_CHARS} by default. Or give \`pattern\`, a JavaScript regular expression, to get at most ` +
             `${MAX_MATCHES} matches, each with its offset and the text around it. When a result gives \`more: true\`, ` +
