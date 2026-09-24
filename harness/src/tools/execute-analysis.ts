@@ -36,9 +36,17 @@ import { callExtendAnalysisFarm } from "./sandbox/link-packages.js";
 const planIdSchema = z.string().regex(/^pln-[a-f0-9]{8}$/, "planId must be a pln-<8hex> value");
 const inputSchema = z
     .object({
-        mode: z.enum(["plan", "adhoc"]),
-        planId: planIdSchema.optional(),
-        request: z.string().min(1).optional(),
+        mode: z
+            .enum(["plan", "adhoc"])
+            .describe("`plan` runs a stored plan that the user approved. `adhoc` runs one targeted step for an explicit user request."),
+        planId: planIdSchema
+            .optional()
+            .describe("mode=plan only, and required there: the `pln-<8hex>` id of the approved stored plan. Omit it for mode=adhoc."),
+        request: z
+            .string()
+            .min(1)
+            .optional()
+            .describe("mode=adhoc only, and required there: the computational request of the user, in the words of the user. Omit it for mode=plan."),
     })
     .superRefine((value, ctx) => {
         if (value.mode === "plan" && (value.planId === undefined || value.request !== undefined)) {
@@ -383,7 +391,9 @@ export function createExecuteAnalysisTool(deps: ExecuteAnalysisToolDeps) {
             "Launch analysis computation asynchronously. Use mode=plan with the planId only after the user approved that stored plan. " +
             "Use mode=adhoc with the user's exact targeted computational request when they explicitly asked to run/compute/test/compare it; " +
             "that explicit request is consent and needs no synthetic-plan approval. If computation is merely your suggestion, ask first. " +
-            "You never choose the sandbox specialist: ad hoc routing does that automatically. Returns runId with status=in_progress; inspect results on a later turn.",
+            "You never choose the sandbox specialist: ad hoc routing does that automatically. Returns runId with status=in_progress; inspect results on a later turn. " +
+            "A plan that already has an active run returns that run, so a second run of one plan does not start. " +
+            "The launch fails with an error, and no run starts, when the plan is not found or fails validation, when a package of the plan cannot link, or when the run is not authorized.",
         inputSchema,
         // The mode is what a user most needs to see here — an approved plan
         // running is a different event from an ad hoc request being routed.

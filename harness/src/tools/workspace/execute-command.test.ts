@@ -117,7 +117,7 @@ describe("execute_command tool", () => {
         expect(EXEC_STREAM_BYTE_CAP).toBe(1024 * 1024);
         expect(tool.description).toContain("capped at 1 MiB");
         expect(tool.description).toContain("excerpt");
-        expect(tool.description).toContain("NOT a deliverable");
+        expect(tool.description).toContain("not a deliverable");
     });
 
     it("gives back a stdout of 200 KiB whole", async () => {

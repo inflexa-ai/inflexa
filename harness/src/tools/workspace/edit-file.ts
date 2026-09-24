@@ -183,9 +183,10 @@ export function createEditFileTool(deps: EditFileDeps) {
             "(default), old_string must occur exactly once. For a bulk pattern " +
             "edit set regex=true: old_string is a JS regex, new_string may use $1 " +
             "references, and exactly one of replace_all=true or expected_matches " +
-            "gates the write. Returns `out_of_prefix` / `out_of_scope` / " +
-            "`file_not_found` / `not_found` / `not_unique` / `match_count_mismatch` " +
-            "data variants — never throws on expected outcomes.",
+            "gates the write. Returns `out_of_prefix` / `out_of_scope` / `symlink_denied` / " +
+            "`file_not_found` / `not_found` / `not_unique` / `match_count_mismatch` / " +
+            "`invalid_pattern` / `invalid_arguments` data variants — never throws on expected outcomes. " +
+            "A data variant other than `ok` writes nothing.",
         inputSchema: EditFileInputSchema,
         // The path only. The replaced text is file content, not a description.
         describeCall: ({ path }) => path,

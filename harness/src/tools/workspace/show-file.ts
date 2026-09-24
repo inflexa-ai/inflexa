@@ -45,6 +45,8 @@ export const showFileTool = defineTool({
         "inline, or paste the bytes. Pick this tool by what you are referencing, not by how the output looks: " +
         "NOT for content you synthesized (a chart, a table, a snippet you invented — use `show_user`), NOT for a stored plan (`show_plan`). " +
         "Paths are analysis-rooted (no leading slash, no `..`); discover them with `workspace_search` or `list_files`. " +
+        "The tool checks the shape of each path only, not that the file exists, so a wrong path fails only when the user views the card; " +
+        "`shown: false` with `invalid_path` means a path has a leading slash or a `..` segment. " +
         "Up to 10 files per call — pass a related set in ONE call and they render as a gallery, rather than one call per figure. " +
         "Cards render in call order, so to interleave figures with prose alternate `show_user(markdown)` and `show_file` calls " +
         "(markdown image syntax pointing at a workspace file does NOT render — this tool is the only way to show one).",

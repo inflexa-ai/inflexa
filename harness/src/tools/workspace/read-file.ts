@@ -89,7 +89,8 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
             "as UTF-8 text. Output is capped at " +
             `${DEFAULT_MAX_BYTES} bytes; pass headLines or tailLines to read a ` +
             "specific window of a large file (typical for bio CSV/TSV/log files). " +
-            "Oversize reads come back truncated with a marker. This tool is for " +
+            "An oversize read returns status `truncated` with the bytes that fit (the start of the file, or " +
+            "the end for tailLines), `totalSize`, and `returnedBytes`. This tool is for " +
             "text; a binary file (one holding NUL bytes, e.g. a .gz or image) comes " +
             "back as a `binary` data variant rather than decoded garbage. Missing " +
             "paths and paths outside the analysis tree return a data variant — not an error.",

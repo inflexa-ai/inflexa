@@ -27,19 +27,19 @@ export type FileMetadata = z.infer<typeof FileMetadataSchema>;
  */
 export const SubmittedFileDescriptionSchema = z.object({
     /** Exact path of the file being described, copied from the prompt's list. */
-    path: z.string(),
-    description: z.string(),
-    dataType: z.string(),
-    format: z.string(),
-    rows: z.number().nullish(),
-    cols: z.number().nullish(),
-    tags: z.array(z.string()).optional(),
-    warnings: z.array(z.string()).optional(),
+    path: z.string().describe("The path of the file, copied exactly from the list of files that the harness gave."),
+    description: z.string().describe("One sentence that says what the file contains. A semantic search of the workspace later finds the file by this text."),
+    dataType: z.string().describe('The semantic type of the data, for example "count matrix" or "QC report".'),
+    format: z.string().describe('The file format, for example "csv", "tsv", "h5ad", or "png".'),
+    rows: z.number().nullish().describe("The count of rows, when you know it."),
+    cols: z.number().nullish().describe("The count of columns, when you know it."),
+    tags: z.array(z.string()).optional().describe("Short labels that help a search find the file."),
+    warnings: z.array(z.string()).optional().describe("Known problems of the file that a reader must know before use."),
 });
 export type SubmittedFileDescription = z.infer<typeof SubmittedFileDescriptionSchema>;
 
 /** Input contract for the `submit_file_metadata` tool. */
 export const SubmitFileMetadataInputSchema = z.object({
-    files: z.array(SubmittedFileDescriptionSchema),
+    files: z.array(SubmittedFileDescriptionSchema).describe("One entry per output file. You can cover the files in one call or in several."),
 });
 export type SubmitFileMetadataInput = z.infer<typeof SubmitFileMetadataInputSchema>;

@@ -44,7 +44,12 @@ export function createBlockerHolder(): BlockerHolder {
 }
 
 /** The one input every `report_blocker` takes, wherever it is offered. */
-const ReportBlockerInputSchema = z.object({ reason: z.string().min(1) });
+const ReportBlockerInputSchema = z.object({
+    reason: z
+        .string()
+        .min(1)
+        .describe("What blocks the work, stated as a fact: the missing or unreadable input, or the capability that is not available, and what you tried."),
+});
 
 export interface ReportBlockerDeps {
     /**

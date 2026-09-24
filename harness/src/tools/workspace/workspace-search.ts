@@ -61,7 +61,9 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
         id: "workspace_search",
         description:
             "Semantic search over the analysis workspace. Returns ranked entries with descriptions " +
-            "and metadata; read a file separately to see its contents. `type` restricts results to one " +
+            "and metadata; read a file separately to see its contents. The nearest entries always come back, up to " +
+            "`limit`, with no relevance cut: `score` is the cosine similarity to the query, and a low score is a weak match, " +
+            "not a hit. An empty `results` list means that nothing of that type is indexed yet. `type` restricts results to one " +
             'entry type: "input-group" (a GROUP of input data the data profiler declared, carrying its ' +
             'derived count, its display pattern, and its slots), "input-dimension" (something that VARIES ' +
             "across the dataset — subject, timepoint, batch — with the observations evidencing it), " +

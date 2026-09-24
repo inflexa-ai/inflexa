@@ -31,7 +31,7 @@ export function createListFilesTool(fs: WorkspaceFilesystem, workingDir?: string
         id: "list_files",
         description:
             "List the entries (files and directories, with file sizes) in a directory of the analysis's " +
-            "own workspace tree. Faster than `ls` via execute_command. Its scope is that tree and nothing " +
+            "own workspace tree. It reads the tree directly and runs no sandbox command. It does not recurse. Its scope is that tree and nothing " +
             "else: it never reaches a directory outside the analysis, including the host process's current " +
             "working directory. Missing and out-of-scope paths return a data variant, not an error.",
         inputSchema: ListFilesInputSchema,

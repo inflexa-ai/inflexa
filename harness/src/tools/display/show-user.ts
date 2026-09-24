@@ -49,7 +49,7 @@ const ShowUserInputSchema = z.object({
         .string()
         .optional()
         .describe(
-            "echart only: analysis-rooted CSV artifact path (e.g. 'runs/run-abc/step-2/output/de-summary.csv') the host loads as the ECharts `dataset.source` at render time. Author `encode`/dimensions against the CSV's column names (read only its header) and omit `dataset.source` from the spec — the rows are never pulled through the context window. If the data is not chart-ready (needs aggregation, filtering, reshaping), do that in a sandbox step that writes a chart-ready CSV. Inline `dataset.source` is only for a handful of numbers you just computed in conversation that exist nowhere as an artifact.",
+            "echart only: analysis-rooted CSV artifact path (e.g. 'runs/run-abc/step-2/output/de-summary.csv') the host loads as the ECharts `dataset.source` at render time. Author `encode`/dimensions against the CSV's column names (read only its header) and omit `dataset.source` from the spec — the rows are never pulled through the context window. The tool checks the shape of the path only, not that the file exists; a wrong path fails only when the card renders. If the data is not chart-ready (needs aggregation, filtering, reshaping), do that in a sandbox step that writes a chart-ready CSV. Inline `dataset.source` is only for a handful of numbers you just computed in conversation that exist nowhere as an artifact.",
         ),
     body: z.string().optional().describe("Markdown content to render (kind=markdown)"),
     code: z.string().optional().describe("Code content (kind=code)"),
