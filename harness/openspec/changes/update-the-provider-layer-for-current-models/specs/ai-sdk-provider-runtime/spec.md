@@ -104,8 +104,12 @@ The `anthropic` arm of `AiSdkProviderConfig` MUST accept an optional `thinkingBi
 - `error`: the API refuses the request with HTTP 400. A test against the real API uses this mode, thus a prefix change fails the test.
 - `off`: the provider sends no binding. A gateway that refuses the beta header needs this mode.
 
-The arm MUST send the mode as `providerOptions.anthropic.thinking.blockBinding.prefixMismatchBehavior`, in the form
-without a `type`. The package then adds the beta header `thinking-binding-controls-2026-08-01`.
+The arm MUST send the mode as `providerOptions.anthropic.thinking.blockBinding.prefixMismatchBehavior`. Any
+`providerOptions.anthropic.thinking` stops the thinking selection of the package. Thus the same `thinking` object MUST
+also carry the `type` and the `display` that the package selects for the effort of the call. For a model that always
+thinks, these are `adaptive` and `summarized` for each effort from `minimal` to `xhigh`. For `none` and
+`provider-default`, the package selects no `type` and no `display`, thus the object carries the binding alone. The
+package then adds the beta header `thinking-binding-controls-2026-08-01`.
 
 The arm MUST send the binding only on a request that runs with thinking. The binding MUST NOT change whether a request
 runs with thinking. A request that runs without thinking MUST carry no `thinking` object from the harness.
@@ -113,8 +117,9 @@ runs with thinking. A request that runs without thinking MUST carry no `thinking
 #### Scenario: The default mode binds the thinking blocks
 
 - **GIVEN** an `anthropic` arm without `thinkingBinding`, bound to `claude-opus-5-5`
-- **WHEN** it runs a call
+- **WHEN** it runs a call at the effort `xhigh`
 - **THEN** the request body carries `thinking.block_binding.prefix_mismatch_behavior: "drop_block"`
+- **AND** the `thinking` object also carries `type: "adaptive"` and `display: "summarized"`, as the package selects them
 - **AND** the request carries the beta header `thinking-binding-controls-2026-08-01`
 
 #### Scenario: The error mode refuses a mismatch

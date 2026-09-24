@@ -34,6 +34,7 @@ Some parameters and comments are stale:
 - The ad hoc router and the analogy conversion record their usage and their metrics.
 - The OpenAI-compatible arm asks for usage on a stream.
 - **BREAKING** Remove `ChatRequest.providerOptions`.
+- **BREAKING** `ChatRequest.system` takes a string or an AI SDK `SystemModelMessage`, because the loop sends the system prompt as a system message with a cache marker. A `ChatProvider` of an embedder that reads `system` as a string breaks.
 - **BREAKING** Remove `createAnthropicProvider` and its export.
 - Write the three stale comments again, and write the real cap in the description of `execute_command`.
 
@@ -46,7 +47,7 @@ None.
 ### Modified Capabilities
 
 - `ai-sdk-provider-runtime`: the configuration carries the effort and the thinking-binding mode. The provider sends the session key. The OpenAI-compatible arm asks for streamed usage. The configuration path loses `createAnthropicProvider`.
-- `harness-providers`: the order in which the provider selects the effort. The breakpoint at the end of the system prompt. The log of dropped thinking blocks. `ChatRequest` loses `providerOptions`.
+- `harness-providers`: the order in which the provider selects the effort. The breakpoint at the end of the system prompt. The log of dropped thinking blocks. `ChatRequest` loses `providerOptions`, and `ChatRequest.system` also takes a system message.
 - `harness-agent-loop`: `runAgent` sends a reasoning value only when its caller gives one. The loop records its metrics for each call.
 - `llm-usage-accounting`: the two direct calls produce usage records.
 - `harness-embedder-exports`: the root barrel loses `createAnthropicProvider`.
@@ -65,6 +66,7 @@ Harness source:
 Consumers:
 
 - A host that takes this version must set the effort of each role. Without a value, each call runs at `xhigh`. The ad hoc router then runs at `xhigh` under its deadline of 10 seconds.
+- An embedder that realizes its own `ChatProvider` must accept a `SystemModelMessage` in `ChatRequest.system`.
 - `cli/src/modules/harness/run_deps.test.ts` uses `createConfiguredAiSdkProvider` instead of `createAnthropicProvider`. CI links the harness of the working copy, thus the test changes in this change.
 - `cli/` adds an effort to each role of `models.agents` in its own change, together with the bump of its pin.
 - Cortex adds an effort to its cloud configuration. The session key lets platform-charts #172 turn on the session affinity of cliproxy.

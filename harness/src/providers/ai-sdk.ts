@@ -1176,11 +1176,10 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
  *
  * The middleware merges the value into the `openai` namespace of
  * `providerOptions`. It keeps each other namespace, and it keeps each other key
- * of the `openai` namespace, thus a cache directive of a different vendor rides
- * through untouched. The arm value wins over a request-level `store`, because
- * the retention mode belongs to the connection and not to one turn. A thread
- * that mixes the two modes replays a reference onto an item that the server
- * never stored.
+ * of the `openai` namespace, thus the session key of the call
+ * (`promptCacheKey`) rides through untouched. The retention mode belongs to the
+ * connection and not to one turn: a thread that mixes the two modes replays a
+ * reference onto an item that the server never stored.
  */
 function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageModelV4 {
     return wrapLanguageModel({

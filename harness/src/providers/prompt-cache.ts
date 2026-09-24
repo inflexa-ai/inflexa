@@ -195,8 +195,9 @@ export function promptCacheProviderOptions(policy: PromptCachePolicy): ProviderO
  * other one is {@link withPromptCacheBreakpoint}.
  *
  * With `"off"` the prompt stays a plain string. An empty prompt stays a plain
- * string too, because a marked system message renders as a text block, and the
- * Anthropic API refuses an empty text block.
+ * string too, thus no cache marker lands on an empty text block. The Anthropic
+ * package renders an empty prompt as an empty text block in both forms, thus
+ * the plain form keeps only the marker off that block.
  */
 export function withSystemPromptBreakpoint(system: string, policy: PromptCachePolicy): string | SystemModelMessage {
     const providerOptions = promptCacheProviderOptions(policy);

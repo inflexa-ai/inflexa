@@ -2,7 +2,14 @@
 
 The provider layer turns a `ChatRequest` into an AI SDK call. A host builds one provider for each role: the conversation, the sandbox agents, and the utility calls. The CLI selects a model for each role in `models.agents`. Cortex does the same in its cloud configuration.
 
-This change is the first of three. The second change makes each agent conversation append-only. The third change adds compaction to the chat thread. This change prepares the provider layer, and it adds the metrics that measure the next two changes.
+This change is the first of a series. The later changes do these tasks:
+
+- They make each agent conversation append-only.
+- They save each chat round.
+- They add compaction to the chat thread.
+- They keep large tool outputs out of the context.
+
+This change prepares the provider layer, and it adds the metrics that measure the later changes.
 
 ## Goals / Non-Goals
 
@@ -17,8 +24,8 @@ This change is the first of three. The second change makes each agent conversati
 **Non-Goals:**
 
 - The cache lifetime of each role. A later change sets it.
-- The history budget. The third change adds it.
-- The removal of the prefix changes in the loop. The second change removes them.
+- The history budget. The change that adds compaction to the chat thread adds it.
+- The removal of the prefix changes in the loop. The change that makes each agent conversation append-only removes them.
 
 ## Decisions
 
@@ -71,7 +78,7 @@ The configuration takes `thinkingBinding`, with the values `drop_block`, `error`
 
 Any `providerOptions.anthropic.thinking` stops the thinking selection of the package. A binding without a `type` turns thinking off on a model that can run without thinking. Thus the provider sends the binding only to a model that always thinks. The capability table of the package reports such a model with `rejectsThinkingDisabled`.
 
-Claude Opus 5.5 and Claude Fable 5.1 are such models, and they are the models that bind a block to its prefix. For them, the provider sends the `type` and the `display` that the package selects, plus the binding. Thus the binding does not change whether a request thinks, or what it shows.
+Each model that always thinks gets the binding. In the capability table of 4.0.62, these models are `claude-opus-5-5`, `claude-fable-5`, and `claude-fable-5-1`. Claude Opus 5.5 and Claude Fable 5.1 are the models that enforce the binding. For each such model, the provider sends the `type` and the `display` that the package selects, plus the binding. Thus the binding does not change whether a request thinks, or what it shows.
 
 The provider logs each reported drop as a warning, with the path and the reason. The reason `prefix_binding_mismatch` shows a prefix change in the harness. The reason `model_binding_mismatch` shows a change of the model, for example a model switch of the CLI.
 

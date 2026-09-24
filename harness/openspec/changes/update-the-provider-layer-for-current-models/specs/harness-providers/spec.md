@@ -24,7 +24,8 @@ The module MUST hold the only two writers of a directive. Thus a request holds a
 - `withPromptCacheBreakpoint(messages, policy)` MUST put the directive on the LAST message that can carry it. It MUST remove the directive from each other message, thus the messages hold exactly one breakpoint. It MUST return a copy of the messages.
 
 For `"off"`, `withSystemPromptBreakpoint` MUST return the system prompt as a plain string. It MUST also return an empty
-system prompt as a plain string, because the Anthropic API refuses an empty text block.
+system prompt as a plain string, thus no directive lands on an empty text block. The Anthropic package renders an empty
+system prompt as an empty text block in both forms.
 
 The system prompt of an agent depends only on its type. Thus the breakpoint at its end caches the tools and the system
 prompt as one entry. Each call of that agent reads or writes the same entry. A new thread reads that entry back. The

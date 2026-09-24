@@ -525,10 +525,13 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         if (opts.resolved?.()) return stopOnResolved(i);
     }
 
-    // The wrap-up keeps the tool set of the loop and forbids a call through
-    // `toolChoice`. A changed tool set rewrites the cached prefix, and a model
-    // that binds its signed thinking blocks to the prefix can reject the
-    // transcript.
+    // The wrap-up sends the tool set of the loop and forbids a call through
+    // `toolChoice`. The openai arm keeps the tools on the wire, thus the call
+    // keeps the prefix there. `@ai-sdk/anthropic` implements `none` by removing
+    // the tools, thus on the Anthropic arm this call changes the prefix: it reads
+    // nothing back from the cache, and a model that binds its signed thinking
+    // blocks to the prefix drops them or refuses the request, by the mode of
+    // the binding.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
         provider
