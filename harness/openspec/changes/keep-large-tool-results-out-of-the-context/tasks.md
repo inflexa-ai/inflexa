@@ -75,19 +75,19 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 3. The tool read_tool_output
 
-- [ ] 3.1 Add `src/tools/read-tool-output.ts`. Export `createReadToolOutputTool(store: ToolOutputStore): Tool` with the id `READ_TOOL_OUTPUT_TOOL_ID`, in the default `step` mode.
-- [ ] 3.2 Give the input schema the field `ref`, and the optional fields `offset` (an integer from 0), `limit` (an integer from 1 to 16,384), and `pattern`.
-- [ ] 3.3 Write the description. It names the excerpt and its reference, and the unit and the start of an offset. It also names the page maximum and the pattern.
-- [ ] 3.4 Add `describeCall`. It gives the reference alone, or `${pattern} in ${ref}` for a search.
-- [ ] 3.5 In `execute`, read `store.get(ctx.session.scope.analysisId, ref)` through `unwrapOrThrow`. A `null` gives `{ status: "not_found", ref }`.
-- [ ] 3.6 An offset at or past the end of the kept text gives `out_of_range`. A read with no pattern gives the window, with a default limit of 8,192.
-- [ ] 3.7 With a pattern, compile it with the flag `g`. A compile failure gives `invalid_pattern` with the message of the error.
-- [ ] 3.8 Search the window to `offset + limit`, or to the end of the kept text when the call gives no limit. Stop after 20 matches.
-- [ ] 3.9 Give each match its offset and the text from 150 characters before it to 250 characters after its start.
-- [ ] 3.10 After a match of zero length, move `lastIndex` on by one character.
-- [ ] 3.11 Give `end` and `more` on a page and on a search. Move each edge of a window by one unit to keep a surrogate pair whole.
-- [ ] 3.12 Measure `JSON.stringify` of the result. Until it has at most `TOOL_RESULT_CAP - 512` characters, shorten the text by a quarter, or drop the last match.
-- [ ] 3.13 Add `src/tools/read-tool-output.test.ts` with a fake store. Add these tests:
+- [x] 3.1 Add `src/tools/read-tool-output.ts`. Export `createReadToolOutputTool(store: ToolOutputStore): Tool` with the id `READ_TOOL_OUTPUT_TOOL_ID`, in the default `step` mode.
+- [x] 3.2 Give the input schema the field `ref`, and the optional fields `offset` (an integer from 0), `limit` (an integer from 1 to 16,384), and `pattern`.
+- [x] 3.3 Write the description. It names the excerpt and its reference, and the unit and the start of an offset. It also names the page maximum and the pattern.
+- [x] 3.4 Add `describeCall`. It gives the reference alone, or `${pattern} in ${ref}` for a search.
+- [x] 3.5 In `execute`, read `store.get(ctx.session.scope.analysisId, ref)` through `unwrapOrThrow`. A `null` gives `{ status: "not_found", ref }`.
+- [x] 3.6 An offset at or past the end of the kept text gives `out_of_range`. A read with no pattern gives the window, with a default limit of 8,192.
+- [x] 3.7 With a pattern, compile it with the flag `g`. A compile failure gives `invalid_pattern` with the message of the error.
+- [x] 3.8 Search the window to `offset + limit`, or to the end of the kept text when the call gives no limit. Stop after 20 matches.
+- [x] 3.9 Give each match its offset and the text from 150 characters before it to 250 characters after its start.
+- [x] 3.10 After a match of zero length, move `lastIndex` on by one character.
+- [x] 3.11 Give `end` and `more` on a page and on a search. Move each edge of a window by one unit to keep a surrogate pair whole.
+- [x] 3.12 Measure `JSON.stringify` of the result. Until it has at most `TOOL_RESULT_CAP - 512` characters, shorten the text by a quarter, or drop the last match.
+- [x] 3.13 Add `src/tools/read-tool-output.test.ts` with a fake store. Add these tests:
   - A page of 8,192 characters from the offset 4,096 gives the text, the end, and the kept length.
   - A call with no limit gives 8,192 characters.
   - A pattern gives each match with its offset and the text around it.
@@ -96,8 +96,8 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
   - An offset past the end gives `out_of_range`, and the pattern `(` gives `invalid_pattern`.
   - A page of 16,384 quotes gives a result of at most 32,256 characters, an `end` below 16,384, and `more: true`.
   - A fake store that gives `err` makes `execute` throw.
-- [ ] 3.14 In `src/loop/run-agent.test.ts`, add a test in which the model reads the reference of its own excerpt. Expected result: the loop does not cut the result of `read_tool_output`.
-- [ ] 3.15 Run `tsc -p tsconfig.json`. Run `bun test src/tools/read-tool-output.test.ts src/loop/run-agent.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 3.14 In `src/loop/tool-output.test.ts`, add a test in which the model reads the reference of its own excerpt. Expected result: the loop does not cut the result of `read_tool_output`.
+- [x] 3.15 Run `tsc -p tsconfig.json`. Run `bun test src/tools/read-tool-output.test.ts src/loop/tool-output.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 4. The sandbox agents and the step body
 
