@@ -146,31 +146,31 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 6. The chat turn
 
-- [ ] 6.1 Make `src/prompts/compaction.ts`. Export `MEMORY_COMPACTION_REQUEST` with the text of the design. Export `SUMMARY_COMPACTION_REQUEST`, the same text with no memory step.
-- [ ] 6.2 In `src/app/chat-turn.ts`, export `DEFAULT_CONVERSATION_BUDGET = 150_000`. The doc comment says that the root loop compacts its view past this estimate.
-- [ ] 6.3 Add `readonly conversationBudget?: number` to `RunChatTurnParams`.
-- [ ] 6.4 In `runChatTurn`, make the policy of the root loop. `budget` is `params.conversationBudget ?? DEFAULT_CONVERSATION_BUDGET`.
-- [ ] 6.5 `provider` is `params.chat` over an emit sink that drops each text delta. Expected result: the emit of the host gets no text delta of the exchange.
-- [ ] 6.6 When the agent declares `update_working_memory`, give the mask `{ allow: ["update_working_memory"] }` and `MEMORY_COMPACTION_REQUEST`.
-- [ ] 6.7 Else give the mask `"none"` and `SUMMARY_COMPACTION_REQUEST`. A `report` thread reads a frozen copy of working memory, thus its agent declares no such tool.
-- [ ] 6.8 `keepFirstTurn` is `prepared.threadType === "report"`.
-- [ ] 6.9 `recordsAfter(view)` reads the analysis context, the run activity, and the working memory again, the same as `prepareChatTurn`. It gives `contextRecordsFor(args, view)`.
-- [ ] 6.10 Give the policy to the root `runAgent` only.
-- [ ] 6.11 In `src/memory/conversation-display-recorder.ts`, make `takeRound` skip the text of each message with an exchange mark. Expected result: an exchange round with no part gives no message.
-- [ ] 6.12 When the round holds a marker, `takeRound` gives the divider. It comes after the assistant message of the parts, when parts exist.
-- [ ] 6.13 The divider is a `system` message with the id of the compaction and one `data-compaction` part. The part carries the figures of the marker.
-- [ ] 6.14 The status of that part is `done` for a summary marker and `failed` for a drop marker.
-- [ ] 6.15 After a marker round, `takeRound` makes a new assistant id for the later rounds of the turn. Expected result: no two messages of the replay share an id.
-- [ ] 6.16 In `src/index.ts`, export `DEFAULT_CONVERSATION_BUDGET` beside `runChatTurn`.
-- [ ] 6.17 In `src/memory/conversation-display-recorder.test.ts`, add these tests:
+- [x] 6.1 Make `src/prompts/compaction.ts`. Export `MEMORY_COMPACTION_REQUEST` with the text of the design. Export `SUMMARY_COMPACTION_REQUEST`, the same text with no memory step.
+- [x] 6.2 In `src/app/chat-turn.ts`, export `DEFAULT_CONVERSATION_BUDGET = 150_000`. The doc comment says that the root loop compacts its view past this estimate.
+- [x] 6.3 Add `readonly conversationBudget?: number` to `RunChatTurnParams`.
+- [x] 6.4 In `runChatTurn`, make the policy of the root loop. `budget` is `params.conversationBudget ?? DEFAULT_CONVERSATION_BUDGET`.
+- [x] 6.5 `provider` is `params.chat` over an emit sink that drops each text delta. Expected result: the emit of the host gets no text delta of the exchange.
+- [x] 6.6 When the agent declares `update_working_memory`, give the mask `{ allow: ["update_working_memory"] }` and `MEMORY_COMPACTION_REQUEST`.
+- [x] 6.7 Else give the mask `"none"` and `SUMMARY_COMPACTION_REQUEST`. A `report` thread reads a frozen copy of working memory, thus its agent declares no such tool.
+- [x] 6.8 `keepFirstTurn` is `prepared.threadType === "report"`.
+- [x] 6.9 `recordsAfter(view)` reads the analysis context, the run activity, and the working memory again, the same as `prepareChatTurn`. It gives `contextRecordsFor(args, view)`.
+- [x] 6.10 Give the policy to the root `runAgent` only.
+- [x] 6.11 In `src/memory/conversation-display-recorder.ts`, make `takeRound` skip the text of each message with an exchange mark. Expected result: an exchange round with no part gives no message.
+- [x] 6.12 When the round holds a marker, `takeRound` gives the divider. It comes after the assistant message of the parts, when parts exist.
+- [x] 6.13 The divider is a `system` message with the id of the compaction and one `data-compaction` part. The part carries the figures of the marker.
+- [x] 6.14 The status of that part is `done` for a summary marker and `failed` for a drop marker.
+- [x] 6.15 After a marker round, `takeRound` makes a new assistant id for the later rounds of the turn. Expected result: no two messages of the replay share an id.
+- [x] 6.16 In `src/index.ts`, export `DEFAULT_CONVERSATION_BUDGET` beside `runChatTurn`.
+- [x] 6.17 In `src/memory/conversation-display-recorder.test.ts`, add these tests:
   - An exchange round gives no message.
   - A marker round gives the divider with the figures of the marker.
   - The text of an exchange never becomes the text of a round.
   - A round after a marker round carries a new assistant id.
-- [ ] 6.18 In `src/memory/conversation-display-replay.unit.test.ts`, add these tests:
+- [x] 6.18 In `src/memory/conversation-display-replay.unit.test.ts`, add these tests:
   - A divider between two rounds gives two assistant messages with the divider between them.
   - A divider of a drop carries `failed`.
-- [ ] 6.19 In `src/app/chat-turn.test.ts`, add `describe("runChatTurn — compaction")` with a fake provider and Postgres. Add these tests:
+- [x] 6.19 In `src/app/chat-turn.test.ts`, add `describe("runChatTurn — compaction")` with a fake provider and Postgres. Add these tests:
   - A turn over `conversationBudget` stores the opening, a round, the marked exchange, the marker, the records, and the later rounds.
   - `loadAll` and `storedMessagesToCortex` give the divider between the two assistant messages of the turn, with two ids.
   - The next turn starts with the summary marker and its records, then the later rounds, then the new opening.
@@ -179,7 +179,7 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
   - A report turn starts with the seed and the summary marker, and it adds no working-memory record.
   - A retract of the last turn removes its exchange and its marker.
   - A turn under the default budget runs no exchange, and `DEFAULT_CONVERSATION_BUDGET` is `150_000`.
-- [ ] 6.20 Run `tsc -p tsconfig.json`. Run `bun test src/memory/conversation-display-recorder.test.ts src/memory/conversation-display-replay.unit.test.ts`. Run `bun test src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 6.20 Run `tsc -p tsconfig.json`. Run `bun test src/memory/conversation-display-recorder.test.ts src/memory/conversation-display-replay.unit.test.ts`. Run `bun test src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 7. The CLI
 

@@ -10,15 +10,17 @@ import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import type { CompactionPolicy } from "../loop/compaction.js";
 import { finalText, runAgent, type AgentFinish } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
-import type { EmitFn } from "../loop/types.js";
+import type { AgentDefinition, EmitFn } from "../loop/types.js";
 import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { conversationRecordTurn, createThreadHistory, type ConversationTurn, type TurnClose } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { findProviderError } from "../providers/errors.js";
+import { MEMORY_COMPACTION_REQUEST, SUMMARY_COMPACTION_REQUEST } from "../prompts/compaction.js";
 import { CONVERSATION_PROMPT_CACHE } from "../providers/prompt-cache.js";
 import type { AgentChat, PromptCachePolicy } from "../providers/types.js";
 import type { ThreadAgentResolver } from "../runtime/assemble.js";
@@ -26,7 +28,7 @@ import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/ind
 import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { AskApproval, AskRequest } from "../tools/approval/contract.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
-import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
+import { assembleMessages, contextRecordsFor, type AssembledMessages } from "./message-assembly.js";
 import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -117,20 +119,13 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
     }
 
-    const analysisState = await loadAnalysisStatus(pool, analysisId).unwrapOr(null);
-    const runActivityContext = await queryNonTerminalRunsByAnalysis(pool, analysisId, RUN_ACTIVITY_DETAIL_LIMIT).match(
-        (activity) => renderRunActivity(activity),
-        () => renderRunActivityUnavailable(),
-    );
-
     const history = createThreadHistory(pool);
     const { messages, userMessage, contextRecords } = await assembleMessages({
         threadId,
         threadType,
         analysisId,
         userInput,
-        analysisContext: analysisState?.context ?? null,
-        runActivityContext,
+        ...(await readTurnContext(pool, analysisId)),
         history,
         workingMemory: createWorkingMemory(pool),
         ...(deps.logger ? { logger: deps.logger } : {}),
@@ -138,6 +133,19 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
 
     return { kind: "ok", threadType, messages, userMessage, contextRecords };
 }
+
+/** The analysis context and the run activity of a turn. A failed read gives the fallback of its kind. */
+async function readTurnContext(pool: Pool, analysisId: string): Promise<{ readonly analysisContext: string | null; readonly runActivityContext: string }> {
+    const analysisState = await loadAnalysisStatus(pool, analysisId).unwrapOr(null);
+    const runActivityContext = await queryNonTerminalRunsByAnalysis(pool, analysisId, RUN_ACTIVITY_DETAIL_LIMIT).match(
+        (activity) => renderRunActivity(activity),
+        () => renderRunActivityUnavailable(),
+    );
+    return { analysisContext: analysisState?.context ?? null, runActivityContext };
+}
+
+/** The root loop of a chat turn compacts its view past this estimate, in tokens. */
+export const DEFAULT_CONVERSATION_BUDGET = 150_000;
 
 export interface RunChatTurnDeps extends PrepareChatTurnDeps {
     /** The agent of a turn comes from the thread type, which only the preparation knows. */
@@ -163,6 +171,8 @@ export interface RunChatTurnParams {
     readonly startedAtMs?: number;
     /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
     readonly promptCache?: PromptCachePolicy;
+    /** The budget of the view of the root loop. Absent gives {@link DEFAULT_CONVERSATION_BUDGET}. */
+    readonly conversationBudget?: number;
 }
 
 export type ChatTurnOutcome =
@@ -249,6 +259,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
             usageRecorder: params.usageRecorder,
             toolOutputStore: createToolOutputStore(deps.pool),
             promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
+            compaction: compactionPolicy(deps, params, prepared.threadType, agent.value, recorder.emit),
             ...(deps.logger === undefined ? {} : { logger: deps.logger }),
             ...(ask === undefined ? {} : { ask: (request: AskRequest) => ask(request, recorder.emit) }),
             onRound: async (round) => {
@@ -281,6 +292,24 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
         durationMs,
         ...(turnUsage === undefined ? {} : { turnUsage: { ...turnUsage } }),
         ...(fallbackText === undefined ? {} : { fallbackText }),
+    };
+}
+
+const WORKING_MEMORY_TOOL_ID = "update_working_memory";
+
+function compactionPolicy(deps: RunChatTurnDeps, params: RunChatTurnParams, threadType: ThreadType, agent: AgentDefinition, emit: EmitFn): CompactionPolicy {
+    // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
+    const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
+    const workingMemory = createWorkingMemory(deps.pool);
+    return {
+        budget: params.conversationBudget ?? DEFAULT_CONVERSATION_BUDGET,
+        // A streaming provider sends each text delta with no source, thus a delta of the summary would show as a reply.
+        provider: params.chat((event) => (event.type === "text-delta" ? undefined : emit(event))),
+        request: remembers ? MEMORY_COMPACTION_REQUEST : SUMMARY_COMPACTION_REQUEST,
+        mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
+        keepFirstTurn: threadType === "report",
+        recordsAfter: async (view) =>
+            contextRecordsFor({ threadType, analysisId: params.analysisId, workingMemory, ...(await readTurnContext(deps.pool, params.analysisId)) }, view),
     };
 }
 

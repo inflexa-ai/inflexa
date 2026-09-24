@@ -322,7 +322,7 @@ export { createStreamingChat } from "./providers/streaming-chat.js";
 // and gives only its transport values: the harness stores the opening, each round,
 // and the outcome. `appendTurn` stays for a record of a host. `createThreadStore`
 // owns thread metadata (create/list/title).
-export { prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
+export { DEFAULT_CONVERSATION_BUDGET, prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
 export type {
     ChatTurnOutcome,
     ChatTurnResult,

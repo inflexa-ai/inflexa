@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
+import type { ModelMessage } from "ai";
+
 import type { EmitFn } from "../loop/types.js";
+import { dropMarkerMessage, markCompactionExchange, summaryMarkerMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
 
 const TOP = { agentId: "conversation", callPath: ["conversation"] };
@@ -238,5 +241,55 @@ describe("conversation display recorder — rounds", () => {
         recorder.takeRound([]);
 
         expect(recorder.takeRound([{ role: "tool", content: [] }])).toEqual([]);
+    });
+});
+
+describe("conversation display recorder — compaction rounds", () => {
+    const exchange: ModelMessage[] = [
+        syntheticUserMessage("Reply with the summary."),
+        { role: "assistant", content: [{ type: "text", text: "The user compares two groups." }] },
+    ].map((message) => markCompactionExchange(message, "c-1"));
+    const figures = { id: "c-1", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+
+    it("gives no message for an exchange round, and never takes the text of the exchange", async () => {
+        const { recorder } = harness();
+
+        expect(recorder.takeRound(exchange)).toEqual([]);
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c2", name: "read_file", input: {} });
+        expect(recorder.takeRound(exchange)[0]!.parts.map((part) => part.type)).toEqual(["data-tool-call"]);
+    });
+
+    it("gives the divider of a marker round with the figures of the marker", () => {
+        const { recorder } = harness();
+
+        const round = recorder.takeRound([summaryMarkerMessage("The user compares two groups.", { kind: "summary", ...figures })]);
+
+        expect(round).toEqual([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", id: "c-1", data: { ...figures, status: "done" } }] }]);
+    });
+
+    it("gives the divider of a drop marker with the status failed, after the assistant message of the parts", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "before" });
+
+        const round = recorder.takeRound([dropMarkerMessage({ kind: "drop", ...figures, keptTurns: 2 })]);
+
+        expect(round.map((message) => [message.id, message.role])).toEqual([
+            ["a1", "assistant"],
+            ["c-1", "system"],
+        ]);
+        expect(round[1]!.parts).toEqual([{ type: "data-compaction", id: "c-1", data: { ...figures, status: "failed" } }]);
+    });
+
+    it("gives a round after a marker round a new assistant id", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "first" });
+        const first = recorder.takeRound([]);
+        recorder.takeRound([summaryMarkerMessage("summary", { kind: "summary", ...figures })]);
+        await recorder.emit({ type: "text-delta", text: "second" });
+        const second = recorder.takeRound([]);
+
+        expect(first[0]!.id).toBe("a1");
+        expect(second[0]!.id).not.toBe("a1");
+        expect(second[0]!.parts).toEqual([{ type: "text", text: "second", state: "done" }]);
     });
 });

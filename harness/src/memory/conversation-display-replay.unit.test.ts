@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { envelopeMessage, syntheticRecordMessage } from "./ai-sdk-message-storage.js";
+import { envelopeMessage, summaryMarkerMessage, syntheticRecordMessage } from "./ai-sdk-message-storage.js";
 import { storedMessagesToCortex } from "./conversation-display-replay.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
 import { envelopeDisplayMessages, type ConversationUIMessage } from "./conversation-display-storage.js";
@@ -347,6 +347,45 @@ describe("replay of a turn stored in rounds", () => {
 
         expect(replay.map((m) => m.usage)).toEqual([undefined, usage, undefined, newer]);
         expect(replay.map((m) => m.durationMs)).toEqual([undefined, 1200, undefined, 800]);
+    });
+
+    function dividerRow(seq: number, status: "done" | "failed"): StoredMessage {
+        const data = { id: "c-1", status, tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+        const marker = summaryMarkerMessage("summary", { kind: "summary", id: "c-1", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 });
+        return {
+            seq,
+            envelope: envelopeMessage(marker),
+            message: marker,
+            displayEnvelope: envelopeDisplayMessages([{ id: "c-1", role: "system", parts: [{ type: "data-compaction", id: "c-1", data }] }]),
+        };
+    }
+
+    it("gives two assistant messages with the divider between them for a divider between two rounds", () => {
+        const replay = storedMessagesToCortex([
+            openingRow(0, { status: "done", usage }),
+            roundRow(3, [{ type: "text", text: "first" }]),
+            dividerRow(9, "done"),
+            roundRow(11, [{ type: "text", text: "second" }], "a-2"),
+        ]);
+
+        expect(replay.map((m) => [m.role, m.id])).toEqual([
+            ["user", "u-0"],
+            ["assistant", "a-1"],
+            ["system", "c-1"],
+            ["assistant", "a-2"],
+        ]);
+        expect(replay[2]!.parts).toEqual([
+            { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+        ]);
+        expect(replay[3]!.usage).toEqual(usage);
+    });
+
+    it("gives the divider of a drop with the status failed", () => {
+        const replay = storedMessagesToCortex([openingRow(0), roundRow(3, [{ type: "text", text: "first" }]), dividerRow(9, "failed")]);
+
+        expect(replay[2]!.parts).toEqual([
+            { type: "data-compaction", id: "c-1", status: "failed", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+        ]);
     });
 
     it("keeps a failure note as a system message after the assistant message of its turn", () => {
