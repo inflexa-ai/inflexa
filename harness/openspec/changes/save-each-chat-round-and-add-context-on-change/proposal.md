@@ -1,6 +1,6 @@
 ## Why
 
-Claude Opus 5.5 binds each signed thinking block to the exact prefix of its request. The prompt cache also matches by the exact prefix. Thus a stored conversation that differs from the sent conversation costs a cache write on each turn. The difference can also make the later thinking blocks invalid.
+Some models bind each signed thinking block to the exact prefix of its request. The prompt cache also matches by the exact prefix. Thus a stored conversation that differs from the sent conversation costs a cache write on each turn. The difference can also make the later thinking blocks invalid.
 
 A production audit of 16 days found that cache writes are 65% of the spend. `conversation-agent` has a hit rate of 45%, and it makes 29% of all cache writes of the harness. The audit found these causes:
 
