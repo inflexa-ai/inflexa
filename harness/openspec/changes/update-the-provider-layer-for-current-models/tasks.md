@@ -124,9 +124,9 @@ Each path is relative to `harness/`. A path that starts with `cli/` is relative 
 
 ## 8. Final checks
 
-- [ ] 8.1 Run `tsc -p tsconfig.json`. Expected result: no error.
-- [ ] 8.2 Run `bun test`. Expected result: each unit test passes. A database suite needs Postgres, as the Testing section of `CLAUDE.md` describes.
-- [ ] 8.3 Run `bun run lint`. Expected result: no error.
-- [ ] 8.4 Run `grep -rn "createAnthropicProvider\|AnthropicProviderDeps" src README.md ../cli/src`. Expected result: no line.
-- [ ] 8.5 Run `openspec validate update-the-provider-layer-for-current-models --strict` in `harness/`. Expected result: the change is valid.
-- [ ] 8.6 Tell the user to archive `place-cache-breakpoint-on-last-message` before this change. Both changes modify the same two requirements, and the later archive replaces the text of the earlier one.
+- [x] 8.1 Run `tsc -p tsconfig.json`. Expected result: no error.
+- [x] 8.2 Run `bun test`. Expected result: each unit test passes. A database suite needs Postgres, as the Testing section of `CLAUDE.md` describes.
+- [x] 8.3 Run `bun run lint`. Expected result: no error.
+- [x] 8.4 Run `grep -rn "createAnthropicProvider\|AnthropicProviderDeps" src README.md ../cli/src`. Expected result: no line.
+- [x] 8.5 Run `openspec validate update-the-provider-layer-for-current-models --strict` in `harness/`. Expected result: the change is valid.
+- [x] 8.6 Tell the user to archive `place-cache-breakpoint-on-last-message` before this change. Both changes modify the same two requirements, and the later archive replaces the text of the earlier one.
