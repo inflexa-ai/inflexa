@@ -1,6 +1,6 @@
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
-import type { AskCardStatus, PlanCardStepView } from "../../types/session.ts";
+import type { AskCardStatus, CompactionStatus, PlanCardStepView } from "../../types/session.ts";
 
 // The readers that turn one raw `EmitFn` event into the primitives a surface renders.
 //
@@ -175,5 +175,30 @@ export function readAskPart(data: unknown): { askId: string; title: string; comm
         command: typeof d.command === "string" ? d.command : "",
         ...(typeof d.detail === "string" ? { detail: d.detail } : {}),
         status,
+    };
+}
+
+const COMPACTION_STATUSES: readonly CompactionStatus[] = ["running", "done", "failed"];
+
+/**
+ * Read a compaction part's fields off the `unknown` `data` payload (the harness's `CompactionPart`), and copy
+ * each field that it keeps. An unknown or missing `status` reads as `failed`, the SAFE TERMINAL: a malformed
+ * emission never leaves a live line that runs forever. `id` becomes `compactionId`, the reconcile key.
+ */
+export function readCompactionPart(data: unknown): {
+    compactionId: string;
+    status: CompactionStatus;
+    tokensBefore: number;
+    tokensAfter?: number;
+    durationMs?: number;
+} {
+    // `data` is external/loop-owned; cast to a loose record and read-and-coerce every field.
+    const d = (data ?? {}) as Record<string, unknown>;
+    return {
+        compactionId: typeof d.id === "string" ? d.id : "",
+        status: COMPACTION_STATUSES.find((status) => status === d.status) ?? "failed",
+        tokensBefore: typeof d.tokensBefore === "number" ? d.tokensBefore : 0,
+        ...(typeof d.tokensAfter === "number" ? { tokensAfter: d.tokensAfter } : {}),
+        ...(typeof d.durationMs === "number" ? { durationMs: d.durationMs } : {}),
     };
 }

@@ -29,7 +29,7 @@ import { activeAsk, queuedCount } from "./asks.ts";
 import { chatStatus } from "./status.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
-import type { AskCardPart, Part, PlanCardPart, RunCardPart, ToolCallPart } from "../../types/session.ts";
+import type { AskCardPart, CompactionPart, Part, PlanCardPart, RunCardPart, ToolCallPart } from "../../types/session.ts";
 
 // The conversation state is a module singleton (one chat screen at a time), so reset it between
 // cases. resetHotState() clears messages/stream/error/adapter state and returns status to idle.
@@ -758,6 +758,51 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
         expect(cards.length).toBe(1);
         expect(cards[0]?.status).toBe("rejected");
         expect(cards[0]?.feedback).toBe("archive, don't delete");
+    });
+});
+
+describe("send() handles data-compaction parts: one part updated in place by its id", () => {
+    const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
+
+    function compactionParts(): CompactionPart[] {
+        return (messages[1]?.parts ?? []).filter((p): p is CompactionPart => p.type === "compaction");
+    }
+
+    test("running then done under one id gives one compaction part with the status and the figures of the second emission", async () => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
+            void emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "running", tokensBefore: 162_000 } });
+            void emit({
+                type: "data-compaction",
+                source: TOP,
+                data: { id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(compactionParts()).toEqual([
+            { id: expect.any(String), type: "compaction", compactionId: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+        ]);
+        expect((messages[1]?.parts ?? []).some((p) => p.type === "text" && p.text.includes("[part:"))).toBe(false);
+    });
+
+    test("a malformed status reads as the terminal status failed", async () => {
+        const seams = fakeSeams({ kind: "ok", opened: true, fallbackText: "" }, (emit) => {
+            void emit({ type: "data-compaction", source: TOP, data: { id: "c-1", status: "paused", tokensBefore: "many" } });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(compactionParts()).toEqual([{ id: expect.any(String), type: "compaction", compactionId: "c-1", status: "failed", tokensBefore: 0 }]);
+    });
+
+    test("a reloaded divider maps to an event message with one compaction part and no tagged mention", () => {
+        const divider = { type: "data-compaction", id: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 };
+
+        const reloaded = cortexToUiMessage({ id: "c-1", role: "system", parts: [divider] } as unknown as CortexMsg, SID, AID);
+
+        expect(reloaded.role).toBe("event");
+        expect(reloaded.parts).toEqual([
+            { id: expect.any(String), type: "compaction", compactionId: "c-1", status: "done", tokensBefore: 162_000, tokensAfter: 14_000, durationMs: 21_000 },
+        ]);
     });
 });
 

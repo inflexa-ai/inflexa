@@ -246,6 +246,26 @@ export type AskCardPart = {
     feedback?: string;
 };
 
+/** The status of a compaction: `running` while the harness summarizes the conversation, then one terminal status. */
+export type CompactionStatus = "running" | "done" | "failed";
+
+/**
+ * A compaction of the conversation, from the harness `data-compaction` part. The live adapter updates the
+ * part in place by `compactionId`, and a reload gives the terminal status that the stored divider holds.
+ */
+export type CompactionPart = {
+    id: string;
+    type: "compaction";
+    /** The id of the compaction — the reconcile key. */
+    compactionId: string;
+    status: CompactionStatus;
+    /** The estimate of the context before the compaction, in tokens. */
+    tokensBefore: number;
+    /** The estimate of the context after the compaction. Absent when the compaction left no marker. */
+    tokensAfter?: number;
+    durationMs?: number;
+};
+
 /**
  * MOCK part: a file edit. Not produced by the live engine and not persisted —
  * drives the "diff / file edit" stream state from fixtures.
@@ -268,11 +288,21 @@ export type FileEditPart = {
 
 /**
  * A message part. `text`, `tool-call`, `plan-card`, `run-card`, `presentation`,
- * `openable-card`, and `report-session` are produced live by the harness emit adapter (and
+ * `openable-card`, `report-session`, and `compaction` are produced live by the harness emit adapter (and
  * reconstructed on transcript reload from the thread's stored turns); `ask-card` is produced
  * live only (a live-turn-only visual, never reconstructed on reload — the ledger is its
  * durable record); `thinking`/`file-edit` remain MOCK (fixture-driven) so the gallery can
  * render every design-system state. Discriminated on `type`.
  */
 export type Part =
-    TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart | AskCardPart | ReportSessionPart;
+    | TextPart
+    | ThinkingPart
+    | ToolCallPart
+    | FileEditPart
+    | PlanCardPart
+    | RunCardPart
+    | PresentationPart
+    | OpenableCardPart
+    | AskCardPart
+    | ReportSessionPart
+    | CompactionPart;

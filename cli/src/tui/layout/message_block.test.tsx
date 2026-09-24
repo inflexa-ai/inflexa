@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
 
+import { GLYPHS } from "../../lib/design_system.ts";
 import { MessageBlock } from "./message_block.tsx";
-import type { TextPart } from "../../types/session.ts";
+import type { CompactionPart, TextPart } from "../../types/session.ts";
 
 // Guards the streaming-vs-finalized markdown bug: @opentui/core's `<markdown streaming={false}>`
 // renders nothing, so a finalized/reloaded text part used to vanish the moment the stream ended.
@@ -80,5 +81,35 @@ describe("MessageBlock user-turn left rule alignment", () => {
         const asstRow = frame.split("\n").find((line) => line.includes("ASSTBODY")) ?? "";
         expect(userRow).toContain("│");
         expect(asstRow).not.toContain("│");
+    });
+});
+
+describe("MessageBlock compaction divider", () => {
+    const divider: CompactionPart = {
+        id: "p-c",
+        type: "compaction",
+        compactionId: "c-1",
+        status: "done",
+        tokensBefore: 162_000,
+        tokensAfter: 14_000,
+        durationMs: 21_000,
+    };
+
+    test("an event entry whose only part is a compaction part renders the divider with no left rule", async () => {
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="event" parts={[divider]} streamPartId={() => null} streamText={() => ""} />,
+            "Summarized",
+        );
+        const row = frame.split("\n").find((line) => line.includes("Summarized")) ?? "";
+        expect(row.startsWith(GLYPHS.lineHorizontal)).toBe(true);
+        expect(frame).not.toContain("│");
+    });
+
+    test("an event entry of a record keeps its left rule", async () => {
+        const frame = await frameWith(
+            () => <MessageBlock index={1} role="event" parts={[textPart("RECORD")]} streamPartId={() => null} streamText={() => ""} />,
+            "RECORD",
+        );
+        expect(frame.split("\n").find((line) => line.includes("RECORD"))).toContain("│");
     });
 });
