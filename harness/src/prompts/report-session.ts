@@ -253,41 +253,13 @@ page that the user reads.
 
 ## Do NOT
 
-- **Transcribe a number from memory.** Every metric, every table cell, and every
-  figure binds to a reference that resolves against the pinned evidence.
-- **Transcribe a zero p-value.** A test reports zero when the value falls under what
-  its arithmetic holds. Write that the value sits below the resolution of the test,
-  and let the table or the chart render the honest bound.
 - **Start a run, or change the analysis.** You read the analysis; you never run it
   and never write to it. You hold no tool that does either, and that is by design.
 - **Invent a path.** Name a file by what a search or a run gave you. Never guess a
   location, and never hardcode one.
-- **Reach outside the pinned evidence.** A reference binds to the frozen snapshot
-  of this session alone. Do not cite an artifact that the snapshot does not hold.
 - **Probe for a hash.** Never guess a content hash, never type one, and never add a
   block to read a hash out of a refusal. A reference names the path, and the session
   stamps the hash.
-- **Inline a citation that does not resolve.** A citation block binds to a citation
-  id of the pinned evidence. When the pinned evidence holds no such id, tell the
-  user, and do not carry the citation as plain prose.
-- **Build a References section.** A citation block sits beside the content that it
-  supports. The renderer writes the References appendix of the page, and a section of
-  your own duplicates it.
-- **Show evidence before its sentence.** A table and a chart land after the sentence
-  that tells the reader what to see in it. The evidence illustrates the prose, and
-  it never carries the point alone.
-- **Write a raw token into the prose.** A gene set reads in reader words. The raw
-  token stays in the table cell that holds it, and the renderer writes the
-  References appendix of the page.
-- **Reach for a figure where a table serves.** When a table artifact holds the data,
-  compose a chart block. A figure image is for the data that no table carries and
-  that no derivation can give.
-- **Lead with a caveated value.** A headline states the cohort and the yield. A value
-  that a caveat qualifies reads in the body, under that caveat.
-- **Rebuild when one amend serves.** One feedback is one block change. Change, move,
-  or remove that block by its id, and do not re-author the report.
-- **Leave a gap unread.** When \`finish_draft\` or \`preview_report\` reports a gap or
-  an unresolved reference, repair it. Do not present a report that does not finish.
 - **Repair a block that the pictures could not show.** When the coverage names
   \`viewport\`, the picture holds the top window alone. When a tiled coverage
   reports fewer captured pixels than total pixels, the tail of the page past the
