@@ -62,6 +62,7 @@ const ANALYSIS_KEYED_TABLES = [
     "cortex_working_memory",
     "cortex_asks",
     "cortex_ask_grants",
+    "cortex_tool_outputs",
 ] as const;
 
 const NOTHING_LEFT: Record<string, number> = {
@@ -76,6 +77,7 @@ const NOTHING_LEFT: Record<string, number> = {
     cortex_working_memory: 0,
     cortex_asks: 0,
     cortex_ask_grants: 0,
+    cortex_tool_outputs: 0,
 };
 
 /** What `seedAnalysis` writes, so a survival assertion can name the same numbers. */
@@ -91,6 +93,7 @@ const FULLY_SEEDED: Record<string, number> = {
     cortex_working_memory: 1,
     cortex_asks: 1,
     cortex_ask_grants: 1,
+    cortex_tool_outputs: 2,
 };
 
 const SEEDED_MESSAGES = 4;
@@ -179,6 +182,15 @@ describe("createAnalysisPurge", () => {
                     values: [threadId, seq],
                 });
             }
+        }
+
+        // A kept text of a chat turn names its thread, and a kept text of a run names none.
+        for (const [index, threadId] of [threadIds[0], null].entries()) {
+            await rig.pool.query({
+                text: `INSERT INTO cortex_tool_outputs (analysis_id, ref, tool_name, tool_call_id, thread_id, content, total_length)
+                       VALUES ($1, $2, 'read_file', $3, $4, 'text', 4)`,
+                values: [analysisId, `to_${index}`, `toolu_${index}`, threadId],
+            });
         }
 
         // One recorded report version sits on each thread. The second reuses the
@@ -375,6 +387,22 @@ describe("createAnalysisPurge", () => {
 
         expect(await ledger.countStatusRows([scheduled])).toBe(1);
         expect(await ledger.countCascadeRows([scheduled])).toEqual(ledger.cascadeRows(1));
+    });
+
+    it("removes each kept tool output of the analysis, and keeps the one of a second analysis under the same reference", async () => {
+        const doomed = await seedAnalysis(`purge-kept-${run}`, { vectorIndex: false });
+        const bystander = await seedAnalysis(`purge-kept-other-${run}`, { vectorIndex: false });
+
+        (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
+
+        const { rows } = await rig.pool.query<{ analysis_id: string; ref: string }>({
+            text: `SELECT analysis_id, ref FROM cortex_tool_outputs WHERE analysis_id = ANY($1) ORDER BY analysis_id, ref`,
+            values: [[doomed.analysisId, bystander.analysisId]],
+        });
+        expect(rows).toEqual([
+            { analysis_id: bystander.analysisId, ref: "to_0" },
+            { analysis_id: bystander.analysisId, ref: "to_1" },
+        ]);
     });
 
     it("reclaims a data-profile workflow from its id namespace", async () => {

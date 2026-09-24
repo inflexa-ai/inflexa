@@ -435,6 +435,23 @@ CREATE TABLE IF NOT EXISTS cortex_ask_grants (
   created_at   TEXT NOT NULL,
   PRIMARY KEY (analysis_id, user_id, grant_key)
 );
+
+-- The kept text of each cut tool result. thread_id is null for a text of a run, thus purgeThread removes
+-- only the texts of chat turns, and purgeAnalysis removes each row by analysis_id.
+CREATE TABLE IF NOT EXISTS cortex_tool_outputs (
+  analysis_id  TEXT NOT NULL,
+  ref          TEXT NOT NULL,
+  tool_name    TEXT NOT NULL,
+  tool_call_id TEXT NOT NULL,
+  thread_id    TEXT,
+  content      TEXT NOT NULL,
+  total_length INTEGER NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (analysis_id, ref)
+);
+
+CREATE INDEX IF NOT EXISTS cortex_tool_outputs_thread_idx
+  ON cortex_tool_outputs (thread_id) WHERE thread_id IS NOT NULL;
 `;
 
 /**

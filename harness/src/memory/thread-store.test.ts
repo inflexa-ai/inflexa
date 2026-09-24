@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 
 import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
+import { createToolOutputStore } from "../state/tool-outputs.js";
 import { createThreadStore, type ThreadStore, type ThreadType } from "./thread-store.js";
 import { createThreadHistory } from "./thread-history.js";
 
@@ -876,6 +877,17 @@ describe("purgeThread across a subtree", () => {
         }
     }
 
+    /** A kept tool output of analysis A. A text of a run names no thread. */
+    async function keepText(ref: string, threadId?: string): Promise<void> {
+        const output = { analysisId: ANALYSIS_A, ref, toolName: "read_file", toolCallId: `call-${ref}`, content: "text", totalLength: 4 };
+        (await createToolOutputStore(pool).put(threadId === undefined ? output : { ...output, threadId }))._unsafeUnwrap();
+    }
+
+    async function keptCount(ref: string): Promise<number> {
+        const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_tool_outputs WHERE ref = $1", [ref]);
+        return Number(rows[0]!.count);
+    }
+
     it("takes the rows and messages of every generation, leaving an unrelated thread whole", async () => {
         await seedGenerations();
         await appendTurnsToEveryThread();
@@ -933,6 +945,19 @@ describe("purgeThread across a subtree", () => {
         expect(await messageCount("unrelated")).toBe(2);
     });
 
+    it("takes the kept tool outputs of a thread and its child, and leaves the kept text of a run", async () => {
+        await seedGenerations();
+        await keepText("to_root", "root");
+        await keepText("to_child", "child");
+        await keepText("to_run");
+
+        (await store.purgeThread("root"))._unsafeUnwrap();
+
+        expect(await keptCount("to_root")).toBe(0);
+        expect(await keptCount("to_child")).toBe(0);
+        expect(await keptCount("to_run")).toBe(1);
+    });
+
     it("gives back the parent and both of its children", async () => {
         (await store.createThread({ threadId: "parent", analysisId: ANALYSIS_A, title: "Parent" }))._unsafeUnwrap();
         (await store.createThread({ threadId: "left", analysisId: ANALYSIS_A, title: "Left", parentThreadId: "parent", parentSeq: 2 }))._unsafeUnwrap();
@@ -958,6 +983,7 @@ describe("purgeThread across a subtree", () => {
     it("leaves every generation whole when the subtree delete fails partway", async () => {
         await seedGenerations();
         await appendTurnsToEveryThread();
+        for (const threadId of GENERATIONS) await keepText(`to_${threadId}`, threadId);
 
         // The messages statement sweeps the whole subtree before the rows statement
         // runs, so a failure on the second one is the widest partway state the shared
@@ -972,6 +998,7 @@ describe("purgeThread across a subtree", () => {
         for (const threadId of GENERATIONS) {
             expect(await threadRowCount(threadId)).toBe(1);
             expect(await messageCount(threadId)).toBe(2);
+            expect(await keptCount(`to_${threadId}`)).toBe(1);
         }
     });
 });

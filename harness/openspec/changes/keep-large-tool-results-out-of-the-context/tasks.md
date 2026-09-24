@@ -51,27 +51,27 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 2. The table and the Postgres store
 
-- [ ] 2.1 In `src/state/init.ts`, add the table `cortex_tool_outputs` and the partial index `cortex_tool_outputs_thread_idx` of the design, after the table `messages`.
-- [ ] 2.2 Write a comment block for the columns, with no semicolon, because the init divides the DDL at each semicolon.
-- [ ] 2.3 In that block, say that `thread_id` is null for a text of a run. Say which purge removes which rows.
-- [ ] 2.4 Add `src/state/tool-outputs.ts`. Export `createToolOutputStore(pool: Pool): ToolOutputStore`.
-- [ ] 2.5 Make `put` one `INSERT ... ON CONFLICT (analysis_id, ref) DO UPDATE` through `tryMutation`, with the op `toolOutputs.put`.
-- [ ] 2.6 The insert writes `thread_id`, or null when the record has no thread id. The update keeps `created_at`.
-- [ ] 2.7 Make `get` one `SELECT` by `analysis_id` and `ref` through `tryQuery`, with the op `toolOutputs.get`. No row gives `null`.
-- [ ] 2.8 In `src/state/purge-analysis.ts`, add the delete of `cortex_tool_outputs` by `analysis_id` to the list of the analysis-keyed deletes. Add the table to the module header.
-- [ ] 2.9 In `src/memory/thread-store.ts`, make `purgeThread` delete the rows of `cortex_tool_outputs` whose `thread_id` is in `SUBTREE_CTE`.
-- [ ] 2.10 Run that delete in the transaction of the purge, before the delete of the thread rows. Add the kept tool outputs to the module header.
-- [ ] 2.11 Add `src/state/tool-outputs.test.ts` with `withSchema`. Add these tests:
+- [x] 2.1 In `src/state/init.ts`, add the table `cortex_tool_outputs` and the partial index `cortex_tool_outputs_thread_idx` of the design, after the table `messages`.
+- [x] 2.2 Write a comment block for the columns, with no semicolon, because the init divides the DDL at each semicolon.
+- [x] 2.3 In that block, say that `thread_id` is null for a text of a run. Say which purge removes which rows.
+- [x] 2.4 Add `src/state/tool-outputs.ts`. Export `createToolOutputStore(pool: Pool): ToolOutputStore`.
+- [x] 2.5 Make `put` one `INSERT ... ON CONFLICT (analysis_id, ref) DO UPDATE` through `tryMutation`, with the op `toolOutputs.put`.
+- [x] 2.6 The insert writes `thread_id`, or null when the record has no thread id. The update keeps `created_at`.
+- [x] 2.7 Make `get` one `SELECT` by `analysis_id` and `ref` through `tryQuery`, with the op `toolOutputs.get`. No row gives `null`.
+- [x] 2.8 In `src/state/purge-analysis.ts`, add the delete of `cortex_tool_outputs` by `analysis_id` to the list of the analysis-keyed deletes. A comment at the entry gives the reason for the key.
+- [x] 2.9 In `src/memory/thread-store.ts`, make `purgeThread` delete the rows of `cortex_tool_outputs` whose `thread_id` is in `SUBTREE_CTE`.
+- [x] 2.10 Run that delete in the transaction of the purge, before the delete of the thread rows. Add the kept tool outputs to the module header.
+- [x] 2.11 Add `src/state/tool-outputs.test.ts` with `withSchema`. Add these tests:
   - A text of 300,000 characters with a character outside ASCII round-trips byte-identical.
   - A record with a thread id round-trips it, and a record with no thread id reads back with none.
   - A second `put` of one key replaces the text and keeps `created_at`.
   - A `get` with a different analysis id gives `null`.
   - A `get` of an unknown reference gives `null`.
-- [ ] 2.12 In `src/state/purge-analysis.test.ts`, add a test. Expected result: the purge removes the rows of the analysis, and the row of a second analysis stays.
-- [ ] 2.13 In `src/memory/thread-store.test.ts`, add a test with a thread, its child, and a text of a run. Expected result: the purge removes the texts of both threads.
-- [ ] 2.14 In the same test, expect that the text of the run stays. Add the kept tool outputs to the test of the failed subtree delete.
-- [ ] 2.15 Run `tsc -p tsconfig.json`. Run `bun test src/state/tool-outputs.test.ts src/state/purge-analysis.test.ts src/memory/thread-store.test.ts` with Postgres.
-- [ ] 2.16 Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 2.12 In `src/state/purge-analysis.test.ts`, add a test. Expected result: the purge removes the rows of the analysis, and the row of a second analysis stays. Add the table to the pinned list of the analysis-keyed tables, and seed two rows.
+- [x] 2.13 In `src/memory/thread-store.test.ts`, add a test with a thread, its child, and a text of a run. Expected result: the purge removes the texts of both threads.
+- [x] 2.14 In the same test, expect that the text of the run stays. Add the kept tool outputs to the test of the failed subtree delete.
+- [x] 2.15 Run `tsc -p tsconfig.json`. Run `bun test src/state/tool-outputs.test.ts src/state/purge-analysis.test.ts src/memory/thread-store.test.ts` with Postgres.
+- [x] 2.16 Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 3. The tool read_tool_output
 
