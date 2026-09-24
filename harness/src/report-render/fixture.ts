@@ -10,8 +10,11 @@
  * The fixture also carries a provenance export. Thus the fixture page stamps each grounded block and shows
  * the lineage control, and a person examines that control beside the markers.
  *
- * Each value is a literal, and the figure source is an inline data URI. Thus the page is a pure function of
- * this module, and the fixture reads no file.
+ * Each value is a literal or a fixed integer formula of its row index, and the figure source is an inline
+ * data URI. Thus the page is a pure function of this module, and the fixture reads no file.
+ *
+ * The chart-forms section holds one chart of each chart type, an interval, a facet, a focus, and a continuous
+ * color. Thus a person examines the publication look on each form of the grammar.
  *
  * Only the tests and `scripts/render-fixture.ts` read this module, thus `tsconfig.json` excludes it the same
  * way that it excludes a test file and the build emits no `dist/report-render/fixture.js`. The lint program
@@ -117,6 +120,395 @@ const VOLCANO_SVG = [
  */
 const VOLCANO_SOURCE = `data:image/svg+xml,${encodeURIComponent(VOLCANO_SVG)}`;
 
+/**
+ * A fixed wobble of one index, from -0.5 to 0.5. The value is integer arithmetic over the index, thus a
+ * generated table is the same on every host and on every render.
+ */
+function wobble(index: number): number {
+    return ((index * 7919) % 97) / 97 - 0.5;
+}
+
+/** Round one generated value to three decimals, thus a cell reads as a measured value. */
+function round3(value: number): number {
+    return Math.round(value * 1000) / 1000;
+}
+
+/** One whole-table binding of a chart of the chart-forms section. */
+function chartTable(file: string, hash: string, columnLabels?: Record<string, string>): ArtifactTableReference {
+    return { kind: "artifact-table", run: "run-2f1c", path: `runs/run-2f1c/figures/${file}`, hash, ...(columnLabels !== undefined ? { columnLabels } : {}) };
+}
+
+/** The four sequencing batches of the cohort. The facet chart draws one panel for each. */
+const BATCHES = ["Batch 1", "Batch 2", "Batch 3", "Batch 4"];
+
+/** The three clusters of the single-cell subset. */
+const CLUSTERS = ["Epithelial", "Stromal", "Immune"];
+
+/** The five hallmark sets of the radar and of the dot plot, in reader words. */
+const HALLMARKS = ["Hypoxia", "Glycolysis", "Angiogenesis", "p53 pathway", "Apoptosis"];
+
+/** The DE table of the three presets: 120 genes with an effect, a mean level, and an adjusted p-value. */
+function deRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (let index = 0; index < 120; index += 1) {
+        const effect = round3(4 * wobble(index) + (index % 11 === 0 ? 2.5 : 0) - (index % 13 === 0 ? 2.5 : 0));
+        const padj = Number(Math.pow(10, -Math.abs(effect) * 2.2 - 0.3 + wobble(index + 5)).toPrecision(3));
+        rows.push({ gene: `GENE${index + 1}`, log2FoldChange: effect, baseMean: round3(40 + 900 * (wobble(index + 11) + 0.5)), padj });
+    }
+    return rows;
+}
+
+/** The association table of the Manhattan plot: 150 variants along three chromosomes. */
+function gwasRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (let index = 0; index < 150; index += 1) {
+        const strength = index === 42 || index === 97 ? 9.5 : 1 + 4 * (wobble(index) + 0.5);
+        rows.push({ variant: `rs${1000 + index}`, position: index * 1_000_000, p: Number(Math.pow(10, -strength).toPrecision(3)) });
+    }
+    return rows;
+}
+
+/** The survival step table of two arms. Each arm loses a share of its patients at each event month. */
+function survivalRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [arm, rate] of [
+        ["Hypoxic", 0.09],
+        ["Normoxic", 0.05],
+    ] as const) {
+        let survival = 1;
+        for (let month = 0; month <= 36; month += 3) {
+            rows.push({ month, arm, survival: round3(survival) });
+            survival *= 1 - rate;
+        }
+    }
+    return rows;
+}
+
+/** The embedding of 60 cells, colored by the CA9 level of each cell. */
+function embeddingRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (let index = 0; index < 60; index += 1) {
+        const cluster = index % 3;
+        rows.push({
+            cell: `cell${index + 1}`,
+            umap1: round3(cluster * 4 + 2 * wobble(index)),
+            umap2: round3((cluster === 1 ? 3 : 0) + 2 * wobble(index + 31)),
+            ca9: round3(Math.max(0, (cluster === 0 ? 3 : 0.5) + 1.5 * wobble(index + 7))),
+        });
+    }
+    return rows;
+}
+
+/** The CA9 level of each cell by cluster and by condition. Twelve cells for each pair give a violin and a box. */
+function clusterRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [place, cluster] of CLUSTERS.entries()) {
+        for (let index = 0; index < 24; index += 1) {
+            const condition = index % 2 === 0 ? "Hypoxic" : "Normoxic";
+            const shift = condition === "Hypoxic" ? 1.2 : 0;
+            rows.push({ cluster, condition, ca9: round3(2 + place * 0.6 + shift + 2 * wobble(index * 3 + place)) });
+        }
+    }
+    return rows;
+}
+
+/** The distribution of the fold change over the 120 genes of the DE table. */
+function histogramRows(): Array<Record<string, string | number>> {
+    return deRows().map((row) => ({ gene: row.gene, log2FoldChange: row.log2FoldChange }));
+}
+
+/**
+ * The mean CA9 level of each cluster and condition, with its 95 percent confidence interval. The bar with an
+ * interval draws each mean from zero, and each whisker over its own bar.
+ */
+function clusterMeanRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [place, cluster] of CLUSTERS.entries()) {
+        for (const condition of ["Hypoxic", "Normoxic"]) {
+            const mean = round3(2 + place * 0.6 + (condition === "Hypoxic" ? 1.2 : 0));
+            const half = round3(0.25 + 0.1 * (wobble(place * 2 + (condition === "Hypoxic" ? 1 : 0)) + 0.5));
+            rows.push({ cluster, condition, mean, ci_low: round3(mean - half), ci_high: round3(mean + half) });
+        }
+    }
+    return rows;
+}
+
+/** The z-scores of six genes over five samples, with the leaf order of each axis from the clustering. */
+function heatmapRows(): Array<Record<string, string | number>> {
+    const genes = ["CA9", "VEGFA", "SLC2A1", "TP53", "CDKN1A", "MDM2"];
+    const samples = ["S1", "S2", "S3", "S4", "S5"];
+    const geneOrder = [1, 3, 2, 5, 6, 4];
+    const sampleOrder = [2, 5, 1, 4, 3];
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [g, gene] of genes.entries()) {
+        for (const [s, sample] of samples.entries()) {
+            rows.push({
+                gene,
+                sample,
+                z: round3(2.4 * wobble(g * 5 + s) + (g < 3 ? 0.6 : -0.6) * (s < 2 ? 1 : -1)),
+                gene_leaf: geneOrder[g],
+                sample_leaf: sampleOrder[s],
+            });
+        }
+    }
+    return rows;
+}
+
+/** The cell-type counts of four biopsies. The stacked bar and the normalized bar read the same table. */
+function compositionRows(): Array<Record<string, string | number>> {
+    const types = ["Tumor", "Fibroblast", "T cell", "Macrophage"];
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [b, biopsy] of ["B01", "B02", "B03", "B04"].entries()) {
+        for (const [t, type] of types.entries()) {
+            rows.push({ biopsy, cell_type: type, cells: 40 + Math.round(120 * (wobble(b * 4 + t) + 0.5)) + (t === 0 ? 150 : 0) });
+        }
+    }
+    return rows;
+}
+
+/** The enrichment dot plot: the gene ratio, the gene count, and the adjusted p-value of each hallmark set. */
+function dotPlotRows(): Array<Record<string, string | number>> {
+    return HALLMARKS.map((pathway, index) => ({
+        pathway,
+        gene_ratio: round3(0.35 - index * 0.05),
+        gene_count: 48 - index * 8,
+        padj: Number((0.0001 * Math.pow(6, index)).toPrecision(3)),
+    }));
+}
+
+/** The pathway scores of the radar, for the two conditions. */
+function radarRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [condition, scale] of [
+        ["Hypoxic", 1],
+        ["Normoxic", 0.55],
+    ] as const) {
+        for (const [index, pathway] of HALLMARKS.entries()) {
+            rows.push({ pathway, condition, score: round3((2.6 - index * 0.3) * scale + 0.3 * wobble(index)) });
+        }
+    }
+    return rows;
+}
+
+/** The forest plot: the hazard ratio of hypoxia and its confidence interval in each subgroup. */
+function forestRows(): Array<Record<string, string | number>> {
+    return [
+        { subgroup: "All patients", hr: 1.62, hr_low: 1.21, hr_high: 2.17 },
+        { subgroup: "Stage I", hr: 1.31, hr_low: 0.84, hr_high: 2.04 },
+        { subgroup: "Stage II", hr: 1.74, hr_low: 1.1, hr_high: 2.75 },
+        { subgroup: "Stage III", hr: 2.05, hr_low: 1.22, hr_high: 3.44 },
+        { subgroup: "Smokers", hr: 1.58, hr_low: 1.08, hr_high: 2.31 },
+        { subgroup: "Never smokers", hr: 1.12, hr_low: 0.66, hr_high: 1.9 },
+    ];
+}
+
+/**
+ * The read depth, the detected genes, and the mitochondrial share of each library, in its batch. The facet
+ * draws one panel for each batch, and the share colors each point on one scale across the panels.
+ */
+function batchRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [b, batch] of BATCHES.entries()) {
+        for (let index = 0; index < 12; index += 1) {
+            const depth = round3(30 + 25 * (wobble(b * 12 + index) + 0.5));
+            rows.push({
+                library: `L${b * 12 + index + 1}`,
+                batch,
+                depth_m: depth,
+                genes_k: round3(12 + depth * 0.12 + 1.5 * wobble(index + b)),
+                mito_pct: round3(4 + 6 * (wobble(index * 5 + b) + 0.5)),
+            });
+        }
+    }
+    return rows;
+}
+
+/** The tumor volume of each arm at each week. The line chart draws one series for each arm. */
+function volumeRows(): Array<Record<string, string | number>> {
+    const rows: Array<Record<string, string | number>> = [];
+    for (const [arm, growth] of [
+        ["Vehicle", 1.32],
+        ["HIF inhibitor", 1.09],
+        ["Radiation", 1.15],
+    ] as const) {
+        let volume = 100;
+        for (let week = 0; week <= 6; week += 1) {
+            rows.push({ week, arm, volume: round3(volume) });
+            volume *= growth;
+        }
+    }
+    return rows;
+}
+
+/** The chart-forms section: one chart of each chart form of the grammar, and the publication look on each one. */
+const CHART_FORMS_SECTION: ReportDocument["sections"][number] = {
+    kind: "section",
+    id: "chart-forms",
+    title: "Chart Forms",
+    blocks: [
+        {
+            kind: "text",
+            id: "chart-forms-intro",
+            content: {
+                prose: "Each chart below draws one plot of the run from the table that made it. Each card exports the chart for a paper and for a slide.",
+            },
+        },
+        {
+            kind: "chart",
+            id: "chart-volume",
+            title: "Tumor volume by arm",
+            binding: chartTable("volume.csv", "sha256:5d1a0c9e7b24", { week: "Week", volume: "Tumor volume (mm³)" }),
+            chartType: "line",
+            encoding: { x: "week", y: "volume", group: "arm" },
+            focus: ["HIF inhibitor"],
+        },
+        {
+            kind: "chart",
+            id: "chart-embedding",
+            title: "CA9 level over the embedding",
+            binding: chartTable("embedding.csv", "sha256:9e3b71c04d58", { umap1: "UMAP 1", umap2: "UMAP 2", ca9: "CA9 level" }),
+            chartType: "scatter",
+            encoding: { x: "umap1", y: "umap2", color: "ca9" },
+        },
+        {
+            kind: "chart",
+            id: "chart-dot-plot",
+            title: "Hallmark enrichment",
+            binding: chartTable("enrichment.csv", "sha256:1b8e44f9a063", { gene_ratio: "Gene ratio", pathway: "Hallmark set", padj: "Adjusted p" }),
+            chartType: "scatter",
+            encoding: { x: "gene_ratio", y: "pathway", size: "gene_count", color: "padj" },
+        },
+        {
+            kind: "chart",
+            id: "chart-histogram",
+            title: "Fold change distribution",
+            binding: chartTable("fold-change.csv", "sha256:0c7f5e2ab916", { log2FoldChange: "log2 fold change" }),
+            chartType: "histogram",
+            encoding: { x: "log2FoldChange" },
+        },
+        {
+            kind: "chart",
+            id: "chart-box",
+            title: "CA9 level by cluster",
+            binding: chartTable("clusters.csv", "sha256:6fa2d83c10e7", { cluster: "Cluster", ca9: "CA9 level" }),
+            chartType: "box",
+            encoding: { x: "cluster", y: "ca9", group: "condition" },
+        },
+        {
+            kind: "chart",
+            id: "chart-violin",
+            title: "CA9 density by cluster",
+            binding: chartTable("clusters.csv", "sha256:6fa2d83c10e7", { cluster: "Cluster", ca9: "CA9 level" }),
+            chartType: "violin",
+            encoding: { x: "cluster", y: "ca9", group: "condition" },
+            focus: ["Hypoxic"],
+        },
+        {
+            kind: "chart",
+            id: "chart-cluster-means",
+            title: "Mean CA9 level by cluster",
+            binding: chartTable("cluster-means.csv", "sha256:d93a5b0e71c4", { cluster: "Cluster", mean: "Mean CA9 level" }),
+            chartType: "bar",
+            encoding: { x: "cluster", y: "mean", group: "condition", low: "ci_low", high: "ci_high" },
+        },
+        {
+            kind: "chart",
+            id: "chart-heatmap",
+            title: "Hypoxia genes in clustered order",
+            binding: chartTable("zscores.csv", "sha256:e2c94b7a5f31", { sample: "Sample", gene: "Gene", z: "z-score" }),
+            chartType: "heatmap",
+            encoding: { x: { column: "sample", orderBy: "sample_leaf" }, y: { column: "gene", orderBy: "gene_leaf" }, value: "z" },
+        },
+        {
+            kind: "chart",
+            id: "chart-pie",
+            title: "Cell types of biopsy B01",
+            binding: chartTable("b01-types.csv", "sha256:77d0e5b3c2a9"),
+            chartType: "pie",
+            encoding: { group: "cell_type", value: "cells" },
+        },
+        {
+            kind: "chart",
+            id: "chart-stacked",
+            title: "Cell types by biopsy",
+            binding: chartTable("composition.csv", "sha256:3a6c1f08e9d4", { biopsy: "Biopsy", cells: "Cells" }),
+            chartType: "stacked-bar",
+            encoding: { x: "biopsy", y: "cells", group: "cell_type" },
+        },
+        {
+            kind: "chart",
+            id: "chart-normalized",
+            title: "Cell-type share by biopsy",
+            binding: chartTable("composition.csv", "sha256:3a6c1f08e9d4", { biopsy: "Biopsy", cells: "Share of cells" }),
+            chartType: "normalized-bar",
+            orientation: "horizontal",
+            encoding: { x: "biopsy", y: "cells", group: "cell_type" },
+        },
+        {
+            kind: "chart",
+            id: "chart-radar",
+            title: "Hallmark scores by condition",
+            binding: chartTable("hallmark-scores.csv", "sha256:c41f8a2d6b07"),
+            chartType: "radar",
+            encoding: { x: "pathway", y: "score", group: "condition" },
+        },
+        {
+            kind: "chart",
+            id: "chart-volcano",
+            title: "Hypoxic against normoxic",
+            binding: chartTable("de-genes.csv", "sha256:8b35e0f7a1c2"),
+            chartType: "volcano",
+            encoding: { x: "log2FoldChange", y: "padj", label: "gene" },
+        },
+        {
+            kind: "chart",
+            id: "chart-ma",
+            title: "Fold change against mean level",
+            binding: chartTable("de-genes.csv", "sha256:8b35e0f7a1c2", { baseMean: "Mean level", log2FoldChange: "log2 fold change" }),
+            chartType: "ma",
+            encoding: { x: "baseMean", y: "log2FoldChange" },
+        },
+        {
+            kind: "chart",
+            id: "chart-manhattan",
+            title: "Association with the hypoxia score",
+            binding: chartTable("gwas.csv", "sha256:2e9d7b4c18a5", { position: "Genome position" }),
+            chartType: "manhattan",
+            encoding: { x: "position", y: "p" },
+        },
+        {
+            kind: "chart",
+            id: "chart-km",
+            title: "Overall survival by hypoxia status",
+            binding: chartTable("survival.csv", "sha256:f06a3c95d7e1", { month: "Month", survival: "Survival" }),
+            chartType: "km",
+            encoding: { x: "month", y: "survival", group: "arm" },
+        },
+        {
+            kind: "chart",
+            id: "chart-forest",
+            title: "Hazard ratio of hypoxia by subgroup",
+            binding: chartTable("hazard-ratios.csv", "sha256:4c2b98e1f5a7", { hr: "Hazard ratio", subgroup: "Subgroup" }),
+            composition: {
+                series: [{ form: "scatter", encoding: { x: "hr", y: "subgroup", low: "hr_low", high: "hr_high" } }],
+                annotations: [{ kind: "reference-line", axis: "x", value: 1 }],
+            },
+        },
+        {
+            kind: "chart",
+            id: "chart-batches",
+            title: "Detected genes against depth, by batch",
+            binding: chartTable("libraries.csv", "sha256:a8f1c6e30b92", {
+                depth_m: "Read depth (M)",
+                genes_k: "Detected genes (k)",
+                mito_pct: "Mito reads (%)",
+            }),
+            chartType: "scatter",
+            encoding: { x: "depth_m", y: "genes_k", color: "mito_pct", facet: "batch" },
+        },
+    ],
+};
+
 /** The fixture document. Each block id is stable, thus two renders give the same bytes. */
 export const FIXTURE_DOCUMENT: ReportDocument = {
     title: "Hypoxia Response in TP53-Mutant Lung Adenocarcinoma",
@@ -206,6 +598,7 @@ export const FIXTURE_DOCUMENT: ReportDocument = {
                     binding: resultsReference,
                     chartType: "bar",
                     encoding: { x: "pathway", y: "nes" },
+                    focus: ["Hypoxia", "Glycolysis"],
                     caption: "Gene set enrichment over the MSigDB hallmark collection. A positive score marks a set that hypoxia raises.",
                 },
                 {
@@ -249,6 +642,7 @@ export const FIXTURE_DOCUMENT: ReportDocument = {
                 },
             ],
         },
+        CHART_FORMS_SECTION,
         {
             kind: "section",
             id: "sources",
@@ -308,6 +702,24 @@ export const FIXTURE_VALUES: RenderValues = {
         ],
     },
     "figure-volcano": { type: "figure", src: VOLCANO_SOURCE },
+    "chart-volume": { type: "table", columns: ["week", "arm", "volume"], rows: volumeRows() },
+    "chart-embedding": { type: "table", columns: ["cell", "umap1", "umap2", "ca9"], rows: embeddingRows() },
+    "chart-dot-plot": { type: "table", columns: ["pathway", "gene_ratio", "gene_count", "padj"], rows: dotPlotRows() },
+    "chart-histogram": { type: "table", columns: ["gene", "log2FoldChange"], rows: histogramRows() },
+    "chart-box": { type: "table", columns: ["cluster", "condition", "ca9"], rows: clusterRows() },
+    "chart-violin": { type: "table", columns: ["cluster", "condition", "ca9"], rows: clusterRows() },
+    "chart-cluster-means": { type: "table", columns: ["cluster", "condition", "mean", "ci_low", "ci_high"], rows: clusterMeanRows() },
+    "chart-heatmap": { type: "table", columns: ["gene", "sample", "z", "gene_leaf", "sample_leaf"], rows: heatmapRows() },
+    "chart-pie": { type: "table", columns: ["biopsy", "cell_type", "cells"], rows: compositionRows().filter((row) => row.biopsy === "B01") },
+    "chart-stacked": { type: "table", columns: ["biopsy", "cell_type", "cells"], rows: compositionRows() },
+    "chart-normalized": { type: "table", columns: ["biopsy", "cell_type", "cells"], rows: compositionRows() },
+    "chart-radar": { type: "table", columns: ["pathway", "condition", "score"], rows: radarRows() },
+    "chart-volcano": { type: "table", columns: ["gene", "log2FoldChange", "baseMean", "padj"], rows: deRows() },
+    "chart-ma": { type: "table", columns: ["gene", "log2FoldChange", "baseMean", "padj"], rows: deRows() },
+    "chart-manhattan": { type: "table", columns: ["variant", "position", "p"], rows: gwasRows() },
+    "chart-km": { type: "table", columns: ["month", "arm", "survival"], rows: survivalRows() },
+    "chart-forest": { type: "table", columns: ["subgroup", "hr", "hr_low", "hr_high"], rows: forestRows() },
+    "chart-batches": { type: "table", columns: ["library", "batch", "depth_m", "genes_k", "mito_pct"], rows: batchRows() },
 };
 
 /** The raw inputs of the fixture chain. The preprocess command reads these bytes, and no block pins them. */

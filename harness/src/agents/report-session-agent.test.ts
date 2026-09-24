@@ -176,6 +176,21 @@ describe("createReportSessionAgent", () => {
         expect(reportSessionPrompt).toContain("a busy category set is not an exemption");
     });
 
+    test("the prompt makes the figure block the last choice, and names the plots that are chart blocks", () => {
+        expect(reportSessionPrompt).toContain("A figure block is the last choice");
+        // The permitted uses are pictures that no table can carry.
+        for (const use of ["a microscopy image", "a schematic", "a genome browser track"]) {
+            expect(reportSessionPrompt).toContain(use);
+        }
+        // Each named plot is a chart block over the table that made it.
+        for (const plot of ["a volcano", "a heatmap", "a dot plot", "a violin", "an embedding", "a forest plot", "a stacked composition", "a radar"]) {
+            expect(reportSessionPrompt).toContain(plot);
+        }
+        // The anti-pattern entry names the run figure of such a plot.
+        const doNot = reportSessionPrompt.slice(reportSessionPrompt.indexOf("## Do NOT"));
+        expect(doNot).toContain("Use a run figure for a plot that a chart draws");
+    });
+
     test("the prompt teaches the headline derivation", () => {
         // The derivation comes first, and the absence branch is the last resort.
         expect(reportSessionPrompt).toContain("derive the headline table first");

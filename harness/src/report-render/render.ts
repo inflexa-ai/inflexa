@@ -22,12 +22,13 @@ import { serializeReference, type ArtifactTableReference } from "../contracts/re
 import { citationRecordOf, type CitationRecords } from "../report-model/reference-resolver.js";
 import { renderChart } from "./views/chart-view.js";
 import { deriveChartRender } from "./chart.js";
+import { chartSvgAssets } from "./chart-export.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import type { ViewOptions } from "./views/lineage.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
 import { citationKeyOf, derivationChains, ReferenceLedger, type DerivationChain } from "./references.js";
 import { provenanceDataAssets, type ProvenanceExport } from "./provenance-data.js";
-import { encodeTablePayload, tableDataAsset, type TablePayload } from "./table-data.js";
+import { encodeTablePayload, tableDataAsset, type DataAsset, type TablePayload } from "./table-data.js";
 import type { RenderedPage, RenderProblem, RenderValue, RenderValues } from "./types.js";
 import { renderCitation, renderFigure, renderMetric, renderMetricGrid, renderTable, tableColumns, tableDisplay } from "./views/values.js";
 
@@ -68,6 +69,9 @@ export interface RenderOptions {
  * The renderer writes no file. The data assets ride the result, and the caller stages them beside the page.
  * Thus the render stays pure, and two renders of one document give byte-identical assets.
  *
+ * Each chart gives two SVG files beside the data assets, and its card links them. The page loads each table
+ * payload as a script, and it loads no SVG. Thus the SVG files ride the staged list of the result alone.
+ *
  * One artifact gives one payload. A table block and a chart block that bind it read that one asset, and a
  * chart under the inline bound carries its rows in its own option and registers none.
  */
@@ -78,7 +82,7 @@ export function renderReportPage(
 ): Result<RenderedPage, RenderProblem[]> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
-    const data: PageData = { payloads: new Map(), mounts: 0, view: { lineage: provenance !== undefined } };
+    const data: PageData = { payloads: new Map(), mounts: 0, svgs: [], view: { lineage: provenance !== undefined } };
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
@@ -96,7 +100,7 @@ export function renderReportPage(
     const references = renderReferenceSection(ledger, document.sections.length, records, derivationChains(derivations));
     return ok({
         html: assemblePage(document.title, nav, content.join(""), references, { dataAssets: tableAssets, grids: data.mounts > 0, provenanceAssets }),
-        dataAssets: [...provenanceAssets, ...tableAssets],
+        dataAssets: [...provenanceAssets, ...tableAssets, ...data.svgs],
     });
 }
 
@@ -121,12 +125,15 @@ interface PayloadRegistration {
  * `mounts` counts the table cards. The grid runtime weighs about two megabytes, thus a page that builds no
  * grid references neither the runtime nor its boot.
  *
+ * `svgs` holds the SVG files of each chart, in document order.
+ *
  * `view` holds the page-wide truths that each view reads. The bag is constant across the whole walk, thus
  * each block of one page decides it alike.
  */
 interface PageData {
     readonly payloads: Map<string, PayloadRegistration>;
     mounts: number;
+    readonly svgs: DataAsset[];
     readonly view: ViewOptions;
 }
 
@@ -232,7 +239,19 @@ function renderBlock(
             if (derived.value.readsPayload) {
                 registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
             }
-            return renderChart(block, ledger, derived.value.option, data.view);
+            // The export reads the chart with every row inline, thus a dense chart exports each point.
+            const svgs = chartSvgAssets(block.id, derived.value.inline);
+            if (svgs.isErr()) {
+                problems.push(svgs.error);
+                return "";
+            }
+            if (svgs.value !== undefined) {
+                data.svgs.push(svgs.value.single, svgs.value.double);
+            }
+            return renderChart(block, ledger, derived.value.option, data.view, {
+                panelRows: derived.value.panelRows,
+                ...(svgs.value !== undefined ? { svg: { single: svgs.value.single.name, double: svgs.value.double.name } } : {}),
+            });
         }
         case "section":
             return renderSection(block, depth, renderChildren(block.blocks, values, ledger, records, data, depth + 1, problems));

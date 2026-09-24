@@ -31,7 +31,7 @@ import {
     TABLE_DATA_DECODER,
 } from "../page.js";
 import { stagedSource } from "../assets.js";
-import { DESIGN_CSS, ECHARTS_THEME, ECHARTS_THEME_NAME } from "../design.js";
+import { CHART_THEMES, chartTheme, DESIGN_CSS } from "../design.js";
 import type { DataAsset } from "../table-data.js";
 import type { CitationRecords } from "../../report-model/reference-resolver.js";
 import type { DerivationChains, ReferenceLedger } from "../references.js";
@@ -48,21 +48,19 @@ const FOOTER_NOTE = "Powered by Inflexa";
 const REFERENCES_TITLE = "References";
 
 /**
- * The theme object as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit
- * that adds a `<` to the theme stays safe inside the script sink. The JSON parser reads `\u003c` as `<`, thus
- * the theme value stays exact.
- */
-const THEME_JSON = scriptJson(ECHARTS_THEME);
-
-/**
- * The registration script for the ECharts theme. It runs before the chart bootstrap, thus each chart
- * reads the registered theme by its name. The guard skips the call when the ECharts runtime did not load.
+ * The registration script for the ECharts themes: the page theme, and the two export themes that the PNG
+ * download reads. It runs before the chart bootstrap, thus each chart reads the registered theme by its
+ * name. The guard skips the calls when the ECharts runtime did not load.
+ *
+ * Each theme rides as script-safe JSON. `scriptJson` replaces every `<` with `\u003c`, thus a later edit that
+ * adds a `<` to the theme stays safe inside the script sink. The JSON parser reads `\u003c` as `<`, thus the
+ * theme value stays exact.
  */
 const THEME_REGISTRATION = `(function () {
   if (typeof echarts === "undefined") {
     return;
   }
-  echarts.registerTheme(${JSON.stringify(ECHARTS_THEME_NAME)}, ${THEME_JSON});
+${CHART_THEMES.map((theme) => `  echarts.registerTheme(${JSON.stringify(theme.name)}, ${scriptJson(chartTheme(theme.textPx))});`).join("\n")}
 })();`;
 
 /**
