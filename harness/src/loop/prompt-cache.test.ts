@@ -365,6 +365,17 @@ const INPUT_TOKENS_METRIC = "cortex.harness.agent.input_tokens";
 const OUTPUT_TOKENS_METRIC = "cortex.harness.agent.output_tokens";
 const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
 const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
+const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
+
+/**
+ * A session whose provenance names `agentId`. The `agent_id` label of a token
+ * counter is the agent id of the usage record of the call, and the record takes
+ * it from the provenance of the session.
+ */
+const sessionOf = (agentId: string) => makeSession({ agentId, callPath: [agentId] });
+
+/** The served model and the provider that a response names, beside its usage. */
+const SERVED = { servedModelId: "claude-opus-5-5", provider: "anthropic.messages" } as const;
 
 describe("runAgent cache-token metrics", () => {
     let exporter: InMemoryMetricExporter;
@@ -392,76 +403,103 @@ describe("runAgent cache-token metrics", () => {
             .flatMap((sm) => sm.metrics);
     }
 
-    /** Sum a counter's data points, optionally for one `agent_id`. */
-    async function counterTotal(name: string, agentId?: string): Promise<number | undefined> {
+    /** Sum a counter's data points, optionally for the series that carry each of `labels`. */
+    async function counterTotal(name: string, labels: Record<string, string> = {}): Promise<number | undefined> {
         const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
         if (metric === undefined) return undefined;
-        return metric.dataPoints.filter((dp) => agentId === undefined || dp.attributes.agent_id === agentId).reduce((acc, dp) => acc + (dp.value as number), 0);
+        return metric.dataPoints
+            .filter((dp) => Object.entries(labels).every(([key, value]) => dp.attributes[key] === value))
+            .reduce((acc, dp) => acc + (dp.value as number), 0);
     }
 
-    it("sums usage across every iteration of a run and reports it per agent", async () => {
+    it("sums usage across every iteration of a run and reports it per agent, model, and provider", async () => {
         const chat = scriptedProvider([
-            makeMessage([toolUseBlock("t0", "echo", {})], "tool_use", {
-                inputTokens: 1000,
-                outputTokens: 20,
-                cacheCreationInputTokens: 900,
-                cacheReadInputTokens: 0,
-            }),
-            makeMessage([toolUseBlock("t1", "echo", {})], "tool_use", {
-                inputTokens: 1100,
-                outputTokens: 30,
-                cacheCreationInputTokens: 100,
-                cacheReadInputTokens: 900,
-            }),
-            makeMessage([textBlock("done")], "end_turn", {
-                inputTokens: 1200,
-                outputTokens: 40,
-                cacheCreationInputTokens: 0,
-                cacheReadInputTokens: 1000,
-            }),
+            {
+                ...makeMessage([toolUseBlock("t0", "echo", {})], "tool_use", {
+                    inputTokens: 1000,
+                    outputTokens: 20,
+                    cacheCreationInputTokens: 900,
+                    cacheReadInputTokens: 0,
+                }),
+                ...SERVED,
+            },
+            {
+                ...makeMessage([toolUseBlock("t1", "echo", {})], "tool_use", {
+                    inputTokens: 1100,
+                    outputTokens: 30,
+                    cacheCreationInputTokens: 100,
+                    cacheReadInputTokens: 900,
+                }),
+                ...SERVED,
+            },
+            {
+                ...makeMessage([textBlock("done")], "end_turn", {
+                    inputTokens: 1200,
+                    outputTokens: 40,
+                    cacheCreationInputTokens: 0,
+                    cacheReadInputTokens: 1000,
+                }),
+                ...SERVED,
+            },
         ]);
 
-        await runAgent(agentDef(8), GO, makeSession(), opts(chat));
+        await runAgent(agentDef(8), GO, sessionOf("cache-agent"), opts(chat));
 
-        // Round-trip: provider usage → ChatResponse.usage → metrics, keyed by agent.
-        expect(await counterTotal(INPUT_TOKENS_METRIC, "cache-agent")).toBe(3300);
-        expect(await counterTotal(OUTPUT_TOKENS_METRIC, "cache-agent")).toBe(90);
-        expect(await counterTotal(CACHE_READ_METRIC, "cache-agent")).toBe(1900);
-        expect(await counterTotal(CACHE_WRITE_METRIC, "cache-agent")).toBe(1000);
+        // Round-trip: provider usage → ChatResponse.usage → metrics, keyed by the
+        // agent, the served model, and the provider.
+        const labels = { agent_id: "cache-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
+        expect(await counterTotal(INPUT_TOKENS_METRIC, labels)).toBe(3300);
+        expect(await counterTotal(OUTPUT_TOKENS_METRIC, labels)).toBe(90);
+        expect(await counterTotal(CACHE_READ_METRIC, labels)).toBe(1900);
+        expect(await counterTotal(CACHE_WRITE_METRIC, labels)).toBe(1000);
     });
 
     it("counts the wrap-up call's tokens too", async () => {
         const usage = { inputTokens: 500, outputTokens: 10, cacheCreationInputTokens: 500, cacheReadInputTokens: 0 };
         const chat = scriptedProvider(() => makeMessage([toolUseBlock("t", "echo", {})], "tool_use", usage));
 
-        await runAgent(agentDef(2), GO, makeSession(), opts(chat));
+        await runAgent(agentDef(2), GO, sessionOf("cache-agent"), opts(chat));
 
         // 2 iterations + wrap-up = 3 calls, all reporting the same usage.
         expect(chat.calls).toHaveLength(3);
-        expect(await counterTotal(INPUT_TOKENS_METRIC, "cache-agent")).toBe(1500);
-        expect(await counterTotal(CACHE_WRITE_METRIC, "cache-agent")).toBe(1500);
+        expect(await counterTotal(INPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(1500);
+        expect(await counterTotal(CACHE_WRITE_METRIC, { agent_id: "cache-agent" })).toBe(1500);
     });
 
     it("records nothing rather than a false zero when the provider reports no usage", async () => {
         const chat = scriptedProvider([makeMessage([textBlock("done")], "end_turn")]);
 
-        await runAgent(agentDef(8), GO, makeSession(), opts(chat));
+        await runAgent(agentDef(8), GO, sessionOf("cache-agent"), opts(chat));
 
         // Absent means "not reported" — the counters must not have been touched.
         expect(await counterTotal(INPUT_TOKENS_METRIC)).toBeUndefined();
         expect(await counterTotal(CACHE_READ_METRIC)).toBeUndefined();
+        expect(await counterTotal(REASONING_TOKENS_METRIC)).toBeUndefined();
     });
 
     it("keeps each agent's cache accounting separate", async () => {
         const usage = { inputTokens: 100, outputTokens: 5, cacheReadInputTokens: 80 };
         const chat = scriptedProvider(() => makeMessage([textBlock("done")], "end_turn", usage));
 
-        await runAgent({ ...agentDef(4), id: "agent-a" }, GO, makeSession(), opts(chat));
-        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
-        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
+        await runAgent({ ...agentDef(4), id: "agent-a" }, GO, sessionOf("agent-a"), opts(chat));
+        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, sessionOf("agent-b"), opts(chat));
+        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, sessionOf("agent-b"), opts(chat));
 
-        expect(await counterTotal(CACHE_READ_METRIC, "agent-a")).toBe(80);
-        expect(await counterTotal(CACHE_READ_METRIC, "agent-b")).toBe(160);
+        expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-a" })).toBe(80);
+        expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-b" })).toBe(160);
+    });
+
+    it("counts the reported reasoning tokens under the provider that reported them", async () => {
+        const chat = scriptedProvider([
+            { ...makeMessage([textBlock("done")], "end_turn", { inputTokens: 100, outputTokens: 90, reasoningTokens: 40 }), ...SERVED },
+        ]);
+
+        await runAgent(agentDef(4), GO, sessionOf("cache-agent"), opts(chat));
+
+        // Providers do not agree on whether the output total includes the
+        // reasoning tokens, thus the series of one provider sums one meaning.
+        expect(await counterTotal(REASONING_TOKENS_METRIC, { agent_id: "cache-agent", provider: "anthropic.messages" })).toBe(40);
+        expect(await counterTotal(OUTPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(90);
     });
 });
 

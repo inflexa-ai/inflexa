@@ -5,10 +5,14 @@ import { z } from "zod";
 import { PLANNABLE_AGENT_CATALOG } from "../agents/sandbox-catalog.js";
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
+import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import type { AgentRunUsage } from "../loop/metrics.js";
+import { accountForChatCall } from "../loop/run-agent.js";
 import { packagesSection, resourceEstimationSection } from "../prompts/planner.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
 import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-identity.js";
@@ -18,6 +22,8 @@ import type { CheckedPackage } from "./sandbox/list-available-packages.js";
 export const AD_HOC_ROUTER_AGENT_ID = "adhoc-router";
 export const AD_HOC_ROUTER_TIMEOUT_MS = 10_000;
 export const AD_HOC_FALLBACK_AGENT_ID = "scientific-executor";
+/** The fixed call name in the slot of the step name of the usage record key. It cannot collide with a loop step name such as `llm-0`. */
+const AD_HOC_ROUTE_CALL_NAME = "adhoc-route";
 
 const resourcesSchema = z.object({
     cpu: z.number().positive(),
@@ -74,6 +80,8 @@ export interface AdHocRouterDeps {
      * the entries reach the link pass as the model wrote them.
      */
     readonly resolvePackages?: (names: readonly string[]) => Promise<readonly CheckedPackage[] | null>;
+    /** The LLM usage-accounting seam for the router call. Omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
@@ -208,9 +216,19 @@ function routeTool() {
 
 export async function routeAdHocRequest(
     deps: AdHocRouterDeps,
-    input: { analysisId: string; request: string; session: AgentSession; signal: AbortSignal },
+    input: {
+        analysisId: string;
+        request: string;
+        session: AgentSession;
+        signal: AbortSignal;
+        /** The usage accumulator of the turn. The router call folds into it, thus the root finish of the turn includes the call. */
+        readonly turnUsage?: AgentRunUsage;
+        /** The id of the tool call that routes the request. The record key of the router call carries it. */
+        readonly invocationId?: string;
+    },
 ): Promise<AdHocRoute> {
     const logger = (deps.logger ?? createNoopLogger()).named("adhoc-router").with({ analysisId: input.analysisId, model: deps.model });
+    const routerSession = forSubAgent(input.session, AD_HOC_ROUTER_AGENT_ID);
     const catalog = PLANNABLE_AGENT_CATALOG.map(
         (agent) => `- ${agent.id}: capabilities [${agent.capabilities.join(", ")}]; suitable for [${agent.suitableFor.join(", ")}]`,
     ).join("\n");
@@ -246,10 +264,23 @@ export async function routeAdHocRequest(
                     // 400. A reply without the call falls back below as `malformed`.
                     tools: routeTool(),
                 },
-                forSubAgent(input.session, AD_HOC_ROUTER_AGENT_ID),
+                routerSession,
                 signal,
             ),
         );
+        // The router call reaches the counters, the recorder, and the turn total
+        // through the accounting path of the loop. A failed call reports no
+        // usage: it throws at `unwrapOrThrow` above, and it records nothing.
+        accountForChatCall(response, {
+            session: routerSession,
+            agentId: AD_HOC_ROUTER_AGENT_ID,
+            callPath: routerSession.provenance.callPath,
+            stepName: AD_HOC_ROUTE_CALL_NAME,
+            ...(input.invocationId === undefined ? {} : { invocationId: input.invocationId }),
+            usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
+            logger,
+            rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
+        });
         const call = Array.isArray(response.message.content)
             ? response.message.content.find((part): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route")
             : undefined;

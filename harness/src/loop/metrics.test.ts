@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
-import { ok } from "neverthrow";
+import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { makeSession } from "../providers/__fixtures__/session.js";
+import type { ProviderError } from "../providers/errors.js";
+import type { AgentChat, ChatResponse } from "../providers/types.js";
 import { defineTool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { __resetMetricsForTest } from "./metrics.js";
@@ -14,6 +16,11 @@ import type { AgentDefinition } from "./types.js";
 
 const ITERATIONS_METRIC = "cortex.harness.agent.iterations";
 const CAP_HITS_METRIC = "cortex.harness.agent.cap_hits";
+const INPUT_TOKENS_METRIC = "cortex.harness.agent.input_tokens";
+const OUTPUT_TOKENS_METRIC = "cortex.harness.agent.output_tokens";
+const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
+const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
+const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
 
 let exporter: InMemoryMetricExporter;
 let reader: PeriodicExportingMetricReader;
@@ -120,5 +127,74 @@ describe("runAgent metrics", () => {
         const iterations = collected.find((m) => m.descriptor.name === ITERATIONS_METRIC);
         const value = iterations!.dataPoints[0]!.value as { sum: number };
         expect(value.sum).toBe(2);
+    });
+});
+
+describe("runAgent token counters for each call", () => {
+    /** A session whose provenance names the agent under test, thus the usage record of each call carries that agent id. */
+    const agentSession = () => makeSession({ agentId: "metrics-agent", callPath: ["metrics-agent"] });
+
+    /** The data points of one counter: the labels and the value of each series. */
+    async function series(name: string): Promise<{ attributes: Record<string, unknown>; value: number }[]> {
+        const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
+        return (metric?.dataPoints ?? []).map((dp) => ({ attributes: { ...dp.attributes }, value: dp.value as number }));
+    }
+
+    const LABELS = { agent_id: "metrics-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
+
+    /** The reply with the usage of one call, the served model, and the provider of the response. */
+    function served(reply: ChatResponse): ChatResponse {
+        return {
+            ...reply,
+            usage: { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 60, cacheCreationInputTokens: 40, reasoningTokens: 5 },
+            servedModelId: "claude-opus-5-5",
+            provider: "anthropic.messages",
+        };
+    }
+
+    const toolCall = (callIndex: number): ChatResponse => served(makeMessage([toolUseBlock(`t${callIndex}`, "echo", {})], "tool_use"));
+
+    it("grows each counter for each call, with the agent, the served model, and the provider as labels", async () => {
+        const chat = scriptedProvider((callIndex, request) =>
+            request.toolChoice === "none" ? served(makeMessage([textBlock("done")], "end_turn")) : toolCall(callIndex),
+        );
+
+        await runAgent(agentDef(2), GO, agentSession(), runOpts(chat));
+
+        // 2 iterations + the forced wrap-up: three calls of the same usage.
+        expect(chat.calls).toHaveLength(3);
+        expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 300 }]);
+        expect(await series(OUTPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 30 }]);
+        expect(await series(CACHE_READ_METRIC)).toEqual([{ attributes: LABELS, value: 180 }]);
+        expect(await series(CACHE_WRITE_METRIC)).toEqual([{ attributes: LABELS, value: 120 }]);
+        expect(await series(REASONING_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 15 }]);
+    });
+
+    it("omits the model and the provider labels when the response gives neither", async () => {
+        const chat = scriptedProvider([makeMessage([textBlock("done")], "end_turn", { inputTokens: 7 })]);
+
+        await runAgent(agentDef(2), GO, agentSession(), runOpts(chat));
+
+        expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: { agent_id: "metrics-agent" }, value: 7 }]);
+    });
+
+    it("keeps the counts of the calls that completed before the run throws", async () => {
+        let calls = 0;
+        const failsOnThirdCall: AgentChat = {
+            capabilities: { toolCalling: true },
+            chat: () => {
+                calls += 1;
+                if (calls === 3) return errAsync({ type: "provider", retryable: false, message: "upstream exploded" } as ProviderError);
+                return okAsync(toolCall(calls));
+            },
+        };
+
+        await expect(runAgent(agentDef(8), GO, agentSession(), { ...runOpts(scriptedProvider([])), provider: failsOnThirdCall })).rejects.toThrow();
+
+        // The counters grew when each of the first two calls completed, not at
+        // the end of the run, which never came.
+        expect(calls).toBe(3);
+        expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 200 }]);
+        expect(await series(REASONING_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 10 }]);
     });
 });

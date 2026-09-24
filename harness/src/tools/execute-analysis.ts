@@ -9,6 +9,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import { DEFAULT_SANDBOX_MAX_STEPS } from "../config/resource-limits.js";
@@ -65,6 +66,8 @@ export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "fa
      * run reserves anything. Without it, the link pass returns at once.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
+    /** The LLM usage-accounting seam for the call of the ad hoc router. Omitted falls back to the no-op recorder. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 export class PlanNotFoundError extends Error {
@@ -354,8 +357,16 @@ async function persistedAdHocPlan(
             resourcePolicy: deps.resourcePolicy,
             logger: deps.logger,
             ...(resolvePackages ? { resolvePackages } : {}),
+            ...(deps.usageRecorder ? { usageRecorder: deps.usageRecorder } : {}),
         },
-        { analysisId: args.analysisId, request: args.request, session: args.ctx.session, signal: args.ctx.signal },
+        {
+            analysisId: args.analysisId,
+            request: args.request,
+            session: args.ctx.session,
+            signal: args.ctx.signal,
+            ...(args.ctx.turnUsage ? { turnUsage: args.ctx.turnUsage } : {}),
+            invocationId: args.ctx.invocationId,
+        },
     );
     const candidate = buildAdHocPlan(args.request, route);
     unwrapOrThrow(await upsertPlan(deps.pool, { planId: args.planId, analysisId: args.analysisId, plan: candidate }));

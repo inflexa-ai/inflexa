@@ -325,6 +325,7 @@ describe("createAiSdkProvider", () => {
                     rawFinishReason: "stop",
                     usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
                     requestedModelId: "fake-model",
+                    provider: "fake-provider",
                 },
             },
         ]);
@@ -1014,6 +1015,7 @@ describe("createAiSdkProvider chatStream retry", () => {
                     rawFinishReason: "stop",
                     usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
                     requestedModelId: "fake-model",
+                    provider: "fake-provider",
                 },
             },
         ]);
@@ -1108,6 +1110,7 @@ describe("createAiSdkProvider chatStream retry", () => {
                     rawFinishReason: "stop",
                     usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
                     requestedModelId: "fake-model",
+                    provider: "fake-provider",
                 },
             },
         ]);

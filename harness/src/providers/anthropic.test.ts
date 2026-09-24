@@ -127,6 +127,7 @@ describe("createAnthropicProvider", () => {
                     // real claim from the endpoint rather than an echo of the request.
                     requestedModelId: "claude-opus-4-7",
                     servedModelId: "claude-opus-4-7",
+                    provider: "anthropic.messages",
                     // Mapped off the canned wire body above: Anthropic's snake_case
                     // `input_tokens` / `cache_*_input_tokens` normalize onto the
                     // harness's neutral `ChatUsage`.
