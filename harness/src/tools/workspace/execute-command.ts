@@ -41,7 +41,8 @@ const ExecuteCommandInputSchema = z.object({
         .min(1)
         .describe(
             "argv array — e.g. ['python', 'scripts/run.py'] or ['head', '-n', '50', 'data/inputs/x.csv']. " +
-                "Not passed through a shell; quoting and globbing are not expanded.",
+                "A one-element array runs through `sh -c`, so pipes, `&&`, quoting, and globbing work; " +
+                "an array of two or more elements runs directly, with no shell, and nothing is expanded.",
         ),
     cwd: z
         .string()

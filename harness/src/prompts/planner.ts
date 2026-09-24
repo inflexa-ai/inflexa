@@ -257,8 +257,10 @@ safety, toxicity, or treatment outcomes:
 
 1. **Include mechanistic grounding steps.** If the analysis identifies
    differentially expressed genes or enriched pathways, include a
-   cheminformatics or enrichment step to map findings to known drug
-   targets, existing therapeutics, and clinical-stage compounds. This
+   cheminformatics or drug-repurposing step to map findings to known drug
+   targets, existing therapeutics, and clinical-stage compounds. The
+   enrichment agent holds no drug or target lookup, thus it cannot do this
+   mapping. This
    prevents the synthesizer from speculating about druggability without
    evidence.
 

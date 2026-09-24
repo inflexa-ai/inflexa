@@ -72,8 +72,10 @@ For exploration beyond the menu:
   more closely or check a grouping you are unsure about. A re-scan is INFORMATIONAL: it
   informs your judgement, and your operations still address the menu ids the briefing
   rendered — no id from a re-scan is addressable.
-- \`list_files\` with \`path: "data/inputs"\` lists the tree — \`path\` is its only
-  parameter, so recurse by calling it again on a subdirectory it returned.
+- \`list_files\` on the absolute input path under the analysis root that your briefing
+  names lists the tree. A relative path resolves against your working directory, not the
+  analysis root. \`path\` is its only parameter, so recurse by calling it again on a
+  subdirectory it returned.
 
 Data files (count matrices, expression tables, large CSVs, genomic files) must be
 processed programmatically. Do not \`read_file\` data files — they will exceed your

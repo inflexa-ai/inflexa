@@ -136,8 +136,8 @@ up front.
   or substituting something else unannounced. Pass reference paths EXPLICITLY to the
   library — nothing in the image points a library at the store, so a library that
   resolves data by name from an env var (CellTypist reads \`$CELLTYPIST_FOLDER\`)
-  will not find it unless you export that variable yourself, in the same command,
-  using a path the inventory actually returned.
+  will not find it unless you set that variable in \`execute_command\`'s \`env\`
+  for the command that needs it, using a path the inventory actually returned.
 - Do NOT call a library's built-in data fetcher — \`dc.op.collectri()\`,
   \`dc.op.progeny()\`, \`dc.op.msigdb()\` and every other \`dc.op.*()\`, CellTypist's
   \`models.download_models()\`, gseapy's Enrichr library names, \`ExperimentHub\`/
@@ -185,13 +185,16 @@ skill references rather than memory.
 \`execute_command\` runs analysis work — scripts, bioinformatics CLI tools,
 shell pipes, and anything the workspace tools don't express. It starts in your
 working directory; a relative \`cwd\` argument is resolved against it.
+Its \`command\` is an argv array. A one-element array runs through \`sh -c\`,
+so pipes, \`&&\`, redirection, quoting, and globbing work there. An array of
+two or more elements runs directly, with no shell.
 
 For these tasks, prefer the dedicated workspace tools — they are faster than
 shelling out and don't waste a turn on path discovery:
 
 | Task                            | Use this tool   | Instead of                 |
 |-|-|-|
-| List files in a directory       | \`list_files\`    | \`ls\` / \`ls -la\` / \`find -name\` |
+| List files in a directory       | \`list_files\`    | \`ls\` / \`ls -la\`             |
 | Read a text/source/result file  | \`read_file\`     | \`cat\` / \`less\`             |
 | Search file contents by pattern | \`grep\`          | shell \`grep\` / \`rg\`        |
 | Size / type of a path           | \`file_stat\`     | \`stat\` / \`wc -c\`           |
@@ -203,7 +206,8 @@ shelling out and don't waste a turn on path discovery:
 - **Previewing huge / binary files** — \`wc -l file.tsv\`, \`zcat file.gz | head\`.
   For text files, prefer \`read_file\` with \`headLines\` / \`tailLines\`.
 - **Shell pipes / chaining** — \`sort | uniq -c | sort -rn | head\`.
-- **\`find\` with non-name predicates** — \`find . -mtime -1\`, \`find . -size +10M\`.
+- **\`find\`** — a recursive search by name, age, or size: \`find . -name '*.h5ad'\`,
+  \`find . -size +10M\`. \`list_files\` lists one directory only.
 - **Real CLI tools** — \`samtools\`, \`bcftools\`, \`tabix\`, \`bedtools\`,
   \`vcftools\`, version probes like \`python -c "import x; print(x.__version__)"\`.
 

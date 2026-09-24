@@ -82,9 +82,12 @@ limitations.
 ### From Targets (interaction workflow)
 1. \`drug_gene_interactions({direction:"gene_to_drugs"})\` — find drugs for
    a gene set. Add \`sources:["dgidb","drugbank"]\` and
-   \`includeDrugRecord:true\` when you need indications and toxicity for a
-   shortlisted candidate — not for the whole discovery sweep.
-2. Review indications, interactions, and toxicity.
+   \`includeDrugRecord:true\` when you need the curated DrugBank record
+   (description, modality, approval groups) for a shortlisted candidate —
+   not for the whole discovery sweep. DrugBank here carries no indication
+   and no toxicity.
+2. Take the existing indications from \`chembl({action:"drug"})\` and the
+   safety profile from \`search_faers\`.
 
 ### From Genetic Evidence
 1. \`gene_disease_evidence({queryType:"disease"})\` — GWAS associations,

@@ -12,8 +12,8 @@ Use the read_file tool to open any output file whose contents you need to
 report a number. A number that appears only in command stdout is NOT
 sufficient — read the persisted artifact that holds it and report what the
 file actually contains. Relative paths resolve against this step's working
-directory, as they did during the step; you may also read input data, the
-data profile, or prior-run outputs by absolute path if needed for context.
+directory, as they did during the step; you may also read input data or
+prior-run outputs by absolute path if needed for context.
 
 Write a markdown summary that covers:
 - key quantitative results — every number lifted from a persisted output
