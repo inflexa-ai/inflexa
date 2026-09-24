@@ -366,13 +366,6 @@ const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
 const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
 const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
 
-/**
- * A session whose provenance names `agentId`. The `agent_id` label of a token
- * counter is the agent id of the usage record of the call, and the record takes
- * it from the provenance of the session.
- */
-const sessionOf = (agentId: string) => makeSession({ agentId, callPath: [agentId] });
-
 /** The served model and the provider that a response names, beside its usage. */
 const SERVED = { servedModelId: "claude-opus-5-5", provider: "anthropic.messages" } as const;
 
@@ -442,7 +435,7 @@ describe("runAgent cache-token metrics", () => {
             },
         ]);
 
-        await runAgent(agentDef(8), GO, sessionOf("cache-agent"), opts(chat));
+        await runAgent(agentDef(8), GO, makeSession(), opts(chat));
 
         // Round-trip: provider usage → ChatResponse.usage → metrics, keyed by the
         // agent, the served model, and the provider.
@@ -457,7 +450,7 @@ describe("runAgent cache-token metrics", () => {
         const usage = { inputTokens: 500, outputTokens: 10, cacheCreationInputTokens: 500, cacheReadInputTokens: 0 };
         const chat = scriptedProvider(() => makeMessage([toolUseBlock("t", "echo", {})], "tool_use", usage));
 
-        await runAgent(agentDef(2), GO, sessionOf("cache-agent"), opts(chat));
+        await runAgent(agentDef(2), GO, makeSession(), opts(chat));
 
         // 2 iterations + wrap-up = 3 calls, all reporting the same usage.
         expect(chat.calls).toHaveLength(3);
@@ -468,7 +461,7 @@ describe("runAgent cache-token metrics", () => {
     it("records nothing rather than a false zero when the provider reports no usage", async () => {
         const chat = scriptedProvider([makeMessage([textBlock("done")], "end_turn")]);
 
-        await runAgent(agentDef(8), GO, sessionOf("cache-agent"), opts(chat));
+        await runAgent(agentDef(8), GO, makeSession(), opts(chat));
 
         // Absent means "not reported" — the counters must not have been touched.
         expect(await counterTotal(INPUT_TOKENS_METRIC)).toBeUndefined();
@@ -480,9 +473,9 @@ describe("runAgent cache-token metrics", () => {
         const usage = { inputTokens: 100, outputTokens: 5, cacheReadInputTokens: 80 };
         const chat = scriptedProvider(() => makeMessage([textBlock("done")], "end_turn", usage));
 
-        await runAgent({ ...agentDef(4), id: "agent-a" }, GO, sessionOf("agent-a"), opts(chat));
-        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, sessionOf("agent-b"), opts(chat));
-        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, sessionOf("agent-b"), opts(chat));
+        await runAgent({ ...agentDef(4), id: "agent-a" }, GO, makeSession(), opts(chat));
+        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
+        await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
 
         expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-a" })).toBe(80);
         expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-b" })).toBe(160);
@@ -493,7 +486,7 @@ describe("runAgent cache-token metrics", () => {
             { ...makeMessage([textBlock("done")], "end_turn", { inputTokens: 100, outputTokens: 90, reasoningTokens: 40 }), ...SERVED },
         ]);
 
-        await runAgent(agentDef(4), GO, sessionOf("cache-agent"), opts(chat));
+        await runAgent(agentDef(4), GO, makeSession(), opts(chat));
 
         // Providers do not agree on whether the output total includes the
         // reasoning tokens, thus the series of one provider sums one meaning.

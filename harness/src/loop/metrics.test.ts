@@ -4,6 +4,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import { errAsync, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
+import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ProviderError } from "../providers/errors.js";
 import type { AgentChat, ChatResponse } from "../providers/types.js";
@@ -12,7 +13,7 @@ import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixt
 import { __resetMetricsForTest } from "./metrics.js";
 import { runAgent } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
-import type { AgentDefinition } from "./types.js";
+import type { AgentDefinition, RunStep } from "./types.js";
 
 const ITERATIONS_METRIC = "cortex.harness.agent.iterations";
 const CAP_HITS_METRIC = "cortex.harness.agent.cap_hits";
@@ -131,8 +132,12 @@ describe("runAgent metrics", () => {
 });
 
 describe("runAgent token counters for each call", () => {
-    /** A session whose provenance names the agent under test, thus the usage record of each call carries that agent id. */
-    const agentSession = () => makeSession({ agentId: "metrics-agent", callPath: ["metrics-agent"] });
+    /**
+     * A root session of the CLI. Its provenance names `tui-chat` for each agent
+     * that a root turn runs, thus a label from the provenance would merge the
+     * tokens of different agents.
+     */
+    const agentSession = () => makeSession({ agentId: "tui-chat", callPath: ["tui-chat"] });
 
     /** The data points of one counter: the labels and the value of each series. */
     async function series(name: string): Promise<{ attributes: Record<string, unknown>; value: number }[]> {
@@ -196,5 +201,53 @@ describe("runAgent token counters for each call", () => {
         expect(calls).toBe(3);
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 200 }]);
         expect(await series(REASONING_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 10 }]);
+    });
+
+    it("labels two agents of one root provenance apart, by the id of the agent of each loop", async () => {
+        const reply = (): ChatResponse => makeMessage([textBlock("done")], "end_turn", { inputTokens: 5 });
+
+        await runAgent({ ...agentDef(2), id: "conversation-agent" }, GO, agentSession(), runOpts(scriptedProvider([reply()])));
+        await runAgent({ ...agentDef(2), id: "report-agent" }, GO, agentSession(), runOpts(scriptedProvider([reply()])));
+
+        const byAgent = (await series(INPUT_TOKENS_METRIC)).map((point) => [point.attributes["agent_id"], point.value]);
+        expect(byAgent).toEqual([
+            ["conversation-agent", 5],
+            ["report-agent", 5],
+        ]);
+    });
+
+    it("counts each call once when a recovery replays the steps of the run", async () => {
+        // A step store keyed by the step name, the same as the durability
+        // engine: the replay returns each stored value, and it runs no body.
+        const stored = new Map<string, unknown>();
+        const replayingStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+            if (stored.has(name)) return stored.get(name) as T;
+            const value = await fn();
+            stored.set(name, value);
+            return value;
+        };
+        const records: LlmUsageRecord[] = [];
+        const usageRecorder: UsageRecorder = {
+            record: (record) => {
+                records.push(record);
+                return okAsync(undefined);
+            },
+        };
+        const chat = scriptedProvider((callIndex, request) =>
+            request.toolChoice === "none" ? served(makeMessage([textBlock("done")], "end_turn")) : toolCall(callIndex),
+        );
+        const session = { ...agentSession(), runFrame: { runId: "run-1", stepId: "step-1" } };
+        const run = () => runAgent(agentDef(2), GO, session, { ...runOpts(chat), runStep: replayingStep, usageRecorder });
+
+        await run();
+        await run();
+
+        // The replay made no model call, and the counters hold one count of each call.
+        expect(chat.calls).toHaveLength(3);
+        expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 300 }]);
+        // The replay delivers each record again under the same key, thus an
+        // upserting sink counts each call once.
+        expect(records).toHaveLength(6);
+        expect(new Set(records.map((record) => record.recordKey)).size).toBe(3);
     });
 });

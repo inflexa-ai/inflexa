@@ -14,8 +14,17 @@
  *   - cortex.harness.agent.reasoning_tokens — reasoning tokens, as the provider
  *     reports them.
  *
+ * The counters grow inside the step body of the call ({@link countChatTokens}).
+ * A durable step that a recovery replays returns its stored reply and does not
+ * run its body, thus the replay does not count the call again. A counter is
+ * cumulative for the life of a process, and nothing downstream can take a
+ * second count off it.
+ *
  * Each token counter carries three labels:
- *   - agent_id — the agent id of the usage record of the call.
+ *   - agent_id — the id of the agent that makes the call: the `agent.id` of the
+ *     loop, or the fixed agent id of a direct call. The provenance of the
+ *     session is no label: a host can give one root provenance to different
+ *     agents, and their tokens would then merge.
  *   - model — the served model of the response. Absent when the response
  *     reports no served model.
  *   - provider — the provider id of the bound model, for example
@@ -150,6 +159,20 @@ export function addChatUsage(total: AgentRunUsage, usage: ChatUsage | undefined)
 export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | TokenUsageRollup | undefined): boolean {
     if (usage === undefined) return false;
     return Object.values(usage).some((value) => value !== undefined);
+}
+
+/**
+ * A mapper that grows the token counters of a completed call under `agentId`,
+ * and passes the response through. A caller maps the call with it inside the
+ * step body of the call, `provider.chat(...).map(countChatTokens(agentId))`: a
+ * replayed step returns its stored reply and does not run the body, thus the
+ * replay does not count the call again. A call that gives `err` counts nothing.
+ */
+export function countChatTokens(agentId: string): (response: ChatResponse) => ChatResponse {
+    return (response) => {
+        recordChatCall({ agentId, response });
+        return response;
+    };
 }
 
 /**

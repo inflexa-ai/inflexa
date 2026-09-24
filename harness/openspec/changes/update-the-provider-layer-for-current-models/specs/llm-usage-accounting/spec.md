@@ -64,11 +64,12 @@ usage MUST produce a record like each other reply. A call that reported nothing 
 
 ### Requirement: A direct provider call uses the accounting path of the loop
 
-The ad hoc router and the analogy conversion call `provider.chat` directly, outside `runAgent`. Each of them MUST account
+The ad hoc router and the analogy conversion call `provider.chat` directly, outside `runAgent`. Each of them MUST grow
+the token counters of its call in the body that makes the call, as the harness-agent-loop capability describes. The
+router uses the agent id `adhoc-router`, and the conversion uses `analogical-reasoner`. Each of them MUST then account
 for its call through the function that the loop uses for each call. That function MUST do these steps:
 
 - Fold the usage of the call into the turn accumulator of the tool context, when the context has one. Thus the root finish of the turn includes the call.
-- Record the token counters of the call, as the harness-agent-loop capability describes.
 - Deliver the usage record through the notice helper of the host-hooks capability.
 
 The record key MUST put a fixed call name in the slot of the step name. The router uses `adhoc-route`, and the

@@ -11,7 +11,7 @@ import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js"
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import type { AgentRunUsage } from "../loop/metrics.js";
+import { countChatTokens, type AgentRunUsage } from "../loop/metrics.js";
 import { accountForChatCall } from "../loop/run-agent.js";
 import { packagesSection, resourceEstimationSection } from "../prompts/planner.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
@@ -242,35 +242,38 @@ export async function routeAdHocRequest(
     let raw: unknown;
     let failure: AdHocRoute["fallbackClass"];
     try {
+        // The token counters grow with the call, under the id of the router.
         const response = unwrapOrThrow(
-            await deps.provider.chat(
-                {
-                    system: [
-                        "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
-                        "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
-                        resourceEstimationSection(deps.resourcePolicy),
-                        resourceBounds(deps.resourcePolicy),
-                        packagesSection(),
-                        "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
-                        "Respond only by calling submit_route.",
-                    ].join("\n\n"),
-                    messages: [
-                        {
-                            role: "user",
-                            content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
-                        },
-                    ],
-                    // No forced tool choice: some Claude models reject it with a
-                    // 400. A reply without the call falls back below as `malformed`.
-                    tools: routeTool(),
-                },
-                routerSession,
-                signal,
-            ),
+            await deps.provider
+                .chat(
+                    {
+                        system: [
+                            "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
+                            "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
+                            resourceEstimationSection(deps.resourcePolicy),
+                            resourceBounds(deps.resourcePolicy),
+                            packagesSection(),
+                            "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
+                            "Respond only by calling submit_route.",
+                        ].join("\n\n"),
+                        messages: [
+                            {
+                                role: "user",
+                                content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
+                            },
+                        ],
+                        // No forced tool choice: some Claude models reject it with a
+                        // 400. A reply without the call falls back below as `malformed`.
+                        tools: routeTool(),
+                    },
+                    routerSession,
+                    signal,
+                )
+                .map(countChatTokens(AD_HOC_ROUTER_AGENT_ID)),
         );
-        // The router call reaches the counters, the recorder, and the turn total
-        // through the accounting path of the loop. A failed call reports no
-        // usage: it throws at `unwrapOrThrow` above, and it records nothing.
+        // The router call reaches the recorder and the turn total through the
+        // accounting path of the loop. A failed call reports no usage: it throws
+        // at `unwrapOrThrow` above, and it counts and records nothing.
         accountForChatCall(response, {
             session: routerSession,
             agentId: AD_HOC_ROUTER_AGENT_ID,

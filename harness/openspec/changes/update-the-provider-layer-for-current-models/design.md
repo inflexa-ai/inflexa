@@ -83,9 +83,11 @@ The breakpoint uses the same vendor namespaces and the same lifetime as the brea
 
 ### The loop records each call
 
-The metric labels are `agent_id`, `model`, and `provider`. `model` is the served model of the response. The counters grow in the path that accounts for each call, not at the end of a run. Thus a run that throws keeps the count of its completed calls. A new counter holds the reasoning tokens.
+The metric labels are `agent_id`, `model`, and `provider`. `agent_id` is the id of the agent that makes the call: the `agent.id` of the loop, or the id of the agent of a direct call. The provenance of the session is no label. The CLI runs each root turn as `tui-chat`, for the conversation agent and for the report agent, thus such a label would merge their tokens. `model` is the served model of the response.
 
-The ad hoc router and the analogy conversion call `provider.chat` directly. They use the same accounting path as the loop.
+A new counter holds the reasoning tokens. The counters grow inside the step body of each call, not at the end of a run. Thus a run that throws keeps the count of its completed calls. A step that a recovery replays returns its stored reply and does not run its body, thus the replay does not count the call again. The usage records keep their idempotency keys, thus a replayed record is an upsert of the same record.
+
+The ad hoc router and the analogy conversion call `provider.chat` directly. They grow the counters in the body that makes the call, and they use the same accounting path as the loop.
 
 ### The packages move together
 
