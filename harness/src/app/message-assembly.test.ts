@@ -26,13 +26,13 @@ const SEED = "the report brief";
 const RECENT = "a recent turn";
 
 /**
- * A store that stands in for an over-budget thread: the seed message survives
- * the eviction only when the read keeps the first turn.
+ * A store that stands in for a compacted thread: the seed message stays in front
+ * of the view only when the read keeps the first turn.
  */
 function seedKeepingHistory(): ThreadHistory {
     return {
         ...stubHistory([]),
-        loadRecent: (_threadId, _budget, options) =>
+        loadRecent: (_threadId, options) =>
             okAsync(
                 options?.keepFirstTurn === true
                     ? [
@@ -148,7 +148,7 @@ describe("assembleMessages", () => {
         expect(contentText(messages[2]!)).toBe(RUN_ACTIVITY);
     });
 
-    test("a report thread loads a window that keeps the seed", async () => {
+    test("a report thread loads a view that keeps the seed", async () => {
         const { messages } = await assembleMessages({
             threadId: "thread-report",
             threadType: "report",
@@ -163,7 +163,7 @@ describe("assembleMessages", () => {
         expect(contentText(messages[0]!)).toBe(SEED);
     });
 
-    test("a conversation thread loads a window that evicts the seed", async () => {
+    test("a conversation thread loads a view without the seed", async () => {
         const { messages } = await assembleMessages({
             threadId: "thread-conversation",
             threadType: "conversation",

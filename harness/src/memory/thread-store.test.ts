@@ -276,7 +276,7 @@ describe("unarchiveThread", () => {
         const history = createThreadHistory(pool);
         (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Back" }))._unsafeUnwrap();
         (await appendTwoMessageTurn("t1"))._unsafeUnwrap();
-        const before = (await history.loadRecent("t1", 1_000_000))._unsafeUnwrap();
+        const before = (await history.loadRecent("t1"))._unsafeUnwrap();
         (await store.archiveThread("t1"))._unsafeUnwrap();
 
         (await store.unarchiveThread("t1"))._unsafeUnwrap();
@@ -287,7 +287,7 @@ describe("unarchiveThread", () => {
         const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
         expect(page.threads.map((t) => t.threadId)).toContain("t1");
         expect(await readTombstone("t1")).toBeNull();
-        expect((await history.loadRecent("t1", 1_000_000))._unsafeUnwrap()).toEqual(before);
+        expect((await history.loadRecent("t1"))._unsafeUnwrap()).toEqual(before);
     });
 
     it("is a no-op on a live thread", async () => {

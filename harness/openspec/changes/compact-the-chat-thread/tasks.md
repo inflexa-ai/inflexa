@@ -54,26 +54,26 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 3. The reader
 
-- [ ] 3.1 In `src/memory/thread-history.ts`, change the signature to `loadRecent(threadId: string, options?: LoadRecentOptions)`. It gives `conversationView(rows, options).messages`.
-- [ ] 3.2 Remove the budget walk, the block snap, `keepsFirstTurn`, and `EVICTION_BLOCK_TURNS`. Expected result: `grep -rn EVICTION_BLOCK_TURNS src` finds nothing.
-- [ ] 3.3 Keep the two histograms. `turnsEvicted` records the count of the turns whose messages the view holds none of. Read `sources` for the count.
-- [ ] 3.4 The attribute `eviction` is true when that count is above 0.
-- [ ] 3.5 Write these doc comments again: `ThreadHistory.loadRecent`, `LoadRecentOptions`, the module header, and the descriptions of the two histograms. Say that stored markers decide the view.
-- [ ] 3.6 In `src/app/message-assembly.ts`, remove `DEFAULT_HISTORY_TOKEN_BUDGET` and `AssembleMessagesArgs.tokenBudget`. Call `loadRecent(threadId, { keepFirstTurn: threadType === "report" })`.
-- [ ] 3.7 Write the module header of `src/app/message-assembly.ts` again. The history is the view of the latest marker, and the root loop compacts at its budget.
-- [ ] 3.8 In `src/memory/count-tokens.ts`, write the module header again. The `tokens` count is the estimate of the loop, and `loadRecent` has no budget.
-- [ ] 3.9 In `src/providers/prompt-cache.ts`, write the paragraph on `loadRecent` again. A compaction moves the start of the view one time, and the prefix holds still between two compactions.
-- [ ] 3.10 In `src/memory/thread-history.test.ts` and `src/memory/thread-store.test.ts`, remove the budget argument of each call of `loadRecent`.
-- [ ] 3.11 In `src/memory/thread-history.test.ts`, replace the blocks "loadRecent token windowing", "loadRecent prefix stability", "loadRecent retained first turn", and "loadRecent boundary snapping". Add these tests:
+- [x] 3.1 In `src/memory/thread-history.ts`, change the signature to `loadRecent(threadId: string, options?: LoadRecentOptions)`. It gives `conversationView(rows, options).messages`.
+- [x] 3.2 Remove the budget walk, the block snap, `keepsFirstTurn`, and `EVICTION_BLOCK_TURNS`. Expected result: `grep -rn EVICTION_BLOCK_TURNS src` finds nothing.
+- [x] 3.3 Keep the two histograms. `turnsEvicted` records the count of the turns whose messages the view holds none of. Read `sources` for the count.
+- [x] 3.4 The attribute `eviction` is true when that count is above 0.
+- [x] 3.5 Write these doc comments again: `ThreadHistory.loadRecent`, `LoadRecentOptions`, the module header, and the descriptions of the two histograms. Say that stored markers decide the view.
+- [x] 3.6 In `src/app/message-assembly.ts`, remove `DEFAULT_HISTORY_TOKEN_BUDGET` and `AssembleMessagesArgs.tokenBudget`. Call `loadRecent(threadId, { keepFirstTurn: threadType === "report" })`.
+- [x] 3.7 Write the module header of `src/app/message-assembly.ts` again. The history is the view of the latest marker, and the root loop compacts at its budget.
+- [x] 3.8 In `src/memory/count-tokens.ts`, write the module header again. The `tokens` count is the estimate of the loop, and `loadRecent` has no budget.
+- [x] 3.9 In `src/providers/prompt-cache.ts`, write the paragraph on `loadRecent` again. A compaction moves the start of the view one time, and the prefix holds still between two compactions.
+- [x] 3.10 In `src/memory/thread-history.test.ts` and `src/memory/thread-store.test.ts`, remove the budget argument of each call of `loadRecent`.
+- [x] 3.11 In `src/memory/thread-history.test.ts`, replace the blocks "loadRecent token windowing", "loadRecent prefix stability", "loadRecent retained first turn", and "loadRecent boundary snapping". Add these tests:
   - A thread with no marker gives each row.
   - A stored summary marker starts the view, and the stored exchange is not in it.
   - A report thread with `keepFirstTurn` gives the seed and then the summary marker.
   - A stored drop marker gives the summary, then the kept turns without reasoning, then the later rows.
   - A retract of the last turn removes its marker, and the view goes back to the earlier marker.
-- [ ] 3.12 Change the block "loadRecent overflow metric". Expected result: a thread with a marker in its sixth turn records 5 left-out turns and `eviction: true`.
-- [ ] 3.13 Change the block "loadRecent ignores the stored rollup". Expected result: the view is the same with and without a rollup on each row.
-- [ ] 3.14 In `src/app/message-assembly.test.ts`, change each fake of `loadRecent` to the new signature. Expected result: a fake reads `keepFirstTurn` from its second argument.
-- [ ] 3.15 Run `tsc -p tsconfig.json`. Run `bun test src/app/message-assembly.test.ts`. Run `bun test src/memory/thread-history.test.ts src/memory/thread-store.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 3.12 Change the block "loadRecent overflow metric". Expected result: a thread with a marker in its sixth turn records 5 left-out turns and `eviction: true`.
+- [x] 3.13 Change the block "loadRecent ignores the stored rollup". Expected result: the view is the same with and without a rollup on each row.
+- [x] 3.14 In `src/app/message-assembly.test.ts`, change each fake of `loadRecent` to the new signature. Expected result: a fake reads `keepFirstTurn` from its second argument.
+- [x] 3.15 Run `tsc -p tsconfig.json`. Run `bun test src/app/message-assembly.test.ts`. Run `bun test src/memory/thread-history.test.ts src/memory/thread-store.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 4. The data part and the divider vocabulary
 

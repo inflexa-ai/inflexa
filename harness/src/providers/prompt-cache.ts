@@ -60,8 +60,9 @@
  * prefix (`loop/run-agent.ts`, `loop/continue-agent.ts`). A tool choice that
  * forbids a call would defeat the cache — see the CAUTION on `ChatRequest.toolChoice`.
  *
- * `loadRecent` shifts the prefix once per `EVICTION_BLOCK_TURNS` block, not every
- * turn (`memory/thread-history.ts`).
+ * `loadRecent` gives the view of the latest compaction marker
+ * (`memory/conversation-view.ts`). A compaction moves the start of the view one
+ * time, and the message prefix holds still between two compactions.
  *
  * A sandbox agent's system prompt is NOT a defeater: it is a pure function of
  * its agent type, byte-identical across every step of every run, and the per-step
