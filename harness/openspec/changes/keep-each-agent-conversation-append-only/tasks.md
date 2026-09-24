@@ -189,9 +189,9 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 11. Final checks
 
-- [ ] 11.1 Run `tsc -p tsconfig.json`. Expected result: no error.
-- [ ] 11.2 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
-- [ ] 11.3 Run `bun run lint`. Expected result: no error.
-- [ ] 11.4 Run `grep -rn "stripUnansweredToolCalls\|sanitizeTranscript\|tryParseEnvelope" src`. Expected result: no match.
-- [ ] 11.5 Make sure that no request in `src/` sets `toolChoice: "none"`. Only the CAUTION comment of `ChatRequest.toolChoice` names the value.
-- [ ] 11.6 In `cli/`, run `bun run harness:local`, `bun run typecheck`, `bun run lint`, and `bun test src/modules/harness`.
+- [x] 11.1 Run `tsc -p tsconfig.json`. Expected result: no error.
+- [x] 11.2 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
+- [x] 11.3 Run `bun run lint`. Expected result: no error.
+- [x] 11.4 Run `grep -rn "stripUnansweredToolCalls\|sanitizeTranscript\|tryParseEnvelope" src`. Expected result: no match.
+- [x] 11.5 Make sure that no request in `src/` sets `toolChoice: "none"`. Only the CAUTION comment of `ChatRequest.toolChoice` names the value.
+- [x] 11.6 In `cli/`, run `bun run harness:local`, `bun run typecheck`, `bun run lint`, and `bun test src/modules/harness`.
