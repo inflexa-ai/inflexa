@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolResultPart } from "ai";
+import { okAsync } from "neverthrow";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import type { ChatRequest } from "../../providers/types.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
@@ -80,6 +82,24 @@ describe("generateAnalogyReport sub-agent tool", () => {
         // Parent session untouched.
         expect(ctx.session.provenance.agentId).toBe("conversation-agent");
         expect(ctx.session.provenance.callPath).toEqual(["conversation-agent"]);
+    });
+
+    it("declares read_tool_output after the search tools and before the terminal tools when it has a tool output store", async () => {
+        const provider = scriptedProvider([submitReport("t1", VALID_ENVELOPE)]);
+        const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, toolOutputStore });
+
+        (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctxFor()))._unsafeUnwrap();
+
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+            "search_semantic_scholar",
+            "search_arxiv",
+            "search_github_repos",
+            "pubmed",
+            "read_tool_output",
+            "submit_analogy_report",
+            "report_blocker",
+        ]);
     });
 
     it("gives the extraction-failed envelope with the reason of a blocker as its message", async () => {

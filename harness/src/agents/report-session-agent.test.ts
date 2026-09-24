@@ -1,7 +1,9 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "node:path";
+import { okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createReportSessionAgent, REPORT_SESSION_AGENT_ID } from "./report-session-agent.js";
 import { reportSessionPrompt } from "../prompts/report-session.js";
 import { createRegistry } from "../tools/registry.js";
@@ -15,7 +17,7 @@ import type { ReportSessionStateGateway } from "../tools/report-authoring/author
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice for
 // asserting the assembled `AgentDefinition`'s shape.
-function buildAgent() {
+function buildAgent(toolOutputStore?: ToolOutputStore) {
     return createReportSessionAgent({
         model: "anthropic/claude-opus-4-8",
         pool: {} as Pool,
@@ -27,6 +29,7 @@ function buildAgent() {
         threads: {} as Pick<ThreadStore, "getThread">,
         chrome: {},
         derivations: {} as Pick<ReportSessionStateStore, "appendDerivation">,
+        ...(toolOutputStore ? { toolOutputStore } : {}),
     });
 }
 
@@ -94,6 +97,17 @@ describe("createReportSessionAgent", () => {
         // The roster is the whole guarantee — assert the exact set, so a later
         // wiring that adds a run starter or a mutate tool fails here.
         expect(new Set(ids)).toEqual(new Set([...READ_SURFACE, ...COMPOSITION_SURFACE]));
+    });
+
+    test("a tool output store adds read_tool_output after grep, and no store leaves it out", () => {
+        const store: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+
+        const withStore = buildAgent(store).tools.map((tool) => tool.id);
+        const withoutStore = buildAgent().tools.map((tool) => tool.id);
+
+        expect(withStore[withStore.indexOf("grep") + 1]).toBe("read_tool_output");
+        expect(withoutStore).not.toContain("read_tool_output");
+        expect(withStore.filter((id) => id !== "read_tool_output")).toEqual(withoutStore);
     });
 
     test("tool ids are unique", () => {

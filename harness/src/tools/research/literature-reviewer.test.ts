@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { okAsync } from "neverthrow";
 
+import type { ToolOutputStore } from "../../loop/tool-output.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
 import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
@@ -62,6 +64,32 @@ describe("literatureReviewer sub-agent tool", () => {
 
         // The child transcript is not exposed — only the report leaves the tool.
         expect(Object.keys(result)).toEqual(["report"]);
+    });
+
+    it("declares read_tool_output after the lookup tools when it has a tool output store", async () => {
+        const provider = scriptedProvider([makeMessage([textBlock("Evidence report.")], "end_turn")]);
+        const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+        const tool = createLiteratureReviewerTool({
+            provider,
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
+            toolOutputStore,
+        });
+
+        (await tool.execute({ brief: "Investigate BRCA1." }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+            "search_gene",
+            "search_protein",
+            "lookup_annotation",
+            "search_interactions",
+            "pubmed",
+            "resolve_citation",
+            "drug_gene_interactions",
+            "gene_preclinical_profile",
+            "read_tool_output",
+        ]);
     });
 
     it("returns an error, not an empty report, when the child run ends without a final text", async () => {

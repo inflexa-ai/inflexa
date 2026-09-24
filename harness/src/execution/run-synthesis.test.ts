@@ -19,8 +19,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { okAsync } from "neverthrow";
 
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession } from "../auth/types.js";
 import {
@@ -517,6 +519,35 @@ describe("generateRunSynthesis — happy path", () => {
             expect(result.synthesis.findings).toHaveLength(1);
             expect(result.synthesis.findings[0]!.title).toBe("Upregulation of FOXP3");
         }
+    });
+
+    it("declares the synthesis tools, the reviewer, and then read_tool_output when it has a tool output store", async () => {
+        const provider = scriptedProvider((i) =>
+            i === 0
+                ? makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })], "tool_use")
+                : makeMessage([textBlock("done")], "end_turn"),
+        );
+        const toolOutputStore: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+
+        await generateRunSynthesis({
+            provider,
+            session: makeRunSession(),
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            citationResolver: unusedCitationResolver,
+            toolOutputStore,
+            summaries: [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }],
+            planNarrative: "n/a",
+            runId: RUN_ID,
+        });
+
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+            "validate_synthesis",
+            "submit_synthesis",
+            "report_blocker",
+            "literature_reviewer",
+            "read_tool_output",
+        ]);
     });
 
     it("returns skipped when the agent calls report_blocker", async () => {

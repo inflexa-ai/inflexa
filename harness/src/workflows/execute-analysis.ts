@@ -111,6 +111,7 @@ import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { ProvenanceSeam, RunProvenanceEvent } from "../provenance/seam.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge, RunChargeOutcome } from "../billing/run-charge.js";
 import { SYNTHESIS_STEP_ID, runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -293,6 +294,8 @@ export interface ExecuteAnalysisDeps {
      * recorder.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the loops of the run synthesis and of their read tools. */
+    readonly toolOutputStore?: ToolOutputStore;
 
     /**
      * The provenance seam of the composition. The body reads its run emit member,
@@ -643,6 +646,7 @@ export function synthesizeFindings(args: {
             bioKeys: deps.bioKeys,
             citationResolver: deps.citationResolver,
             usageRecorder: deps.usageRecorder,
+            ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
         },
         {
             analysisId,

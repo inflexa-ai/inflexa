@@ -126,21 +126,21 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 5. The other agents
 
-- [ ] 5.1 In `src/agents/conversation-agent.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `ConversationAgentDeps`. Add the read tool after `createGrepTool(workspaceFs)` when the store is present.
-- [ ] 5.2 In the same file, give the store to `createGeneratePlanTool` and to `createGenerateAnalogyReportTool`.
-- [ ] 5.3 In `src/tools/research/generate-plan.ts`, add the field to `GeneratePlanDeps`. Put the read tool after the search tools and before the terminal tools.
-- [ ] 5.4 In the same file, give the store to the options of `runToTerminal`.
-- [ ] 5.5 In `src/tools/research/generate-analogy-report.ts`, add the field to the deps. Put the read tool after the search tools, and give the store to the options of the loop.
-- [ ] 5.6 In `src/tools/research/literature-reviewer.ts`, add the field to `LiteratureReviewerDeps`. Put the read tool last in `reviewerTools`, and give the store to the options of `runAgent`.
-- [ ] 5.7 In `src/execution/run-synthesis.ts`, add the field to `GenerateRunSynthesisInput`. Put the read tool after the reviewer, and give the store to the reviewer and to `loopDeps`.
-- [ ] 5.8 In `src/app/synthesize-run.ts` and `src/workflows/execute-analysis.ts`, add the field to the deps, and give it on to `generateRunSynthesis`.
-- [ ] 5.9 In `src/agents/report-session-agent.ts`, add the field to the deps. Add the read tool after the `grep` tool when the store is present.
-- [ ] 5.10 In `src/agents/conversation-agent.test.ts` and `src/agents/report-session-agent.test.ts`, add a test each. Expected result: a store adds `read_tool_output`, and no store leaves it out.
-- [ ] 5.11 In `src/tools/research/literature-reviewer.test.ts`, change the test of the tool inventory. Expected result: with a store, `read_tool_output` comes after the lookup tools.
-- [ ] 5.12 In `src/execution/run-synthesis.test.ts`, add a test of the tool list. Expected result: `validate_synthesis`, `submit_synthesis`, `report_blocker`, `literature_reviewer`, and `read_tool_output`.
-- [ ] 5.13 In `src/tools/research/generate-plan.test.ts` and `src/tools/research/generate-analogy-report.test.ts`, add a test each. Expected result: the agent declares `read_tool_output` before its terminal tools.
-- [ ] 5.14 Run `tsc -p tsconfig.json`. Run `bun test src/agents/conversation-agent.test.ts src/agents/report-session-agent.test.ts src/tools/research/literature-reviewer.test.ts src/execution/run-synthesis.test.ts src/tools/research/generate-analogy-report.test.ts`.
-- [ ] 5.15 Run `bun test src/tools/research/generate-plan.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 5.1 In `src/agents/conversation-agent.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `ConversationAgentDeps`. Add the read tool after `createGrepTool(workspaceFs)` when the store is present.
+- [x] 5.2 In the same file, give the store to `createGeneratePlanTool` and to `createGenerateAnalogyReportTool`.
+- [x] 5.3 In `src/tools/research/generate-plan.ts`, add the field to `GeneratePlanDeps`. Put the read tool after the search tools and before the terminal tools.
+- [x] 5.4 In the same file, give the store to the options of `runToTerminal`.
+- [x] 5.5 In `src/tools/research/generate-analogy-report.ts`, add the field to the deps. Put the read tool after the search tools, and give the store to the options of the loop.
+- [x] 5.6 In `src/tools/research/literature-reviewer.ts`, add the field to `LiteratureReviewerDeps`. Put the read tool last in `reviewerTools`, and give the store to the options of `runAgent`.
+- [x] 5.7 In `src/execution/run-synthesis.ts`, add the field to `GenerateRunSynthesisInput`. Put the read tool after the reviewer, and give the store to the reviewer and to `loopDeps`.
+- [x] 5.8 In `src/app/synthesize-run.ts` and `src/workflows/execute-analysis.ts`, add the field to the deps, and give it on to `generateRunSynthesis`.
+- [x] 5.9 In `src/agents/report-session-agent.ts`, add the field to the deps. Add the read tool after the `grep` tool when the store is present.
+- [x] 5.10 In `src/agents/conversation-agent.test.ts` and `src/agents/report-session-agent.test.ts`, add a test each. Expected result: a store adds `read_tool_output`, and no store leaves it out.
+- [x] 5.11 In `src/tools/research/literature-reviewer.test.ts`, change the test of the tool inventory. Expected result: with a store, `read_tool_output` comes after the lookup tools.
+- [x] 5.12 In `src/execution/run-synthesis.test.ts`, add a test of the tool list. Expected result: `validate_synthesis`, `submit_synthesis`, `report_blocker`, `literature_reviewer`, and `read_tool_output`.
+- [x] 5.13 In `src/tools/research/generate-plan.test.ts` and `src/tools/research/generate-analogy-report.test.ts`, add a test each. Expected result: the agent declares `read_tool_output` before its terminal tools.
+- [x] 5.14 Run `tsc -p tsconfig.json`. Run `bun test src/agents/conversation-agent.test.ts src/agents/report-session-agent.test.ts src/tools/research/literature-reviewer.test.ts src/execution/run-synthesis.test.ts src/tools/research/generate-analogy-report.test.ts`.
+- [x] 5.15 Run `bun test src/tools/research/generate-plan.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 6. The composition
 

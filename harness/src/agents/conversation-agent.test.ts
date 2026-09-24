@@ -1,9 +1,10 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "node:path";
-import { ok } from "neverthrow";
+import { ok, okAsync } from "neverthrow";
 import { z } from "zod";
 import type { Pool } from "pg";
 
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createConversationAgent, CONVERSATION_AGENT_ID } from "./conversation-agent.js";
 import { conversationPrompt } from "../prompts/conversation.js";
 import { createRegistry } from "../tools/registry.js";
@@ -19,7 +20,7 @@ import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
 // for asserting the assembled `AgentDefinition`'s shape.
-function buildAgent(hostTools?: readonly Tool[]) {
+function buildAgent(hostTools?: readonly Tool[], toolOutputStore?: ToolOutputStore) {
     return createConversationAgent({
         provider: {} as ChatProvider,
         utilityProvider: {} as ChatProvider,
@@ -42,6 +43,7 @@ function buildAgent(hostTools?: readonly Tool[]) {
         chrome: {},
         citationResolver: unusedCitationResolver,
         ...(hostTools ? { hostTools } : {}),
+        ...(toolOutputStore ? { toolOutputStore } : {}),
     });
 }
 
@@ -171,6 +173,17 @@ describe("createConversationAgent", () => {
         // The host tool joins without displacing any built-in.
         expect(ids).toContain("generate_plan");
         expect(ids).toContain("read_file");
+    });
+
+    test("a tool output store adds read_tool_output after grep, and no store leaves it out", () => {
+        const store: ToolOutputStore = { put: () => okAsync(undefined), get: () => okAsync(null) };
+
+        const withStore = buildAgent(undefined, store).tools.map((t) => t.id);
+        const withoutStore = buildAgent().tools.map((t) => t.id);
+
+        expect(withStore[withStore.indexOf("grep") + 1]).toBe("read_tool_output");
+        expect(withoutStore).not.toContain("read_tool_output");
+        expect(withStore.filter((id) => id !== "read_tool_output")).toEqual(withoutStore);
     });
 
     test("omitting host tools yields exactly the built-in roster", () => {
