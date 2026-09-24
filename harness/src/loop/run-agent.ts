@@ -174,19 +174,67 @@ export interface RunAgentOptions {
 }
 
 /** A run that receives no turn accumulator is the turn's root. See `RunAgentOptions.turnUsage`. */
-const isTurnRoot = (opts: RunAgentOptions): boolean => opts.turnUsage === undefined;
+export const isTurnRoot = (opts: RunAgentOptions): boolean => opts.turnUsage === undefined;
 
 export function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
     return traceAgentRun(agent.id, session, isTurnRoot(opts), () => runAgentLoop(agent, initial, session, opts));
 }
 
 async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
+    const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
+    const loop = openLoop(agent, initial, session, opts, agent.id);
+    const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0 });
+    if (task !== "capped") return task;
+    return loop.legacyWrapUp(formatStepName.llm(agent.maxIterations));
+}
+
+/** One stretch of model requests of a conversation, under one mask. */
+export interface LoopSegment {
+    /** The tools that can run for each request of the segment. Absent lets each declared tool run. */
+    readonly mask: ToolMask | undefined;
+    /** The cap of model requests in the segment. */
+    readonly maxRequests: number;
+    /** The names of the durable steps of the segment. */
+    readonly stepNames: StepNameFormatter;
+    /** The `index` of the first request of the segment in its `iteration` events. */
+    readonly firstIndex: number;
+    /** A harness request that the segment appends, as a synthetic user message, before its first request. */
+    readonly requestText?: string;
+}
+
+/**
+ * One conversation of an agent, open for its segments. Each segment extends the
+ * same message list under the same system prompt, the same declared tools, and
+ * the same tool choice, thus each request extends the prefix of the one before
+ * it. The segments of one run share the usage rollups, the counters, the budget,
+ * and the terminal record.
+ */
+export interface OpenLoop {
+    /** Run one segment: the result of the run when a reply ends it, or `"capped"` when the segment used its cap. */
+    runSegment(segment: LoopSegment): Promise<RunAgentResult | "capped">;
+    /** End a run whose last segment used its cap: settle the transcript, record the run, and give the capped finish. */
+    endCapped(): Promise<RunAgentResult>;
+    /** The single wrap-up call of a run at its iteration cap. */
+    legacyWrapUp(stepName: string): Promise<RunAgentResult>;
+}
+
+/**
+ * Open the loop over one conversation. `metricAgentId` names the agent that the
+ * token counters and the run metrics count under: `agent.id` for a run, or the
+ * accounting agent id of a continuation.
+ */
+export function openLoop(
+    agent: AgentDefinition,
+    initial: readonly LoopMessage[],
+    session: AgentSession,
+    opts: RunAgentOptions,
+    metricAgentId: string,
+): OpenLoop {
     const { provider, signal, emit, runStep } = opts;
     // The step of a model call or a tool call writes no span. The `chat` span and
     // the `execute_tool` span under it describe the call already, and they attach
     // to the `invoke_agent` span of this run.
     const callStep: RunStep = (name, fn) => passThroughSpan(name, () => runStep(name, fn));
-    const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
     const configuredFatalLoopError = opts.isFatalLoopError ?? (() => false);
     // AbortError is control flow, not a tool failure. Always compose it with the
     // host's fatal predicate so request cancellation cannot be converted into a
@@ -235,13 +283,13 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const turnUsage: AgentRunUsage = opts.turnUsage ?? {};
     const turnRoot = isTurnRoot(opts);
 
-    const toolCtx = (tu: ToolCallPart): ToolContext => ({
+    const toolCtx = (tu: ToolCallPart, names: StepNameFormatter): ToolContext => ({
         invocationId: tu.toolCallId,
         session,
         signal,
         emit,
         runStep: (name, fn) => {
-            const stepName = `${formatStepName.tool(tu.toolName, tu.toolCallId)}:${name}`;
+            const stepName = `${names.tool(tu.toolName, tu.toolCallId)}:${name}`;
             return runStep(stepName, () => {
                 stableSpan(stepName, `tool:${tu.toolName}:${name}`, { [ATTR_INFLEXA_TOOL_USE_ID]: tu.toolCallId });
                 return fn();
@@ -317,15 +365,33 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         ...(turnRoot && hasReportedUsage(turnUsage) ? { turnUsage: { ...turnUsage } } : {}),
     });
 
+    /**
+     * One model request over the transcript so far, under the prefix of the
+     * conversation. The token counters grow inside the step body, thus a replayed
+     * step, which returns the stored reply, does not count the call again.
+     */
+    const callModel = async (stepName: string, toolChoice: ChatRequest["toolChoice"]): Promise<ChatResponse> => {
+        const request: ChatRequest = {
+            system,
+            messages: withPromptCacheBreakpoint(messages, promptCache),
+            tools: toolDefs,
+            ...(toolChoice !== undefined ? { toolChoice } : {}),
+            ...reasoningField,
+        };
+        const reply = await resultStep(callStep)(stepName, () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId)));
+        accountForChatCall(reply, { ...accounting, stepName });
+        return reply;
+    };
+
     // The user said no. A subsequent model call would only let the agent argue
     // with the decision, or spend a call acknowledging it; the denial tool result
     // is itself what the surface renders, so the turn ends the moment a denial
     // lands in a dispatch round — after the concurrent siblings in that same round
     // have completed and been appended. Mirrors the clean-stop terminal path.
-    const stopOnDenial = async (i: number): Promise<RunAgentResult> => {
+    const stopOnDenial = async (index: number): Promise<RunAgentResult> => {
         settleTranscript();
-        await emit({ type: "iteration", source, index: i, final: true });
-        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
+        await emit({ type: "iteration", source, index, final: true });
+        recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
         logFinish("warn", "denied", false);
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries, ...finishUsage() } };
     };
@@ -404,10 +470,11 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const dispatchRound = async (
         calls: readonly ToolCallPart[],
         mask: ToolMask | undefined,
+        names: StepNameFormatter,
     ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> => {
         const refusals = refusalsFor(calls, mask, opts.toolBudget, used);
         const admitted = calls.filter((_, idx) => refusals[idx] === undefined);
-        const dispatched = await dispatchTools(admitted, toolsById, toolCtx, isFatalLoopError, callStep, formatStepName.tool, encoding);
+        const dispatched = await dispatchTools(admitted, toolsById, (tu) => toolCtx(tu, names), isFatalLoopError, callStep, names.tool, encoding);
         const results: ToolResultPart[] = [];
         const durations: (number | undefined)[] = [];
         const resultDetails: (ToolCallDetail | undefined)[] = [];
@@ -428,156 +495,159 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         return { results, durations, resultDetails };
     };
 
-    const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
+    const stopOnResolved = async (index: number): Promise<RunAgentResult> => {
         settleTranscript();
-        await emit({ type: "iteration", source, index: i, final: true });
-        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
+        await emit({ type: "iteration", source, index, final: true });
+        recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
         return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
     };
 
-    for (let i = 0; i < agent.maxIterations; i++) {
-        iterations = i + 1;
-        const request: ChatRequest = {
-            system,
-            messages: withPromptCacheBreakpoint(messages, promptCache),
-            tools: toolDefs,
-            ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
-            ...reasoningField,
-        };
-        const llmStepName = formatStepName.llm(i);
-        // Counters grow inside the step body, so a replayed step (which returns
-        // the stored reply) does not double-count the call.
-        const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal).map(countChatTokens(agent.id)));
-        accountForChatCall(reply, { ...accounting, stepName: llmStepName });
+    const runSegment = async (segment: LoopSegment): Promise<RunAgentResult | "capped"> => {
+        const names = segment.stepNames;
+        if (segment.requestText !== undefined) messages.push(syntheticUserMessage(segment.requestText));
+        for (let k = 0; k < segment.maxRequests; k++) {
+            const index = segment.firstIndex + k;
+            iterations++;
+            const reply = await callModel(names.llm(k), opts.toolChoice);
 
-        if (reply.finishReason === "aborted") {
-            // An interrupted turn keeps whatever the model produced before the cut, but
-            // never an empty shell: a partial with no content adds no message, so a
-            // no-output abort leaves the transcript at the initial prefix. The marker
-            // then rides the last assistant message this run produced — the partial when
-            // it has content, or the tool-calling step when the abort landed mid-dispatch
-            // — an assistant role no turn-boundary reader observes. "aborted" is not
-            // "tool-calls", so this falls into the terminal return below.
-            if (assistantHasContent(reply.message)) messages.push(reply.message);
-            markLastLoopAssistant(messages, initial.length);
-        } else {
-            messages.push(reply.message);
-        }
+            if (reply.finishReason === "aborted") {
+                // An interrupted turn keeps whatever the model produced before the cut, but
+                // never an empty shell: a partial with no content adds no message, so a
+                // no-output abort leaves the transcript at the initial prefix. The marker
+                // then rides the last assistant message this run produced — the partial when
+                // it has content, or the tool-calling step when the abort landed mid-dispatch
+                // — an assistant role no turn-boundary reader observes. "aborted" is not
+                // "tool-calls", so this falls into the terminal return below.
+                if (assistantHasContent(reply.message)) messages.push(reply.message);
+                markLastLoopAssistant(messages, initial.length);
+            } else {
+                messages.push(reply.message);
+            }
 
-        const toolCalls = toolCallParts(reply.message);
-        if (reply.finishReason === "length") {
-            truncationRecoveries++;
-            await emit({ type: "iteration", source, index: i, final: false });
-            // `tools` is what the model asked for; the trailing call was cut off at the
-            // output limit and is never dispatched, which the distinct message records.
-            log.debug("iteration truncated at output limit", { iteration: i, tools: toolCalls.map((t) => t.toolName), truncationRecoveries });
-            if (toolCalls.length === 0) {
-                // Stamped synthetic, not left as a bare `user` message: the wire format needs a user turn
-                // after a truncated assistant message, but this one is the loop's own nudge, and thread
-                // storage treats a genuine `user` message as the start of a conversation turn. Unmarked, it
-                // would split this turn in two everywhere that boundary is read.
-                messages.push(syntheticUserMessage(TRUNCATED_PROSE_STEER));
+            const toolCalls = toolCallParts(reply.message);
+            if (reply.finishReason === "length") {
+                truncationRecoveries++;
+                await emit({ type: "iteration", source, index, final: false });
+                // `tools` is what the model asked for; the trailing call was cut off at the
+                // output limit and is never dispatched, which the distinct message records.
+                log.debug("iteration truncated at output limit", { iteration: index, tools: toolCalls.map((t) => t.toolName), truncationRecoveries });
+                if (toolCalls.length === 0) {
+                    // Stamped synthetic, not left as a bare `user` message: the wire format needs a user turn
+                    // after a truncated assistant message, but this one is the loop's own nudge, and thread
+                    // storage treats a genuine `user` message as the start of a conversation turn. Unmarked, it
+                    // would split this turn in two everywhere that boundary is read.
+                    messages.push(syntheticUserMessage(TRUNCATED_PROSE_STEER));
+                    continue;
+                }
+                const trailing = toolCalls[toolCalls.length - 1]!;
+                const earlier = toolCalls.slice(0, -1);
+                const earlierDetails = roundDetails(earlier);
+                for (const [idx, tu] of earlier.entries()) {
+                    await emit({
+                        type: "tool-started",
+                        source,
+                        toolUseId: tu.toolCallId,
+                        name: tu.toolName,
+                        input: tu.input,
+                        ...detailField(earlierDetails[idx]),
+                    });
+                }
+                const { results, durations, resultDetails } = await dispatchRound(earlier, segment.mask, names);
+                const errored = await settleRound(earlier, results, earlierDetails, resultDetails, durations);
+                results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
+                // The trailing call was never dispatched, but it reaches the model as an error
+                // result like any other — so it counts, or `toolErrors` reports a cleaner run
+                // than the model actually read. It gets no `tool-finished` event: no
+                // `tool-started` was emitted for it either, and the pair must stay balanced.
+                toolCallCount++;
+                toolErrorCount++;
+                errored.push(trailing.toolName);
+                log.debug("tool results returned errors", { iteration: index, tools: errored });
+                messages.push({ role: "tool", content: results });
+                appendDeferredImages(messages, results, encoding.deferredImages);
+                if (hasDenial(results)) return stopOnDenial(index);
+                if (opts.resolved?.()) return stopOnResolved(index);
                 continue;
             }
-            const trailing = toolCalls[toolCalls.length - 1]!;
-            const earlier = toolCalls.slice(0, -1);
-            const earlierDetails = roundDetails(earlier);
-            for (const [idx, tu] of earlier.entries()) {
-                await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(earlierDetails[idx]) });
+
+            // A local model behind an OpenAI-compatible server routinely labels a
+            // tool-calling reply `stop`. The calls are complete and the model waits
+            // on their results, thus the mislabeled round dispatches like a
+            // `tool-calls` one. Every other terminal answers its calls with the
+            // not-run result: a filtered or aborted reply must not act.
+            const dispatchesRound = reply.finishReason === "tool-calls" || (reply.finishReason === "stop" && toolCalls.length > 0);
+            if (!dispatchesRound) {
+                settleTranscript();
+                await emit({ type: "iteration", source, index, final: true });
+                recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
+                logFinish("info", reply.finishReason, false);
+                return {
+                    messages,
+                    finish: {
+                        reason: reply.finishReason,
+                        ...(reply.rawFinishReason === undefined ? {} : { rawFinishReason: reply.rawFinishReason }),
+                        cappedOut: false,
+                        truncationRecoveries,
+                        ...finishUsage(),
+                    },
+                };
             }
-            const { results, durations, resultDetails } = await dispatchRound(earlier, opts.toolMask);
-            const errored = await settleRound(earlier, results, earlierDetails, resultDetails, durations);
-            results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
-            // The trailing call was never dispatched, but it reaches the model as an error
-            // result like any other — so it counts, or `toolErrors` reports a cleaner run
-            // than the model actually read. It gets no `tool-finished` event: no
-            // `tool-started` was emitted for it either, and the pair must stay balanced.
-            toolCallCount++;
-            toolErrorCount++;
-            errored.push(trailing.toolName);
-            log.debug("tool results returned errors", { iteration: i, tools: errored });
+
+            await emit({ type: "iteration", source, index, final: false });
+            log.debug("iteration", { iteration: index, tools: toolCalls.map((t) => t.toolName) });
+            const details = roundDetails(toolCalls);
+            for (const [idx, tu] of toolCalls.entries()) {
+                await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
+            }
+            const { results, durations, resultDetails } = await dispatchRound(toolCalls, segment.mask, names);
+            const errored = await settleRound(toolCalls, results, details, resultDetails, durations);
+            if (errored.length > 0) log.debug("tool results returned errors", { iteration: index, tools: errored });
             messages.push({ role: "tool", content: results });
             appendDeferredImages(messages, results, encoding.deferredImages);
-            if (hasDenial(results)) return stopOnDenial(i);
-            if (opts.resolved?.()) return stopOnResolved(i);
-            continue;
+            if (hasDenial(results)) return stopOnDenial(index);
+            if (opts.resolved?.()) return stopOnResolved(index);
         }
+        return "capped";
+    };
 
-        // A local model behind an OpenAI-compatible server routinely labels a
-        // tool-calling reply `stop`. The calls are complete and the model waits
-        // on their results, thus the mislabeled round dispatches like a
-        // `tool-calls` one. Every other terminal answers its calls with the
-        // not-run result: a filtered or aborted reply must not act.
-        const dispatchesRound = reply.finishReason === "tool-calls" || (reply.finishReason === "stop" && toolCalls.length > 0);
-        if (!dispatchesRound) {
-            settleTranscript();
-            await emit({ type: "iteration", source, index: i, final: true });
-            recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
-            logFinish("info", reply.finishReason, false);
-            return {
-                messages,
-                finish: {
-                    reason: reply.finishReason,
-                    ...(reply.rawFinishReason === undefined ? {} : { rawFinishReason: reply.rawFinishReason }),
-                    cappedOut: false,
-                    truncationRecoveries,
-                    ...finishUsage(),
-                },
-            };
-        }
-
-        await emit({ type: "iteration", source, index: i, final: false });
-        log.debug("iteration", { iteration: i, tools: toolCalls.map((t) => t.toolName) });
-        const details = roundDetails(toolCalls);
-        for (const [idx, tu] of toolCalls.entries()) {
-            await emit({ type: "tool-started", source, toolUseId: tu.toolCallId, name: tu.toolName, input: tu.input, ...detailField(details[idx]) });
-        }
-        const { results, durations, resultDetails } = await dispatchRound(toolCalls, opts.toolMask);
-        const errored = await settleRound(toolCalls, results, details, resultDetails, durations);
-        if (errored.length > 0) log.debug("tool results returned errors", { iteration: i, tools: errored });
-        messages.push({ role: "tool", content: results });
-        appendDeferredImages(messages, results, encoding.deferredImages);
-        if (hasDenial(results)) return stopOnDenial(i);
-        if (opts.resolved?.()) return stopOnResolved(i);
-    }
+    const endCapped = async (): Promise<RunAgentResult> => {
+        settleTranscript();
+        recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
+        logFinish("warn", "max_iterations", true);
+        return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
+    };
 
     // `toolChoice: "none"` keeps tools on the wire for the OpenAI arm (prefix
     // stable), but `@ai-sdk/anthropic` drops them, breaking the cache and
     // risking a rejected or dropped signed-thinking block.
-    const wrapUpStepName = formatStepName.llm(agent.maxIterations);
-    const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
-        provider
-            .chat(
-                { system, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
-                session,
-                signal,
-            )
-            .map(countChatTokens(agent.id)),
-    );
-    accountForChatCall(wrapUp, { ...accounting, stepName: wrapUpStepName });
+    const legacyWrapUp = async (stepName: string): Promise<RunAgentResult> => {
+        const wrapUp = await callModel(stepName, "none");
 
-    if (wrapUp.finishReason === "aborted") {
-        // An abort during the wrap-up is still the user cutting the turn — the
-        // same event the in-loop path handles — so it gets the identical treatment: keep a
-        // partial only when it carries content, and stamp the marker on the last assistant
-        // this run produced. Reporting it as a plain cap-out would hide the interruption
-        // from every downstream reader; `cappedOut` stays true because the loop genuinely
-        // exhausted its iterations, while the reason carries the abort.
-        if (assistantHasContent(wrapUp.message)) messages.push(wrapUp.message);
+        if (wrapUp.finishReason === "aborted") {
+            // An abort during the wrap-up is still the user cutting the turn — the
+            // same event the in-loop path handles — so it gets the identical treatment: keep a
+            // partial only when it carries content, and stamp the marker on the last assistant
+            // this run produced. Reporting it as a plain cap-out would hide the interruption
+            // from every downstream reader; `cappedOut` stays true because the loop genuinely
+            // exhausted its iterations, while the reason carries the abort.
+            if (assistantHasContent(wrapUp.message)) messages.push(wrapUp.message);
+            settleTranscript();
+            markLastLoopAssistant(messages, initial.length);
+            await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
+            recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
+            logFinish("warn", "aborted", true);
+            return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries, ...finishUsage() } };
+        }
+
+        messages.push(wrapUp.message);
         settleTranscript();
-        markLastLoopAssistant(messages, initial.length);
         await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-        recordAgentRun({ agentId: agent.id, iterations, cappedOut: true });
-        logFinish("warn", "aborted", true);
-        return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries, ...finishUsage() } };
-    }
+        recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
+        logFinish("warn", "max_iterations", true);
+        return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
+    };
 
-    messages.push(wrapUp.message);
-    settleTranscript();
-    await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-    recordAgentRun({ agentId: agent.id, iterations, cappedOut: true });
-    logFinish("warn", "max_iterations", true);
-    return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
+    return { runSegment, endCapped, legacyWrapUp };
 }
 
 /** What one completed LLM call is accounted under. */
@@ -637,7 +707,8 @@ export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting
  * UUIDs or the profiler's `data-profile` literal, step ids are path-safe plan
  * ids (`T1S1`, `synthesis`, `profile`), tool-call ids are provider-issued
  * opaque tokens, and the loop's step names are `llm-{n}` / `tool-{name}-{id}`
- * with an optional `salvage:` prefix — none of them can contain `>`.
+ * with an optional continuation namespace (`salvage:`, `file-metadata:`,
+ * `step-summary:`) — none of them can contain `>`.
  */
 const CALL_PATH_DELIMITER = ">";
 

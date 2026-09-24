@@ -45,23 +45,23 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 3. The continuation
 
-- [ ] 3.1 In `src/loop/run-agent.ts`, move the request and dispatch loop of `runAgentLoop` into a segment function. A segment takes a mask, a cap of requests, a step-name formatter, and an optional request text.
-- [ ] 3.2 Keep the run state outside the segment: the messages, the usage rollups, the counters, the `used` map of the budget, and the logger. Expected result: `runAgent` runs one task segment, and each test of `src/loop` passes.
-- [ ] 3.3 Export the segment function for `src/loop/continue-agent.ts` only. Do not add it to `src/index.ts`.
-- [ ] 3.4 Add `src/loop/continue-agent.ts`. Export `ContinuationRequest` with `text`, `mask`, `maxRequests`, `stepNamespace`, and an optional `accountingAgentId`. Export `ContinuationResult` with `messages` and `finish`.
-- [ ] 3.5 Export `continueAgent(agent, conversation, request, session, opts: RunAgentOptions): Promise<ContinuationResult>`. It appends `syntheticUserMessage(request.text)` and runs one segment with no wrap-up.
-- [ ] 3.6 Make `continueAgent` return the messages from the request to the end. Expected result: the messages of `conversation` stay unchanged.
-- [ ] 3.7 In `continueAgent`, name each step `${request.stepNamespace}:${name}`. `name` comes from `opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER`. Expected result: the first model step of the namespace `file-metadata` is `file-metadata:llm-0`.
-- [ ] 3.8 With `accountingAgentId`, run the segment under `forSubAgent(session, accountingAgentId)`. Give that id to `countChatTokens`, `recordAgentRun`, and `traceAgentRun` in place of `agent.id`. Expected result: the usage records, the token counters, and the iteration histogram carry the accounting id.
-- [ ] 3.9 At its cap, make `continueAgent` return `finish.reason: "max_iterations"` with `cappedOut: true`, with no wrap-up request. On an abort, it returns `"aborted"`.
-- [ ] 3.10 In the doc comment of `CALL_PATH_DELIMITER` in `src/loop/run-agent.ts`, add the namespaces of the continuations to the list of step names.
-- [ ] 3.11 In `src/loop/run-agent.test.ts`, add `describe("continueAgent")` with these tests:
+- [x] 3.1 In `src/loop/run-agent.ts`, move the request and dispatch loop of `runAgentLoop` into a segment function. A segment takes a mask, a cap of requests, a step-name formatter, and an optional request text.
+- [x] 3.2 Keep the run state outside the segment: the messages, the usage rollups, the counters, the `used` map of the budget, and the logger. Expected result: `runAgent` runs one task segment, and each test of `src/loop` passes.
+- [x] 3.3 Export the segment function for `src/loop/continue-agent.ts` only. Do not add it to `src/index.ts`.
+- [x] 3.4 Add `src/loop/continue-agent.ts`. Export `ContinuationRequest` with `text`, `mask`, `maxRequests`, `stepNamespace`, and an optional `accountingAgentId`. Export `ContinuationResult` with `messages` and `finish`.
+- [x] 3.5 Export `continueAgent(agent, conversation, request, session, opts: RunAgentOptions): Promise<ContinuationResult>`. It appends `syntheticUserMessage(request.text)` and runs one segment with no wrap-up.
+- [x] 3.6 Make `continueAgent` return the messages from the request to the end. Expected result: the messages of `conversation` stay unchanged.
+- [x] 3.7 In `continueAgent`, name each step `${request.stepNamespace}:${name}`. `name` comes from `opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER`. Expected result: the first model step of the namespace `file-metadata` is `file-metadata:llm-0`.
+- [x] 3.8 With `accountingAgentId`, run the segment under `forSubAgent(session, accountingAgentId)`. Give that id to `countChatTokens`, `recordAgentRun`, and `traceAgentRun` in place of `agent.id`. Expected result: the usage records, the token counters, and the iteration histogram carry the accounting id.
+- [x] 3.9 At its cap, make `continueAgent` return `finish.reason: "max_iterations"` with `cappedOut: true`, with no wrap-up request. On an abort, it returns `"aborted"`.
+- [x] 3.10 In the doc comment of `CALL_PATH_DELIMITER` in `src/loop/run-agent.ts`, add the namespaces of the continuations to the list of step names.
+- [x] 3.11 In `src/loop/run-agent.test.ts`, add `describe("continueAgent")` with these tests:
   - The first request holds the system prompt, the tools, and each message of the conversation, byte-identical.
   - The result holds only the synthetic request and the new messages.
   - The cap ends the continuation with no wrap-up request.
   - The usage record carries the accounting agent id, and the `runId` and the `stepId` of the session.
   - The step names carry the namespace.
-- [ ] 3.12 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 3.12 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 4. The wrap-up as a continuation
 

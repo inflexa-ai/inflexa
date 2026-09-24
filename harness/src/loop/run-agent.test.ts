@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { ModelMessage, ToolResultPart } from "ai";
-import { err, ok } from "neverthrow";
+import { err, ok, okAsync } from "neverthrow";
 import { z } from "zod";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import type { AgentSession } from "../auth/types.js";
+import type { LlmUsageRecord } from "../billing/usage-recorder.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
@@ -12,6 +14,7 @@ import type { ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
 import { defineTool, withToolResultImage, withToolResultImages, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, thinkingBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
+import { continueAgent } from "./continue-agent.js";
 import { runAgent, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
 import type { AgentDefinition, EmitEvent, RunStep } from "./types.js";
@@ -1754,5 +1757,126 @@ describe("runAgent — per-call duration", () => {
         // The trailing call is refused rather than dispatched, thus it settles
         // outside the round and reports no finished event of its own.
         expect(events.some((e) => e.type === "tool-finished" && e.toolUseId === "tu-cut")).toBe(false);
+    });
+});
+
+// ── continueAgent (see the harness-agent-loop spec) ──────────────────
+
+describe("continueAgent", () => {
+    /** A finished conversation of one tool round and a closing text reply, and the provider that ran it. */
+    async function conversation(): Promise<{ messages: ModelMessage[]; provider: ScriptedProvider; agent: AgentDefinition }> {
+        const agent = agentDef([echoTool()]);
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const { messages } = await runAgent(agent, GO, makeSession(), opts(provider, { promptCache: "off" }));
+        return { messages, provider, agent };
+    }
+
+    it("sends the system prompt, the tools, and each message of the conversation unchanged", async () => {
+        const { messages, provider: first, agent } = await conversation();
+        const provider = scriptedProvider([makeMessage([textBlock("summary")], "end_turn")]);
+
+        await continueAgent(
+            agent,
+            messages,
+            { text: "Summarize the work.", mask: "none", maxRequests: 2, stepNamespace: "step-summary" },
+            makeSession(),
+            opts(provider, { promptCache: "off" }),
+        );
+
+        const request = provider.calls[0]!;
+        const lastOfConversation = first.calls.at(-1)!;
+        expect(request.system).toEqual(lastOfConversation.system);
+        expect(Object.keys(request.tools)).toEqual(Object.keys(lastOfConversation.tools));
+        expect(request.toolChoice).toBeUndefined();
+        expect(JSON.stringify(request.messages.slice(0, messages.length))).toBe(JSON.stringify(messages));
+    });
+
+    it("returns only the synthetic request and the new messages, and changes no message of the conversation", async () => {
+        const { messages, agent } = await conversation();
+        const before = JSON.stringify(messages);
+        const provider = scriptedProvider([makeMessage([textBlock("summary")], "end_turn")]);
+
+        const result = await continueAgent(
+            agent,
+            messages,
+            { text: "Summarize the work.", mask: "none", maxRequests: 2, stepNamespace: "step-summary" },
+            makeSession(),
+            opts(provider),
+        );
+
+        expect(result.messages).toHaveLength(2);
+        expect(isSyntheticUserMessage(result.messages[0]!)).toBe(true);
+        expect(result.messages[0]!.content).toBe("Summarize the work.");
+        expect(result.messages[1]!.content).toEqual([{ type: "text", text: "summary" }]);
+        expect(result.finish).toMatchObject({ reason: "stop", cappedOut: false });
+        expect(JSON.stringify(messages)).toBe(before);
+    });
+
+    it("ends at its cap with no wrap-up request", async () => {
+        const { messages, agent } = await conversation();
+        const provider = scriptedProvider((i) => makeMessage([toolUseBlock(`tu-c${i}`, "echo", { label: "again" })], "tool_use"));
+
+        const result = await continueAgent(
+            agent,
+            messages,
+            { text: "Answer in text.", mask: "none", maxRequests: 2, stepNamespace: "wrap" },
+            makeSession(),
+            opts(provider),
+        );
+
+        expect(provider.calls).toHaveLength(2);
+        expect(provider.calls.every((call) => call.toolChoice === undefined)).toBe(true);
+        expect(result.finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
+        // [request, assistant, tool(refused), assistant, tool(refused)]
+        expect(result.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
+    });
+
+    it("records each call under the accounting agent id and the step of the session", async () => {
+        const { messages, agent } = await conversation();
+        const records: LlmUsageRecord[] = [];
+        const provider = scriptedProvider([makeMessage([textBlock("summary")], "end_turn", { inputTokens: 10, outputTokens: 2 })]);
+        const session: AgentSession = { ...makeSession(), runFrame: { runId: "run-1", stepId: "T1S1" } };
+
+        await continueAgent(
+            agent,
+            messages,
+            { text: "Summarize.", mask: "none", maxRequests: 2, stepNamespace: "step-summary", accountingAgentId: "step-summary-writer" },
+            session,
+            opts(provider, {
+                usageRecorder: {
+                    record: (record) => {
+                        records.push(record);
+                        return okAsync(undefined);
+                    },
+                },
+            }),
+        );
+
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({ agentId: "step-summary-writer", runId: "run-1", stepId: "T1S1" });
+        expect(records[0]!.callPath).toEqual(["conversation-agent", "step-summary-writer"]);
+        expect(records[0]!.recordKey.endsWith(":step-summary:llm-0")).toBe(true);
+    });
+
+    it("names each step under the namespace", async () => {
+        const { messages, agent } = await conversation();
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-m", "echo", { label: "m" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const rec = recordingStep();
+
+        await continueAgent(
+            agent,
+            messages,
+            { text: "Describe the files.", mask: { allow: ["echo"] }, maxRequests: 8, stepNamespace: "file-metadata" },
+            makeSession(),
+            opts(provider, { runStep: rec.runStep }),
+        );
+
+        expect(rec.names).toEqual(["file-metadata:llm-0", "file-metadata:tool-echo-tu-m", "file-metadata:llm-1"]);
     });
 });

@@ -10,6 +10,7 @@ import type { ProviderError } from "../providers/errors.js";
 import type { AgentChat, ChatResponse } from "../providers/types.js";
 import { defineTool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
+import { continueAgent } from "./continue-agent.js";
 import { __resetMetricsForTest } from "./metrics.js";
 import { runAgent } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
@@ -239,5 +240,21 @@ describe("runAgent token counters for each call", () => {
         // upserting sink counts each call once.
         expect(records).toHaveLength(6);
         expect(new Set(records.map((record) => record.recordKey)).size).toBe(3);
+    });
+
+    it("counts a continuation under its accounting agent id, not the id of the agent it continues", async () => {
+        const chat = scriptedProvider([served(makeMessage([textBlock("summary")], "end_turn"))]);
+
+        await continueAgent(
+            agentDef(2),
+            GO,
+            { text: "Summarize.", mask: "none", maxRequests: 2, stepNamespace: "step-summary", accountingAgentId: "step-summary-writer" },
+            agentSession(),
+            runOpts(chat),
+        );
+
+        expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: { ...LABELS, agent_id: "step-summary-writer" }, value: 100 }]);
+        const iterations = (await collectMetrics()).find((m) => m.descriptor.name === ITERATIONS_METRIC);
+        expect(iterations!.dataPoints.map((dp) => dp.attributes["agent_id"])).toEqual(["step-summary-writer"]);
     });
 });
