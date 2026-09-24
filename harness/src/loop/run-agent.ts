@@ -27,7 +27,7 @@ import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
-import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
+import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
@@ -256,9 +256,12 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 
     // Resolved once, not per iteration: an identical policy across every call is
     // itself part of the cache contract — the request prefix has to be
-    // byte-identical to be read back. The breakpoint it places is re-derived per
-    // call, because it rides the last message and the transcript grows.
+    // byte-identical to be read back. The message breakpoint is re-derived per
+    // call, because it rides the last message and the transcript grows. The
+    // system prompt of an agent depends only on its type, thus its marked form
+    // is made once and each call of the run sends the same one.
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
+    const system = withSystemPromptBreakpoint(agent.systemPrompt, promptCache);
     // The loop sends the effort of its caller on each call, or no effort at all.
     // With no effort on the request, the provider applies the effort of its
     // configuration. A default here would hide that configuration.
@@ -424,7 +427,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     for (let i = 0; i < agent.maxIterations; i++) {
         iterations = i + 1;
         const request: ChatRequest = {
-            system: agent.systemPrompt,
+            system,
             messages: withPromptCacheBreakpoint(messages, promptCache),
             tools: toolDefs,
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
@@ -552,7 +555,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
         provider.chat(
-            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
+            { system, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
             session,
             signal,
         ),

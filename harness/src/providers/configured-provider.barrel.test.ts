@@ -4,6 +4,7 @@ import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@infle
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
 
 import { makeSession } from "./__fixtures__/session.js";
+import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "./prompt-cache.js";
 import type { FetchLike } from "./types.js";
 
 /** One `text/event-stream` body: each arm of the provider reads the wire as SSE. */
@@ -317,6 +318,20 @@ describe("the thinking binding on the wire", () => {
         const wire = await anthropicWire("claude-sonnet-4-5", "none");
 
         expect(wire.body["thinking"]).toEqual({ type: "disabled" });
+    });
+});
+
+describe("the system prompt breakpoint on the wire", () => {
+    it("renders cache_control on the text block of the system prompt", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
+        });
+
+        const result = await provider.chat({ ...request, system: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE) }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.requests[0]?.body["system"]).toEqual([{ type: "text", text: "You are a test model.", cache_control: { type: "ephemeral", ttl: "5m" } }]);
     });
 });
 

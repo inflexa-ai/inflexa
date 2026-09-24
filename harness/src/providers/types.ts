@@ -6,7 +6,7 @@
  * attribution is resolved lazily at the provider wire boundary.
  */
 
-import type { FinishReason, LanguageModel, ModelMessage, ToolSet } from "ai";
+import type { FinishReason, LanguageModel, ModelMessage, SystemModelMessage, ToolSet } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ResultAsync } from "neverthrow";
@@ -39,7 +39,11 @@ export interface ProviderCapabilities {
 }
 
 export interface ChatRequest {
-    readonly system: string;
+    /**
+     * The system prompt: a plain string, or a system message that carries the
+     * cache marker at its end (`withSystemPromptBreakpoint`).
+     */
+    readonly system: string | SystemModelMessage;
     readonly messages: readonly ModelMessage[];
     readonly tools: ToolSet;
     /**

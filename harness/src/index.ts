@@ -291,16 +291,17 @@ export type {
 // Prompt caching. `PromptCachePolicy` is the harness's vendor-neutral cache
 // directive; a composition root sets it per run via `RunAgentOptions.promptCache`
 // (defaulting to `DEFAULT_PROMPT_CACHE` — 5m — when omitted, since an agent loop
-// re-sends its prefix every iteration and breaks even immediately). Hosts whose
-// endpoint ignores cache directives — notably the Claude Max OAuth path — pass
-// `"off"`; the `cortex.harness.agent.cache_*_tokens` metrics show which case a
-// deployment is actually in. `withPromptCacheBreakpoint` is the placement: it
-// puts the ONE marker of a request on its last message, where every hop upstream
-// can count it, in the namespace of each vendor that needs an explicit
-// breakpoint (Anthropic and Bedrock; the OpenAI family and Gemini cache without
-// one). Never attach `promptCacheProviderOptions` to a request itself — that
-// emits a top-level field an intermediary cannot see, and a proxy that trims to
-// Anthropic's cap of four breakpoints then sends five.
+// re-sends its prefix every iteration and breaks even immediately). A host whose
+// endpoint ignores cache directives, or charges badly for them, passes `"off"`;
+// the `cortex.harness.agent.cache_*_tokens` metrics show which case a deployment
+// is actually in. A request holds two markers of the harness, each on a block
+// where every hop upstream can count it: the loop marks the end of the system
+// prompt, and `withPromptCacheBreakpoint` marks the last message. Each marker
+// carries the namespace of each vendor that needs an explicit breakpoint
+// (Anthropic and Bedrock; the OpenAI family and Gemini cache without one), and a
+// proxy that trims to Anthropic's cap of four breakpoints counts both markers.
+// Never attach `promptCacheProviderOptions` to a request itself — that emits a
+// top-level field an intermediary cannot see, and the proxy then sends five.
 export { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "./providers/prompt-cache.js";
 // Reasoning depth. `ReasoningPolicy` is the vendor-neutral name for how deep a
 // model reasons. The provider selects the effort of each call in this order:
