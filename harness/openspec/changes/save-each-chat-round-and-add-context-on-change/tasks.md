@@ -93,28 +93,28 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 4. The display of each round
 
-- [ ] 4.1 In `src/memory/conversation-display-recorder.ts`, make the user id and the assistant id one time, when the recorder is made. Use the option value when it is given.
-- [ ] 4.2 Add `takeOpening(): ConversationUIMessage[]` to `ConversationDisplayRecorder`. It gives the user message of the turn, with the id of 4.1.
-- [ ] 4.3 Add `takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[]`. It gives one assistant message with the parts that the recorder got after the last take, under the id of 4.1. It gives an empty array when no part exists.
-- [ ] 4.4 In `takeRound`, when the parts hold no text, add the text of the assistant messages of the round. Set `state: "done"` on each text part. Mark each `data-ask` part with the status `pending` as `aborted`.
-- [ ] 4.5 After a take, clear the parts and the index of the reconciling parts. Thus a later update of a part lands in the next round, and the replay replaces the earlier copy.
-- [ ] 4.6 Keep `finish` with no change of its behavior. Its doc comment says that `runChatTurn` uses `takeOpening` and `takeRound`.
-- [ ] 4.7 In `src/memory/conversation-display-replay.ts`, merge a stored assistant message into the message before it when the two share an id. Append the parts in order. A reconciling part replaces its earlier copy with the same type and id.
-- [ ] 4.8 In the same function, fold the `turn` of a user row onto the last assistant message of that turn. Set `usage`, `durationMs`, and `interrupted: true` for the status `aborted`. The turn ends at the next genuine user row.
-- [ ] 4.9 Keep the fold of the row figures for an older turn. Write the module header again for the merge and the fold.
-- [ ] 4.10 In `src/memory/conversation-display-recorder.test.ts`, add these tests:
+- [x] 4.1 In `src/memory/conversation-display-recorder.ts`, make the user id and the assistant id one time, when the recorder is made. Use the option value when it is given.
+- [x] 4.2 Add `takeOpening(): ConversationUIMessage[]` to `ConversationDisplayRecorder`. It gives the user message of the turn, with the id of 4.1.
+- [x] 4.3 Add `takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[]`. It gives one assistant message with the parts that the recorder got after the last take, under the id of 4.1. It gives an empty array when no part exists.
+- [x] 4.4 In `takeRound`, when the parts hold no text, add the text of the assistant messages of the round. Set `state: "done"` on each text part. Mark each `data-ask` part with the status `pending` as `aborted`.
+- [x] 4.5 After a take, clear the parts and the index of the reconciling parts. Thus a later update of a part lands in the next round, and the replay replaces the earlier copy.
+- [x] 4.6 Keep `finish` with no change of its behavior. Its doc comment says that `runChatTurn` uses `takeOpening` and `takeRound`.
+- [x] 4.7 In `src/memory/conversation-display-replay.ts`, merge a stored assistant message into the message before it when the two share an id. Append the parts in order. A reconciling part replaces its earlier copy with the same type and id.
+- [x] 4.8 In the same function, fold the `turn` of a user row onto the last assistant message of that turn. Set `usage`, `durationMs`, and `interrupted: true` for the status `aborted`. The turn ends at the next genuine user row.
+- [x] 4.9 Keep the fold of the row figures for an older turn. Write the module header again for the merge and the fold.
+- [x] 4.10 In `src/memory/conversation-display-recorder.test.ts`, add these tests:
   - `takeOpening` gives the user message.
   - Two takes give the parts of each round under one assistant id.
   - A round with no streamed text takes the text of its assistant message.
   - A pending approval becomes `aborted` at the take.
   - A round with no part gives no message.
-- [ ] 4.11 In `src/memory/conversation-display-replay.unit.test.ts`, add these tests:
+- [x] 4.11 In `src/memory/conversation-display-replay.unit.test.ts`, add these tests:
   - Two rounds with one id give one assistant message, with the parts in order.
   - A reconciling part in a later round replaces its earlier copy.
   - A `turn` with the status `aborted` folds the rollup, the duration, and `interrupted`.
   - An older turn keeps the fold of its row figures.
   - A failure note stays a `system` message after the assistant message.
-- [ ] 4.12 Run `tsc -p tsconfig.json`. Run `bun test src/memory/conversation-display-recorder.test.ts src/memory/conversation-display-replay.unit.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 4.12 Run `tsc -p tsconfig.json`. Run `bun test src/memory/conversation-display-recorder.test.ts src/memory/conversation-display-replay.unit.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 5. The chat turn
 

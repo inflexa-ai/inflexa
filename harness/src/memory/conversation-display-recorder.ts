@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DataUIPart, UIMessagePart } from "ai";
+import type { DataUIPart, ModelMessage, UIMessagePart } from "ai";
 
 import type { ToolCallOutcome } from "../contracts/chat-events.js";
 import { PART_REGISTRY, type CortexChatPartType } from "../contracts/part-registry.js";
@@ -9,6 +9,11 @@ import { conversationDisplayPart, type ConversationUIData, type ConversationUIMe
 
 export interface ConversationDisplayRecorder {
     readonly emit: EmitFn;
+    /** The user message of the turn. */
+    takeOpening(): ConversationUIMessage[];
+    /** The assistant message of one round: the parts that the recorder got after the last take, or none. */
+    takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[];
+    /** The whole turn in one projection. `runChatTurn` stores each round with `takeOpening` and `takeRound` instead. */
     finish(options?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[];
 }
 
@@ -50,7 +55,25 @@ function dataPart(event: ChatDataPart): ConversationPart {
     } as ConversationPart;
 }
 
+/** The text of the assistant messages of a round. */
+function assistantText(messages: readonly ModelMessage[]): string {
+    return messages
+        .filter((message) => message.role === "assistant")
+        .map((message) =>
+            typeof message.content === "string"
+                ? message.content
+                : message.content
+                      .filter((part) => part.type === "text")
+                      .map((part) => part.text)
+                      .join(""),
+        )
+        .join("");
+}
+
 export function createConversationDisplayRecorder(options: ConversationDisplayRecorderOptions): ConversationDisplayRecorder {
+    // One id for each message of the turn, thus the rounds of a turn replay as one assistant message.
+    const userMessageId = options.userMessageId ?? randomUUID();
+    const assistantMessageId = options.assistantMessageId ?? randomUUID();
     const assistantParts: DisplayPart[] = [];
     // Where a reconciling part lives, keyed by `type:id`. Type-qualified because a
     // stable id is only unique within its own family — a plan and a run card may
@@ -143,36 +166,46 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         return options.sink(event);
     };
 
+    function closeParts(): void {
+        // Calls need no closing pass: one that never reached `tool-finished` still holds
+        // the `incomplete` it was recorded with at dispatch, which is the whole of what
+        // the harness observed. An approval does need one — `pending` is a question, and
+        // a turn that ends without answering it aborted it.
+        for (const part of assistantParts) {
+            if (part.type === "data-ask" && part.data.status === "pending") part.data.status = "aborted";
+            if (part.type === "text") part.state = "done";
+        }
+    }
+
+    function takeOpening(): ConversationUIMessage[] {
+        return [{ id: userMessageId, role: "user", parts: [{ type: "text", text: options.userText, state: "done" }] }];
+    }
+
+    function takeRound(messages: readonly ModelMessage[]): ConversationUIMessage[] {
+        if (!assistantParts.some((part) => part.type === "text")) appendText(assistantText(messages));
+        // Only a round that a throw ends can hold a pending approval.
+        closeParts();
+        if (assistantParts.length === 0) return [];
+        const round: ConversationUIMessage = { id: assistantMessageId, role: "assistant", parts: jsonCopy(assistantParts) };
+        // A later update of a part lands in the next round, and the replay replaces the earlier copy.
+        assistantParts.length = 0;
+        reconcileIndexes.clear();
+        return [round];
+    }
+
     function finish(finishOptions?: { readonly fallbackText?: string; readonly interrupted?: boolean }): ConversationUIMessage[] {
         if (!finished) {
             finished = true;
             if (!assistantParts.some((part) => part.type === "text") && finishOptions?.fallbackText) {
                 appendText(finishOptions.fallbackText);
             }
-            // Calls need no closing pass: one that never reached `tool-finished` still holds
-            // the `incomplete` it was recorded with at dispatch, which is the whole of what
-            // the harness observed. An approval does need one — `pending` is a question, and
-            // a turn that ends without answering it aborted it.
-            for (const part of assistantParts) {
-                if (part.type === "data-ask" && part.data.status === "pending") {
-                    part.data.status = "aborted";
-                }
-            }
-            for (const part of assistantParts) {
-                if (part.type === "text") part.state = "done";
-            }
+            closeParts();
         }
 
-        const messages: ConversationUIMessage[] = [
-            {
-                id: options.userMessageId ?? randomUUID(),
-                role: "user",
-                parts: [{ type: "text", text: options.userText, state: "done" }],
-            },
-        ];
+        const messages = takeOpening();
         if (assistantParts.length > 0) {
             messages.push({
-                id: options.assistantMessageId ?? randomUUID(),
+                id: assistantMessageId,
                 role: "assistant",
                 ...(finishOptions?.interrupted ? { metadata: { interrupted: true } } : {}),
                 parts: jsonCopy(assistantParts),
@@ -181,5 +214,5 @@ export function createConversationDisplayRecorder(options: ConversationDisplayRe
         return messages;
     }
 
-    return { emit, finish };
+    return { emit, takeOpening, takeRound, finish };
 }
