@@ -190,8 +190,8 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [x] 7.5 In `README.md`, write the sentence on the chat turn again (line 99). A turn is `runChatTurn`.
 - [x] 7.6 Write each changed sentence of 7.1 to 7.5 in STE. Run `bun ../.claude/hooks/ste-check.ts --file` on each file, and fix each hard finding in the changed text. Do not format a markdown file.
 - [x] 7.7 Run `grep -rnE 'prepareChatTurn.{0,30}runAgent.{0,30}appendTurn' src README.md CONTEXT.md CLAUDE.md ../cli/src`. Expected result: no match.
-- [ ] 7.8 Run `tsc -p tsconfig.json`. Expected result: no error.
-- [ ] 7.9 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
-- [ ] 7.10 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.
-- [ ] 7.11 Run `openspec validate save-each-chat-round-and-add-context-on-change --strict` in `harness/`. Expected result: the change is valid.
-- [ ] 7.12 In `cli/`, run `bun run harness:local`, `tsc -p tsconfig.json`, `bun test`, and `bun run lint`. Expected result: no error and no failed test.
+- [x] 7.8 Run `tsc -p tsconfig.json`. Expected result: no error.
+- [x] 7.9 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
+- [x] 7.10 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.
+- [x] 7.11 Run `openspec validate save-each-chat-round-and-add-context-on-change --strict` in `harness/`. Expected result: the change is valid.
+- [x] 7.12 In `cli/`, run `bun run harness:local`, `tsc -p tsconfig.json`, `bun test`, and `bun run lint`. Expected result: no error and no failed test.
