@@ -29,7 +29,9 @@ Acquire compound data via ChEMBL tools:
 2. \`chembl({action:"compounds", searchType:"target"})\` for each target.
 3. \`chembl({action:"bioactivity"})\` for detailed IC50/EC50/Ki.
 4. Optionally \`chembl({action:"mechanism"})\` for mechanisms of action.
-5. Optionally \`chembl({action:"drug"})\` for approved drugs against these targets.
+5. Optionally \`chembl({action:"drug"})\` with a hit's compound name, for
+   its approval status and indications. This action takes a drug name or an
+   indication, not a target.
 6. Save the retrieved data as CSV in the workspace for analysis.
 
 ### Mode C — PubChem Compound Resolution
