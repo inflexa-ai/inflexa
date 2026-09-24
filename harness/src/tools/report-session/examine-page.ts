@@ -354,13 +354,14 @@ export function createExaminePageTool(deps: ExaminePageToolDeps): Tool<ExaminePa
     return defineTool({
         id: "examine_page",
         description:
-            "Open the rendered report page in a real headless browser, and report what you see. " +
-            "Give back one or more screenshots, the coverage of the look, the console errors, and the failed requests. " +
+            "Open the rendered report page in a real headless browser, and give back what a reviewer sees: " +
+            "one or more screenshots, the coverage of the look, the console errors, and the failed requests. " +
             "A tall page arrives as consecutive top-to-bottom slices in document order, and the tiles list names the rows of each slice. " +
             "The coverage says whether the pictures hold the whole page, a truncated top portion of it, or the top window alone. " +
             "Run it after the preview to look at the current page, and to confirm that the layout and the charts read clean. " +
-            "The report tool records a version only after you look at the current page. " +
-            "If the page has no confirmed render, run the preview again first.",
+            "A look at the page of the current draft is what lets record_report_version record. " +
+            "The outcomes no-page and missed-stamp mean that no preview rendered the current page: run preview_report, then look again. " +
+            "The outcome no-browser means that this host gives no browser, and a repeat gives the same outcome.",
         inputSchema: examinePageInput,
         executionMode: "inline",
         describeCall: "none",

@@ -250,7 +250,11 @@ export function createDeriveTableTool(deps: DeriveTableToolDeps): Tool<DeriveTab
             "That directory is the one place that the script can write: the analysis mounts read-only, and the container has no network. " +
             "The standard output carries the logs of the script alone, thus a table that it prints there reaches nobody. " +
             "The derived table joins the pinned evidence of this session, thus a block binds its path the same way as a pinned artifact. " +
-            "A name that this session already derived is refused, thus a second derivation of one table takes a new name.",
+            "A name that this session already derived is refused, thus a second derivation of one table takes a new name. " +
+            `Limits: the script holds at most ${String(SCRIPT_CAP_BYTES / 1024)} KiB, inputs holds at most ${String(INPUT_CAP)} paths, ` +
+            `and the run stops after ${String(DERIVATION_DEADLINE_MS / 1000)} seconds. ` +
+            "A failed script gives back exec-failed with the tail of its standard error. " +
+            "The outcome unavailable means that this host cannot run a derivation, and a repeat gives the same outcome.",
         inputSchema: deriveTableInput,
         executionMode: "inline",
         describeCall: (input): string => `derive ${input.output}`,

@@ -89,12 +89,17 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
     return defineTool({
         id: "literature_reviewer",
         description:
-            "Delegate batch literature/biology research: looking up multiple " +
-            "genes or pathways, validating findings against published knowledge, " +
-            "or building evidence profiles. Pass a self-contained brief — the " +
-            "reviewer has no access to this conversation. Returns a structured " +
-            "evidence report. Do NOT delegate simple single-gene lookups; handle " +
-            "those directly with your own bio-lookup tools.",
+            "Delegate batch literature/biology research to a sub-agent: looking up " +
+            "multiple genes or pathways, validating findings against published " +
+            "knowledge, or building evidence profiles. The reviewer holds gene, " +
+            "protein, annotation, interaction, PubMed, citation-verification, " +
+            "drug-gene and preclinical-profile lookups. It cannot see this " +
+            "conversation, the workspace, or the analysis files, thus pass a " +
+            "self-contained brief. One call runs a multi-step research loop of up " +
+            "to 30 model turns. Returns {report}: a Markdown evidence report with " +
+            "an evidence summary per target, cross-target patterns, and key " +
+            "references with PMIDs. A run that ends with no report returns a " +
+            "retryable error that names the finish reason.",
         inputSchema: z.object({
             brief: z
                 .string()

@@ -75,13 +75,21 @@ const blockPayload = z.union([AuthoringBlockSchema, z.unknown()]);
  */
 const absentable = <T extends z.ZodType>(schema: T): z.ZodOptional<z.ZodNullable<T>> => schema.nullish();
 
+/** The meaning of each flat destination field. The add and the move share it. */
+const DESTINATION_NOTES = {
+    parentId: "The id of the section that holds the destination. Leave it out for the root. An anchor in `before` or `after` implies its parent.",
+    place: "Put the block at the `start` or the `end` of the parent. The default is `end`. Give a place or an anchor, not both.",
+    before: "The id of a sibling block. The block lands directly before it.",
+    after: "The id of a sibling block. The block lands directly after it.",
+} as const;
+
 /** The flat destination fields. An anchor is `before` or `after`, and a place is `start` or `end`. */
 const addBlockInput = z.object({
     block: blockPayload,
-    parentId: absentable(z.string()),
-    place: absentable(z.enum(["start", "end"])),
-    before: absentable(z.string()),
-    after: absentable(z.string()),
+    parentId: absentable(z.string()).describe(DESTINATION_NOTES.parentId),
+    place: absentable(z.enum(["start", "end"])).describe(DESTINATION_NOTES.place),
+    before: absentable(z.string()).describe(DESTINATION_NOTES.before),
+    after: absentable(z.string()).describe(DESTINATION_NOTES.after),
 });
 
 /**
@@ -90,32 +98,32 @@ const addBlockInput = z.object({
  * `z.unknown()` as a required key, thus an optional marker is what makes the retitle call representable.
  */
 const changeBlockInput = z.object({
-    targetId: z.string(),
-    title: absentable(z.string()),
-    block: blockPayload.optional(),
+    targetId: z.string().describe("The id of the block to change, as the outline gives it."),
+    title: absentable(z.string()).describe("The new title of a section target. Give a title or a block, not both."),
+    block: blockPayload.optional().describe("The replacement of an atom target. Give a title or a block, not both."),
 });
 
 const removeBlockInput = z.object({
-    targetId: z.string(),
+    targetId: z.string().describe("The id of the block to remove, as the outline gives it."),
 });
 
 const moveBlockInput = z.object({
-    targetId: z.string(),
-    parentId: absentable(z.string()),
-    place: absentable(z.enum(["start", "end"])),
-    before: absentable(z.string()),
-    after: absentable(z.string()),
+    targetId: z.string().describe("The id of the block to move, as the outline gives it."),
+    parentId: absentable(z.string()).describe(DESTINATION_NOTES.parentId),
+    place: absentable(z.enum(["start", "end"])).describe(DESTINATION_NOTES.place),
+    before: absentable(z.string()).describe(DESTINATION_NOTES.before),
+    after: absentable(z.string()).describe(DESTINATION_NOTES.after),
 });
 
 const readOutlineInput = z.object({});
 
 /** The read names its target with the same field name as each mutation, thus one id key serves them all. */
 const readBlockInput = z.object({
-    targetId: z.string(),
+    targetId: z.string().describe("The id of the block to read, as the outline gives it."),
 });
 
 const setTitleInput = z.object({
-    title: z.string().min(1),
+    title: z.string().min(1).describe("The title of the whole report."),
 });
 
 const finishDraftInput = z.object({});

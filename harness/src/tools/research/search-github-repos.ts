@@ -76,10 +76,16 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }) {
         id: "search_github_repos",
         description:
             "Search GitHub for code repositories matching a free-text query, " +
-            "optionally filtered by programming language. Returns URL, full " +
+            "optionally filtered by programming language. Results are sorted by " +
+            "star count, highest first, not by relevance. Returns URL, full " +
             "name (owner/repo), description, star count, primary language, " +
-            "and last-updated timestamp. Use to find implementations of " +
-            "cross-domain methods cited in analogical-reasoning results.",
+            "and last-updated timestamp; description and language are absent " +
+            "when GitHub holds none. Use to find a published implementation of " +
+            "a method or a pipeline.\n" +
+            "ABSENCE IS NORMAL: an empty repos array means no repository matched, " +
+            "and `success: false` with an `error` string means GitHub could not be " +
+            "reached or refused the request (the low unauthenticated rate limit " +
+            "lands here). Report either one and continue, do not retry unchanged.",
         inputSchema: z.object({
             query: z
                 .string()

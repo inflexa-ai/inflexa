@@ -61,7 +61,7 @@ function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
             "relations, and key terms of phase 1, and each analogy with its " +
             "coverage and its cited solutions from phase 2. Call it one time with " +
             "the full report. If it rejects the report, correct the fields that it " +
-            "names and call it again. Stop immediately after an accepted call.",
+            "names and call it again. An accepted call ends the run.",
         inputSchema: AnalogyReportSchema,
         describeCall: "none",
         execute: async (report) => {
@@ -69,7 +69,7 @@ function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
             cell.outcome = { kind: "report", report };
             return ok({
                 recorded: true as const,
-                message: "Report recorded. You are done — stop now and do not take further actions.",
+                message: "Report recorded.",
             });
         },
     });
@@ -189,25 +189,25 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             "Idea-generation engine. Extracts structural analogies for an open-ended " +
             "scientific problem and returns real, cited solutions from other fields " +
             "(control theory, ML, ecology, logistics, economics…).\n" +
-            "WHEN: any exploratory or hypothesis-generation turn — 'what could we do " +
-            "about X', 'what should we try', 'how could we approach this', 'we're " +
-            "stuck', 'brainstorm ideas', 'are there precedents outside biology'. The " +
-            "trigger is exploratory INTENT, not the words 'analogy' or 'cross-domain' " +
-            "— users rarely name it, so infer it and reach for the tool proactively.\n" +
+            "WHEN: an exploratory or hypothesis-generation turn — the user asks how " +
+            "to approach a problem, what to try, or whether precedents exist outside " +
+            "biology. The intent decides, whether or not the user names analogy or " +
+            "cross-domain search.\n" +
             "NOT for: in-domain literature review (use `pubmed` and the other " +
             "bio-lookup tools), single-gene factual lookup (use `search_gene`), or " +
             "execution-mode turns where the user just wants the next step done. It " +
-            "drives a multi-step research sub-agent over live literature search, so " +
-            "it is slow — never spend it on a fact you could look up.\n" +
+            "drives a multi-step research sub-agent (up to 40 model turns) over live " +
+            "literature search, so it is slow; a fact that one lookup answers does " +
+            "not need it.\n" +
             "RETURNS an AnalogyReport envelope the UI renders as an inline card. An " +
             "analogy the search could not fill carries a `coverage` tag " +
             "(`queried_no_data` | `search_failed` | `not_loaded`) with an empty " +
-            "`solutions` array — informational, NOT an error. A top-level `error` " +
-            "field means no report was produced: on `error.kind === " +
-            '"extraction-failed"` do NOT retry with the same or a similar problem ' +
-            "statement (the wrapper already salvaged the run one time — you would " +
-            "burn latency on the same failure). Surface the message and ask the " +
-            "user to narrow the problem.",
+            "`solutions` array — a partial result, not an error. A top-level `error` " +
+            'field with `kind: "extraction-failed"` means no report was produced: the ' +
+            "sub-agent found the problem empty or incoherent, failed, or ended with " +
+            "no report after one corrective request. `error.message` gives the cause. " +
+            "A retry with the same or a similar problem statement meets the same " +
+            "failure, thus surface the message and ask the user to narrow the problem.",
         inputSchema: generateAnalogyReportInputSchema,
         describeCall: "none",
         execute: async (input, ctx) => {

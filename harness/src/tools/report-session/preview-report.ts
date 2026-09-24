@@ -523,9 +523,14 @@ export function createPreviewReportTool(deps: PreviewReportToolDeps): Tool<Previ
     return defineTool({
         id: "preview_report",
         description:
-            "Render the current draft to a self-contained HTML page, and give back the page path. " +
+            "Render the current draft to an HTML page in the session directory, and give back the page path. " +
+            "The page loads its figures, table data, and libraries from an assets directory that the tool stages beside it. " +
             "The tool finishes the draft first: an incomplete draft gives back the gap list, and no page renders. " +
             "On a pass it resolves each reference, stages each bound image beside the page, and writes the page. " +
+            "An unresolved reference gives back the block and the binding to repair. " +
+            "The outcome resolver-unavailable means that this host gives no reference resolver, and a repeat gives the same outcome. " +
+            "A rendered page carries pagePath, and access when the host serves the page: a URL with its expiry, or the reason that no URL was granted. " +
+            "The render marks the page that examine_page looks at next. " +
             "Use it to see the report, and to confirm that each reference resolves.",
         inputSchema: previewReportInput,
         executionMode: "inline",

@@ -28,7 +28,10 @@ export const searchArxivTool = defineTool({
         categories: z
             .array(z.string())
             .optional()
-            .describe('Optional arXiv category filters (e.g., ["cs.LG", "math.OC"]). ' + "Combined with the query using AND."),
+            .describe(
+                'Optional arXiv category filters (e.g., ["cs.LG", "math.OC"]). A paper matches when it carries any one of them, ' +
+                    "and that filter is combined with the query using AND.",
+            ),
         limit: z.number().int().min(1).max(20).default(10).describe("Maximum results (1–20, default 10)."),
     }),
     describeCall: "none",

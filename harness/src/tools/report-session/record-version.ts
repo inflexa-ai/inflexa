@@ -196,7 +196,8 @@ export function createRecordVersionTool(deps: RecordVersionToolDeps): Tool<Recor
         description:
             "Record the current draft as one report version. The tool runs the whole gate first: it finishes the draft, " +
             "resolves each reference, matches each chart encoding, and matches each assert. An incomplete draft gives back the gap list, " +
-            "and a failed reference gives back the block that broke. The tool records a version only after the eyes look at the current page. " +
+            "and a failed reference gives back the block that broke. The tool records a version only after examine_page looked at the page of the current draft: " +
+            "with no look it gives back never-seen, and after an edit since the look it gives back stale-look. " +
             "A thread holds one version, thus a later record replaces it whole. Amend the draft, look at the page again, and record again. " +
             "After the version lands, the tool removes the file of each derived table that no block of the recorded report binds.",
         inputSchema: recordVersionInput,

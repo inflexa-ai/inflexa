@@ -100,13 +100,13 @@ describe("the tool contract", () => {
         expect(tool.id).toBe("inspect_data_profile");
         expect(Object.keys(schema.properties).sort()).toEqual(["page", "pageSize", "scope"]);
         // The description must say where the profile lives, because nothing else will.
-        expect(tool.description).toContain("AUTHORITATIVE");
-        expect(tool.description).toContain("NO data-profile file");
+        expect(tool.description).toContain("authoritative record");
+        expect(tool.description).toContain("no data-profile file");
         // A tool is self-describing at attach time, so the failed state's qualifier
         // has to be here or the agent never learns it exists — and it must claim only
         // what the tool can produce.
         expect(tool.description).toContain("failedAt");
-        expect(tool.description).toContain("PAST attempt");
+        expect(tool.description).toContain("past attempt");
     });
 });
 
