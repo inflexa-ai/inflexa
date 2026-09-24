@@ -255,7 +255,9 @@ Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the exac
 
 The loop MUST apply the mask and the budget at dispatch, in the order of the calls of a round. A call passes when the mask names its tool and the budget of its tool has a unit left. A call that passes MUST use one unit of the budget, whatever its result. The count includes the earlier calls of the same round.
 
-A call that the mask refuses, or a call past the budget of its tool, MUST get an error result that gives the reason. Its tool MUST NOT run, and the loop MUST NOT run a step for it. The loop MUST emit the `tool-started` and `tool-finished` pair of a refused call, with the outcome `error`.
+A call that the mask refuses, or a call past the budget of its tool, MUST get an error result that gives the reason. Its tool MUST NOT run. The loop MUST emit the `tool-started` and `tool-finished` pair of a refused call, with the outcome `error`.
+
+The loop MUST give the refusal inside the step wrapper that a dispatched call of the same tool id gets, under the same step name. A step-mode tool and an unknown tool id get a durable step. A workflow-mode tool and an inline-mode tool get no wrapper. Thus the step sequence of a round is the same with and without the mask. An earlier build dispatched a call of an undeclared tool as an unknown tool, in a step. When this build declares that tool as a step-mode tool and refuses the call, a replay finds the recorded step.
 
 Both dispatch paths MUST apply the same check: the normal round and the round that a truncation cut. The check is a pure function of the mask, the budget, and the calls of the run. Thus a replay refuses the same calls. Provider-native masking, for example OpenAI `allowed_tools`, is out of scope, and each request declares the full tool set.
 
@@ -277,11 +279,18 @@ Both dispatch paths MUST apply the same check: the normal round and the round th
 - **WHEN** one reply calls `literature_reviewer` 2 times
 - **THEN** the first call of the reply runs, and the second call gets the error result of the budget
 
-#### Scenario: A refused call runs no step
+#### Scenario: A refused call keeps the step of its tool
 
 - **GIVEN** a durable run whose mask refuses a step-mode tool
 - **WHEN** the model calls that tool
-- **THEN** the loop runs no `runStep` for the call, and a replay of the run gives the same error result
+- **THEN** the refusal runs inside the step of a dispatched call of that tool, under the same step name
+- **AND** the tool does not run, and a replay of the run returns the error result from that step
+
+#### Scenario: A step of an earlier build replays
+
+- **GIVEN** a durable run that an earlier build recorded, whose agent did not declare a step-mode tool that the model called
+- **WHEN** this build replays the run with the tool declared and refused by the mask
+- **THEN** the refusal takes the recorded step of the call, and the replay gives the recorded result
 
 #### Scenario: No mask lets each declared tool run
 
