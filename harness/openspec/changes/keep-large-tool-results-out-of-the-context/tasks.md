@@ -183,8 +183,8 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [x] 9.3 In `CLAUDE.md`, section "Storage Layout", add `cortex_tool_outputs` to the app tables. It holds conversation data, the same as `messages`.
 - [x] 9.4 Write each changed sentence of 9.1 to 9.3 in STE. Run `bun ../.claude/hooks/ste-check.ts --file` on each file, and fix each hard finding in the changed text.
 - [x] 9.5 Do not format a markdown file. Run `grep -rn "32 KiB" src`. Expected result: no match.
-- [ ] 9.6 Run `tsc -p tsconfig.json`. Expected result: no error.
-- [ ] 9.7 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
-- [ ] 9.8 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.
-- [ ] 9.9 Run `openspec validate keep-large-tool-results-out-of-the-context --strict` in `harness/`. Expected result: the change is valid.
-- [ ] 9.10 In `cli/`, run `bun run harness:local`, `tsc -p tsconfig.json`, `bun test`, and `bun run lint`. Expected result: no error and no failed test.
+- [x] 9.6 Run `tsc -p tsconfig.json`. Expected result: no error.
+- [x] 9.7 Run `bun test`. Expected result: each unit test passes. A database suite uses Postgres.
+- [x] 9.8 Run `bun run lint`. Expected result: no error. Run `bun run format:file` on each file under `src/` that this change changed.
+- [x] 9.9 Run `openspec validate keep-large-tool-results-out-of-the-context --strict` in `harness/`. Expected result: the change is valid.
+- [x] 9.10 In `cli/`, run `bun run harness:local`, `tsc -p tsconfig.json`, `bun test`, and `bun run lint`. Expected result: no error and no failed test.
