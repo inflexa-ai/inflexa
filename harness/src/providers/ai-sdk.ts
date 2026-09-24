@@ -25,7 +25,17 @@ import { passThroughTracer } from "../lib/otel-spans.js";
 import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
 import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
-import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities, ReasoningPolicy } from "./types.js";
+import type {
+    ChatProvider,
+    ChatRequest,
+    ChatResponse,
+    ChatStreamEvent,
+    ChatUsage,
+    FetchLike,
+    ProviderCapabilities,
+    ProviderOptions,
+    ReasoningPolicy,
+} from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -83,6 +93,13 @@ export interface ProviderHostPolicy {
     readonly suspendOn?: SuspendOn;
 }
 
+/** The facts of one model call from which a provider makes the provider options of that call. */
+export interface ProviderCall {
+    readonly session: AgentSession;
+    /** The effort that the provider selected for the call. */
+    readonly reasoning: ReasoningPolicy;
+}
+
 export interface AiSdkProviderDeps extends ProviderHostPolicy {
     readonly model: LanguageModel;
     readonly capabilities?: Partial<ProviderCapabilities>;
@@ -111,6 +128,12 @@ export interface AiSdkProviderDeps extends ProviderHostPolicy {
      * call runs at {@link DEFAULT_REASONING}.
      */
     readonly reasoning?: ReasoningPolicy;
+    /**
+     * The provider options of one call, in the namespace of the bound model.
+     * The provider calls the function one time for each call, before the retry
+     * envelope, thus each attempt of the call sends the same options.
+     */
+    readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined;
 }
 
 /**
@@ -284,6 +307,50 @@ export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
 
 function workloadOf(session: AgentSession): string {
     return `${session.scope.kind}:${scopeWorkloadId(session.scope)}`;
+}
+
+/**
+ * The session key of a call. A gateway keeps the calls of one key on one
+ * account, and thus on one prompt cache.
+ *
+ * The key goes to the vendor, thus it holds only identifiers: never a name, an
+ * address, or the `identity` of the session. It reads only the scope and the
+ * run frame. `forSubAgent` changes only the provenance, thus a sub-agent sends
+ * the key of its parent.
+ *
+ * The first rule that applies gives the key:
+ *
+ * 1. A run frame with a step gives `<analysisId>:<runId>:<stepId>`.
+ * 2. A run frame without a step gives `<analysisId>:<runId>`.
+ * 3. A scope with a thread gives `<analysisId>:<threadId>`.
+ * 4. Else, the key is `<analysisId>`.
+ *
+ * The run frame comes first, because a run that a chat starts can carry the
+ * thread of that chat in its scope, and the steps of that run must not share the
+ * key of the chat. The step key spreads the parallel steps of one run across the
+ * accounts of a gateway, and each step keeps its later calls on its account.
+ */
+export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">): string {
+    const { scope, runFrame } = session;
+    if (runFrame !== undefined) {
+        return runFrame.stepId === undefined ? `${scope.analysisId}:${runFrame.runId}` : `${scope.analysisId}:${runFrame.runId}:${runFrame.stepId}`;
+    }
+    return scope.threadId === undefined ? scope.analysisId : `${scope.analysisId}:${scope.threadId}`;
+}
+
+/**
+ * Merge the provider options of a call over the provider options of a request,
+ * one namespace at a time. A key of the call wins over the same key of the
+ * request, and each other key of a namespace stays.
+ */
+function mergeProviderOptions(request: ProviderOptions | undefined, call: ProviderOptions | undefined): ProviderOptions | undefined {
+    if (call === undefined) return request;
+    if (request === undefined) return call;
+    const merged: ProviderOptions = { ...request };
+    for (const [namespace, options] of Object.entries(call)) {
+        merged[namespace] = { ...request[namespace], ...options };
+    }
+    return merged;
 }
 
 function isAbortError(value: unknown): boolean {
@@ -729,6 +796,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const reasoning = effortOf(req);
+        const providerOptions = mergeProviderOptions(req.providerOptions, deps.providerOptionsFor?.({ session, reasoning }));
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
             const hookCall: HookCall = { unsettled: false };
             const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
@@ -771,7 +839,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // carries the one configured bound, and a turn that writes
                         // steadily runs as long as it needs.
                         ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
-                        providerOptions: req.providerOptions,
+                        providerOptions,
                         reasoning,
                     });
                     // The drain sits inside the retried closure, thus a failure at any
@@ -818,6 +886,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
         const reasoning = effortOf(req);
+        const providerOptions = mergeProviderOptions(req.providerOptions, deps.providerOptionsFor?.({ session, reasoning }));
         const hookCall: HookCall = { unsettled: false };
         const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
         const capture = captureServedModelId(deps.model);
@@ -850,7 +919,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // no content, for example a keep-alive comment, produces no part,
                     // thus it feeds neither bound.
                     ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
-                    providerOptions: req.providerOptions,
+                    providerOptions,
                     reasoning,
                 });
                 const iterator = result.fullStream[Symbol.asyncIterator]();
@@ -1063,6 +1132,8 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
             ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            // The package sends the key as `metadata.user_id`.
+            providerOptionsFor: ({ session }) => ({ anthropic: { metadata: { userId: sessionKeyOf(session) } } }),
         });
     }
 
@@ -1097,6 +1168,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
             ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            // The package sends the key as `prompt_cache_key`. The store
+            // directive merges into the same namespace, and it keeps this key.
+            providerOptionsFor: ({ session }) => ({ openai: { promptCacheKey: sessionKeyOf(session) } }),
         });
     }
 
@@ -1106,6 +1180,8 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         apiKey: config.apiKey,
         fetch: effectiveFetch as typeof fetch | undefined,
     });
+    // The compatible wire has no standard field for a session key, thus this arm
+    // gives no provider options of its own.
     return createAiSdkProvider({
         // The compatible package reads the neutral `reasoning` of the call, thus
         // the seam needs no middleware to carry the depth into its namespace.

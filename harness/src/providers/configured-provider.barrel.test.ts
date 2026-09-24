@@ -198,6 +198,57 @@ describe("the reasoning effort of the configuration", () => {
     });
 });
 
+describe("the session key on the wire", () => {
+    /** A step of the run `r1` of the analysis `a1`. */
+    const stepSession = { ...makeSession({ scope: { kind: "analysis", analysisId: "a1" } }), runFrame: { runId: "r1", stepId: "s1" } };
+    /** A chat call on the thread `t1` of the analysis `a1`. */
+    const chatSession = makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } });
+
+    it("sends the key as metadata.user_id on the anthropic arm", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
+        });
+
+        const result = await provider.chat(request, stepSession);
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.requests[0]?.body["metadata"]).toEqual({ user_id: "a1:r1:s1" });
+    });
+
+    it("sends the key as prompt_cache_key on the openai arm", async () => {
+        const cap = capturingFetch(responsesSse);
+        const provider = createConfiguredAiSdkProvider({ config: { kind: "openai", apiKey: "test-key", model: "gpt-5.1", fetch: cap.fetch } });
+
+        const result = await provider.chat(request, chatSession);
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.requests[0]?.body["prompt_cache_key"]).toBe("a1:t1");
+    });
+
+    it("sends no key on the openai-compatible arm", async () => {
+        const cap = capturingFetch(openaiSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: cap.fetch,
+            },
+        });
+
+        const result = await provider.chat(request, stepSession);
+
+        expect(result.isOk()).toBe(true);
+        const body = cap.requests[0]?.body;
+        expect(body).not.toHaveProperty("prompt_cache_key");
+        expect(body).not.toHaveProperty("metadata");
+        expect(JSON.stringify(body)).not.toContain("a1:r1");
+    });
+});
+
 describe("output-token ceiling", () => {
     /** Run one chat over a capturing fetch and report the `max_tokens` that reached the wire. */
     async function wireMaxTokens(

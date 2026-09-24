@@ -28,6 +28,7 @@ interface ResponsesRequestBody {
     readonly model?: string;
     readonly store?: boolean;
     readonly user?: string;
+    readonly prompt_cache_key?: string;
     readonly max_output_tokens?: number;
     readonly input?: readonly ResponsesInputItem[];
 }
@@ -236,6 +237,19 @@ describe("openai arm store directive", () => {
         expect(result.isOk()).toBe(true);
         expect(cap.bodies[0]?.store).toBe(false);
         expect(cap.bodies[0]?.user).toBe("user-001");
+    });
+
+    it("keeps the session key beside the store value", async () => {
+        // The session key and the store directive share the `openai` namespace.
+        // The directive merges into that namespace, thus the key stays.
+        const cap = capturingFetch(() => responsesSse(["Hello, world"]));
+        const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch) });
+
+        const result = await provider.chat(request, makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } }));
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.bodies[0]?.store).toBe(false);
+        expect(cap.bodies[0]?.prompt_cache_key).toBe("a1:t1");
     });
 });
 
