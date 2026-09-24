@@ -12,6 +12,12 @@
  * `WorkspaceFilesystem`, `inspect_data_profile` over the shared `Pool`, and the
  * bio/literature/context7/run-inspection tools its `meta.tools` allowlist names.
  *
+ * Two cells of the step body each add one tool after every other tool: a
+ * blocker cell adds `report_blocker`, and a file-metadata cell adds
+ * `submit_file_metadata`, the output tool of the file-metadata continuation
+ * after the task. The data profiler gets neither cell, because it declares no
+ * blocked status and runs no post-step pipeline.
+ *
  * Tool resolution is a single registry lookup — every name in `meta.tools`
  * must map to a concrete `Tool`; unknown names throw at composition time
  * so misconfigured agents fail at startup, not at the first LLM call.
@@ -69,6 +75,7 @@ import { createEditFileTool, createExecuteCommandTool, createWorkspaceMutator, c
 import { createSkillTools } from "../../tools/sandbox/skills.js";
 
 import { createReportBlockerTool, type BlockerHolder } from "../../tools/sandbox/report-blocker.js";
+import { createSubmitFileMetadataTool, type FileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 
 import { toSandboxPath } from "../../workspace/paths.js";
 import { setActiveExecId } from "../../state/index.js";
@@ -138,6 +145,16 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
      * agents that have no terminal status to declare (such as the data profiler).
      */
     readonly blockerHolder?: BlockerHolder;
+    /**
+     * The per-step cell of the file-metadata continuation (see the
+     * harness-sandbox-agents spec). When present, the agent declares
+     * `submit_file_metadata` as its last tool from its first request, thus the
+     * task and the continuations after it declare the same tools. The task
+     * masks the tool, and only the file-metadata continuation lets it run. Omit
+     * it for an agent that runs no post-step pipeline, such as the data
+     * profiler.
+     */
+    readonly fileMetadata?: FileMetadataCell;
     /**
      * The farm-extension seam of the embedder. When it is bound, every
      * sandbox agent gets the `link_packages` tool in its always-on substrate,
@@ -334,6 +351,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
         ...skillTools,
         ...resolveSandboxTools(deps, meta.tools),
         ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),
+        ...(deps.fileMetadata ? [createSubmitFileMetadataTool(deps.fileMetadata)] : []),
     ];
 
     return {

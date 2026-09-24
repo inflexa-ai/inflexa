@@ -157,6 +157,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         extendAnalysisFarm: comp.extendAnalysisFarm,
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
+        fileMetadata: ctx.fileMetadata,
         step: {
             sandbox: ctx.sandbox,
             workspaceRoot: comp.resolveWorkspaceRoot(ctx.input.analysisId),

@@ -15,6 +15,8 @@ import {
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SubmitExecBody } from "../../sandbox/types.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
+import { createBlockerHolder } from "../../tools/sandbox/report-blocker.js";
+import { createFileMetadataCell } from "../../tools/sandbox/submit-file-metadata.js";
 
 import { makeFakeSandboxAgentDeps, makeFakeSandboxClient } from "./__fixtures__/deps.js";
 import { BASE_SANDBOX_TOOLS, createSandboxAgent } from "./shared.js";
@@ -360,6 +362,43 @@ describe("createSandboxAgent — the farm-extension seam", () => {
                 { kind: "absent", spelling: "nonesuch", acquisitionPossible: true },
             ],
         });
+    });
+});
+
+describe("createSandboxAgent — the file-metadata output tool", () => {
+    it("a file-metadata cell adds submit_file_metadata as the last tool, after report_blocker", () => {
+        const deps = { ...makeFakeSandboxAgentDeps(), blockerHolder: createBlockerHolder() };
+
+        const withCell = createSandboxAgent({ ...deps, fileMetadata: createFileMetadataCell() }, meta, body);
+        const withoutCell = createSandboxAgent(deps, meta, body);
+
+        const ids = withCell.tools.map((t) => t.id);
+        expect(ids.at(-1)).toBe("submit_file_metadata");
+        expect(ids.slice(0, -1)).toEqual(withoutCell.tools.map((t) => t.id));
+        expect(ids.at(-2)).toBe("report_blocker");
+    });
+
+    it("an agent with no cell, such as the data profiler, has no submit_file_metadata", () => {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+
+        expect(def.tools.map((t) => t.id)).not.toContain("submit_file_metadata");
+    });
+
+    it("the system prompt is byte-identical with and without the cell", () => {
+        const withCell = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, meta, body);
+        const withoutCell = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body);
+
+        expect(withCell.systemPrompt).toBe(withoutCell.systemPrompt);
+    });
+
+    it("the output tool refuses a call before the cell knows the files of the step", async () => {
+        const def = createSandboxAgent({ ...makeFakeSandboxAgentDeps(), fileMetadata: createFileMetadataCell() }, meta, body);
+        const tool = def.tools.at(-1)!;
+
+        const result = await tool.execute({ files: [{ path: "output/a.csv", description: "d", dataType: "table", format: "csv" }] }, makeToolContext().ctx);
+
+        expect(result.isErr()).toBe(true);
+        expect(result._unsafeUnwrapErr()).toMatchObject({ retryable: false, error: expect.stringContaining("after the task") });
     });
 });
 

@@ -21,6 +21,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock, test } fro
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ToolResultPart } from "ai";
 import { errAsync, ok, okAsync } from "neverthrow";
 import { Error as DBOSErrors } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
@@ -32,14 +33,16 @@ import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession, SpawnSession } from "../auth/types.js";
 import { createCapturingLogger, silentLogger, type CapturingLogger } from "../__tests__/setup/logger.js";
 import { classifyReadPath } from "../provenance/collector.js";
-import type { AgentChat, ChatResponse, ChatUsage, EmbeddingProvider } from "../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse, ChatUsage, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../execution/artifact-registry.js";
 import type { GateFailure } from "../lib/hooks.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
-import { defineTool } from "../tools/define-tool.js";
+import type { AgentDefinition } from "../loop/types.js";
+import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createSubmitFileMetadataTool, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "./sandbox-step.js";
 
 const RUN = "run-9";
@@ -247,8 +250,24 @@ function usageStepInput(): SandboxStepInput {
 }
 
 /**
- * Deps for a step whose agent has no tools: the loop makes exactly one LLM call
- * and stops, and the post-step pipeline finds an empty artifact tree.
+ * The step agent of the rigs: the given tools, then the output tool of the
+ * file-metadata continuation, bound to the cell of the step, as the substrate
+ * of a real step agent declares it.
+ */
+function stepAgent(fileMetadata: FileMetadataCell, tools: readonly Tool[] = [], maxIterations = 4): AgentDefinition {
+    return {
+        id: USAGE_AGENT_ID,
+        systemPrompt: "you are a test step agent",
+        model: STEP_MODEL_ID,
+        tools: [...tools, createSubmitFileMetadataTool(fileMetadata)],
+        maxIterations,
+    };
+}
+
+/**
+ * Deps for a step whose agent declares only the output tool: the loop makes
+ * exactly one LLM call and stops, and the post-step pipeline finds an empty
+ * artifact tree.
  */
 function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
     return {
@@ -264,13 +283,7 @@ function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
         workspaceFs: {} as WorkspaceFilesystem,
         resolveWorkspaceRoot: () => workspaceRoot,
         model: STEP_MODEL_ID,
-        buildAgent: () => ({
-            id: USAGE_AGENT_ID,
-            systemPrompt: "you are a test step agent",
-            model: STEP_MODEL_ID,
-            tools: [],
-            maxIterations: 4,
-        }),
+        buildAgent: ({ fileMetadata }) => stepAgent(fileMetadata),
         resolveWritePrefix: (stepInput) => join(workspaceRoot, "runs", stepInput.runId, stepInput.stepId),
     };
 }
@@ -388,6 +401,49 @@ describe("sandbox-step data-step-usage part", () => {
 
         const folded = usageParts(foldStream(dbosState.emittedParts));
         expect(folded.map((p) => p.stepId).sort()).toEqual(["T1S1", "T1S2"]);
+    });
+});
+
+// ── the output tool of the file-metadata continuation ───────────────
+
+/** The tool result of one call in the messages of a request. */
+function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
+    return request.messages
+        .flatMap((message) => (message.role === "tool" ? message.content : []))
+        .find((part): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
+}
+
+describe("sandbox-step file-metadata output tool", () => {
+    it("masks submit_file_metadata during the task, thus the call gets the error of the mask", async () => {
+        let cell: FileMetadataCell | undefined;
+        const provider = scriptedProvider((i) =>
+            i === 0
+                ? makeMessage(
+                      [
+                          toolUseBlock("tu-meta", "submit_file_metadata", {
+                              files: [{ path: "output/result.csv", description: "counts", dataType: "table", format: "csv" }],
+                          }),
+                      ],
+                      "tool_use",
+                  )
+                : makeMessage([textBlock("done")], "end_turn"),
+        );
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            provider,
+            buildAgent: ({ fileMetadata }) => {
+                cell = fileMetadata;
+                return stepAgent(fileMetadata);
+            },
+        };
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        const refusal = toolResultIn(provider.calls[1]!, "tu-meta");
+        expect(refusal?.output.type).toBe("error-text");
+        expect(JSON.stringify(refusal?.output)).toContain("The tool submit_file_metadata is not available for this request");
+        expect(cell?.descriptions.size).toBe(0);
     });
 });
 
@@ -690,26 +746,25 @@ describe("sandbox-step capped-out empty manifest", () => {
             ...usageStepDeps(undefined),
             pool,
             provider,
-            buildAgent: ({ blockerHolder }) => ({
-                id: USAGE_AGENT_ID,
-                systemPrompt: "you are a test step agent",
-                model: STEP_MODEL_ID,
-                tools: [
-                    defineTool({
-                        id: "echo",
-                        description: "Echo the label back.",
-                        inputSchema: z.object({ label: z.string() }),
-                        describeCall: "none",
-                        execute: async ({ label }) => {
-                            if (args.blockerReason !== undefined) {
-                                blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
-                            }
-                            return ok({ label });
-                        },
-                    }),
-                ],
-                maxIterations: 1,
-            }),
+            buildAgent: ({ blockerHolder, fileMetadata }) =>
+                stepAgent(
+                    fileMetadata,
+                    [
+                        defineTool({
+                            id: "echo",
+                            description: "Echo the label back.",
+                            inputSchema: z.object({ label: z.string() }),
+                            describeCall: "none",
+                            execute: async ({ label }) => {
+                                if (args.blockerReason !== undefined) {
+                                    blockerHolder.outcome = { kind: "blocker", reason: args.blockerReason };
+                                }
+                                return ok({ label });
+                            },
+                        }),
+                    ],
+                    1,
+                ),
         };
         return { deps, values };
     }
