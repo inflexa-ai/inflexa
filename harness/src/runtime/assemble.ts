@@ -46,6 +46,7 @@ import { createCitationResolver, type CitationResolverConfig } from "../citation
 import type { CitationResolver } from "../citations/types.js";
 import type { AuthContext } from "../auth/types.js";
 import { createThreadStore } from "../memory/thread-store.js";
+import { createWorkingMemory } from "../memory/working-memory.js";
 import { createArtifactReadStore, createProductionResolver } from "../report-model/production-resolver.js";
 import type { ReferenceResolver } from "../report-model/reference-resolver.js";
 import { createReportVersionStore } from "../state/report-versions.js";
@@ -68,11 +69,15 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * conversation agent does not — a half-wired ledger that reads as a complete
  * one. The protection has to hold on both sides of the assembly, not just the
  * conversation side. Each bag omits `toolOutputStore` for the same reason: each
- * loop must keep its texts in the one store that each read tool reads.
+ * loop must keep its texts in the one store that each read tool reads. The
+ * `executeAnalysis` bag omits `workingMemory`, because the step seeds must read
+ * the same memory that the conversation agent writes.
  */
 export interface CoreWorkflowDeps {
     readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
-    readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver" | "toolOutputStore">;
+    readonly buildExecuteAnalysis: (
+        sandboxStep: SandboxStepCallable,
+    ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "citationResolver" | "toolOutputStore" | "workingMemory">;
     readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore">;
 }
 
@@ -313,7 +318,13 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
     const toolOutputStore = createToolOutputStore(conversation.pool);
 
     const sandboxStep = registerSandboxStep({ ...wf.sandboxStep, citationResolver, usageRecorder, toolOutputStore });
-    const executeAnalysis = registerExecuteAnalysis({ ...wf.buildExecuteAnalysis(sandboxStep), citationResolver, usageRecorder, toolOutputStore });
+    const executeAnalysis = registerExecuteAnalysis({
+        ...wf.buildExecuteAnalysis(sandboxStep),
+        citationResolver,
+        usageRecorder,
+        toolOutputStore,
+        workingMemory: createWorkingMemory(conversation.pool),
+    });
     const dataProfile = registerDataProfileWorkflow({ ...wf.dataProfile, usageRecorder, toolOutputStore });
     // The extraction workflow shares the profile's sandbox and authorization rails, thus it draws the same
     // three seams from the profile deps. The report resolver factory binds the extraction arm over this

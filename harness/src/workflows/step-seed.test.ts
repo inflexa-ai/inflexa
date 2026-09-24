@@ -5,7 +5,7 @@
  * parent wraps it in a `DBOS.runStep`, which is what makes its output
  * replay-stable). They assert on the composed STRING against real durable
  * state: a summary written to the run tree, artifact rows in the fake ledger,
- * and a persisted data profile.
+ * a persisted data profile, and a working-memory row read through the real store.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
@@ -15,6 +15,8 @@ import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
+import { createWorkingMemory, type WorkingMemory } from "../memory/working-memory.js";
+import { ANALYSIS_MEMORY_HEADING } from "../prompts/briefing.js";
 import type { DataProfileResult } from "../state/data-profile.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import { composeStepSeed } from "./execute-analysis.js";
@@ -47,10 +49,16 @@ interface FakeState {
     readonly profile?: DataProfileResult;
     /** `cortex_artifacts` step-output rows, keyed by step id. */
     readonly artifactsByStep?: Record<string, Array<{ path: string; file_type: string | null }>>;
+    /** `cortex_working_memory.data` for this analysis. A mutable holder, thus a test can edit it between two dispatches. */
+    readonly memory?: { current: WorkingMemory | undefined };
+    /** Make the working-memory read fail at the driver. */
+    readonly memoryReadFails?: boolean;
 }
 
 function fakePool(state: FakeState): Pool {
-    const query = async (q: { text: string; values?: readonly unknown[] }) => {
+    // The state queries pass a config object; the working-memory store passes the text and the values apart.
+    const query = async (config: string | { text: string; values?: readonly unknown[] }, values?: readonly unknown[]) => {
+        const q = typeof config === "string" ? { text: config, values } : config;
         const text = q.text.trim();
         if (text.startsWith("SELECT data_profile_status")) {
             if (!state.profile) return { rows: [], rowCount: 0 };
@@ -68,6 +76,11 @@ function fakePool(state: FakeState): Pool {
                 rowCount: 1,
             };
         }
+        if (text.startsWith("SELECT data FROM cortex_working_memory")) {
+            if (state.memoryReadFails) throw new Error("connection refused");
+            const data = state.memory?.current;
+            return data ? { rows: [{ data }], rowCount: 1 } : { rows: [], rowCount: 0 };
+        }
         if (text.startsWith("SELECT path, file_type")) {
             const stepId = q.values?.[2] as string;
             const limit = q.values?.[3] as number;
@@ -80,10 +93,25 @@ function fakePool(state: FakeState): Pool {
 }
 
 function deps(workspaceRoot: string, state: FakeState = {}): ExecuteAnalysisDeps {
+    const pool = fakePool(state);
     return {
-        pool: fakePool(state),
+        pool,
+        workingMemory: createWorkingMemory(pool),
         resolveWorkspaceRoot: () => workspaceRoot,
     } as unknown as ExecuteAnalysisDeps;
+}
+
+function memoryRow(overrides: Partial<WorkingMemory> = {}): WorkingMemory {
+    return {
+        goal: "MEMORY_GOAL",
+        constraints: [
+            { id: "c1", text: "USER_RULE", origin: "user" },
+            { id: "c2", text: "AGENT_RULE", origin: "agent" },
+        ],
+        hypotheses: [{ id: "h1", text: "HYPOTHESIS_TEXT" }],
+        findings: { "run-0": [{ id: "f1", text: "FINDING_TEXT" }] },
+        ...overrides,
+    };
 }
 
 function planStep(id: string, dependsOn: readonly string[] = []): AnalysisStep {
@@ -218,6 +246,54 @@ describe("composeStepSeed", () => {
         expect(seed).toContain("QUESTION_T1S1");
     });
 
+    it("carries the goal and each constraint with its origin, and leaves out the hypotheses and the findings", async () => {
+        const root = await makeWorkspace();
+        const seed = await composeStepSeed({
+            input: input([planStep("T1S1")]),
+            stepId: "T1S1",
+            runId: RUN_ID,
+            deps: deps(root, { memory: { current: memoryRow() } }),
+        });
+
+        expect(seed).toContain("## Analysis memory (read only)");
+        expect(seed).toContain("Goal: MEMORY_GOAL");
+        expect(seed).toContain("- (user) USER_RULE");
+        expect(seed).toContain("- (agent) AGENT_RULE");
+        expect(seed).not.toContain("HYPOTHESIS_TEXT");
+        expect(seed).not.toContain("FINDING_TEXT");
+    });
+
+    it("omits the memory section when the analysis has no working-memory row", async () => {
+        const root = await makeWorkspace();
+        const seed = await composeStepSeed({ input: input([planStep("T1S1")]), stepId: "T1S1", runId: RUN_ID, deps: deps(root) });
+
+        expect(seed).not.toContain("Analysis memory");
+        expect(seed).toContain("QUESTION_T1S1");
+    });
+
+    it("reads the memory at each dispatch, thus a later step sees an edit made during the run", async () => {
+        const root = await makeWorkspace();
+        const memory = { current: memoryRow() };
+        const stepDeps = deps(root, { memory });
+        const runInput = input([planStep("T1S1"), planStep("T1S2")]);
+
+        const first = await composeStepSeed({ input: runInput, stepId: "T1S1", runId: RUN_ID, deps: stepDeps });
+        memory.current = memoryRow({ constraints: [{ id: "c3", text: "EDITED_RULE", origin: "user" }] });
+        const second = await composeStepSeed({ input: runInput, stepId: "T1S2", runId: RUN_ID, deps: stepDeps });
+
+        expect(first).toContain("USER_RULE");
+        expect(first).not.toContain("EDITED_RULE");
+        expect(second).toContain("EDITED_RULE");
+        expect(second).not.toContain("USER_RULE");
+    });
+
+    it("leaves the memory section out when the working-memory read fails", async () => {
+        const root = await makeWorkspace();
+        const seed = await composeStepSeed({ input: input([planStep("T1S1")]), stepId: "T1S1", runId: RUN_ID, deps: deps(root, { memoryReadFails: true }) });
+        expect(seed).not.toContain(ANALYSIS_MEMORY_HEADING);
+        expect(seed.length).toBeGreaterThan(0);
+    });
+
     it("recomposes byte-identically from the same durable inputs (replay stability)", async () => {
         const root = await makeWorkspace();
         await writeStepSummary(root, "T1S1", "# DE results\n\n412 genes.");
@@ -228,6 +304,7 @@ describe("composeStepSeed", () => {
             deps: deps(root, {
                 profile: PROFILE,
                 artifactsByStep: { T1S1: [{ path: "runs/run-1/T1S1/output/de.csv", file_type: "output" }] },
+                memory: { current: memoryRow() },
             }),
         };
 

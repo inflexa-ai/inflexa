@@ -5,6 +5,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ANALYSIS_MEMORY_HEADING } from "../../prompts/briefing.js";
 import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../../prompts/SOUL.js";
 import {
     sandboxOrientCorePrompt,
@@ -400,6 +401,13 @@ describe("createSandboxAgent — the file-metadata output tool", () => {
 
         expect(result.isErr()).toBe(true);
         expect(result._unsafeUnwrapErr()).toMatchObject({ retryable: false, error: expect.stringContaining("after the task") });
+    });
+});
+
+describe("the orient core and the analysis-memory section of the briefing", () => {
+    it("names the heading that the briefing renders, in each toolchain variant", () => {
+        expect(sandboxOrientCorePromptFor("store")).toContain(`"${ANALYSIS_MEMORY_HEADING}"`);
+        expect(sandboxOrientCorePromptFor("image")).toContain(`"${ANALYSIS_MEMORY_HEADING}"`);
     });
 });
 

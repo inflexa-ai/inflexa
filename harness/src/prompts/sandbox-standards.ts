@@ -43,6 +43,10 @@ working directory and the read-only analysis root, what the input dataset is
 (domain, organism, design, quality concerns, files), and what each upstream step
 produced and where it put it. Work from it.
 
+When the analysis has a recorded goal or constraints, the briefing carries them
+under "Analysis memory (read only)": obey each constraint from the user, and treat
+each constraint from the agent as context. You cannot change that memory.
+
 Do NOT re-derive what it already gives you: no filesystem hunt for your inputs, no
 re-reading an upstream step whose summary you were handed, no re-deriving the
 organism or the dimensions from raw bytes. Reach further only where the briefing is

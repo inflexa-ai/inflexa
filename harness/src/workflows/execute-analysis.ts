@@ -106,7 +106,8 @@ import type { SynthesisStatus, UpdateStepExecutionInput } from "../state/index.j
 import { addChatUsage, hasReportedUsage, type AgentRunUsage } from "../loop/metrics.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import { SYNTHESIS_AGENT_ID, loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
-import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
+import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, emptyStepMemory, type StepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
+import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
@@ -296,6 +297,11 @@ export interface ExecuteAnalysisDeps {
     readonly usageRecorder?: UsageRecorder;
     /** The store of the loops of the run synthesis and of their read tools. */
     readonly toolOutputStore?: ToolOutputStore;
+    /**
+     * The working memory of the analysis. The body only reads it: each step seed
+     * carries the goal and the constraints as they are at the dispatch of that step.
+     */
+    readonly workingMemory: WorkingMemoryStore;
 
     /**
      * The provenance seam of the composition. The body reads its run emit member,
@@ -490,17 +496,36 @@ export function buildChildInput(args: {
  * rendered any earlier (at plan submission, say) cannot mention them, and the
  * agent is left to rediscover its own upstream.
  *
- * Everything read here is durable state written by an already-settled child
- * (`output/summary.md`, `cortex_artifacts`) or by the profiler
- * (`cortex_analysis_state`) — never live in-flight state, which would not
- * reproduce.
- *
  * REPLAY: the caller wraps this in a `DBOS.runStep`, so the composed string is
  * checkpointed and a replay returns it verbatim — the DB and disk are not read
  * again and cannot drift the seed under a recovered run. Never call it
  * unwrapped from the workflow body.
  */
 export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<string> {
+    return composeStepBriefing(await gatherStepPackage(args));
+}
+
+/**
+ * Do every read of one step's package and give the data its seed is rendered
+ * from. All reads live here, so `composeStepBriefing` stays a pure renderer.
+ *
+ * Everything read is durable state: written by an already-settled child
+ * (`output/summary.md`, `cortex_artifacts`), by the profiler
+ * (`cortex_analysis_state`), or by the conversation agent
+ * (`cortex_working_memory`). The working memory is the one read that can
+ * change while the run is live — it is read per dispatch, not once per run,
+ * so an edit during a run reaches each later step, and two steps of one run
+ * can carry different copies.
+ *
+ * A read failure throws (house rules): a swallowed error would be frozen into
+ * the checkpointed seed and served to every replay of this step.
+ */
+export async function gatherStepPackage(args: {
+    input: ExecuteAnalysisInput;
+    stepId: string;
+    runId: string;
+    deps: ExecuteAnalysisDeps;
+}): Promise<StepBriefing> {
     const { input, stepId, runId, deps } = args;
 
     const step = input.planStepById[stepId];
@@ -519,9 +544,19 @@ export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepI
         workingDir: toSandboxPath(workspaceRoot, analysisId, stepWritePrefix({ workspaceRoot, runId, stepId })),
     };
 
-    // A DB failure here throws (house rules): a swallowed error would be frozen
-    // into the checkpointed seed and served to every replay of this step.
     const profile = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
+    // A failed memory read leaves the section out: the step runs without the copy of the memory, not without a seed.
+    const memoryRead = await deps.workingMemory.load(analysisId);
+    if (memoryRead.isErr()) {
+        const log = (deps.logger ?? createNoopLogger()).named("executeAnalysis.seed");
+        log.warn("the working-memory read failed, thus the seed has no memory section", {
+            analysisId,
+            stepId,
+            error: describeDbError(memoryRead.error),
+            ...log.errorFields(memoryRead.error.cause),
+        });
+    }
+    const memory = memoryRead.isOk() ? memoryRead.value : emptyStepMemory();
 
     const upstream = await collectUpstreamHandoffs({
         analysisId,
@@ -532,12 +567,13 @@ export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepI
         pool: deps.pool,
     });
 
-    return composeStepBriefing({
+    return {
         step,
         workspace,
         profile: profile?.result ?? null,
         upstream,
-    });
+        memory: { goal: memory.goal, constraints: memory.constraints },
+    };
 }
 
 /**
