@@ -33,7 +33,7 @@ import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderC
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolError, type ToolResultImage } from "../tools/define-tool.js";
 import { labelToolFailure, labelToolValidationFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
-import { addChatUsage, hasReportedUsage, recordAgentRun, recordChatCall, type AgentRunUsage } from "./metrics.js";
+import { addChatUsage, countChatTokens, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
@@ -409,7 +409,9 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             ...reasoningField,
         };
         const llmStepName = formatStepName.llm(i);
-        const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal));
+        // The token counters grow inside the step body, thus a replayed step,
+        // which returns the stored reply, does not count the call again.
+        const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal).map(countChatTokens(agent.id)));
         accountForChatCall(reply, { ...accounting, stepName: llmStepName });
 
         if (reply.finishReason === "aborted") {
@@ -529,11 +531,13 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     // transcript.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
-        provider.chat(
-            { system, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
-            session,
-            signal,
-        ),
+        provider
+            .chat(
+                { system, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
+                session,
+                signal,
+            )
+            .map(countChatTokens(agent.id)),
     );
     accountForChatCall(wrapUp, { ...accounting, stepName: wrapUpStepName });
 
@@ -564,7 +568,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 /** What one completed LLM call is accounted under. */
 export interface ChatCallAccounting {
     readonly session: AgentSession;
-    /** The agent that made the call. The usage record and the `agent_id` label of the token counters carry it. */
+    /** The agent that made the call, as its usage record names it. */
     readonly agentId: string;
     readonly callPath: readonly string[];
     /**
@@ -583,12 +587,18 @@ export interface ChatCallAccounting {
 }
 
 /**
- * Account for one completed LLM call: fold its usage into each rollup, grow the
- * token counters, and hand the attributed record to the recorder. The loop calls
- * it at the fold point, with the reply in hand — before any branch that can end
- * the run — so a call that completed is accounted for even when the run later
- * aborts or dies. A direct `provider.chat` call outside the loop uses the same
- * path, thus its call reaches the same three surfaces.
+ * Account for one completed LLM call: fold its usage into each rollup, and hand
+ * the attributed record to the recorder. The loop calls it at the fold point,
+ * with the reply in hand — before any branch that can end the run — so a call
+ * that completed is accounted for even when the run later aborts or dies. A
+ * direct `provider.chat` call outside the loop uses the same path, thus its call
+ * reaches the same surfaces.
+ *
+ * The token counters are not grown here. The caller grows them inside the step
+ * body of the call (`countChatTokens`), because a replayed step also returns its
+ * stored reply to this function. A replay folds the rollups of the recovered
+ * run again, which holds them in memory only, and it delivers the record again
+ * under the same idempotency key, which an upserting sink counts once.
  *
  * A call that reported nothing produces no record. Model ids are identity,
  * not usage: a reply carrying only `requestedModelId`/`servedModelId` still
@@ -600,7 +610,6 @@ export interface ChatCallAccounting {
  */
 export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting): void {
     for (const rollup of call.rollups) addChatUsage(rollup, reply.usage);
-    recordChatCall({ agentId: call.agentId, response: reply });
 
     const reported = reply.usage;
     if (reported === undefined || !hasReportedUsage(reported)) return;

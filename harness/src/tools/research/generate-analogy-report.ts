@@ -24,6 +24,7 @@ import { forSubAgent } from "../../auth/types.js";
 import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { countChatTokens } from "../../loop/metrics.js";
 import { accountForChatCall, finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition } from "../../loop/types.js";
@@ -276,27 +277,29 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             // raw output into a valid envelope. The parse+validate+envelope
             // cascade below is the safety net.
             try {
+                // The token counters grow with the call, under the id of the reasoner.
                 const reply = unwrapOrThrow(
-                    await deps.provider.chat(
-                        {
-                            tools: {},
-                            toolChoice: "none",
-                            system:
-                                "You convert an analogical-reasoner's free-text output " +
-                                "into a strict AnalogyReportSchema JSON envelope. You " +
-                                "preserve information faithfully and never invent content. " +
-                                "You return ONLY raw JSON — no prose, no markdown fences, " +
-                                "no commentary.",
-                            messages: [{ role: "user", content: buildConversionPrompt(rawText) }],
-                        },
-                        childSession,
-                        ctx.signal,
-                    ),
+                    await deps.provider
+                        .chat(
+                            {
+                                tools: {},
+                                toolChoice: "none",
+                                system:
+                                    "You convert an analogical-reasoner's free-text output " +
+                                    "into a strict AnalogyReportSchema JSON envelope. You " +
+                                    "preserve information faithfully and never invent content. " +
+                                    "You return ONLY raw JSON — no prose, no markdown fences, " +
+                                    "no commentary.",
+                                messages: [{ role: "user", content: buildConversionPrompt(rawText) }],
+                            },
+                            childSession,
+                            ctx.signal,
+                        )
+                        .map(countChatTokens(AGENT_ID)),
                 );
-                // The conversion call reaches the counters, the recorder, and the
-                // turn total through the accounting path of the loop. Its fixed
-                // call name keeps its record key apart from each key of the
-                // research loop.
+                // The conversion call reaches the recorder and the turn total
+                // through the accounting path of the loop. Its fixed call name
+                // keeps its record key apart from each key of the research loop.
                 accountForChatCall(reply, {
                     session: childSession,
                     agentId: AGENT_ID,

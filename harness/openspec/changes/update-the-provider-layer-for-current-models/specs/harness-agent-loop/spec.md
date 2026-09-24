@@ -67,6 +67,11 @@ arm, the wrap-up request still changes the prefix.
 The loop MUST record the token counters of each LLM call when that call completes, the forced wrap-up included. It MUST
 NOT wait for the end of the run. Thus a run that throws keeps the count of the calls that completed before the throw.
 
+The loop MUST grow the counters inside the step body of the call. A step that a recovery replays returns its stored
+reply and does not run its body. Thus the replay does not count the call again. A counter is cumulative, and no sink can
+remove a second count from it. The usage record keeps its idempotency key, thus the replay delivers the same record
+again, and an upserting sink counts it one time.
+
 The loop MUST record these counters:
 
 - `cortex.harness.agent.input_tokens`
@@ -77,7 +82,7 @@ The loop MUST record these counters:
 
 Each counter MUST carry these labels:
 
-- `agent_id`: the `agentId` of the usage record of the call.
+- `agent_id`: the id of the agent that makes the call. The loop uses the `id` of its `AgentDefinition`, the same as the iteration histogram. A direct call uses the id of its own agent. The label MUST NOT come from the provenance of the session. A host can give one root provenance to different agents, and their tokens would then merge.
 - `model`: the `servedModelId` of the response. The label is absent when the response reports no served model.
 - `provider`: the `provider` of the response. The label is absent when the response names no provider.
 
@@ -94,8 +99,9 @@ total, with the descendant loops. The llm-usage-accounting capability gives the 
 the finish rollups are three surfaces over the same capture of each call. No surface replaces another, and the rule that
 absent means "not reported" holds on all three.
 
-The ad hoc router and the analogy conversion call `provider.chat` directly. They MUST use the same accounting path as
-the loop, thus their calls reach the counters and the recorder.
+The ad hoc router and the analogy conversion call `provider.chat` directly. Each of them MUST grow the counters in the
+body that makes the call, under its own agent id. Each of them MUST also use the same accounting path as the loop. Thus
+their calls reach the counters and the recorder.
 
 The two cache counters make prompt caching observable. The hit rate of an agent type is
 `cache_read_tokens / input_tokens`, because `inputTokens` is the total billed prefix. A read counter at zero beside a
@@ -129,6 +135,19 @@ through its `Logger`. The `err` MUST NOT change the outcome of the run.
 - **GIVEN** a response with the `servedModelId` `claude-opus-5-5` and the `provider` `anthropic.messages`
 - **WHEN** the loop records the call
 - **THEN** each token counter MUST carry `agent_id`, `model: "claude-opus-5-5"`, and `provider: "anthropic.messages"`
+
+#### Scenario: Two agents of one root provenance stay apart
+
+- **GIVEN** two loops of different agents, whose sessions carry the same provenance, for example `tui-chat`
+- **WHEN** each loop records a call
+- **THEN** the token counters MUST carry the id of the agent of each loop as `agent_id`, thus the two series stay apart
+
+#### Scenario: A replayed step does not count again
+
+- **GIVEN** a run whose steps a recovery replays from the step store
+- **WHEN** each replayed step returns its stored reply
+- **THEN** the token counters MUST NOT grow for the replayed calls
+- **AND** the usage records of the replayed calls MUST carry the same keys as the records of the first run
 
 #### Scenario: Reasoning tokens reach their counter
 
