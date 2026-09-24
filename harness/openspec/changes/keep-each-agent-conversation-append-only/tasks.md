@@ -85,18 +85,18 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 5. The salvage as a continuation
 
-- [ ] 5.1 In `src/loop/run-to-terminal.ts`, run the salvage through `continueAgent` with `first.messages` and `opts`. Give the request `{ text: salvage.nudge, mask: { allow: salvage.tools.map((t) => t.id) }, maxRequests: salvageBudget, stepNamespace: "salvage" }`.
-- [ ] 5.2 Remove `salvageAgent` and `salvageStepNames`. Return `[...first.messages, ...salvaged.messages]` as the messages of the result.
-- [ ] 5.3 Keep `sumUsage`, the `SalvageRecord`, and the warn record. Expected result: the step names stay `salvage:llm-0` and `salvage:tool-<name>-<id>`.
-- [ ] 5.4 Throw at the start of `runToTerminal` when a tool of `salvage.tools` is not in `agent.tools`. The message names the tool and the agent.
-- [ ] 5.5 Write the module header and the doc comments of `TerminalSalvage` again. The salvage keeps the declared tools, and the ids of `salvage.tools` make the mask. Remove the salvage run from the list of cache defeaters in `src/providers/prompt-cache.ts`.
-- [ ] 5.6 In `src/loop/run-to-terminal.test.ts`, add these tests:
+- [x] 5.1 In `src/loop/run-to-terminal.ts`, run the salvage through `continueAgent` with `first.messages` and `opts`. Give the request `{ text: salvage.nudge, mask: { allow: salvage.tools.map((t) => t.id) }, maxRequests: salvageBudget, stepNamespace: "salvage" }`.
+- [x] 5.2 Remove `salvageAgent` and `salvageStepNames`. Return `[...first.messages, ...salvaged.messages]` as the messages of the result.
+- [x] 5.3 Keep `sumUsage`, the `SalvageRecord`, and the warn record. Expected result: the step names stay `salvage:llm-0` and `salvage:tool-<name>-<id>`.
+- [x] 5.4 Throw at the start of `runToTerminal` when a tool of `salvage.tools` is not in `agent.tools`. The message names the tool and the agent.
+- [x] 5.5 Write the module header and the doc comments of `TerminalSalvage` again. The salvage keeps the declared tools, and the ids of `salvage.tools` make the mask. Remove the salvage run from the list of cache defeaters in `src/providers/prompt-cache.ts`.
+- [x] 5.6 In `src/loop/run-to-terminal.test.ts`, add these tests:
   - Each salvage request declares each tool of the agent.
   - A salvage call of a tool that is not terminal gets the error result of the mask.
   - An undeclared terminal tool throws.
-- [ ] 5.7 Make sure that the salvage tests in `src/execution/run-synthesis.test.ts` and `src/tools/research/generate-plan.test.ts` pass. Change a test only when it asserts the tool set of a salvage request.
-- [ ] 5.8 Run `tsc -p tsconfig.json`. Run `bun test src/loop/run-to-terminal.test.ts src/execution/run-synthesis.test.ts`.
-- [ ] 5.9 Run `bun test src/tools/research/generate-plan.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 5.7 Make sure that the salvage tests in `src/execution/run-synthesis.test.ts` and `src/tools/research/generate-plan.test.ts` pass. Change a test only when it asserts the tool set of a salvage request.
+- [x] 5.8 Run `tsc -p tsconfig.json`. Run `bun test src/loop/run-to-terminal.test.ts src/execution/run-synthesis.test.ts`.
+- [x] 5.9 Run `bun test src/tools/research/generate-plan.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 6. The budget of the synthesis
 
