@@ -12,10 +12,8 @@ import {
     type ToolSet,
 } from "ai";
 import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
-// The capability table of the package, from its internal entry. The binding of
-// the thinking blocks reads it to find a model that always thinks, because any
-// `providerOptions.anthropic.thinking` stops the thinking selection of the
-// package (refer to `thinkingWithBinding`).
+// Any `providerOptions.anthropic.thinking` bypasses this table's thinking
+// selection (see `thinkingWithBinding`).
 import { getModelCapabilities } from "@ai-sdk/anthropic/internal";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -59,16 +57,10 @@ export const RETRY_MAX_DELAY_MS = 30_000;
 
 /**
  * Output-token ceiling requested when a config names none — a floor against a
- * provider default, not a target.
- *
- * For a model id that the capability table of `@ai-sdk/anthropic`
- * (`getModelCapabilities`) knows, the package clamps a larger value to the row
- * of that model, so this value cannot over-request a model that the table
- * knows. For an unset value the package takes a default from the same table:
- * 128000 for a `claude-*` id that the table does not know, and 4096 for a
- * non-Claude id, for example a model behind an Anthropic-compatible endpoint.
- * The anthropic arm always sends a value, thus such a model does not truncate
- * at 4096 in the middle of a tool call.
+ * provider default, not a target. For an unset value, `@ai-sdk/anthropic`
+ * defaults to 128000 for an unknown `claude-*` id and 4096 for a non-Claude
+ * id. The anthropic arm always sends a value, so it never truncates mid
+ * tool-call.
  *
  * Lower it per-config for servers that validate `prompt + max_tokens <= context`
  * (vLLM and similar) against a small-context model.
@@ -106,10 +98,9 @@ export interface ProviderHostPolicy {
     readonly suspendOn?: SuspendOn;
 }
 
-/** The facts of one model call from which a provider makes the provider options of that call. */
+/** The call facts that `providerOptionsFor` uses to build provider options. */
 export interface ProviderCall {
     readonly session: AgentSession;
-    /** The effort that the provider selected for the call. */
     readonly reasoning: ReasoningPolicy;
 }
 
@@ -135,16 +126,11 @@ export interface AiSdkProviderDeps extends ProviderHostPolicy {
      * hands the SDK no bound.
      */
     readonly requestTimeoutMs?: number;
-    /**
-     * The reasoning effort of each call whose request sets no `reasoning`. The
-     * value of a request wins over this value. When the field is absent, such a
-     * call runs at {@link DEFAULT_REASONING}.
-     */
+    /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
     readonly reasoning?: ReasoningPolicy;
     /**
-     * The provider options of one call, in the namespace of the bound model.
-     * The provider calls the function one time for each call, before the retry
-     * envelope, thus each attempt of the call sends the same options.
+     * Builds provider options once per call, before the retry envelope, so
+     * every attempt reuses the same options.
      */
     readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined;
 }
@@ -190,31 +176,11 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
-          /**
-           * The reasoning effort of each call whose request sets no `reasoning`.
-           * A host sets the effort of a role here, beside the model of that
-           * role. When the field is absent, such a call runs at
-           * {@link DEFAULT_REASONING}.
-           */
+          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
           /**
-           * What the API does with a replayed thinking block whose prefix
-           * changed. Claude Opus 5.5 and Claude Fable 5.1 bind each signed
-           * thinking block to the prefix that made it.
-           *
-           * - `drop_block`, the default: the API drops the block that does not
-           *   match, and each later thinking block of that request. The request
-           *   continues, and the provider logs each drop that the response
-           *   reports.
-           * - `error`: the API refuses the request with HTTP 400. A test against
-           *   the real API uses this mode, thus a prefix change fails the test.
-           * - `off`: the provider sends no binding.
-           *
-           * The binding makes the package send the beta header
-           * `thinking-binding-controls-2026-08-01`. A gateway that refuses that
-           * header needs `off`. The provider sends the binding only to a model
-           * that always thinks, thus the binding never changes whether a
-           * request thinks.
+           * How the API handles a signed thinking block whose prefix changed
+           * (Opus 5.5, Fable 5.1). Needs the `thinking-binding-controls-2026-08-01` beta header.
            */
           readonly thinkingBinding?: "drop_block" | "error" | "off";
       }
@@ -253,12 +219,7 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
-          /**
-           * The reasoning effort of each call whose request sets no `reasoning`.
-           * A host sets the effort of a role here, beside the model of that
-           * role. When the field is absent, such a call runs at
-           * {@link DEFAULT_REASONING}.
-           */
+          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
           /**
            * NOTICE: this value is the retention directive of the Responses wire.
@@ -324,12 +285,7 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
-          /**
-           * The reasoning effort of each call whose request sets no `reasoning`.
-           * A host sets the effort of a role here, beside the model of that
-           * role. When the field is absent, such a call runs at
-           * {@link DEFAULT_REASONING}.
-           */
+          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
           readonly reasoning?: ReasoningPolicy;
       };
 
@@ -343,26 +299,8 @@ function workloadOf(session: AgentSession): string {
 }
 
 /**
- * The identifier string of the session key of a call. A gateway keeps the calls
- * of one key on one account, and thus on one prompt cache. The vendor never gets
- * this string, only its digest ({@link sessionKeyDigestOf}).
- *
- * The string holds only identifiers: never a name, an address, or the
- * `identity` of the session. It reads only the scope and the run frame.
- * `forSubAgent` changes only the provenance, thus a sub-agent sends the key of
- * its parent.
- *
- * The first rule that applies gives the string:
- *
- * 1. A run frame with a step gives `<analysisId>:<runId>:<stepId>`.
- * 2. A run frame without a step gives `<analysisId>:<runId>`.
- * 3. A scope with a thread gives `<analysisId>:<threadId>`.
- * 4. Else, the string is `<analysisId>`.
- *
- * The run frame comes first, because a run that a chat starts can carry the
- * thread of that chat in its scope, and the steps of that run must not share the
- * key of the chat. The step key spreads the parallel steps of one run across the
- * accounts of a gateway, and each step keeps its later calls on its account.
+ * Identifiers only, never a name or address. The run frame wins over the
+ * thread so parallel steps of one run keep separate gateway cache accounts.
  */
 export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">): string {
     const { scope, runFrame } = session;
@@ -373,35 +311,18 @@ export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">):
 }
 
 /**
- * The session key that goes to the vendor: the base64url SHA-256 digest of the
- * identifier string of {@link sessionKeyOf}, always 43 characters.
- *
- * The identifier string of a step holds three identifiers and passes 64
- * characters. OpenAI and Azure refuse a `prompt_cache_key` longer than 64
- * characters with a 400 that no retry passes. Anthropic recommends a hash or
- * another opaque value for `metadata.user_id`. One string always gives one
- * digest, thus a gateway still keeps the calls of one session on one account.
+ * Base64url SHA-256 digest of {@link sessionKeyOf}, always 43 characters.
+ * OpenAI and Azure reject a `prompt_cache_key` over 64 characters with a
+ * non-retryable 400.
  */
 export function sessionKeyDigestOf(session: Pick<AgentSession, "scope" | "runFrame">): string {
     return createHash("sha256").update(sessionKeyOf(session)).digest("base64url");
 }
 
 /**
- * The `thinking` options that bind the thinking blocks of a call to their
- * prefix, for a model that always thinks.
- *
- * CAUTION: any `providerOptions.anthropic.thinking` stops the thinking selection
- * of `@ai-sdk/anthropic`, and the package then sends only what these options
- * hold. A binding without a `type` turns thinking off on a model that can run
- * without thinking. Thus the caller sends the binding only to a model whose
- * capability row says `rejectsThinkingDisabled`.
- *
- * For such a model the options repeat the `type` and the `display` that the
- * package (4.0.62) selects for the effort of the call. Each effort from
- * `minimal` to `xhigh` selects `adaptive` with `summarized`. The effort `none`
- * selects no `type`, and it lowers the effort to `low`. The effort
- * `provider-default` selects nothing. Thus the binding changes neither whether
- * a call thinks nor what it shows.
+ * CAUTION: setting `providerOptions.anthropic.thinking` without a `type`
+ * turns thinking off. Call only for a model whose capability row says
+ * `rejectsThinkingDisabled`.
  */
 function thinkingWithBinding(reasoning: ReasoningPolicy, mode: "drop_block" | "error"): NonNullable<AnthropicLanguageModelOptions["thinking"]> {
     const blockBinding = { prefixMismatchBehavior: mode };
@@ -409,18 +330,14 @@ function thinkingWithBinding(reasoning: ReasoningPolicy, mode: "drop_block" | "e
     return { type: "adaptive", display: "summarized", blockBinding };
 }
 
-/** One input transformation that the Anthropic API reports. A field is absent when the entry carries no string for it. */
+/** One input transformation that the Anthropic API reports. */
 interface InputTransformation {
     readonly type?: string;
     readonly path?: string;
     readonly reason?: string;
 }
 
-/**
- * The input transformations of a response. The Anthropic package gives them in
- * `providerMetadata.anthropic.inputTransformations`, for example a thinking
- * block that the binding dropped. A response of a different vendor gives none.
- */
+/** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
 function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTransformation[] {
     const entries = metadata?.["anthropic"]?.["inputTransformations"];
     if (!Array.isArray(entries)) return [];
@@ -852,7 +769,6 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
     const providerId = providerIdOf(deps.model);
-    /** The effort of one call: the value of the request, then the value of the configuration, then the default. */
     const effortOf = (req: ChatRequest): ReasoningPolicy => req.reasoning ?? deps.reasoning ?? DEFAULT_REASONING;
     // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
     // prompt or completion text on them. The integration rides on each call
@@ -883,10 +799,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     /**
-     * Record each thinking block that the response reports as dropped. The drop
-     * does not fail the call: the request continued without the block. The
-     * reason shows the cause. `prefix_binding_mismatch` is a change of the
-     * prefix, and `model_binding_mismatch` is a change of the model.
+     * Logs each dropped thinking block; the drop does not fail the call.
+     * `reason` is `prefix_binding_mismatch` or `model_binding_mismatch`.
      */
     function logDroppedThinkingBlocks(session: AgentSession, metadata: ProviderMetadata | undefined): void {
         for (const drop of inputTransformationsOf(metadata)) {
@@ -1233,9 +1147,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // must declare the capability. A config value overrides this default in
         // both directions.
         const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
-        // A model that always thinks runs each request with thinking, thus the
-        // binding goes on each of its requests. A model that can run without
-        // thinking gets no binding (refer to `thinkingWithBinding`).
+        // A model that can run without thinking gets no binding (see `thinkingWithBinding`).
         const bindingMode = config.thinkingBinding ?? "drop_block";
         const binding = bindingMode !== "off" && getModelCapabilities(config.model).rejectsThinkingDisabled ? bindingMode : undefined;
         return createAiSdkProvider({

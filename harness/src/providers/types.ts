@@ -39,10 +39,8 @@ export interface ProviderCapabilities {
 }
 
 /**
- * One model call, in harness-neutral terms. The request carries no provider
- * options: the provider makes the options of each call itself, and a cache
- * marker rides a message or the system prompt. A free bag would let a caller
- * write a vendor key that turns a table of the provider package off.
+ * The request carries no free-form provider options. That would let a caller
+ * set a vendor key that bypasses the provider's per-model table.
  */
 export interface ChatRequest {
     /**
@@ -58,9 +56,8 @@ export interface ChatRequest {
      */
     readonly toolChoice?: "auto" | "none";
     /**
-     * How deep the model reasons on this call. The provider selects the effort
-     * of a call in this order: this value, the `reasoning` of the provider
-     * configuration, then `DEFAULT_REASONING`. Refer to `ReasoningPolicy`.
+     * How deep the model reasons. Absent, the effort falls back to the provider
+     * configuration's `reasoning`, then `DEFAULT_REASONING`.
      */
     readonly reasoning?: ReasoningPolicy;
 }
@@ -165,9 +162,8 @@ export interface ChatResponse {
      */
     readonly servedModelId?: string;
     /**
-     * The provider id of the bound model, as the AI SDK names it in
-     * `LanguageModel.provider`, for example `anthropic.messages`. Absent for a
-     * bare model-id string, which names no provider.
+     * The AI SDK's `LanguageModel.provider` id, for example `anthropic.messages`.
+     * Absent for a bare model-id string, which names no provider.
      */
     readonly provider?: string;
 }

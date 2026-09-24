@@ -22,7 +22,7 @@ import type { CheckedPackage } from "./sandbox/list-available-packages.js";
 export const AD_HOC_ROUTER_AGENT_ID = "adhoc-router";
 export const AD_HOC_ROUTER_TIMEOUT_MS = 10_000;
 export const AD_HOC_FALLBACK_AGENT_ID = "scientific-executor";
-/** The fixed call name in the slot of the step name of the usage record key. It cannot collide with a loop step name such as `llm-0`. */
+/** Must differ from a loop step name such as `llm-0`, since both share the usage-record key space. */
 const AD_HOC_ROUTE_CALL_NAME = "adhoc-route";
 
 const resourcesSchema = z.object({
@@ -80,7 +80,7 @@ export interface AdHocRouterDeps {
      * the entries reach the link pass as the model wrote them.
      */
     readonly resolvePackages?: (names: readonly string[]) => Promise<readonly CheckedPackage[] | null>;
-    /** The LLM usage-accounting seam for the router call. Omitted falls back to the no-op recorder. */
+    /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
 }
 
@@ -221,9 +221,9 @@ export async function routeAdHocRequest(
         request: string;
         session: AgentSession;
         signal: AbortSignal;
-        /** The usage accumulator of the turn. The router call folds into it, thus the root finish of the turn includes the call. */
+        /** The router call folds its usage into this, so the turn total includes it. */
         readonly turnUsage?: AgentRunUsage;
-        /** The id of the tool call that routes the request. The record key of the router call carries it. */
+        /** Carried into the record key of the router usage entry. */
         readonly invocationId?: string;
     },
 ): Promise<AdHocRoute> {
@@ -242,7 +242,6 @@ export async function routeAdHocRequest(
     let raw: unknown;
     let failure: AdHocRoute["fallbackClass"];
     try {
-        // The token counters grow with the call, under the id of the router.
         const response = unwrapOrThrow(
             await deps.provider
                 .chat(
@@ -271,9 +270,7 @@ export async function routeAdHocRequest(
                 )
                 .map(countChatTokens(AD_HOC_ROUTER_AGENT_ID)),
         );
-        // The router call reaches the recorder and the turn total through the
-        // accounting path of the loop. A failed call reports no usage: it throws
-        // at `unwrapOrThrow` above, and it counts and records nothing.
+        // A failed call throws at unwrapOrThrow above, so no usage is recorded.
         accountForChatCall(response, {
             session: routerSession,
             agentId: AD_HOC_ROUTER_AGENT_ID,

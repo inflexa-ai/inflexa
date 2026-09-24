@@ -132,14 +132,9 @@ describe("runAgent metrics", () => {
 });
 
 describe("runAgent token counters for each call", () => {
-    /**
-     * A root session of the CLI. Its provenance names `tui-chat` for each agent
-     * that a root turn runs, thus a label from the provenance would merge the
-     * tokens of different agents.
-     */
+    /** Shares one provenance across agents, so a provenance label would merge their tokens. */
     const agentSession = () => makeSession({ agentId: "tui-chat", callPath: ["tui-chat"] });
 
-    /** The data points of one counter: the labels and the value of each series. */
     async function series(name: string): Promise<{ attributes: Record<string, unknown>; value: number }[]> {
         const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
         return (metric?.dataPoints ?? []).map((dp) => ({ attributes: { ...dp.attributes }, value: dp.value as number }));
@@ -147,7 +142,6 @@ describe("runAgent token counters for each call", () => {
 
     const LABELS = { agent_id: "metrics-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
 
-    /** The reply with the usage of one call, the served model, and the provider of the response. */
     function served(reply: ChatResponse): ChatResponse {
         return {
             ...reply,
@@ -166,7 +160,6 @@ describe("runAgent token counters for each call", () => {
 
         await runAgent(agentDef(2), GO, agentSession(), runOpts(chat));
 
-        // 2 iterations + the forced wrap-up: three calls of the same usage.
         expect(chat.calls).toHaveLength(3);
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 300 }]);
         expect(await series(OUTPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 30 }]);
@@ -196,8 +189,6 @@ describe("runAgent token counters for each call", () => {
 
         await expect(runAgent(agentDef(8), GO, agentSession(), { ...runOpts(scriptedProvider([])), provider: failsOnThirdCall })).rejects.toThrow();
 
-        // The counters grew when each of the first two calls completed, not at
-        // the end of the run, which never came.
         expect(calls).toBe(3);
         expect(await series(INPUT_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 200 }]);
         expect(await series(REASONING_TOKENS_METRIC)).toEqual([{ attributes: LABELS, value: 10 }]);
@@ -217,8 +208,7 @@ describe("runAgent token counters for each call", () => {
     });
 
     it("counts each call once when a recovery replays the steps of the run", async () => {
-        // A step store keyed by the step name, the same as the durability
-        // engine: the replay returns each stored value, and it runs no body.
+        // Mimics DBOS replay: a stored step returns its value and skips the body.
         const stored = new Map<string, unknown>();
         const replayingStep: RunStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
             if (stored.has(name)) return stored.get(name) as T;

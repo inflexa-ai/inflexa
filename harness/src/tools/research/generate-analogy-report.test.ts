@@ -154,7 +154,6 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
     it("accounts the conversion call under its own key, and folds each call into the turn total", async () => {
         const provider = scriptedProvider([
-            // The research agent returns prose, thus the conversion call runs.
             makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn", { inputTokens: 100, outputTokens: 10 }),
             makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn", { inputTokens: 20, outputTokens: 5 }),
         ]);

@@ -66,7 +66,7 @@ export interface ExecuteAnalysisToolDeps extends Pick<EnvironmentStorePaths, "fa
      * run reserves anything. Without it, the link pass returns at once.
      */
     readonly extendAnalysisFarm?: ExtendAnalysisFarm;
-    /** The LLM usage-accounting seam for the call of the ad hoc router. Omitted falls back to the no-op recorder. */
+    /** Falls back to the no-op recorder when omitted. */
     readonly usageRecorder?: UsageRecorder;
 }
 

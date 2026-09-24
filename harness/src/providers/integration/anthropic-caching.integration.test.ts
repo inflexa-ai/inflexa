@@ -50,11 +50,8 @@ const LARGE_SYSTEM = Array.from(
 ).join(" ");
 
 /**
- * The request the loop builds: the system prompt marked at its end, an AI SDK
- * `ToolSet`, and the cache breakpoint placed on the LAST MESSAGE, exactly as
- * `runAgent` places the two markers. The cache keys on a prefix and the render
- * order is tools → system → messages, thus each marker caches everything before
- * it.
+ * Carries both cache markers `runAgent` places (system-prompt end, last message).
+ * Each caches everything before it, since render order is tools → system → messages.
  *
  * The placement is the part under test as much as the caching is: each marker has
  * to be a per-block one that an intermediary can count, never the request-level

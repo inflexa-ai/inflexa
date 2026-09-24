@@ -342,7 +342,6 @@ describe("ad hoc resource validation", () => {
 });
 
 describe("ad hoc routing — the usage of the router call", () => {
-    /** A recorder whose collected records are the assertion surface. */
     function recordingRecorder(): { usageRecorder: UsageRecorder; records: LlmUsageRecord[] } {
         const records: LlmUsageRecord[] = [];
         return {
@@ -356,7 +355,6 @@ describe("ad hoc routing — the usage of the router call", () => {
         };
     }
 
-    /** A router provider whose reply reports the usage of the call. */
     function providerReportingUsage(): ChatProvider {
         return {
             capabilities: { toolCalling: true },
