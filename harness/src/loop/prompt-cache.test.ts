@@ -219,7 +219,7 @@ describe("withSystemPromptBreakpoint", () => {
         expect(withSystemPromptBreakpoint("You are a test agent.", "off" as PromptCachePolicy)).toBe("You are a test agent.");
     });
 
-    it("leaves an empty system prompt a plain string, because the API refuses an empty text block", () => {
+    it("leaves an empty system prompt a plain string, thus no marker lands on an empty text block", () => {
         expect(withSystemPromptBreakpoint("", DEFAULT_PROMPT_CACHE)).toBe("");
     });
 });
@@ -237,8 +237,9 @@ describe("runAgent prompt-cache directive", () => {
             expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
 
-        // The wrap-up keeps the tool set of the loop, thus the cached prefix of
-        // the loop holds, and it forbids a call.
+        // The wrap-up request carries the tool set of the loop, and it forbids a
+        // call. Whether the prefix holds on the wire depends on the arm: the
+        // Anthropic package removes the tools for `none`.
         const wrapUp = chat.calls.at(-1)!;
         expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
         expect(wrapUp.toolChoice).toBe("none");
