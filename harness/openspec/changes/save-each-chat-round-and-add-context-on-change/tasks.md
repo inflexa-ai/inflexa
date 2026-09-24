@@ -118,33 +118,33 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 5. The chat turn
 
-- [ ] 5.1 In `src/providers/prompt-cache.ts`, export `CONVERSATION_PROMPT_CACHE: PromptCachePolicy = { ttl: "1h" }` beside `DEFAULT_PROMPT_CACHE`. The doc comment gives the reason: a person can reply 5 to 60 minutes later.
-- [ ] 5.2 In the same doc comment, say that only the root loop of a chat turn uses it. Each other loop keeps `DEFAULT_PROMPT_CACHE`, because its requests start less than 5 minutes apart.
-- [ ] 5.3 In `src/app/chat-turn.ts`, export `RunChatTurnDeps`: `PrepareChatTurnDeps` and `readonly agents: ThreadAgentResolver`.
-- [ ] 5.4 Export `RunChatTurnParams` with `analysisId`, `threadId`, `userInput`, `session`, `chat: (emit: EmitFn) => AgentChat`, `emit`, `signal`, and `usageRecorder`. Add the optional `ask`, `author`, `startedAtMs`, and `promptCache`.
-- [ ] 5.5 Export `ChatTurnOutcome`: `{ status: "done"; finish }`, `{ status: "aborted"; finish? }`, or `{ status: "failed"; reason; cause }`.
-- [ ] 5.6 Export `ChatTurnResult` with the kinds `prepare_failed`, `not_found`, `agent_unresolved`, and `ran`. `ran` carries `outcome`, `opened`, `storeError?`, `durationMs`, `turnUsage?`, and `fallbackText?`.
-- [ ] 5.7 Add `export async function runChatTurn(deps, params): Promise<ChatTurnResult>`. It calls `prepareChatTurn`, gives `prepare_failed` for a throw, and gives `not_found` unchanged. The function is an API boundary, thus its `catch` is permitted.
-- [ ] 5.8 Resolve the agent with `deps.agents.forThread(prepared.threadType)`. A refusal gives `agent_unresolved` with the thread type. Expected result: the turn wrote no row.
-- [ ] 5.9 Make the display recorder over `params.emit`, with `userText: params.userInput` and the call path of the session. Start the list of pending groups with the opening group.
-- [ ] 5.10 The opening group holds `userMessage` and `contextRecords`, the display of `takeOpening()`, and the author.
-- [ ] 5.11 Add `flush(close?)`. It calls `writeTurn` with the pending groups, `startSeq` when known, and `close`. It does nothing when the list is empty and no close is given.
-- [ ] 5.12 On `ok`, `flush` clears the list and keeps `startSeq`. On `err`, it keeps the list and the error, and it logs a warn with the thread id.
-- [ ] 5.13 Await `flush()` before `runAgent`. Run `runAgent` with `chat(recorder.emit)`, `recorder.emit`, the signal, `passthroughStep`, the usage recorder, the logger, and the bound `ask`.
-- [ ] 5.14 Give the root loop `promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE`. Give no `reasoning`, thus the effort comes from the provider configuration.
-- [ ] 5.15 Give `runAgent` an `onRound` that adds the group of the round, with the display of `takeRound(round.messages)`. Then it awaits `flush()`.
-- [ ] 5.16 Select the outcome by the rules of the spec. For a throw, read `signal.aborted` and the error name `AbortError`, the same as `cli/src/modules/harness/turn.ts` lines 403-407 do now.
-- [ ] 5.17 Add `failureReasonOf(err: unknown): string`. A `suspend` error gives the reason of `suspensionOfFailure`. Find a `ProviderError` on the `ResultError` value and on the cause chain.
-- [ ] 5.18 In `failureReasonOf`, an `auth` error gives `The model endpoint refused the credential.` A different provider error gives `The model request failed.` A different error gives `The turn stopped on an internal error.`
-- [ ] 5.19 Add `failureNote(reason: string): string`. Its lines are `[Turn Failed]`, `The turn stopped before it finished. Reason: <reason>`, and `The rounds above this note ran, and their results are stored.`
-- [ ] 5.20 Close the turn with `flush(close)`. The close holds the status, the reason, the `turnUsage` of the finish, and the duration from `params.startedAtMs`, or from the call time.
-- [ ] 5.21 For `failed`, add the note `conversationRecordTurn(failureNote(reason))` to the close.
-- [ ] 5.22 Give `ran` with the outcome, `opened`, `storeError`, the duration, the turn usage, and `fallbackText`. `opened` is true when a write gave `startSeq`. `storeError` is the kept error when groups stayed pending.
-- [ ] 5.23 Write the module header of `src/app/chat-turn.ts` again. A turn is `runChatTurn`, and `prepareChatTurn` is its first step.
-- [ ] 5.24 In `src/index.ts`, export `runChatTurn` and the types of 5.3 to 5.6. Export the types `TurnWrite`, `TurnWriteResult`, `TurnClose`, `TurnStatus`, and `StoredTurnRecord`, because a fake of `ThreadHistory` names them.
-- [ ] 5.25 In `src/index.ts`, export `CONVERSATION_PROMPT_CACHE` beside `DEFAULT_PROMPT_CACHE`. Write the comment above that export again: the root loop of a chat turn uses 1 hour, and each other loop uses 5 minutes.
-- [ ] 5.26 Write the comment of the conversation-turn block in `src/index.ts` again. A host calls `runChatTurn`, and `appendTurn` stays for a host record.
-- [ ] 5.27 In `src/app/chat-turn.test.ts`, add `describe("runChatTurn")` with a fake provider and Postgres. Add these tests:
+- [x] 5.1 In `src/providers/prompt-cache.ts`, export `CONVERSATION_PROMPT_CACHE: PromptCachePolicy = { ttl: "1h" }` beside `DEFAULT_PROMPT_CACHE`. The doc comment gives the reason: a person can reply 5 to 60 minutes later.
+- [x] 5.2 In the same doc comment, say that only the root loop of a chat turn uses it. Each other loop keeps `DEFAULT_PROMPT_CACHE`, because its requests start less than 5 minutes apart.
+- [x] 5.3 In `src/app/chat-turn.ts`, export `RunChatTurnDeps`: `PrepareChatTurnDeps` and `readonly agents: ThreadAgentResolver`.
+- [x] 5.4 Export `RunChatTurnParams` with `analysisId`, `threadId`, `userInput`, `session`, `chat: (emit: EmitFn) => AgentChat`, `emit`, `signal`, and `usageRecorder`. Add the optional `ask`, `author`, `startedAtMs`, and `promptCache`.
+- [x] 5.5 Export `ChatTurnOutcome`: `{ status: "done"; finish }`, `{ status: "aborted"; finish? }`, or `{ status: "failed"; reason; cause }`.
+- [x] 5.6 Export `ChatTurnResult` with the kinds `prepare_failed`, `not_found`, `agent_unresolved`, and `ran`. `ran` carries `outcome`, `opened`, `storeError?`, `durationMs`, `turnUsage?`, and `fallbackText?`.
+- [x] 5.7 Add `export async function runChatTurn(deps, params): Promise<ChatTurnResult>`. It calls `prepareChatTurn`, gives `prepare_failed` for a throw, and gives `not_found` unchanged. The function is an API boundary, thus its `catch` is permitted.
+- [x] 5.8 Resolve the agent with `deps.agents.forThread(prepared.threadType)`. A refusal gives `agent_unresolved` with the thread type. Expected result: the turn wrote no row.
+- [x] 5.9 Make the display recorder over `params.emit`, with `userText: params.userInput` and the call path of the session. Start the list of pending groups with the opening group.
+- [x] 5.10 The opening group holds `userMessage` and `contextRecords`, the display of `takeOpening()`, and the author.
+- [x] 5.11 Add `flush(close?)`. It calls `writeTurn` with the pending groups, `startSeq` when known, and `close`. It does nothing when the list is empty and no close is given.
+- [x] 5.12 On `ok`, `flush` clears the list and keeps `startSeq`. On `err`, it keeps the list and the error, and it logs a warn with the thread id.
+- [x] 5.13 Await `flush()` before `runAgent`. Run `runAgent` with `chat(recorder.emit)`, `recorder.emit`, the signal, `passthroughStep`, the usage recorder, the logger, and the bound `ask`.
+- [x] 5.14 Give the root loop `promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE`. Give no `reasoning`, thus the effort comes from the provider configuration.
+- [x] 5.15 Give `runAgent` an `onRound` that adds the group of the round, with the display of `takeRound(round.messages)`. Then it awaits `flush()`.
+- [x] 5.16 Select the outcome by the rules of the spec. For a throw, read `signal.aborted` and the error name `AbortError`, the same as `cli/src/modules/harness/turn.ts` lines 403-407 do now.
+- [x] 5.17 Add `failureReasonOf(err: unknown): string`. A `suspend` error gives the reason of `suspensionOfFailure`. Find a `ProviderError` on the `ResultError` value and on the cause chain.
+- [x] 5.18 In `failureReasonOf`, an `auth` error gives `The model endpoint refused the credential.` A different provider error gives `The model request failed.` A different error gives `The turn stopped on an internal error.`
+- [x] 5.19 Add `failureNote(reason: string): string`. Its lines are `[Turn Failed]`, `The turn stopped before it finished. Reason: <reason>`, and `The rounds above this note ran, and their results are stored.`
+- [x] 5.20 Close the turn with `flush(close)`. The close holds the status, the reason, the `turnUsage` of the finish, and the duration from `params.startedAtMs`, or from the call time.
+- [x] 5.21 For `failed`, add the note `conversationRecordTurn(failureNote(reason))` to the close.
+- [x] 5.22 Give `ran` with the outcome, `opened`, `storeError`, the duration, the turn usage, and `fallbackText`. `opened` is true when a write gave `startSeq`. `storeError` is the kept error when groups stayed pending.
+- [x] 5.23 Write the module header of `src/app/chat-turn.ts` again. A turn is `runChatTurn`, and `prepareChatTurn` is its first step.
+- [x] 5.24 In `src/index.ts`, export `runChatTurn` and the types of 5.3 to 5.6. Export the types `TurnWrite`, `TurnWriteResult`, `TurnClose`, `TurnStatus`, and `StoredTurnRecord`, because a fake of `ThreadHistory` names them.
+- [x] 5.25 In `src/index.ts`, export `CONVERSATION_PROMPT_CACHE` beside `DEFAULT_PROMPT_CACHE`. Write the comment above that export again: the root loop of a chat turn uses 1 hour, and each other loop uses 5 minutes.
+- [x] 5.26 Write the comment of the conversation-turn block in `src/index.ts` again. A host calls `runChatTurn`, and `appendTurn` stays for a host record.
+- [x] 5.27 In `src/app/chat-turn.test.ts`, add `describe("runChatTurn")` with a fake provider and Postgres. Add these tests:
   - A clean turn stores the opening, each round, and a `done` record with the rollup and the duration.
   - `loadAll` and `storedMessagesToCortex` give one user message and one assistant message for the turn.
   - An `auth` error on the third request keeps two rounds, adds the note, and closes `failed` with the credential reason.
@@ -154,9 +154,9 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
   - A tool that throws an `AbortError` under a live signal gives `failed`, and the thread holds the assistant message with a not-run result.
   - An unresolved agent writes no row and no record.
   - A second turn with no change adds no context record.
-- [ ] 5.28 In the same file, add tests of the cache policy. Expected result: the root loop sends 1-hour markers, a host policy of 5 minutes wins, and a sub-agent loop inside the turn sends 5-minute markers.
-- [ ] 5.29 In the same file, give a turn a pool whose client fails the insert of the first round one time. Expected result: the second write stores both rounds in order, and `storeError` is absent.
-- [ ] 5.30 Run `tsc -p tsconfig.json`. Run `bun test src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 5.28 In the same file, add tests of the cache policy. Expected result: the root loop sends 1-hour markers, a host policy of 5 minutes wins, and a sub-agent loop inside the turn sends 5-minute markers.
+- [x] 5.29 In the same file, give a turn a pool whose client fails the insert of the first round one time. Expected result: the second write stores both rounds in order, and `storeError` is absent.
+- [x] 5.30 Run `tsc -p tsconfig.json`. Run `bun test src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 6. The CLI
 

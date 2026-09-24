@@ -1,26 +1,30 @@
 /**
- * Chat-turn preparation — the host-agnostic assembly half of one chat turn.
- *
- * This is the PREPARATION half of a conversation turn, lifted out of the HTTP
- * route so callers other than the route (e.g. a CLI) can reuse it. It owns,
- * in order: thread-ownership resolution, best-effort title seeding, analysis
- * status load, and message assembly. It deliberately owns NONE of the
- * transport orchestration (streaming/SSE/queue/status codes) — that stays in
- * the caller. A turn is `prepareChatTurn → runAgent(own emit) → appendTurn`.
- *
- * Returns a typed result: `not_found` when the `threadId` is owned by a
- * different analysis (indistinguishable from absent), otherwise `ok` with the
- * assembled `messages` and the standalone `userMessage` the caller persists.
+ * The chat turn of a host: a turn is `runChatTurn`, and `prepareChatTurn` is its first step. The
+ * host gives only its transport values, and the harness stores the opening, each round, and the outcome.
  */
 
 import type { Pool } from "pg";
 
+import type { AgentSession } from "../auth/types.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { TokenUsageRollup } from "../contracts/usage.js";
+import type { DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { finalText, runAgent, type AgentFinish } from "../loop/run-agent.js";
+import { passthroughStep } from "../loop/run-step.js";
+import type { EmitFn } from "../loop/types.js";
+import { createConversationDisplayRecorder } from "../memory/conversation-display-recorder.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
-import { createThreadHistory } from "../memory/thread-history.js";
+import { conversationRecordTurn, createThreadHistory, type ConversationTurn, type TurnClose } from "../memory/thread-history.js";
 import { createThreadStore, type ThreadType } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
+import { findProviderError } from "../providers/errors.js";
+import { CONVERSATION_PROMPT_CACHE } from "../providers/prompt-cache.js";
+import type { AgentChat, PromptCachePolicy } from "../providers/types.js";
+import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
+import type { AskApproval, AskRequest } from "../tools/approval/contract.js";
+import { suspensionOfFailure } from "../workflows/suspension.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
 import { renderRunActivity, renderRunActivityUnavailable, RUN_ACTIVITY_DETAIL_LIMIT } from "./run-activity.js";
 import { createNoopLogger } from "../lib/console-logger.js";
@@ -73,7 +77,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     }
 
     // The type a caller resolves the turn's agent from, and the type that the
-    // message assembly reads for its tail. An existing row carries
+    // message assembly reads for its context records. An existing row carries
     // its own. An absent one defaults to `conversation` — the store's own
     // default — so a best-effort create that fails non-fatally still leaves a
     // usable type; a successful create overrides it from the returned row.
@@ -132,4 +136,164 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     });
 
     return { kind: "ok", threadType, messages, userMessage, contextRecords };
+}
+
+export interface RunChatTurnDeps extends PrepareChatTurnDeps {
+    /** The agent of a turn comes from the thread type, which only the preparation knows. */
+    readonly agents: ThreadAgentResolver;
+}
+
+/** The transport values of one turn. */
+export interface RunChatTurnParams {
+    readonly analysisId: string;
+    readonly threadId: string;
+    readonly userInput: string;
+    readonly session: AgentSession;
+    /** Makes the provider of the turn over the emit sink of the display recorder. */
+    readonly chat: (emit: EmitFn) => AgentChat;
+    readonly emit: EmitFn;
+    readonly signal: AbortSignal;
+    readonly usageRecorder: UsageRecorder;
+    /** The approval binding. It gets the emit sink of the display recorder, thus the display records each `data-ask`. */
+    readonly ask?: (request: AskRequest, emit: EmitFn) => Promise<AskApproval>;
+    /** Who sent the user message. */
+    readonly author?: string;
+    /** When the host opened the turn. Absent counts from the call. */
+    readonly startedAtMs?: number;
+    /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
+    readonly promptCache?: PromptCachePolicy;
+}
+
+export type ChatTurnOutcome =
+    | { readonly status: "done"; readonly finish: AgentFinish }
+    | { readonly status: "aborted"; readonly finish?: AgentFinish }
+    | { readonly status: "failed"; readonly reason: string; readonly cause: unknown };
+
+export type ChatTurnResult =
+    | { readonly kind: "prepare_failed"; readonly cause: unknown }
+    | { readonly kind: "not_found" }
+    | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType }
+    | {
+          readonly kind: "ran";
+          readonly outcome: ChatTurnOutcome;
+          /** True when the opening of the turn landed. */
+          readonly opened: boolean;
+          /** The error of the last write, when rows of the turn or its close did not land. */
+          readonly storeError?: DbError;
+          readonly durationMs: number;
+          readonly turnUsage?: TokenUsageRollup;
+          /** The final text of a run that returned. */
+          readonly fallbackText?: string;
+      };
+
+/**
+ * Run one chat turn: prepare it, resolve its agent, store its opening, run the root loop with a
+ * round sink that stores each round, and close the turn with its outcome.
+ */
+export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnParams): Promise<ChatTurnResult> {
+    const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
+    const startedAtMs = params.startedAtMs ?? Date.now();
+
+    let prepared: PrepareChatTurnResult;
+    try {
+        prepared = await prepareChatTurn(deps, { analysisId: params.analysisId, threadId: params.threadId, userInput: params.userInput });
+    } catch (cause) {
+        return { kind: "prepare_failed", cause };
+    }
+    if (prepared.kind === "not_found") return prepared;
+    const agent = deps.agents.forThread(prepared.threadType);
+    if (agent.isErr()) return { kind: "agent_unresolved", threadType: prepared.threadType };
+
+    const history = createThreadHistory(deps.pool, deps.logger);
+    const recorder = createConversationDisplayRecorder({ userText: params.userInput, topLevelCallPath: params.session.provenance.callPath, sink: params.emit });
+    // The groups that did not land yet, in the order of the turn. A failed write keeps them for the next write.
+    let pending: ConversationTurn[] = [
+        {
+            modelMessages: [prepared.userMessage, ...prepared.contextRecords],
+            displayMessages: recorder.takeOpening(),
+            ...(params.author === undefined ? {} : { author: params.author }),
+        },
+    ];
+    let startSeq: number | undefined;
+    let storeError: DbError | undefined;
+
+    // A store fault never stops the turn: the error rides the result.
+    const flush = async (close?: TurnClose): Promise<void> => {
+        if (pending.length === 0 && close === undefined) return;
+        const closing = close === undefined ? {} : { close };
+        const write = startSeq === undefined ? { opening: pending[0]!, rounds: pending.slice(1), ...closing } : { startSeq, rounds: pending, ...closing };
+        (await history.writeTurn(params.threadId, write)).match(
+            (written) => {
+                pending = [];
+                startSeq = written.startSeq;
+                storeError = undefined;
+            },
+            (error) => {
+                storeError = error;
+                logger.warn("chat turn write failed", { threadId: params.threadId, op: error.op, ...logger.errorFields(error.cause) });
+            },
+        );
+    };
+
+    await flush();
+    const { ask } = params;
+    let outcome: ChatTurnOutcome;
+    let fallbackText: string | undefined;
+    try {
+        const run = await runAgent(agent.value, prepared.messages, params.session, {
+            provider: params.chat(recorder.emit),
+            signal: params.signal,
+            emit: recorder.emit,
+            runStep: passthroughStep,
+            usageRecorder: params.usageRecorder,
+            promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
+            ...(deps.logger === undefined ? {} : { logger: deps.logger }),
+            ...(ask === undefined ? {} : { ask: (request: AskRequest) => ask(request, recorder.emit) }),
+            onRound: async (round) => {
+                pending.push({ modelMessages: round.messages, displayMessages: recorder.takeRound(round.messages) });
+                await flush();
+            },
+        });
+        outcome = run.finish.reason === "aborted" ? { status: "aborted", finish: run.finish } : { status: "done", finish: run.finish };
+        fallbackText = finalText(run.messages);
+    } catch (cause) {
+        // A provider failure that races an abort stays a failure, thus both facts must hold.
+        const aborted = params.signal.aborted && cause instanceof Error && cause.name === "AbortError";
+        outcome = aborted ? { status: "aborted" } : { status: "failed", reason: failureReasonOf(cause), cause };
+    }
+
+    const durationMs = Date.now() - startedAtMs;
+    const turnUsage = outcome.status === "failed" ? undefined : outcome.finish?.turnUsage;
+    await flush({
+        status: outcome.status,
+        ...(outcome.status === "failed" ? { reason: outcome.reason, note: conversationRecordTurn(failureNote(outcome.reason)) } : {}),
+        ...(turnUsage === undefined ? {} : { turnUsage }),
+        turnDurationMs: durationMs,
+    });
+
+    return {
+        kind: "ran",
+        outcome,
+        opened: startSeq !== undefined,
+        ...(storeError === undefined ? {} : { storeError }),
+        durationMs,
+        ...(turnUsage === undefined ? {} : { turnUsage: { ...turnUsage } }),
+        ...(fallbackText === undefined ? {} : { fallbackText }),
+    };
+}
+
+/** The reason of a failed turn. It never holds the error message, because each later turn sends the note to the vendor. */
+function failureReasonOf(err: unknown): string {
+    const suspension = suspensionOfFailure(err);
+    if (suspension !== undefined) return suspension.reason;
+    const providerError = findProviderError(err);
+    if (providerError?.type === "auth") return "The model endpoint refused the credential.";
+    if (providerError !== undefined) return "The model request failed.";
+    return "The turn stopped on an internal error.";
+}
+
+function failureNote(reason: string): string {
+    return ["[Turn Failed]", `The turn stopped before it finished. Reason: ${reason}`, "The rounds above this note ran, and their results are stored."].join(
+        "\n",
+    );
 }
