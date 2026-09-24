@@ -48,24 +48,24 @@ Each path is relative to `harness/`. A path that starts with `cli/` is relative 
 
 ## 4. The thinking-binding mode and the drop log
 
-- [ ] 4.1 Read the wire shape of the installed package, in `node_modules/@ai-sdk/anthropic/src/anthropic-language-model.ts`. Read `resolveAnthropicReasoningConfig`, `getModelCapabilities`, and the merge of `providerOptions.anthropic.thinking` below the comment "Map top-level `reasoning`". Make sure that these facts of version `4.0.62` still hold:
+- [x] 4.1 Read the wire shape of the installed package, in `node_modules/@ai-sdk/anthropic/src/anthropic-language-model.ts`. Read `resolveAnthropicReasoningConfig`, `getModelCapabilities`, and the merge of `providerOptions.anthropic.thinking` below the comment "Map top-level `reasoning`". Make sure that these facts of version `4.0.62` still hold:
   - A model with `rejectsThinkingDisabled` always thinks. These models are `claude-opus-5-5`, `claude-fable-5`, and `claude-fable-5-1`. The `none` effort sends `output_config.effort: "low"` to such a model.
   - A model that can turn thinking off gets `thinking: { type: "disabled" }` for the `none` effort.
   - The package applies its own `thinking` selection only when `providerOptions.anthropic.thinking` is absent. Thus a binding without a `type` removes `type` and `display` from the body, and the API applies the default thinking mode of the model.
   - Write down the `type` and the `display` that the package sends to a model with `rejectsThinkingDisabled` for each effort value, when no `providerOptions.anthropic.thinking` is present. Task 4.4 uses these values.
-- [ ] 4.2 If 4.1 shows a different wire shape, stop. Report the difference to the user, and wait for a decision.
-- [ ] 4.3 In `src/providers/ai-sdk.ts`, add `readonly thinkingBinding?: "drop_block" | "error" | "off"` to the `anthropic` arm of `AiSdkProviderConfig`. The doc comment gives the three modes, the default `drop_block`, the beta header `thinking-binding-controls-2026-08-01`, and the gateway that needs `off`.
-- [ ] 4.4 In the `anthropic` `providerOptionsFor` of `createConfiguredAiSdkProvider`, add `thinking: { type, display, blockBinding: { prefixMismatchBehavior: mode } }` only on a request that runs with thinking. `type` and `display` are the values that 4.1 wrote down, thus the body keeps the thinking selection of the package. Use this rule: the mode is not `off`, and `getModelCapabilities(config.model).rejectsThinkingDisabled` is `true`. Import `getModelCapabilities` from `@ai-sdk/anthropic/internal`, with a comment that names the hidden constraint of 4.1. Expected result: the binding never changes whether a request thinks.
-- [ ] 4.5 In `createAiSdkProvider`, read `providerMetadata.anthropic.inputTransformations` after the drain of the stream. Do this in `chat` and on the two terminal paths of `chatStream`. Log one `logger.warn("thinking block dropped", …)` for each entry, with `workload`, `type`, `path`, and `reason`. In `chat`, log after the retry envelope resolves, thus only the attempt that succeeded logs.
-- [ ] 4.6 In `src/providers/configured-provider.barrel.test.ts`, add wire tests with the changed `capturingFetch`:
+- [x] 4.2 If 4.1 shows a different wire shape, stop. Report the difference to the user, and wait for a decision.
+- [x] 4.3 In `src/providers/ai-sdk.ts`, add `readonly thinkingBinding?: "drop_block" | "error" | "off"` to the `anthropic` arm of `AiSdkProviderConfig`. The doc comment gives the three modes, the default `drop_block`, the beta header `thinking-binding-controls-2026-08-01`, and the gateway that needs `off`.
+- [x] 4.4 In the `anthropic` `providerOptionsFor` of `createConfiguredAiSdkProvider`, add `thinking: { type, display, blockBinding: { prefixMismatchBehavior: mode } }` only on a request that runs with thinking. `type` and `display` are the values that 4.1 wrote down, thus the body keeps the thinking selection of the package. Use this rule: the mode is not `off`, and `getModelCapabilities(config.model).rejectsThinkingDisabled` is `true`. Import `getModelCapabilities` from `@ai-sdk/anthropic/internal`, with a comment that names the hidden constraint of 4.1. Expected result: the binding never changes whether a request thinks.
+- [x] 4.5 In `createAiSdkProvider`, read `providerMetadata.anthropic.inputTransformations` after the drain of the stream. Do this in `chat` and on the two terminal paths of `chatStream`. Log one `logger.warn("thinking block dropped", …)` for each entry, with `workload`, `type`, `path`, and `reason`. In `chat`, log after the retry envelope resolves, thus only the attempt that succeeded logs.
+- [x] 4.6 In `src/providers/configured-provider.barrel.test.ts`, add wire tests with the changed `capturingFetch`:
   - For `claude-opus-5-5` at `xhigh` with no mode, the body carries `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` and `output_config.effort: "xhigh"`. The `anthropic-beta` header holds `thinking-binding-controls-2026-08-01`.
   - For `claude-opus-5-5` at `none`, the body carries the binding and `output_config.effort: "low"`.
   - For `thinkingBinding: "error"`, the body carries `"error"`.
   - For `thinkingBinding: "off"`, the body and the headers carry no binding.
   - For `claude-opus-4-7` at `xhigh`, the body carries `thinking.type: "adaptive"` and no binding.
   - For `claude-sonnet-4-5` at `none`, the body carries `thinking.type: "disabled"` and no binding.
-- [ ] 4.7 In `src/providers/ai-sdk.test.ts`, add tests of the drop log with a logger that records each call. The fake model gives `providerMetadata.anthropic.inputTransformations` on its finish part. Expected result: one warn record for each entry, on `chat` and on `chatStream`, and `chat` returns `ok`.
-- [ ] 4.8 Run `tsc -p tsconfig.json`. Run `bun test src/providers/ai-sdk.test.ts src/providers/configured-provider.barrel.test.ts`. Then run `bun run format:file` on each changed file under `src/`.
+- [x] 4.7 In `src/providers/ai-sdk.test.ts`, add tests of the drop log with a logger that records each call. The fake model gives `providerMetadata.anthropic.inputTransformations` on its finish part. Expected result: one warn record for each entry, on `chat` and on `chatStream`, and `chat` returns `ok`.
+- [x] 4.8 Run `tsc -p tsconfig.json`. Run `bun test src/providers/ai-sdk.test.ts src/providers/configured-provider.barrel.test.ts`. Then run `bun run format:file` on each changed file under `src/`.
 
 ## 5. The cache breakpoint at the end of the system prompt
 

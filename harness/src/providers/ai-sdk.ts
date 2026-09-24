@@ -5,10 +5,16 @@ import {
     type LanguageModel,
     type LanguageModelUsage,
     type ModelMessage,
+    type ProviderMetadata,
     type TextStreamPart,
     type ToolSet,
 } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
+// The capability table of the package, from its internal entry. The binding of
+// the thinking blocks reads it to find a model that always thinks, because any
+// `providerOptions.anthropic.thinking` stops the thinking selection of the
+// package (refer to `thinkingWithBinding`).
+import { getModelCapabilities } from "@ai-sdk/anthropic/internal";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { OpenTelemetry } from "@ai-sdk/otel";
@@ -184,6 +190,26 @@ export type AiSdkProviderConfig =
            * {@link DEFAULT_REASONING}.
            */
           readonly reasoning?: ReasoningPolicy;
+          /**
+           * What the API does with a replayed thinking block whose prefix
+           * changed. Claude Opus 5.5 and Claude Fable 5.1 bind each signed
+           * thinking block to the prefix that made it.
+           *
+           * - `drop_block`, the default: the API drops the block that does not
+           *   match, and each later thinking block of that request. The request
+           *   continues, and the provider logs each drop that the response
+           *   reports.
+           * - `error`: the API refuses the request with HTTP 400. A test against
+           *   the real API uses this mode, thus a prefix change fails the test.
+           * - `off`: the provider sends no binding.
+           *
+           * The binding makes the package send the beta header
+           * `thinking-binding-controls-2026-08-01`. A gateway that refuses that
+           * header needs `off`. The provider sends the binding only to a model
+           * that always thinks, thus the binding never changes whether a
+           * request thinks.
+           */
+          readonly thinkingBinding?: "drop_block" | "error" | "off";
       }
     | {
           readonly kind: "openai";
@@ -336,6 +362,54 @@ export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">):
         return runFrame.stepId === undefined ? `${scope.analysisId}:${runFrame.runId}` : `${scope.analysisId}:${runFrame.runId}:${runFrame.stepId}`;
     }
     return scope.threadId === undefined ? scope.analysisId : `${scope.analysisId}:${scope.threadId}`;
+}
+
+/**
+ * The `thinking` options that bind the thinking blocks of a call to their
+ * prefix, for a model that always thinks.
+ *
+ * CAUTION: any `providerOptions.anthropic.thinking` stops the thinking selection
+ * of `@ai-sdk/anthropic`, and the package then sends only what these options
+ * hold. A binding without a `type` turns thinking off on a model that can run
+ * without thinking. Thus the caller sends the binding only to a model whose
+ * capability row says `rejectsThinkingDisabled`.
+ *
+ * For such a model the options repeat the `type` and the `display` that the
+ * package (4.0.62) selects for the effort of the call. Each effort from
+ * `minimal` to `xhigh` selects `adaptive` with `summarized`. The effort `none`
+ * selects no `type`, and it lowers the effort to `low`. The effort
+ * `provider-default` selects nothing. Thus the binding changes neither whether
+ * a call thinks nor what it shows.
+ */
+function thinkingWithBinding(reasoning: ReasoningPolicy, mode: "drop_block" | "error"): NonNullable<AnthropicLanguageModelOptions["thinking"]> {
+    const blockBinding = { prefixMismatchBehavior: mode };
+    if (reasoning === "none" || reasoning === "provider-default") return { blockBinding };
+    return { type: "adaptive", display: "summarized", blockBinding };
+}
+
+/** One input transformation that the Anthropic API reports. A field is absent when the entry carries no string for it. */
+interface InputTransformation {
+    readonly type?: string;
+    readonly path?: string;
+    readonly reason?: string;
+}
+
+/**
+ * The input transformations of a response. The Anthropic package gives them in
+ * `providerMetadata.anthropic.inputTransformations`, for example a thinking
+ * block that the binding dropped. A response of a different vendor gives none.
+ */
+function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTransformation[] {
+    const entries = metadata?.["anthropic"]?.["inputTransformations"];
+    if (!Array.isArray(entries)) return [];
+    return entries.map((entry: unknown) => {
+        const fields = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+        const text = (key: string): string | undefined => {
+            const value = fields[key];
+            return typeof value === "string" ? value : undefined;
+        };
+        return { type: text("type"), path: text("path"), reason: text("reason") };
+    });
 }
 
 /**
@@ -794,6 +868,18 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         });
     }
 
+    /**
+     * Record each thinking block that the response reports as dropped. The drop
+     * does not fail the call: the request continued without the block. The
+     * reason shows the cause. `prefix_binding_mismatch` is a change of the
+     * prefix, and `model_binding_mismatch` is a change of the model.
+     */
+    function logDroppedThinkingBlocks(session: AgentSession, metadata: ProviderMetadata | undefined): void {
+        for (const drop of inputTransformationsOf(metadata)) {
+            logger.warn("thinking block dropped", { workload: workloadOf(session), type: drop.type, path: drop.path, reason: drop.reason });
+        }
+    }
+
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const reasoning = effortOf(req);
         const providerOptions = mergeProviderOptions(req.providerOptions, deps.providerOptionsFor?.({ session, reasoning }));
@@ -863,11 +949,16 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         finishReason: await result.finishReason,
                         rawFinishReason: await result.rawFinishReason,
                         usage: await result.usage,
+                        providerMetadata: (await result.finalStep).providerMetadata,
                     };
                 });
+                // Logged past the envelope, thus only the attempt that succeeded
+                // reports its drops.
+                const { providerMetadata: metadata, ...reply } = collected;
+                logDroppedThinkingBlocks(session, metadata);
                 return ok(
                     responseFromMessages({
-                        ...collected,
+                        ...reply,
                         requestedModelId,
                         // Read after the drain: the metadata chunk that carries the
                         // served id reaches the capture only as the stream is consumed.
@@ -946,12 +1037,14 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         finishReason: await result.finishReason,
                         rawFinishReason: await result.rawFinishReason,
                         usage: await result.usage,
+                        providerMetadata: (await result.finalStep).providerMetadata,
                     };
                 }
                 return { kind: "streaming" as const, result, iterator, firstDelta: first.text };
             });
 
             if (opened.kind === "completed") {
+                logDroppedThinkingBlocks(session, opened.providerMetadata);
                 const response = responseFromMessages({
                     messages: opened.messages,
                     fallbackText: "",
@@ -990,6 +1083,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 // reaches the capture only as the stream is consumed.
                 servedModelId: capture.servedModelId(),
             });
+            logDroppedThinkingBlocks(session, (await result.finalStep).providerMetadata);
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
@@ -1123,6 +1217,11 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // must declare the capability. A config value overrides this default in
         // both directions.
         const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
+        // A model that always thinks runs each request with thinking, thus the
+        // binding goes on each of its requests. A model that can run without
+        // thinking gets no binding (refer to `thinkingWithBinding`).
+        const bindingMode = config.thinkingBinding ?? "drop_block";
+        const binding = bindingMode !== "off" && getModelCapabilities(config.model).rejectsThinkingDisabled ? bindingMode : undefined;
         return createAiSdkProvider({
             model: provider.chat(config.model),
             ...hostPolicyOf(deps),
@@ -1132,8 +1231,14 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
             ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
-            // The package sends the key as `metadata.user_id`.
-            providerOptionsFor: ({ session }) => ({ anthropic: { metadata: { userId: sessionKeyOf(session) } } }),
+            // The package sends the key as `metadata.user_id`, and the binding as
+            // `thinking.block_binding`.
+            providerOptionsFor: ({ session, reasoning }) => ({
+                anthropic: {
+                    metadata: { userId: sessionKeyOf(session) },
+                    ...(binding !== undefined ? { thinking: thinkingWithBinding(reasoning, binding) } : {}),
+                } satisfies AnthropicLanguageModelOptions,
+            }),
         });
     }
 
