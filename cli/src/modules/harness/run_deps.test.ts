@@ -94,6 +94,7 @@ function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgen
         lineageCollector: {},
         blockerHolder: {},
         fileMetadata: {},
+        toolOutputStore: {},
         sandbox: {},
     } as unknown as SandboxAgentBuildContext;
 }
@@ -305,6 +306,14 @@ describe("buildSandboxStepDeps", () => {
         expect(agent.id).toBe("bulk-transcriptomics-agent");
         expect(Array.isArray(agent.tools)).toBe(true);
         expect(agent.tools.at(-1)?.id).toBe("submit_file_metadata");
+    });
+
+    test("buildAgent gives the tool output store of the step to the agent, thus it declares read_tool_output", () => {
+        const deps = buildSandboxStepDeps(testComposition());
+
+        const agent = deps.buildAgent(fakeBuildContext("bulk-transcriptomics-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
+
+        expect(agent.tools.map((tool) => tool.id)).toContain("read_tool_output");
     });
 
     test("buildAgent throws for an unknown agent id, naming the id and the known catalog ids", () => {
