@@ -31,7 +31,7 @@ export interface SubmitExecDeps {
     runStep?: <T>(fn: () => Promise<T>, config: { name: string }) => Promise<T>;
     /**
      * Per-stream retention budget to send when the body does not carry one.
-     * Defaults to `EXEC_STREAM_BYTE_CAP`.
+     * Defaults to `EXEC_STREAM_BYTE_CAP`, the maximum of a kept tool output.
      */
     execStreamByteCap?: number;
 }

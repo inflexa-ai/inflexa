@@ -156,18 +156,18 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 7. The stream budget of the sandbox
 
-- [ ] 7.1 In `src/tools/workspace/result-bounds.ts`, set `EXEC_STREAM_BYTE_CAP = TOOL_OUTPUT_KEEP_MAX`, imported from `src/loop/tool-output.ts`.
-- [ ] 7.2 Write the module header of `result-bounds.ts` again. The budget bounds the memory and a kept text, and the loop cut keeps the context small.
-- [ ] 7.3 In `src/tools/workspace/execute-command.ts`, write the description again. State the budget of 1 MiB for each stream, and the excerpt with a reference.
-- [ ] 7.4 In the same description, keep the text that stdout and stderr are not a deliverable.
-- [ ] 7.5 In `src/sandbox/submit-exec.ts` and `src/sandbox/create-sandbox.ts`, write the doc comments of the budget again. The budget is the maximum of a kept text.
-- [ ] 7.6 In `src/tools/workspace/result-bounds.test.ts`, change each test that names 32 KiB to use `EXEC_STREAM_BYTE_CAP`. Add a test that a stream of 200 KiB stays whole.
-- [ ] 7.7 In `src/sandbox/submit-exec.test.ts`, add a test. Expected result: a body with no budget posts `stdoutByteCap` and `stderrByteCap` of 1,048,576.
-- [ ] 7.8 In `src/sandbox/create-sandbox.test.ts`, add a test. Expected result: a stdout of 2,097,152 bytes comes back with 1,048,576 bytes, the flag, and the total.
-- [ ] 7.9 In `src/tools/workspace/execute-command.test.ts`, change the tests of the bound. Expected result: a stdout of 200 KiB comes back whole, and the description names 1 MiB.
-- [ ] 7.10 Run `tsc -p tsconfig.json`. Run `bun test src/tools/workspace/result-bounds.test.ts src/sandbox/submit-exec.test.ts src/sandbox/create-sandbox.test.ts src/tools/workspace/execute-command.test.ts src/tools/workspace/mutate-surface-e2e.test.ts`.
-- [ ] 7.11 Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
-- [ ] 7.12 In `images/sandbox-base/server/`, run `go test ./...`. Expected result: the tests of `capturingBuilder` pass, and the server code does not change.
+- [x] 7.1 In `src/tools/workspace/result-bounds.ts`, set `EXEC_STREAM_BYTE_CAP = TOOL_OUTPUT_KEEP_MAX`, imported from `src/loop/tool-output.ts`.
+- [x] 7.2 Write the module header of `result-bounds.ts` again. The budget bounds the memory and a kept text, and the loop cut keeps the context small.
+- [x] 7.3 In `src/tools/workspace/execute-command.ts`, write the description again. State the budget of 1 MiB for each stream, and the excerpt with a reference.
+- [x] 7.4 In the same description, keep the text that stdout and stderr are not a deliverable.
+- [x] 7.5 In `src/sandbox/submit-exec.ts` and `src/sandbox/create-sandbox.ts`, write the doc comments of the budget again. The budget is the maximum of a kept text.
+- [x] 7.6 In `src/tools/workspace/result-bounds.test.ts`, change each test that names 32 KiB to use `EXEC_STREAM_BYTE_CAP`. Add a test that a stream of 200 KiB stays whole.
+- [x] 7.7 In `src/sandbox/submit-exec.test.ts`, add a test. Expected result: a body with no budget posts `stdoutByteCap` and `stderrByteCap` of 1,048,576.
+- [x] 7.8 In `src/sandbox/create-sandbox.test.ts`, add a test. Expected result: a stdout of 2,097,152 bytes comes back with 1,048,576 bytes, the flag, and the total.
+- [x] 7.9 In `src/tools/workspace/execute-command.test.ts`, change the tests of the bound. Expected result: a stdout of 200 KiB comes back whole, and the description names 1 MiB.
+- [x] 7.10 Run `tsc -p tsconfig.json`. Run `bun test src/tools/workspace/result-bounds.test.ts src/sandbox/submit-exec.test.ts src/sandbox/create-sandbox.test.ts src/tools/workspace/execute-command.test.ts src/tools/workspace/mutate-surface-e2e.test.ts`.
+- [x] 7.11 Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 7.12 In `images/sandbox-base/server/`, run `go test ./...`. Expected result: the tests of `capturingBuilder` pass, and the server code does not change.
 
 ## 8. The CLI
 

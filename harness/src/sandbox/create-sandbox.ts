@@ -76,8 +76,8 @@ export interface CreateSandboxClientConfig {
     /**
      * Per-stream retention budget sent with every exec, so the sandbox drops
      * output past it instead of shipping it. Defaults to `EXEC_STREAM_BYTE_CAP`,
-     * the same value the host truncates to on receipt — sending more than the
-     * host will keep buys nothing.
+     * the maximum of a kept tool output and the same value the host truncates to
+     * on receipt — sending more than the host will keep buys nothing.
      */
     execStreamByteCap?: number;
     /** Cluster resource ceilings; every sandbox request is clamped to these. */

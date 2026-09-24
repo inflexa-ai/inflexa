@@ -5,8 +5,9 @@
  * shape is uniform across the surface and the cap can be tuned in one
  * place.
  *
- * The cap of each stream alone bounds a tool result, so a chatty command
- * cannot fill the context window even at both caps.
+ * The cap bounds the memory of the host and the size of a kept tool output. It
+ * does not keep the context of the model small: the loop cuts a long result into
+ * an excerpt, and it keeps the text for `read_tool_output`.
  *
  * The same value is sent to the sandbox as a retention budget, so the bytes are
  * dropped at the producer and never cross the wire. Capping here as well is not
@@ -14,10 +15,11 @@
  * and this is the boundary that keeps it out of the process either way.
  */
 
+import { TOOL_OUTPUT_KEEP_MAX } from "../../loop/tool-output.js";
 import type { ExecResult } from "../../sandbox/types.js";
 
-/** Per-stream cap. 32 KiB — roomy for real output. */
-export const EXEC_STREAM_BYTE_CAP = 32 * 1024;
+/** Per-stream cap: the maximum of a kept tool output, thus the host gets each stream that the store can keep. */
+export const EXEC_STREAM_BYTE_CAP = TOOL_OUTPUT_KEEP_MAX;
 
 export interface BoundedStream {
     readonly content: string;

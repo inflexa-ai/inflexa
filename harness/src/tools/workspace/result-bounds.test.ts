@@ -26,6 +26,14 @@ describe("boundExecResult", () => {
         expect(r.stderrTotalLength).toBe(4);
     });
 
+    it("keeps a stream of 200 KiB whole", () => {
+        const stream = "w".repeat(200 * 1024);
+        const r = boundExecResult(baseResult({ stdout: stream }));
+        expect(r.stdout).toBe(stream);
+        expect(r.stdoutTruncated).toBe(false);
+        expect(r.stdoutTotalLength).toBe(200 * 1024);
+    });
+
     it("truncates oversize stdout independently of stderr", () => {
         const big = "x".repeat(EXEC_STREAM_BYTE_CAP + 100);
         const r = boundExecResult(baseResult({ stdout: big, stderr: "ok" }));

@@ -16,6 +16,7 @@ import { err, errAsync, okAsync } from "neverthrow";
 import type { AwaitExecOptions } from "./await-exec.js";
 import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
 import * as dockerClient from "./docker-client.js";
+import { signCallback } from "./hmac.js";
 import { mintSandboxIdentity } from "./identity.js";
 import * as k8sClient from "./k8s-client.js";
 import { SandboxFailure as BarrelSandboxFailure } from "@inflexa-ai/harness";
@@ -491,5 +492,47 @@ describe("createSandboxClient — the toolchain on the client", () => {
 
     test("the declared image toolchain reaches the client", () => {
         expect(createSandboxClient({ ...base, toolchainSource: "image" }).toolchainSource).toBe("image");
+    });
+});
+
+describe("createSandboxClient — the stream budget on receipt", () => {
+    test("cuts a stdout of 2,097,152 bytes from a server that ignores the budget to 1,048,576 bytes, with the flag and the total", async () => {
+        const secret = "base64:" + Buffer.from("01234567890123456789012345678901").toString("base64");
+        const execId = "wf-1:step-a:fn-0";
+        const nowMs = 1_700_000_000_000;
+        const timestamp = Math.floor(nowMs / 1000);
+        const result = { execId, exitCode: 0, stdout: "s".repeat(2_097_152), stderr: "", durationMs: 5, timedOut: false };
+        const body = JSON.stringify({ status: "completed", events: [], cursor: 0, result });
+        const signature = signCallback({ execId, body: Buffer.from(body, "utf8"), timestamp, secret });
+        const client = createSandboxClient({
+            pool: {} as unknown as Pool,
+            env: { backend: "docker", namespace: "" },
+            cortexBaseUrl: "http://127.0.0.1:0",
+            image: "sandbox-base:latest",
+            resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+            resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+            farmSource: { kind: "fixed", location: { farmPath: "/store/farms/catalog" } },
+            awaitOptions: {
+                now: () => nowMs,
+                runStep: (fn) => fn(),
+                sleep: async () => {},
+                fetch: (async () =>
+                    new Response(body, {
+                        status: 200,
+                        headers: { "x-sandbox-signature": signature, "x-sandbox-timestamp": String(timestamp) },
+                    })) as unknown as typeof fetch,
+            },
+        });
+
+        const received = await client.awaitExec(
+            { sandboxId: "sb-1", host: "127.0.0.1", port: 8765, backend: "docker", callbackSecret: secret },
+            execId,
+            () => {},
+            nowMs + 60_000,
+        );
+
+        expect(Buffer.byteLength(received.stdout, "utf8")).toBe(1_048_576);
+        expect(received.stdoutTruncated).toBe(true);
+        expect(received.stdoutTotalBytes).toBe(2_097_152);
     });
 });

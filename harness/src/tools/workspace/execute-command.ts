@@ -113,8 +113,10 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
         description:
             "Run a command in the sandbox and return its stdout/stderr/exit code. " +
             "Use for scripts, CLI tools, shell pipes, and anything the workspace " +
-            `tools don't express. stdout and stderr are each capped at ${EXEC_STREAM_BYTE_CAP / 1024} KiB; oversize ` +
-            "streams come back with truncation markers. Failures are returned as data, " +
+            `tools don't express. stdout and stderr are each capped at ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB; the end ` +
+            "of a longer stream is dropped, and the result carries its truncation flag. A long result comes back as an " +
+            "excerpt of its start and its end, with a reference to read the rest when the harness keeps it. " +
+            "Failures are returned as data, " +
             "not thrown. stdout/stderr are EPHEMERAL and are NOT a deliverable — use " +
             "this to confirm a command ran, not to produce results. Do NOT compute " +
             "analysis results via 'python -c' / inline one-liners and read them from " +
