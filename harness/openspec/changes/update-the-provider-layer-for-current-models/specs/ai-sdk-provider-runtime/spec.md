@@ -137,21 +137,27 @@ runs with thinking. A request that runs without thinking MUST carry no `thinking
 
 ### Requirement: The provider sends a session key on each call
 
-The provider MUST make a session key from the `AgentSession` of each call. The key MUST come from the first rule that
-applies:
+The provider MUST make a session key from the `AgentSession` of each call. The identifier string of the key MUST come
+from the first rule that applies:
 
 1. A run frame with a step gives `<analysisId>:<runId>:<stepId>`.
 2. A run frame without a step gives `<analysisId>:<runId>`.
 3. A scope with a thread gives `<analysisId>:<threadId>`.
-4. Else, the key is `<analysisId>`.
+4. Else, the string is `<analysisId>`.
 
 The run frame comes first, because a run that a chat starts can carry the thread of that chat in its scope. The steps of
 that run must not share the key of the chat. The step key spreads the parallel steps of one run across the accounts of a
 gateway. Each step keeps its later calls on its account, for example the step summary.
 
-The key MUST hold only identifiers. The key goes to the vendor, thus it MUST NOT hold a name, an address, or the
-`identity` of the session. The key reads only the scope and the run frame. `forSubAgent` changes only the provenance,
-thus a sub-agent sends the key of its parent.
+The identifier string MUST hold only identifiers. It MUST NOT hold a name, an address, or the `identity` of the session.
+It reads only the scope and the run frame. `forSubAgent` changes only the provenance, thus a sub-agent sends the key of
+its parent.
+
+The key that goes to the vendor MUST be the base64url SHA-256 digest of the identifier string, with 43 characters. The
+string of a step holds three identifiers, and it has more than 64 characters. OpenAI and Azure refuse a
+`prompt_cache_key` longer than 64 characters with HTTP 400, and no retry passes that error. Anthropic recommends a hash
+or another opaque value for `metadata.user_id`. One string always gives one digest, thus a gateway keeps the calls of
+one session on one account.
 
 The `anthropic` arm MUST send the key as `providerOptions.anthropic.metadata.userId`. The `openai` arm MUST send the key
 as `providerOptions.openai.promptCacheKey`. The `openai-compatible` arm has no standard field, thus it MUST send no key.
@@ -163,19 +169,26 @@ gateway. A host can add it through `resolveRequestHeaders`, which gets the sessi
 
 - **GIVEN** a `RunSession` with the `analysisId` `a1`, the `runId` `r1`, and the `stepId` `s1`
 - **WHEN** an `anthropic` arm runs a call under that session
-- **THEN** the request body carries `metadata.user_id: "a1:r1:s1"`
+- **THEN** the request body carries `metadata.user_id` with the base64url SHA-256 digest of `a1:r1:s1`
 
 #### Scenario: A run that a chat started does not share the chat key
 
 - **GIVEN** a `RunSession` whose scope carries the `threadId` `t1`, and whose run frame carries the `runId` `r1` and no step
 - **WHEN** a provider runs a call under that session
-- **THEN** the session key is `a1:r1`
+- **THEN** the identifier string of the session key is `a1:r1`
 
 #### Scenario: A chat call carries the thread key
 
 - **GIVEN** a `RequestSession` whose scope carries the `analysisId` `a1` and the `threadId` `t1`
 - **WHEN** an `openai` arm runs a call under that session
-- **THEN** the request body carries `prompt_cache_key: "a1:t1"`
+- **THEN** the request body carries `prompt_cache_key` with the base64url SHA-256 digest of `a1:t1`
+
+#### Scenario: The key fits the limit of the vendor
+
+- **GIVEN** a step session whose analysis id and run id are UUIDs
+- **WHEN** the provider makes the session key
+- **THEN** the key has 43 characters, thus it stays within the limit of 64 characters
+- **AND** the key is the same each time for that session, and different for a different step of the same run
 
 #### Scenario: A sub-agent sends the key of its parent
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
@@ -204,6 +205,8 @@ describe("the session key on the wire", () => {
     const stepSession = { ...makeSession({ scope: { kind: "analysis", analysisId: "a1" } }), runFrame: { runId: "r1", stepId: "s1" } };
     /** A chat call on the thread `t1` of the analysis `a1`. */
     const chatSession = makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } });
+    /** The key that the vendor gets for an identifier string: its base64url SHA-256 digest. */
+    const digestOf = (identifier: string): string => createHash("sha256").update(identifier).digest("base64url");
 
     it("sends the key as metadata.user_id on the anthropic arm", async () => {
         const cap = capturingFetch(anthropicSse);
@@ -214,7 +217,7 @@ describe("the session key on the wire", () => {
         const result = await provider.chat(request, stepSession);
 
         expect(result.isOk()).toBe(true);
-        expect(cap.requests[0]?.body["metadata"]).toEqual({ user_id: "a1:r1:s1" });
+        expect(cap.requests[0]?.body["metadata"]).toEqual({ user_id: digestOf("a1:r1:s1") });
     });
 
     it("sends the key as prompt_cache_key on the openai arm", async () => {
@@ -224,7 +227,7 @@ describe("the session key on the wire", () => {
         const result = await provider.chat(request, chatSession);
 
         expect(result.isOk()).toBe(true);
-        expect(cap.requests[0]?.body["prompt_cache_key"]).toBe("a1:t1");
+        expect(cap.requests[0]?.body["prompt_cache_key"]).toBe(digestOf("a1:t1"));
     });
 
     it("sends no key on the openai-compatible arm", async () => {
@@ -247,6 +250,7 @@ describe("the session key on the wire", () => {
         expect(body).not.toHaveProperty("prompt_cache_key");
         expect(body).not.toHaveProperty("metadata");
         expect(JSON.stringify(body)).not.toContain("a1:r1");
+        expect(JSON.stringify(body)).not.toContain(digestOf("a1:r1:s1"));
     });
 });
 
