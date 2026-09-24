@@ -54,19 +54,17 @@
  * ## Cache defeaters — what silently kills the hit rate
  *
  * The cache keys on an *exact prefix*, so anything that perturbs the head of the
- * request invalidates everything after it. `runAgent`'s wrap-up and
- * `runToTerminal`'s salvage are not among them: each keeps the tools and the
- * tool choice, and a tool mask refuses each call that must not run
- * (`loop/run-agent.ts`, `loop/run-to-terminal.ts`). `toolChoice: "none"` would
- * be one — see the CAUTION on `ChatRequest.toolChoice`. Known defeater:
- *
- *  1. Step summary and file metadata replay a step's transcript under their own
- *     prompt and tools (`execution/step-summary.ts`, `execution/artifact-metadata.ts`).
+ * request invalidates everything after it. `runAgent`'s wrap-up, `runToTerminal`'s
+ * salvage, and a step's file-metadata and summary continuations each keep the
+ * system prompt, the tools, and the tool choice of their conversation, and a
+ * tool mask refuses each call that must not run (`loop/run-agent.ts`,
+ * `loop/continue-agent.ts`). `toolChoice: "none"` would be a defeater — see the
+ * CAUTION on `ChatRequest.toolChoice`.
  *
  * `loadRecent` shifts the prefix once per `EVICTION_BLOCK_TURNS` block, not every
  * turn (`memory/thread-history.ts`).
  *
- * A sandbox agent's system prompt is NOT one of them: it is a pure function of
+ * A sandbox agent's system prompt is NOT a defeater: it is a pure function of
  * its agent type, byte-identical across every step of every run, and the per-step
  * paths ride in the step's briefing instead (`agents/sandbox/shared.ts`,
  * `prompts/briefing.ts`). Keep it that way — one interpolated id or path there

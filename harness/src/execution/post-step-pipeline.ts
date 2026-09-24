@@ -2,7 +2,8 @@
  * The harness's post-step pipeline — the per-step bookkeeping that runs after a sandbox
  * agent loop finishes: describe the output files, write an interpretive
  * summary, reconcile + register the artifact manifest, and index the
- * descriptions into the per-analysis vector store.
+ * descriptions into the per-analysis vector store. The description and the
+ * summary are continuations of the conversation of the step agent.
  *
  * These leaf bodies are host-neutral: the only place an embedder differs is the
  * injected `ArtifactRegistry` (filesystem vs. external provenance) and the
@@ -15,8 +16,8 @@ import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { LoopMessage } from "../loop/types.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
-import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
@@ -44,31 +45,42 @@ export interface PostStepPipelineDeps {
     readonly pool: Pool;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    /** LLM usage-accounting seam for the metadata + summary loops; omitted falls back to the no-op recorder. */
+    /** LLM usage-accounting seam for the metadata + summary continuations; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /** Non-streaming chat — the metadata + summary sub-agent loops. */
+    /** Non-streaming chat — the provider of the task, which the metadata + summary continuations extend. */
     readonly provider: AgentChat;
     /** Write-side embedder for the vector index. */
     readonly embedding: EmbeddingProvider;
-    readonly workspaceFs: WorkspaceFilesystem;
     readonly artifactRegistry: ArtifactRegistry;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    /** Sandbox model id — provenance label for metadata + summary. */
-    readonly model: string;
+}
+
+/** The product of the file-metadata stage, as its `DBOS.runStep` checkpoints it. */
+export interface StepFileMetadata {
+    /** One entry per manifest file, described or fallback. */
+    readonly entries: readonly FileMetadataEntry[];
+    /**
+     * The messages of the file-metadata exchange: the request, then each message
+     * after it. Empty when no continuation ran. The summary continues the
+     * conversation after them, thus a replay gives the summary the same prefix.
+     */
+    readonly messages: readonly LoopMessage[];
 }
 
 /**
- * Describe each manifest file. Returns one entry per file — a file the model
- * fails to describe gets a deterministic fallback, never a dropped entry.
+ * Describe each manifest file through a continuation of the conversation of the
+ * step agent. Returns one entry per file — a file the model fails to describe
+ * gets a deterministic fallback, never a dropped entry — and the messages of
+ * the exchange.
  */
 export async function generateStepFileMetadata(
     deps: PostStepPipelineDeps,
     postCtx: PostStepContext,
     manifest: readonly ArtifactManifestEntry[],
-): Promise<readonly FileMetadataEntry[]> {
-    const { input, session, transcript, writePrefix } = postCtx;
-    if (manifest.length === 0) return [];
+): Promise<StepFileMetadata> {
+    const { input, session, transcript, agent, fileMetadata } = postCtx;
+    if (manifest.length === 0) return { entries: [], messages: [] };
 
     const dbPathPrefix = `runs/${input.runId}/${input.stepId}/`;
     const artifactsForMeta: ArtifactForMetadata[] = manifest.map((a) => ({
@@ -77,9 +89,13 @@ export async function generateStepFileMetadata(
         sizeBytes: a.size,
     }));
     const result = await coreGenerateFileMetadata({
+        logger: deps.logger,
         provider: deps.provider,
         usageRecorder: deps.usageRecorder,
         session,
+        agent,
+        cell: fileMetadata,
+        transcript,
         artifacts: artifactsForMeta,
         resourceId: input.analysisId,
         extraMetadata: {
@@ -88,35 +104,33 @@ export async function generateStepFileMetadata(
             producerRun: input.runId,
             producerAgent: input.agentId,
         },
-        modelId: deps.model,
-        messages: transcript,
-        workspaceFs: deps.workspaceFs,
-        workingDir: writePrefix,
     });
-    return result.entries;
+    return { entries: result.entries, messages: result.messages };
 }
 
 /**
  * Generate the interpretive step summary and persist it to
- * `output/summary.md`. A write failure is non-fatal (logged) — the summary is
- * still returned for vector indexing.
+ * `output/summary.md`. The summary continues the conversation of the step
+ * agent after `metadataMessages`, the messages of the file-metadata exchange.
+ * A write failure is non-fatal (logged) — the summary is still returned for
+ * vector indexing.
  */
 export async function generateStepSummaryAndWrite(
     deps: PostStepPipelineDeps,
     postCtx: PostStepContext,
     manifest: readonly ArtifactManifestEntry[],
+    metadataMessages: readonly LoopMessage[],
 ): Promise<StepSummary | undefined> {
-    const { input, session, transcript, writePrefix } = postCtx;
+    const { input, session, transcript, agent, writePrefix } = postCtx;
 
     const summary = await coreGenerateStepSummary({
+        logger: deps.logger,
         provider: deps.provider,
         usageRecorder: deps.usageRecorder,
         session,
-        modelId: deps.model,
-        messages: transcript,
+        agent,
+        conversation: [...transcript, ...metadataMessages],
         artifactPaths: manifest.map((a) => a.path),
-        workspaceFs: deps.workspaceFs,
-        workingDir: writePrefix,
         stepId: input.stepId,
         agentId: input.agentId,
         runId: input.runId,

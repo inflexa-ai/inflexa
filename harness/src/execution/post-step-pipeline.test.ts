@@ -23,7 +23,7 @@ import type { ProviderError } from "../providers/errors.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
-import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import { createFileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { searchIndexName } from "../workspace/search-config.js";
 import type { ArtifactRegistry } from "./artifact-registry.js";
 import type { FileMetadataEntry } from "./artifact-metadata.js";
@@ -54,12 +54,15 @@ function makeRunSession(analysisId: string): RunSession {
 
 function makePostCtx(analysisId: string): PostStepContext {
     // The vector-index stage reads only `input.{analysisId,runId,stepId,agentId}`
-    // and `session`; the remaining `SandboxStepInput` fields never reach it.
+    // and `session`; the remaining `SandboxStepInput` fields, the agent, and the
+    // file-metadata cell never reach it.
     const input = { analysisId, runId: RUN_ID, stepId: STEP_ID, agentId: AGENT_ID } as unknown as SandboxStepInput;
     return {
         input,
         session: makeRunSession(analysisId),
         transcript: [],
+        agent: { id: AGENT_ID, systemPrompt: "unused", model: "test-model", tools: [], maxIterations: 1 },
+        fileMetadata: createFileMetadataCell(),
         writePrefix: "/unused",
         sandboxId: "sbx-test",
         lineageCollector: new ProvenanceCollector({ stepId: STEP_ID, runId: RUN_ID }),
@@ -74,10 +77,8 @@ function makeDeps(pool: Pool, embedding: EmbeddingProvider, logger: Logger): Pos
         logger,
         embedding,
         provider: {} as AgentChat,
-        workspaceFs: {} as WorkspaceFilesystem,
         artifactRegistry: {} as ArtifactRegistry,
         resolveWorkspaceRoot: (id) => id,
-        model: "test-model",
     };
 }
 

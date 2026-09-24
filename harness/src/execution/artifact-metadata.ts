@@ -1,40 +1,43 @@
 /**
  * Per-step artifact metadata generation — describes a step's output files
- * via a focused `runAgent` tool-call loop on the harness `ChatProvider`.
+ * through a continuation of the conversation of the step agent
+ * (`continueAgent`), on the harness `ChatProvider`.
  *
- * Design (mirrors `generate-plan.ts`): the describer agent communicates
- * exclusively through one tool, `submit_file_metadata`, whose `execute`
- * validates every entry's `path` against the known artifact set. Unknown
- * paths (hallucinated files) are rejected with feedback; uncovered files are
- * reported as `remaining` so the model resubmits. Descriptions are matched
- * to files BY PATH — there is no positional array-index alignment, so a
- * dropped, reordered, or extra entry can never attach a description to the
- * wrong file.
+ * The continuation extends the prefix that the task cached: the same system
+ * prompt, the same declared tools, the same tool choice, and each message of
+ * the task. Thus it reads that prefix back from the prompt cache, and each
+ * signed thinking block of the task stays valid. Its request gives the
+ * describer instructions and the list of the files, and its mask lets only
+ * `submit_file_metadata`, `read_file`, and `grep` run.
+ *
+ * The step agent declares `submit_file_metadata` from its first request
+ * (`tools/sandbox/submit-file-metadata.ts`). The tool validates every entry's
+ * `path` against the known artifact set that `cell.expect` sets. Unknown paths
+ * (hallucinated files) are rejected with feedback; uncovered files are reported
+ * as `remaining` so the model resubmits. Descriptions are matched to files BY
+ * PATH — there is no positional array-index alignment, so a dropped,
+ * reordered, or extra entry can never attach a description to the wrong file.
  *
  * Lossless contract: every input artifact appears in the result exactly
- * once. A file the model never describes (loop budget exhausted, persistent
- * tool errors, model refusal) gets a deterministic fallback description
+ * once. A file the model never describes (the cap exhausted, persistent tool
+ * errors, model refusal) gets a deterministic fallback description
  * synthesised from its path + inferred type + size. Fallbacks are logged —
- * never silently dropped, never silently chunked out.
+ * never silently dropped, never silently chunked out. A step agent that
+ * declares no `submit_file_metadata` (an embedder that gives no cell to its
+ * agent) gets the fallback for each file, with no model call.
  *
  * `Session` is taken explicitly (see the harness-durable-runtime spec) — billing is a compile-time
  * obligation on every provider call.
  */
 
-import { ok } from "neverthrow";
-
 import type { AgentSession } from "../auth/types.js";
-import { forSubAgent } from "../auth/types.js";
-import { runAgent } from "../loop/run-agent.js";
+import { continueAgent } from "../loop/continue-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
-import { defineTool, type Tool } from "../tools/define-tool.js";
-import { createReadFileTool } from "../tools/workspace/read-file.js";
-import { composeSystemPrompt } from "../agents/system-prompt.js";
-import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { inferArtifactType } from "../schemas/artifact-manifest.js";
-import { SubmitFileMetadataInputSchema, type SubmittedFileDescription } from "../schemas/file-metadata.js";
+import type { SubmittedFileDescription } from "../schemas/file-metadata.js";
+import { SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
@@ -51,28 +54,24 @@ export interface ArtifactForMetadata {
 export interface GenerateFileMetadataOptions {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    /** LLM usage-accounting seam for the describer loop; omitted falls back to the no-op recorder. */
+    /** LLM usage-accounting seam for the continuation; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The provider of the task, thus each request extends the prefix that the task cached. */
     readonly provider: AgentChat;
     readonly session: AgentSession;
     readonly artifacts: readonly ArtifactForMetadata[];
     readonly resourceId: string;
     /** Extra metadata fields merged into every entry's `metadata`. */
     readonly extraMetadata?: Record<string, unknown>;
-    /** Model id — provenance label only; the provider owns the wire model. */
-    readonly modelId: string;
+    /** The step agent: the continuation sends its system prompt and its declared tools. */
+    readonly agent: AgentDefinition;
+    /** The cell that the `submit_file_metadata` tool of `agent` records into. */
+    readonly cell: FileMetadataCell;
     /**
-     * In-memory step transcript from `runAgent` — gives the describer the
-     * agent's intent so descriptions reflect what the file was produced for.
-     * Optional: empty/absent degrades to path-only describing.
+     * The in-memory transcript of the task from `runAgent`: the conversation
+     * that the continuation extends. It gives the agent the intent of each file.
      */
-    readonly messages?: readonly LoopMessage[];
-    /** Workspace read seam — backs the scoped `read_file` tool. */
-    readonly workspaceFs?: WorkspaceFilesystem;
-    /** Absolute host path to the step's writable output tree — `read_file`'s working dir. */
-    readonly workingDir?: string;
-    /** Iteration budget for the describer loop. Defaults to {@link DEFAULT_MAX_ITERATIONS}. */
-    readonly maxIterations?: number;
+    readonly transcript: readonly LoopMessage[];
     readonly signal?: AbortSignal;
 }
 
@@ -87,19 +86,27 @@ export interface FileMetadataResult {
     readonly indexed: number;
     /** One entry per input artifact (described or fallback), input order. */
     readonly entries: readonly FileMetadataEntry[];
+    /**
+     * The new messages of the continuation: the request, then each message
+     * after it. Empty when no continuation ran.
+     */
+    readonly messages: readonly LoopMessage[];
 }
 
-/** Sub-agent identity for the describer loop — provenance only. */
+/** The agent that the calls of the continuation are accounted under. */
 const DESCRIBER_AGENT_ID = "file-metadata-describer";
 
 /**
- * Iteration budget: one full submission + a few correction rounds. The
- * fallback backstop means an exhausted budget degrades gracefully rather
- * than dropping files, so the cap stays small.
+ * The cap of requests: one full submission + a few correction rounds. The
+ * fallback backstop means an exhausted cap degrades gracefully rather than
+ * dropping files, so the cap stays small.
  */
-const DEFAULT_MAX_ITERATIONS = 8;
+const DESCRIBER_MAX_REQUESTS = 8;
 
-const SYSTEM_PROMPT = `You are a deterministic metadata describer for bioinformatics output files.
+/** The tools that the continuation lets run. Each one is a declared tool of the step agent. */
+const DESCRIBER_TOOLS = [SUBMIT_FILE_METADATA_TOOL_ID, "read_file", "grep"];
+
+const DESCRIBER_INSTRUCTIONS = `Your work on this step has ended. Now describe its output files.
 
 You describe files by calling the submit_file_metadata tool. For each file provide:
   - path        — copy the file's path EXACTLY from the list you are given.
@@ -121,63 +128,10 @@ Rules:
   - Do not guess file contents you cannot infer; a terse, honest description is
     better than a confident wrong one.`;
 
-function buildPrompt(artifacts: readonly ArtifactForMetadata[]): string {
+/** The harness request of the continuation: the describer instructions and the list of the files. */
+function describerRequest(artifacts: readonly ArtifactForMetadata[]): string {
     const list = artifacts.map((a) => `- ${a.displayPath}`).join("\n");
-    return `Describe the following output files by calling submit_file_metadata. Copy each \`path\` EXACTLY from this list. Read a file with read_file when its path alone is not enough to describe it accurately:\n\n${list}`;
-}
-
-/**
- * Drop a trailing partial assistant `tool_use` round from a loop transcript:
- * it has no matching `tool_result`, so prefixing it onto a fresh loop turn
- * would be an invalid message sequence.
- */
-function sanitizeTranscript(messages: readonly LoopMessage[]): LoopMessage[] {
-    const out: LoopMessage[] = [...messages];
-    while (out.length > 0) {
-        const last = out[out.length - 1]!;
-        const blocks = Array.isArray(last.content) ? last.content : [];
-        const hasOpenToolUse = last.role === "assistant" && blocks.some((b) => b.type === "tool-call");
-        if (hasOpenToolUse) {
-            out.pop();
-            continue;
-        }
-        break;
-    }
-    return out;
-}
-
-/**
- * The single describer tool. Accumulates accepted descriptions into
- * `holder` keyed by path; rejects paths outside `knownPaths`. Returns the
- * coverage state the model uses to decide whether to continue.
- */
-function buildSubmitTool(holder: Map<string, SubmittedFileDescription>, knownPaths: ReadonlySet<string>): Tool {
-    return defineTool({
-        id: "submit_file_metadata",
-        description:
-            "Submit metadata for output files. Each entry's `path` MUST exactly " +
-            "match one of the listed files. Returns {accepted, unknownPaths, " +
-            "remaining}: accepted=true means every file now has metadata — STOP. " +
-            "Otherwise drop the unknownPaths and describe the remaining files.",
-        inputSchema: SubmitFileMetadataInputSchema,
-        describeCall: "none",
-        execute: async (input) => {
-            const unknownPaths: string[] = [];
-            for (const entry of input.files) {
-                if (!knownPaths.has(entry.path)) {
-                    unknownPaths.push(entry.path);
-                    continue;
-                }
-                holder.set(entry.path, entry);
-            }
-            const remaining = [...knownPaths].filter((p) => !holder.has(p));
-            return ok({
-                accepted: unknownPaths.length === 0 && remaining.length === 0,
-                unknownPaths,
-                remaining,
-            });
-        },
-    });
+    return `${DESCRIBER_INSTRUCTIONS}\n\nDescribe the following output files by calling submit_file_metadata. Copy each \`path\` EXACTLY from this list. Read a file with read_file when its path alone is not enough to describe it accurately:\n\n${list}`;
 }
 
 function buildEntry(artifact: ArtifactForMetadata, desc: SubmittedFileDescription, extra: Record<string, unknown> | undefined): FileMetadataEntry {
@@ -218,52 +172,59 @@ function fallbackEntry(artifact: ArtifactForMetadata, extra: Record<string, unkn
 }
 
 /**
- * Describe a step's known artifacts via a tool-call loop. Non-fatal: a loop
- * failure or partial coverage degrades to deterministic fallbacks, so the
- * result always carries exactly one entry per input artifact.
+ * Describe a step's known artifacts through a continuation of the conversation
+ * of the step agent. Non-fatal: a continuation failure or partial coverage
+ * degrades to deterministic fallbacks, so the result always carries exactly
+ * one entry per input artifact.
  */
 export async function generateFileMetadata(opts: GenerateFileMetadataOptions): Promise<FileMetadataResult> {
     const logger = (opts.logger ?? createNoopLogger()).named("artifact-metadata").with({ resourceId: opts.resourceId });
     if (opts.artifacts.length === 0) {
-        return { indexed: 0, entries: [] };
+        return { indexed: 0, entries: [], messages: [] };
     }
 
-    const knownPaths = new Set(opts.artifacts.map((a) => a.displayPath));
-    const holder = new Map<string, SubmittedFileDescription>();
-
-    const tools: Tool[] = [buildSubmitTool(holder, knownPaths)];
-    if (opts.workspaceFs) {
-        tools.push(createReadFileTool(opts.workspaceFs, opts.workingDir));
-    }
-
-    const describer: AgentDefinition = {
-        id: DESCRIBER_AGENT_ID,
-        systemPrompt: composeSystemPrompt(SYSTEM_PROMPT),
-        model: opts.modelId,
-        tools,
-        maxIterations: opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-    };
-
-    const signal = opts.signal ?? new AbortController().signal;
-
-    const transcript = opts.messages ? sanitizeTranscript(opts.messages) : [];
-
-    try {
-        await runAgent(describer, [...transcript, { role: "user", content: buildPrompt(opts.artifacts) }], forSubAgent(opts.session, DESCRIBER_AGENT_ID), {
-            provider: opts.provider,
-            signal,
-            emit: () => {},
-            runStep: passthroughStep,
-            usageRecorder: opts.usageRecorder,
+    // The mask can let only a declared tool run, and an embedder whose agent
+    // factory gives no cell to the agent declares no output tool.
+    if (!opts.agent.tools.some((tool) => tool.id === SUBMIT_FILE_METADATA_TOOL_ID)) {
+        logger.warn("the step agent declares no submit_file_metadata, thus each file gets a deterministic fallback description", {
+            agentId: opts.agent.id,
+            artifactCount: opts.artifacts.length,
         });
+        return { indexed: 0, entries: opts.artifacts.map((artifact) => fallbackEntry(artifact, opts.extraMetadata)), messages: [] };
+    }
+
+    opts.cell.expect(opts.artifacts.map((a) => a.displayPath));
+
+    let messages: readonly LoopMessage[] = [];
+    try {
+        const continued = await continueAgent(
+            opts.agent,
+            opts.transcript,
+            {
+                text: describerRequest(opts.artifacts),
+                mask: { allow: DESCRIBER_TOOLS },
+                maxRequests: DESCRIBER_MAX_REQUESTS,
+                stepNamespace: "file-metadata",
+                accountingAgentId: DESCRIBER_AGENT_ID,
+            },
+            opts.session,
+            {
+                provider: opts.provider,
+                signal: opts.signal ?? new AbortController().signal,
+                emit: () => {},
+                runStep: passthroughStep,
+                usageRecorder: opts.usageRecorder,
+            },
+        );
+        messages = continued.messages;
     } catch (err) {
-        logger.warn("describer loop failed; using fallbacks", logger.errorFields(err));
+        logger.warn("describer continuation failed; using fallbacks", logger.errorFields(err));
     }
 
     const entries: FileMetadataEntry[] = [];
     const fallbackPaths: string[] = [];
     for (const artifact of opts.artifacts) {
-        const desc = holder.get(artifact.displayPath);
+        const desc = opts.cell.descriptions.get(artifact.displayPath);
         if (desc) {
             entries.push(buildEntry(artifact, desc, opts.extraMetadata));
         } else {
@@ -280,5 +241,5 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
         });
     }
 
-    return { indexed: holder.size, entries };
+    return { indexed: entries.length - fallbackPaths.length, entries, messages };
 }

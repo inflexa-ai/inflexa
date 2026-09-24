@@ -126,36 +126,36 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 8. The post-step continuations
 
-- [ ] 8.1 In `src/workflows/sandbox-step.ts`, add `readonly agent: AgentDefinition` and `readonly fileMetadata: FileMetadataCell` to `PostStepContext`. Give the built agent and the cell to `postCtx`.
-- [ ] 8.2 In `src/execution/artifact-metadata.ts`, change `GenerateFileMetadataOptions`. Add `agent`, `cell`, and the transcript. Remove `workspaceFs`, `workingDir`, and `maxIterations`.
-- [ ] 8.3 In `generateFileMetadata`, set the known paths with `cell.expect(displayPaths)`. Then run `continueAgent` with these values:
+- [x] 8.1 In `src/workflows/sandbox-step.ts`, add `readonly agent: AgentDefinition` and `readonly fileMetadata: FileMetadataCell` to `PostStepContext`. Give the built agent and the cell to `postCtx`.
+- [x] 8.2 In `src/execution/artifact-metadata.ts`, change `GenerateFileMetadataOptions`. Add `agent`, `cell`, and the transcript. Remove `workspaceFs`, `workingDir`, and `maxIterations`.
+- [x] 8.3 In `generateFileMetadata`, set the known paths with `cell.expect(displayPaths)`. Then run `continueAgent` with these values:
   - the request: the text of `describerRequest(artifacts)`
   - the mask: `{ allow: [SUBMIT_FILE_METADATA_TOOL_ID, "read_file", "grep"] }`
   - `maxRequests: 8`
   - `stepNamespace: "file-metadata"`
   - `accountingAgentId: "file-metadata-describer"`
-- [ ] 8.4 Make `describerRequest` from the current `SYSTEM_PROMPT` and `buildPrompt`, with their rules on `read_file`. The mask lets the declared `read_file` and `grep` of the agent run.
-- [ ] 8.5 Return `{ indexed, entries, messages }`, where `messages` holds the new messages of the continuation. Keep the fallback entries and the fallback warn.
-- [ ] 8.6 Remove `sanitizeTranscript`, `buildSubmitTool`, and the describer `AgentDefinition` from `src/execution/artifact-metadata.ts`.
-- [ ] 8.7 When `agent.tools` has no `submit_file_metadata`, log one warn and return the fallback entries with no model call. Expected result: an embedder that does not give the cell gets fallback descriptions, not an error.
-- [ ] 8.8 In `src/execution/step-summary.ts`, change `generateStepSummary` to take `agent` and a conversation: the transcript plus the metadata messages.
-- [ ] 8.9 Run `continueAgent` with the request `summaryRequest(artifactPaths)`, the mask `{ allow: ["read_file", "grep"] }`, and `maxRequests: 12`. Use `stepNamespace: "step-summary"` and `accountingAgentId: "step-summary-writer"`.
-- [ ] 8.10 Read the markdown with `finalText` on the new messages. Keep `incrementSummaryNullCount` for an empty text and for a throw.
-- [ ] 8.11 Remove `sanitizeTranscript`, the writer `AgentDefinition`, and the options `workspaceFs`, `workingDir`, and `maxIterations` from `src/execution/step-summary.ts`. Remove the two post-step forks from the list of cache defeaters in `src/providers/prompt-cache.ts`.
-- [ ] 8.12 Keep `stepSummaryPrompt` in `src/prompts/execute-analysis/step-summary.ts` with no change. Its rules on `read_file` stay, because the mask lets `read_file` run.
-- [ ] 8.13 Make `summaryRequest` from the current `SYSTEM_PROMPT` of `src/execution/step-summary.ts` and `stepSummaryPrompt`, with no change of their text.
-- [ ] 8.14 In `src/execution/post-step-pipeline.ts`, make `generateStepFileMetadata` return `{ entries, messages }`. Give `postCtx.agent`, `postCtx.fileMetadata`, `deps.provider`, and `deps.usageRecorder` to the producer. Remove `workspaceFs` from `PostStepPipelineDeps`, because no stage reads it. Keep `SandboxStepDeps.workspaceFs`, and tell the user that it has no reader.
-- [ ] 8.15 Make `generateStepSummaryAndWrite` take the metadata messages, and give them to `generateStepSummary`.
-- [ ] 8.16 In `src/workflows/sandbox-step.ts`, give the metadata messages of the metadata step to the summary step. Expected result: a replay gives the summary the same prefix.
-- [ ] 8.17 In the same file, read a cached metadata value that is a bare array as entries with no messages. Expected result: a checkpoint of the earlier version still replays.
-- [ ] 8.18 In `src/execution/artifact-metadata.test.ts`, change the tests to run a continuation. Keep the tests of the match by path, the unknown path, the fallback, `extraMetadata`, and the read of a file.
-- [ ] 8.19 In the same file, add a test that an agent with no output tool gets the fallback with no provider call.
-- [ ] 8.20 In `src/execution/step-summary.test.ts`, change the tests to run a continuation. Remove the sanitize test. Keep the test that grounds the summary in a file that `read_file` reads.
-- [ ] 8.21 In the same file, add a test that the request declares the tools of the agent. Its messages start with the transcript and the metadata messages, byte-identical.
-- [ ] 8.22 In the same file, add a test in which the model calls `write_file`. Expected result: the call gets the error result of the mask, and no file changes.
-- [ ] 8.23 In `src/workflows/sandbox-step.test.ts`, add a test that the summary request holds the messages of the metadata exchange. Add a test that a cached metadata array replays as entries.
-- [ ] 8.24 Run `tsc -p tsconfig.json`. Run `bun test src/execution/artifact-metadata.test.ts src/execution/step-summary.test.ts src/workflows/sandbox-step.test.ts`.
-- [ ] 8.25 Run `bun test src/execution/post-step-pipeline.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 8.4 Make `describerRequest` from the current `SYSTEM_PROMPT` and `buildPrompt`, with their rules on `read_file`. The mask lets the declared `read_file` and `grep` of the agent run.
+- [x] 8.5 Return `{ indexed, entries, messages }`, where `messages` holds the new messages of the continuation. Keep the fallback entries and the fallback warn.
+- [x] 8.6 Remove `sanitizeTranscript`, `buildSubmitTool`, and the describer `AgentDefinition` from `src/execution/artifact-metadata.ts`.
+- [x] 8.7 When `agent.tools` has no `submit_file_metadata`, log one warn and return the fallback entries with no model call. Expected result: an embedder that does not give the cell gets fallback descriptions, not an error.
+- [x] 8.8 In `src/execution/step-summary.ts`, change `generateStepSummary` to take `agent` and a conversation: the transcript plus the metadata messages.
+- [x] 8.9 Run `continueAgent` with the request `summaryRequest(artifactPaths)`, the mask `{ allow: ["read_file", "grep"] }`, and `maxRequests: 12`. Use `stepNamespace: "step-summary"` and `accountingAgentId: "step-summary-writer"`.
+- [x] 8.10 Read the markdown with `finalText` on the new messages. Keep `incrementSummaryNullCount` for an empty text and for a throw.
+- [x] 8.11 Remove `sanitizeTranscript`, the writer `AgentDefinition`, and the options `workspaceFs`, `workingDir`, and `maxIterations` from `src/execution/step-summary.ts`. Remove the two post-step forks from the list of cache defeaters in `src/providers/prompt-cache.ts`.
+- [x] 8.12 Keep `stepSummaryPrompt` in `src/prompts/execute-analysis/step-summary.ts` with no change. Its rules on `read_file` stay, because the mask lets `read_file` run.
+- [x] 8.13 Make `summaryRequest` from the current `SYSTEM_PROMPT` of `src/execution/step-summary.ts` and `stepSummaryPrompt`, with no change of their text.
+- [x] 8.14 In `src/execution/post-step-pipeline.ts`, make `generateStepFileMetadata` return `{ entries, messages }`. Give `postCtx.agent`, `postCtx.fileMetadata`, `deps.provider`, and `deps.usageRecorder` to the producer. Remove `workspaceFs` from `PostStepPipelineDeps`, because no stage reads it. Keep `SandboxStepDeps.workspaceFs`, and tell the user that it has no reader.
+- [x] 8.15 Make `generateStepSummaryAndWrite` take the metadata messages, and give them to `generateStepSummary`.
+- [x] 8.16 In `src/workflows/sandbox-step.ts`, give the metadata messages of the metadata step to the summary step. Expected result: a replay gives the summary the same prefix.
+- [x] 8.17 In the same file, read a cached metadata value that is a bare array as entries with no messages. Expected result: a checkpoint of the earlier version still replays.
+- [x] 8.18 In `src/execution/artifact-metadata.test.ts`, change the tests to run a continuation. Keep the tests of the match by path, the unknown path, the fallback, `extraMetadata`, and the read of a file.
+- [x] 8.19 In the same file, add a test that an agent with no output tool gets the fallback with no provider call.
+- [x] 8.20 In `src/execution/step-summary.test.ts`, change the tests to run a continuation. Remove the sanitize test. Keep the test that grounds the summary in a file that `read_file` reads.
+- [x] 8.21 In the same file, add a test that the request declares the tools of the agent. Its messages start with the transcript and the metadata messages, byte-identical.
+- [x] 8.22 In the same file, add a test in which the model calls `write_file`. Expected result: the call gets the error result of the mask, and no file changes.
+- [x] 8.23 In `src/workflows/sandbox-step.test.ts`, add a test that the summary request holds the messages of the metadata exchange. Add a test that a cached metadata array replays as entries.
+- [x] 8.24 Run `tsc -p tsconfig.json`. Run `bun test src/execution/artifact-metadata.test.ts src/execution/step-summary.test.ts src/workflows/sandbox-step.test.ts`.
+- [x] 8.25 Run `bun test src/execution/post-step-pipeline.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 9. The terminal tools of the analogy report
 

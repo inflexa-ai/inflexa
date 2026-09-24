@@ -1,40 +1,45 @@
 /**
- * Per-step interpretive markdown summary — a focused `runAgent` tool-loop on
- * the harness `ChatProvider` that consumes the step's in-memory transcript
- * (the `runAgent` `messages` array the workflow body already holds) AND a
- * scoped `read_file` so it grounds every quantitative claim in the persisted
- * output files rather than confabulating from `execute_command` stdout.
+ * Per-step interpretive markdown summary — a continuation of the conversation
+ * of the step agent (`continueAgent`) on the harness `ChatProvider`. The
+ * conversation is the step's in-memory transcript (the `runAgent` `messages`
+ * array the workflow body already holds), then the messages of the
+ * file-metadata exchange when one ran. Thus the continuation reads back the
+ * prefix that the task and the exchange cached, and each signed thinking block
+ * of the task stays valid.
  *
  * Contract:
- *   - `runAgent` loop with a single `read_file` tool scoped to the step's
- *     writable output tree (via `createReadFileTool(workspaceFs, workingDir)`).
- *     The summarizer reads any output file it needs, then emits the markdown
+ *   - The continuation sends the system prompt and the declared tools of the
+ *     step agent. Its mask lets only `read_file` and `grep` run, and their
+ *     working directory is the step's writable output tree, thus the agent
+ *     grounds every quantitative claim in the persisted output files rather
+ *     than confabulating from `execute_command` stdout. It emits the markdown
  *     summary as its final assistant text.
  *   - Returns `{ stepId, agentId, markdown }` on non-empty final text;
- *     `undefined` on empty/empty-after-trim, on a loop throw, or on no
- *     text in the final assistant turn. Non-fatal — the workflow body decides
- *     whether to write `output/summary.md`.
+ *     `undefined` on empty/empty-after-trim, on a continuation throw, or on no
+ *     text in the final assistant turn. A continuation that uses its cap on
+ *     reads ends with no final text, because a continuation runs no wrap-up.
+ *     Non-fatal — the workflow body decides whether to write
+ *     `output/summary.md`.
  *   - `Session` is taken explicitly (see the harness-durable-runtime spec).
  *
- * Honest empty: with no output artifacts the prompt directs the model to
+ * Honest empty: with no output artifacts the request directs the model to
  * state plainly that the step produced no output files — no synthesized
  * results. Blocked steps skip this producer entirely (handled upstream).
  *
  * Transcript-from-memory: per the harness-thread-store spec, workflow loops have no `messages`
  * table; reconstruction from `operation_outputs` is read-side only. At
- * step time the workflow body already holds the array — pass it in.
+ * step time the workflow body already holds the array — pass it in. The loop
+ * answers each unanswered call of the task at its exit, thus the transcript is
+ * valid as it is.
  */
 
 import type { AgentSession } from "../auth/types.js";
-import { forSubAgent } from "../auth/types.js";
-import { finalText, runAgent, type RunAgentResult } from "../loop/run-agent.js";
+import { continueAgent, type ContinuationResult } from "../loop/continue-agent.js";
+import { finalText } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { stepSummaryPrompt } from "../prompts/execute-analysis/step-summary.js";
-import { composeSystemPrompt } from "../agents/system-prompt.js";
-import { createReadFileTool } from "../tools/workspace/read-file.js";
-import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js";
 
 import { incrementSummaryNullCount } from "./step-summary-metrics.js";
@@ -50,86 +55,74 @@ Ground every quantitative claim in a PERSISTED output file: open it with the rea
 
 When finished, write the markdown summary as your final message. It is stored as the step summary exactly as you write it.`;
 
-/** Sub-agent identity for the summary loop — provenance only. */
+/** The agent that the calls of the continuation are accounted under. */
 const SUMMARY_AGENT_ID = "step-summary-writer";
 
-/** Iteration budget: a handful of read_file reads plus the final write-up. */
-const DEFAULT_MAX_ITERATIONS = 12;
+/** The cap of requests: a handful of read_file reads plus the final write-up. */
+const SUMMARY_MAX_REQUESTS = 12;
+
+/** The tools that the continuation lets run. Each one is a declared tool of the step agent. */
+const SUMMARY_TOOLS = ["read_file", "grep"];
+
+/** The harness request of the continuation: the summary instructions and the list of the output files. */
+function summaryRequest(artifactPaths: readonly string[]): string {
+    return `${SYSTEM_PROMPT}\n\n${stepSummaryPrompt(artifactPaths.join("\n"))}`;
+}
 
 export interface GenerateStepSummaryOptions {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-    /** LLM usage-accounting seam for the summary loop; omitted falls back to the no-op recorder. */
+    /** LLM usage-accounting seam for the continuation; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The provider of the task, thus each request extends the prefix that the task cached. */
     readonly provider: AgentChat;
     readonly session: AgentSession;
-    readonly modelId: string;
-    /** In-memory transcript from `runAgent` — assistant + tool-result rounds. */
-    readonly messages: readonly LoopMessage[];
+    /** The step agent: the continuation sends its system prompt and its declared tools. */
+    readonly agent: AgentDefinition;
+    /**
+     * The conversation that the continuation extends: the transcript of the
+     * task, then the messages of the file-metadata exchange when one ran.
+     */
+    readonly conversation: readonly LoopMessage[];
     readonly artifactPaths: readonly string[];
-    /** Workspace read seam — backs the scoped `read_file` tool. */
-    readonly workspaceFs: WorkspaceFilesystem;
-    /** Absolute host path to the step's writable output tree — `read_file`'s working dir. */
-    readonly workingDir: string;
     readonly stepId: string;
     readonly agentId: string;
     readonly runId: string;
-    readonly maxIterations?: number;
     readonly signal?: AbortSignal;
 }
 
 /**
- * Sanitize a transcript that came from the loop so it can prefix a fresh
- * loop turn: any final assistant `tool_use` block needs a matching
- * `tool_result` we are not going to produce. Drop the trailing partial round.
- */
-function sanitizeTranscript(messages: readonly LoopMessage[]): LoopMessage[] {
-    const out: LoopMessage[] = [...messages];
-    while (out.length > 0) {
-        const last = out[out.length - 1]!;
-        const blocks = Array.isArray(last.content) ? last.content : [];
-        const hasOpenToolUse = last.role === "assistant" && blocks.some((b) => b.type === "tool-call");
-        if (hasOpenToolUse) {
-            out.pop();
-            continue;
-        }
-        break;
-    }
-    return out;
-}
-
-/**
- * Run the post-step summary loop on the harness provider against the supplied
- * transcript, grounding claims in persisted files via `read_file`. Returns
- * `undefined` on any non-fatal failure mode; the workflow body proceeds
- * without `summary.md` in that case.
+ * Run the summary continuation over the conversation of the step agent,
+ * grounding claims in persisted files via `read_file`. Returns `undefined` on
+ * any non-fatal failure mode; the workflow body proceeds without `summary.md`
+ * in that case.
  */
 export async function generateStepSummary(opts: GenerateStepSummaryOptions): Promise<StepSummary | undefined> {
     const logger = (opts.logger ?? createNoopLogger()).named("step-summary").with({ runId: opts.runId, stepId: opts.stepId, agentId: opts.agentId });
-    const transcript = sanitizeTranscript(opts.messages);
-    const userPrompt = stepSummaryPrompt(opts.artifactPaths.join("\n"));
 
-    const writer: AgentDefinition = {
-        id: SUMMARY_AGENT_ID,
-        systemPrompt: composeSystemPrompt(SYSTEM_PROMPT),
-        model: opts.modelId,
-        tools: [createReadFileTool(opts.workspaceFs, opts.workingDir)],
-        maxIterations: opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,
-    };
-
-    const signal = opts.signal ?? new AbortController().signal;
-
-    let result: RunAgentResult;
+    let result: ContinuationResult;
     try {
-        result = await runAgent(writer, [...transcript, { role: "user", content: userPrompt }], forSubAgent(opts.session, SUMMARY_AGENT_ID), {
-            provider: opts.provider,
-            signal,
-            emit: () => {},
-            runStep: passthroughStep,
-            usageRecorder: opts.usageRecorder,
-        });
+        result = await continueAgent(
+            opts.agent,
+            opts.conversation,
+            {
+                text: summaryRequest(opts.artifactPaths),
+                mask: { allow: SUMMARY_TOOLS },
+                maxRequests: SUMMARY_MAX_REQUESTS,
+                stepNamespace: "step-summary",
+                accountingAgentId: SUMMARY_AGENT_ID,
+            },
+            opts.session,
+            {
+                provider: opts.provider,
+                signal: opts.signal ?? new AbortController().signal,
+                emit: () => {},
+                runStep: passthroughStep,
+                usageRecorder: opts.usageRecorder,
+            },
+        );
     } catch (err) {
-        logger.warn("summary loop failed", logger.errorFields(err));
+        logger.warn("summary continuation failed", logger.errorFields(err));
         incrementSummaryNullCount(opts.agentId, "throw");
         return undefined;
     }
