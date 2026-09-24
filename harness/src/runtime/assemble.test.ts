@@ -28,7 +28,15 @@ import type { ReportSessionState, ReportSessionStateGateway, SessionStateLoad } 
 import type { ExaminePageResult } from "../tools/report-session/index.js";
 import type { StartReportSessionResult } from "../tools/start-report-session.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import { createThreadAgentResolver, resolveCompositionEyes, type CoreRuntime, type CoreRuntimeDeps } from "./assemble.js";
+import {
+    assembleCoreRuntime,
+    createThreadAgentResolver,
+    resolveCompositionEyes,
+    type ConversationAssemblyDeps,
+    type CoreRuntime,
+    type CoreRuntimeDeps,
+    type CoreWorkflowDeps,
+} from "./assemble.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ThreadStore, ThreadType } from "../memory/thread-store.js";
 
@@ -499,6 +507,56 @@ describe("one resolved answer", () => {
         expect(connected).toEqual([BOTH_ENDPOINT]);
         // The config names no browser, thus the started arm says that the tool read the same answer.
         expect(started.outcome).toBe("started");
+    });
+});
+
+describe("the tool output store of the composition", () => {
+    /** Each dep that the assembly reads at construction. No agent and no workflow runs in this case. */
+    function coreDeps(): CoreRuntimeDeps {
+        const conversation: ConversationAssemblyDeps = {
+            provider: {} as ChatProvider,
+            utilityProvider: {} as ChatProvider,
+            pool: {} as Pool,
+            embedding: {} as EmbeddingProvider,
+            workspaceFs: {} as WorkspaceFilesystem,
+            model: "test/model",
+            utilityModel: "test/utility-model",
+            resolveWorkspaceRoot: (id: string) => join("/sessions", id),
+            runAuthorizer: {} as RunAuthorizer,
+            runLauncher: {} as RunLauncher,
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            skillsDir: "/skills",
+            chrome: {},
+        };
+        return {
+            conversation,
+            workflows: {
+                sandboxStep: {} as CoreWorkflowDeps["sandboxStep"],
+                buildExecuteAnalysis: () => ({}) as ReturnType<CoreWorkflowDeps["buildExecuteAnalysis"]>,
+                dataProfile: {} as CoreWorkflowDeps["dataProfile"],
+            },
+        };
+    }
+
+    it("gives the conversation agent and the report agent read_tool_output", async () => {
+        const dbos = await import("@dbos-inc/dbos-sdk");
+        const register = dbos.DBOS.registerWorkflow;
+        // The registry of DBOS is global to the process, and a launched engine refuses a registration.
+        (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = (workflow: unknown) => workflow;
+        try {
+            const runtime = assembleCoreRuntime(coreDeps());
+
+            for (const type of ["conversation", "report"] as const) {
+                expect(
+                    runtime.agents
+                        .forThread(type)
+                        ._unsafeUnwrap()
+                        .tools.map((tool) => tool.id),
+                ).toContain("read_tool_output");
+            }
+        } finally {
+            (dbos.DBOS as unknown as { registerWorkflow: unknown }).registerWorkflow = register;
+        }
     });
 });
 
