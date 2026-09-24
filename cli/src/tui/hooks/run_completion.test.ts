@@ -546,7 +546,7 @@ describe("thread write serialization", () => {
         const turnGate = new Promise<void>((r) => (releaseTurn = r));
 
         // A chat turn is streaming. It holds the thread against records for its WHOLE duration,
-        // because the engine's own appendTurn lands inside `runChatTurn` — releasing earlier would
+        // because the engine writes each round inside `runChatTurn` — releasing earlier would
         // let a record splice between the turn's rows.
         const sendP = send(
             { sessionId: SID, analysisId: "a1", userText: "hello" },
