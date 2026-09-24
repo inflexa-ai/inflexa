@@ -116,11 +116,12 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
             `tools don't express. stdout and stderr are each capped at ${EXEC_STREAM_BYTE_CAP / (1024 * 1024)} MiB; the end ` +
             "of a longer stream is dropped, and the result carries its truncation flag. A long result comes back as an " +
             "excerpt of its start and its end, with a reference to read the rest when the harness keeps it. " +
-            "Failures are returned as data, " +
-            "not thrown. stdout/stderr are EPHEMERAL and are NOT a deliverable — use " +
-            "this to confirm a command ran, not to produce results. Do NOT compute " +
-            "analysis results via 'python -c' / inline one-liners and read them from " +
-            "stdout; that work is lost. Write a script and persist its outputs to output/.",
+            "Failures are returned as data, not thrown: `status` is `ok` whenever the call completed, so read " +
+            "`exitCode` for the outcome of the command. `timedOut: true` means the timeout stopped the command, and a " +
+            "`syntheticFailure` with `exitCode: null` means the sandbox died under the command (its reason names an " +
+            "out-of-memory kill). stdout and stderr are not a deliverable: they are ephemeral, " +
+            "so use them to confirm that a command ran. A result that you compute with 'python -c' or an inline " +
+            "one-liner and read from stdout is lost. Write a script and persist its outputs to output/.",
         inputSchema: ExecuteCommandInputSchema,
         // The script is what a reader recognises, and it survives a long
         // invocation whose flags would otherwise push it past the length cap.

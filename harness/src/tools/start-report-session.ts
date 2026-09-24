@@ -204,7 +204,10 @@ export function createStartReportSessionTool(deps: StartReportSessionToolDeps): 
             "Keep the whole brief under approximately 2000 tokens. " +
             "When the conversation holds no user turn of new work after the last report session, the tool " +
             "starts nothing and it names that session. The ask that started that session is not new work. " +
-            "Then tell the user to continue in that chat.",
+            "Then tell the user to continue in that chat. " +
+            "The result `outcome` is `started` or `existing-session` with the `threadId` of the report chat. " +
+            "`no_browser` means that this deployment has no browser for the report agent, thus no report session can start; tell the user. " +
+            "`refused`, `parent_not_found`, `parent_not_a_conversation`, and `failed` mean that nothing started, and `detail` gives the reason where there is one.",
         inputSchema: startReportSessionInput,
         executionMode: "inline",
         describeCall: "none",

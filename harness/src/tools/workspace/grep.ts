@@ -27,7 +27,10 @@ const GrepInputSchema = z.object({
     pattern: z
         .string()
         .min(1)
-        .describe("Regular expression to match. Anchored per line; case-sensitive unless " + "`ignoreCase` is true."),
+        .describe(
+            "JavaScript regular expression, tested against each line separately. It matches anywhere in the line " +
+                "unless you add `^` or `$`; case-sensitive unless `ignoreCase` is true.",
+        ),
     path: z
         .string()
         .min(1)
@@ -59,12 +62,13 @@ export function createGrepTool(fs: WorkspaceFilesystem, workingDir?: string) {
     return defineTool({
         id: "grep",
         description:
-            "Regex search over workspace files (input data, prior runs, step " +
-            "outputs, summaries, syntheses, data profile). Pass a file or a " +
-            "directory path; directories are walked recursively. Results are " +
-            `capped at ${DEFAULT_MAX_MATCHES} matches and ${DEFAULT_MAX_MATCH_BYTES} ` +
-            "bytes per line — narrow your path or pattern if you hit the cap. " +
-            "No matches and out-of-scope paths return data variants, not errors.",
+            "Regex search over the text files of the workspace (input data, prior runs, step " +
+            "outputs, summaries, syntheses). Pass a file or a " +
+            `directory path; directories are walked recursively, to a depth of ${MAX_DIR_DEPTH}. Results are ` +
+            `capped at ${DEFAULT_MAX_MATCHES} matches, and each preview at ${DEFAULT_MAX_MATCH_BYTES} characters of its line. ` +
+            `Only the first ${MAX_GREP_FILE_BYTES / (1024 * 1024)} MiB of each file is searched, and a file with a NUL byte ` +
+            "in its first KiB is skipped as binary. A `truncated` status means the match cap or the file cap cut the search; " +
+            "narrow your path or pattern. No matches, missing paths, and out-of-scope paths return data variants, not errors.",
         inputSchema: GrepInputSchema,
         // Both fields, because either alone loses the call: the same pattern over
         // two trees and two patterns over one tree are both ordinary sequences.

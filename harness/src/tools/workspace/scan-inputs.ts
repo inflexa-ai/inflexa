@@ -50,7 +50,9 @@ export function createScanInputsTool(deps: ScanInputsDeps) {
             "the shapes its filenames form (sets of files whose names differ only at marked positions), " +
             "the distinct values each varying position takes, how those positions co-occur, value overlap " +
             "between shapes, and the files that share structure with nothing else. " +
-            "Deterministic — no model, no per-file decoding — so it costs the same on three files as on three thousand. " +
+            "It also reads the header of one member file for each shape (magic bytes, a preamble, a header row, or a container index). " +
+            "Deterministic — no model — and the manifest it returns is bounded, so it costs the same context on three files as on three thousand. " +
+            "The walk stops at a ceiling of files; a manifest marked INCOMPLETE describes part of the subtree, so scan a narrower path. " +
             "Your briefing already carries a scan of the whole input tree; call this to look at a subtree more closely, " +
             "or to check a grouping you are unsure about. " +
             "It reports observations only: which files are one KIND of data, and what a varying position MEANS, are yours to decide.",

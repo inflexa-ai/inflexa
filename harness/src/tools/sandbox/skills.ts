@@ -78,8 +78,10 @@ export function createSkillTools(deps: SkillToolsDeps) {
         description:
             "Search your skills (method decision trees, API references, worked " +
             "examples) by keyword. Start here when picking a method or verifying an " +
-            "API detail. Returns matching skill files with a line snippet — then " +
-            "`skill_read` the file. No matches returns a data variant.",
+            "API detail. The query splits on whitespace into words, and each word matches as a " +
+            "case-insensitive substring. Returns one entry per matching skill file — its skill, its path, " +
+            "and the first line that holds a query word — ranked by how many distinct query words the file " +
+            "holds. Then `skill_read` the file. No matches returns a data variant.",
         inputSchema: z.object({
             query: z.string().min(1).describe("Keywords to match (e.g. 'PyDESeq2 contrast syntax')."),
             topK: z.number().int().min(1).max(MAX_TOP_K).optional().describe(`Max results to return. Defaults to ${DEFAULT_TOP_K}.`),

@@ -70,7 +70,7 @@ const ListAvailableRefsInputSchema = z.object({
         .max(MAX_INPUT_PATH_BYTES)
         .optional()
         .describe(
-            'Shorthand for a top-level group to inspect (e.g. "atlas_singlecell", "msigdb"); the groups present come back in `categories`. Ignored when `path` is given.',
+            "The name of a top-level directory of the store to inspect, the same as `path` with one segment. A label in `categories` that is not a directory reads as `not_found`; pass such a label as `query`. Ignored when `path` is given.",
         ),
     query: z
         .string()
@@ -589,7 +589,8 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             "Results are ALWAYS bounded — prefer a targeted query over a full dump: " +
             '`query` is the main entry point, a case-insensitive substring filter over each entry\'s path and its dataset/title/category/organism/format/contents labels (e.g. "regulon", "hallmark", "mouse"); ' +
             "`path` inspects one directory beneath /mnt/refs (a returned path, or store-relative) — drill in with it when a listing is truncated; " +
-            '`category` is shorthand for a top-level group (e.g. "pathways", "regulatory-networks"), and the groups present come back in `categories`; ' +
+            '`categories` in the response lists the top-level directory names and the dataset group labels (for example "pathways") present; ' +
+            "pass a group label as `query`, because `category` inspects a top-level directory by name and a label that is not a directory reads as `not_found`; " +
             "`limit` caps the entries returned. The response carries `returned`, `total`, and `hasMore`, so truncation is never silent. " +
             "An empty result means the dataset is absent right now — not that it is unobtainable. Say so; never guess a path, and never silently substitute a different dataset. " +
             "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path, and whatever is added shows up on a later call.",

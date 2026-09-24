@@ -31,10 +31,17 @@ const resourcesSchema = z.object({
     gpu: z.object({ count: z.number().int().positive() }).optional(),
 });
 const routeSchema = z.object({
-    agentId: z.string().optional(),
-    resources: resourcesSchema.optional(),
-    rationale: z.string().optional(),
-    packages: z.array(z.string()).optional(),
+    agentId: z.string().optional().describe("The id of one specialist from the eligible catalog, copied exactly."),
+    resources: resourcesSchema
+        .optional()
+        .describe(
+            "The sandbox resources of the step, inside the stated ranges. Omit to take the defaults; a value outside the ranges is replaced by the defaults.",
+        ),
+    rationale: z.string().optional().describe("One or two sentences on why this specialist fits the request. The step agent reads it."),
+    packages: z
+        .array(z.string())
+        .optional()
+        .describe("The packages that the scripts of the step import, each as `[python:|r:]<name>[==<version>]`. An empty array is valid."),
 });
 
 /**
