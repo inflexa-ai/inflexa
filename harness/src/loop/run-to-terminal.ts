@@ -4,17 +4,19 @@
  * Some agents communicate their result EXCLUSIVELY through a terminal tool
  * (`submit_plan`, `submit_profile`, `submit_synthesis`, …):
  * the loop's text reply is discarded and the outcome is read from a closure
- * cell the terminal tool writes. Plain `runAgent` ends a capped run on a
- * tool-LESS wrap-up turn, so an agent that burns its whole iteration budget —
- * or simply stops on prose — without ever submitting leaves that cell empty
- * and forces the caller to hard-fail.
+ * cell the terminal tool writes. The wrap-up of a capped run lets no tool run,
+ * so an agent that burns its whole iteration budget — or simply stops on
+ * prose — without ever submitting leaves that cell empty and forces the caller
+ * to hard-fail.
  *
  * `runToTerminal` runs the agent, then — if the outcome cell is still empty
- * and the run was not aborted — grants ONE focused salvage continuation whose
- * only tools are the terminal tools, opened by a corrective nudge. Restricting
- * the surface to the terminal tools removes every distraction; a small
- * `maxIterations` lets the model fix a single validation rejection and
- * resubmit.
+ * and the run was not aborted — runs ONE salvage continuation of the same
+ * conversation (`continueAgent`), opened by a corrective nudge. The salvage
+ * requests declare every tool of the agent, because the tool set is part of the
+ * prefix that the prompt cache and a signed thinking block bind to. The ids of
+ * the terminal tools make the mask of the salvage: only a terminal tool runs,
+ * and a call of any other tool gets an error result. A small cap lets the model
+ * fix a single validation rejection and resubmit.
  *
  * Salvage steps are namespaced (`salvage:…`) so a durable (DBOS) caller does
  * not collide the continuation's `llm-*` / `tool-*` cache keys with the first
@@ -24,8 +26,9 @@
 import type { AgentSession } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Tool } from "../tools/define-tool.js";
+import { continueAgent } from "./continue-agent.js";
 import { addChatUsage, type AgentRunUsage } from "./metrics.js";
-import { DEFAULT_STEP_NAME_FORMATTER, runAgent, type AgentFinish, type RunAgentOptions, type RunAgentResult, type StepNameFormatter } from "./run-agent.js";
+import { runAgent, type AgentFinish, type RunAgentOptions, type RunAgentResult } from "./run-agent.js";
 import type { AgentDefinition, LoopMessage } from "./types.js";
 
 /** Default salvage budget: one submit plus a validation-fix retry or two. */
@@ -57,27 +60,27 @@ export interface RunToTerminalResult extends RunAgentResult {
 
 /** Describes how to salvage a run that never reached its terminal tool. */
 export interface TerminalSalvage {
-    /** Terminal tools offered on the salvage turn (submit / blocker / …). Must be
-     *  the same instances the first run used — they close over the outcome cell. */
+    /**
+     * The terminal tools (submit / blocker / …). Their ids make the mask of the
+     * salvage continuation, whose requests still declare every tool of the
+     * agent. Each one must be a declared tool of the agent, because a mask
+     * cannot let an undeclared tool run.
+     */
     readonly tools: readonly Tool[];
-    /** Corrective user message that opens the salvage continuation. */
+    /** The corrective request that opens the salvage continuation, appended as a synthetic user message. */
     readonly nudge: string;
-    /** Salvage iteration budget. Defaults to {@link DEFAULT_SALVAGE_ITERATIONS}. */
+    /** The cap of salvage requests. Defaults to {@link DEFAULT_SALVAGE_ITERATIONS}. */
     readonly maxIterations?: number;
-}
-
-function salvageStepNames(base: StepNameFormatter): StepNameFormatter {
-    return {
-        llm: (i) => `salvage:${base.llm(i)}`,
-        tool: (name, id) => `salvage:${base.tool(name, id)}`,
-    };
 }
 
 /**
  * Drive `agent` to its terminal tool, salvaging once if it doesn't get there.
- * Returns the salvage run's result when a salvage occurred (its message array
- * already includes the first run's, and its token rollups are summed across both
- * attempts), otherwise the first run's result.
+ * When a salvage ran, the result holds the messages of the first run and then
+ * the messages of the salvage, the finish of the salvage, and the token rollups
+ * of both attempts. Otherwise it is the result of the first run.
+ *
+ * Throws before the first run when a terminal tool is not a declared tool of
+ * the agent.
  */
 export async function runToTerminal(
     agent: AgentDefinition,
@@ -86,12 +89,17 @@ export async function runToTerminal(
     opts: RunAgentOptions,
     salvage: TerminalSalvage,
 ): Promise<RunToTerminalResult> {
+    const undeclared = salvage.tools.find((terminal) => !agent.tools.some((tool) => tool.id === terminal.id));
+    if (undeclared !== undefined) {
+        throw new Error(`The terminal tool "${undeclared.id}" is not a declared tool of the agent "${agent.id}", thus the salvage mask cannot let it run.`);
+    }
+
     const first = await runAgent(agent, initial, session, opts);
     if (opts.resolved?.() || opts.signal.aborted) return { ...first, salvage: null };
 
     const salvageBudget = salvage.maxIterations ?? DEFAULT_SALVAGE_ITERATIONS;
     // Reported here rather than in `runAgent` because the loop cannot know it is being
-    // salvaged: it sees an ordinary run with a small budget and a restricted tool set.
+    // salvaged: it sees a continuation with a small cap and a mask.
     // Only this wrapper holds the fact that a first attempt ended without its outcome.
     // The first run's finish rides along because it is the whole diagnosis of WHY a
     // salvage was needed, and it is the field the second run's result overwrites.
@@ -104,27 +112,24 @@ export async function runToTerminal(
         salvageMaxIterations: salvageBudget,
     });
 
-    const salvageAgent: AgentDefinition = {
-        ...agent,
-        tools: [...salvage.tools],
-        maxIterations: salvageBudget,
-    };
-    const salvageOpts: RunAgentOptions = {
-        ...opts,
-        formatStepName: salvageStepNames(opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER),
-    };
-    const salvaged = await runAgent(salvageAgent, [...first.messages, { role: "user", content: salvage.nudge }], session, salvageOpts);
+    const salvaged = await continueAgent(
+        agent,
+        first.messages,
+        { text: salvage.nudge, mask: { allow: salvage.tools.map((t) => t.id) }, maxRequests: salvageBudget, stepNamespace: "salvage" },
+        session,
+        opts,
+    );
 
-    // The continuation is the same logical run as the first attempt — its
-    // message array already carries the first run's — so its rollups must too,
-    // or the caller reads the salvage turn's tokens as the whole cost.
+    // The continuation is the same logical run as the first attempt — the result
+    // carries the messages of both — so its rollups must cover both too, or the
+    // caller reads the salvage turn's tokens as the whole cost.
     //
     // `salvage` deliberately keeps each attempt's OWN finish, unsummed: it is the
     // per-attempt diagnosis, not a second accounting of the same tokens. The two
     // views are therefore NOT additive — `finish` is the run's total and already
     // covers everything `salvage.firstFinish` and `salvage.finish` report.
     return {
-        ...salvaged,
+        messages: [...first.messages, ...salvaged.messages],
         finish: {
             ...salvaged.finish,
             ...sumUsage("usage", first.finish, salvaged.finish),

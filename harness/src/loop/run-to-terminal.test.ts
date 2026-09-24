@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import type { ToolResultPart } from "ai";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import { isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
@@ -24,6 +26,22 @@ function submitTool(cell: { value: string | null }): Tool {
             return ok({ accepted: true });
         },
     });
+}
+
+/** A tool that is not terminal, and that counts its runs. */
+function countedTool(id: string): { tool: Tool; runs: () => number } {
+    let runs = 0;
+    const tool = defineTool({
+        id,
+        description: `The ${id} tool.`,
+        inputSchema: z.object({}),
+        describeCall: "none",
+        execute: async () => {
+            runs++;
+            return ok({ ran: id });
+        },
+    });
+    return { tool, runs: () => runs };
 }
 
 function agentDef(tools: Tool[], maxIterations = 4): AgentDefinition {
@@ -155,9 +173,7 @@ describe("runToTerminal", () => {
 
         // First run used bare `llm-0`; the salvage run's steps are all prefixed,
         // so no name from the two passes collides.
-        expect(names).toContain("llm-0");
-        expect(names.some((n) => n.startsWith("salvage:llm-"))).toBe(true);
-        expect(new Set(names).size).toBe(names.length);
+        expect(names).toEqual(["llm-0", "salvage:llm-0", "salvage:tool-submit-t1"]);
     });
 
     it("reports the usage of both passes on the returned finish", async () => {
@@ -223,5 +239,82 @@ describe("runToTerminal", () => {
         expect("turnUsage" in finish).toBe(false);
         expect(finish.usage).toBeUndefined();
         expect(finish.turnUsage).toBeUndefined();
+    });
+
+    it("declares each tool of the agent on each salvage request", async () => {
+        const cell = { value: null as string | null };
+        const submit = submitTool(cell);
+        const blocker = countedTool("report_blocker");
+        const agent = agentDef([countedTool("search").tool, countedTool("read").tool, submit, blocker.tool]);
+        const provider = scriptedProvider([
+            makeMessage([textBlock("thinking")], "end_turn"),
+            makeMessage([toolUseBlock("t1", "submit", { answer: "salvaged" })], "tool_use"),
+        ]);
+
+        const { messages, salvage } = await runToTerminal(
+            agent,
+            GO,
+            makeSession(),
+            { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, resolved: () => cell.value !== null },
+            { tools: [submit, blocker.tool], nudge: NUDGE },
+        );
+
+        expect(cell.value).toBe("salvaged");
+        expect(provider.calls).toHaveLength(2);
+        const [firstRequest, salvageRequest] = provider.calls;
+        expect(Object.keys(salvageRequest!.tools)).toEqual(["search", "read", "submit", "report_blocker"]);
+        expect(Object.keys(salvageRequest!.tools)).toEqual(Object.keys(firstRequest!.tools));
+        expect(salvageRequest!.system).toEqual(firstRequest!.system);
+        // The nudge is a synthetic request, thus it opens no turn in a stored thread.
+        const nudge = messages[2]!;
+        expect(nudge.content).toBe(NUDGE);
+        expect(isSyntheticUserMessage(nudge)).toBe(true);
+        // [user, assistant(prose), nudge, assistant(submit), tool(result)]
+        expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool"]);
+        expect(salvage?.firstFinish.reason).toBe("stop");
+    });
+
+    it("refuses a salvage call of a tool that is not terminal", async () => {
+        const cell = { value: null as string | null };
+        const submit = submitTool(cell);
+        const search = countedTool("search");
+        const provider = scriptedProvider([
+            makeMessage([textBlock("thinking")], "end_turn"),
+            makeMessage([toolUseBlock("s1", "search", {})], "tool_use"),
+            makeMessage([toolUseBlock("t1", "submit", { answer: "salvaged" })], "tool_use"),
+        ]);
+
+        const { messages } = await runToTerminal(
+            agentDef([search.tool, submit]),
+            GO,
+            makeSession(),
+            { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, resolved: () => cell.value !== null },
+            { tools: [submit], nudge: NUDGE },
+        );
+
+        expect(search.runs()).toBe(0);
+        expect(cell.value).toBe("salvaged");
+        const refused = messages.flatMap((m) => (m.role === "tool" ? (m.content as ToolResultPart[]) : [])).find((r) => r.toolCallId === "s1")!;
+        expect(refused.output.type).toBe("error-text");
+        expect(JSON.parse((refused.output as { value: string }).value)).toEqual({
+            error: "The tool search is not available for this request, thus it did not run. The tools that can run now: submit.",
+            retryable: false,
+        });
+    });
+
+    it("throws before the first run when a terminal tool is not a declared tool of the agent", async () => {
+        const cell = { value: null as string | null };
+        const provider = scriptedProvider([makeMessage([textBlock("thinking")], "end_turn")]);
+
+        const run = runToTerminal(
+            agentDef([countedTool("search").tool]),
+            GO,
+            makeSession(),
+            { provider, signal: new AbortController().signal, emit: () => {}, runStep: passthroughStep, resolved: () => cell.value !== null },
+            { tools: [submitTool(cell)], nudge: NUDGE },
+        );
+
+        await expect(run).rejects.toThrow('The terminal tool "submit" is not a declared tool of the agent "test-agent"');
+        expect(provider.calls).toHaveLength(0);
     });
 });

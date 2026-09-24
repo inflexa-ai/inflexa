@@ -484,7 +484,7 @@ function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { v
  * The planner's inner tools. Only terminal tools enter the loop
  * (`submit_plan`, `request_clarification`, `report_blocker`); environment
  * inventories are read before the loop and injected into its seed message.
- * The terminal list is re-offered if salvage is needed.
+ * The ids of the terminal list make the mask of the salvage, if one is needed.
  */
 interface InnerTools {
     readonly terminal: Tool[];
