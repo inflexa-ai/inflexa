@@ -31,7 +31,7 @@ import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createUpdateWorkingMemoryTool } from "../tools/memory/update-working-memory.js";
 import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
-import { DEFAULT_CONVERSATION_BUDGET, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
+import { DEFAULT_CONVERSATION_BUDGET, openChatTurn, prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -532,6 +532,53 @@ describe("runChatTurn", () => {
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user", "assistant"]);
         expect(contextRecordOf(rows[4]!.message)).toBeUndefined();
+    });
+
+    it("opens a report thread with the report agent, and runs it under the provenance of that agent", async () => {
+        (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
+        const records: LlmUsageRecord[] = [];
+        const usageRecorder: UsageRecorder = {
+            record: (record) => {
+                records.push(record);
+                return okAsync(undefined);
+            },
+        };
+        const report: AgentDefinition = { ...agentWith([echoTool()]), id: "report-session-agent" };
+        const agents: ThreadAgentResolver = { forThread: (type) => ok(type === "report" ? report : agentWith([echoTool()])) };
+        const { provenance: _hostProvenance, ...session } = makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } });
+        const { analysisId, threadId, userInput, ...run } = params(
+            scriptedProvider([makeMessage([textBlock("drafted")], "end_turn", { inputTokens: 5, outputTokens: 1 })]),
+            { session, usageRecorder },
+        );
+
+        const opened = await openChatTurn({ pool, agents }, { analysisId, threadId, userInput });
+        if (opened.kind !== "ready") throw new Error(`expected an open turn, got ${opened.kind}`);
+        const result = await opened.run(run);
+
+        expect(opened.agent.id).toBe("report-session-agent");
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" } });
+        expect(records.map((record) => [record.agentId, record.callPath])).toEqual([["report-session-agent", ["report-session-agent"]]]);
+    });
+
+    it("refuses a thread of a different analysis at the open, before any row of the turn", async () => {
+        (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_B, title: "Owned by B" }))._unsafeUnwrap();
+
+        const opened = await openChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, { analysisId: ANALYSIS_A, threadId: THREAD, userInput: "hi" });
+
+        expect(opened).toEqual({ kind: "not_found" });
+        expect(await storedRows()).toEqual([]);
+        expect(await turnRecords()).toEqual([]);
+    });
+
+    it("stores the display of the user message with the secrets redacted", async () => {
+        const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123";
+        const provider = scriptedProvider([makeMessage([textBlock("noted")], "end_turn")]);
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { userInput: `use the key ${secret}` }));
+
+        const replay = storedMessagesToCortex(await storedRows());
+        expect(replay[0]!.parts).toEqual([{ type: "text", text: "use the key [REDACTED: OpenAI API Key]" }]);
+        expect(JSON.stringify(replay)).not.toContain(secret);
     });
 
     it("gives the usage recorder of the host to the root loop", async () => {

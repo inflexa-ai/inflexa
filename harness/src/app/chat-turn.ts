@@ -1,11 +1,13 @@
 /**
- * The chat turn of a host: a turn is `runChatTurn`, and `prepareChatTurn` is its first step. The
- * host gives only its transport values, and the harness stores the opening, each round, and the outcome.
+ * The chat turn of a host: a turn is `runChatTurn`, which is `openChatTurn` and then the `run` of the
+ * open turn. `prepareChatTurn` is the first step of the open. The host gives only its transport
+ * values, and the harness stores the opening, each round, and the outcome.
  */
 
+import type { ModelMessage } from "ai";
 import type { Pool } from "pg";
 
-import type { AgentSession } from "../auth/types.js";
+import type { RequestSession } from "../auth/types.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { DbError } from "../lib/db-result.js";
@@ -153,12 +155,22 @@ export interface RunChatTurnDeps extends PrepareChatTurnDeps {
     readonly agents: ThreadAgentResolver;
 }
 
-/** The transport values of one turn. */
-export interface RunChatTurnParams {
+/**
+ * The session of a turn without its provenance. The harness sets the provenance from the agent that
+ * it resolves, because only the preparation knows the thread type.
+ */
+export type ChatTurnSession = Omit<RequestSession, "provenance">;
+
+/** What opens a turn: the thread and the user input. */
+export interface OpenChatTurnParams {
     readonly analysisId: string;
     readonly threadId: string;
     readonly userInput: string;
-    readonly session: AgentSession;
+}
+
+/** The transport values of a turn that is open. */
+export interface RunOpenChatTurnParams {
+    readonly session: ChatTurnSession;
     /** Makes the provider of the turn over the emit sink of the display recorder. */
     readonly chat: (emit: EmitFn) => AgentChat;
     readonly emit: EmitFn;
@@ -168,7 +180,7 @@ export interface RunChatTurnParams {
     readonly ask?: (request: AskRequest, emit: EmitFn) => Promise<AskApproval>;
     /** Who sent the user message. */
     readonly author?: string;
-    /** When the host opened the turn. Absent counts from the call. */
+    /** When the host opened the turn. Absent counts from the call to {@link openChatTurn}. */
     readonly startedAtMs?: number;
     /** The cache policy of the root loop. Absent gives {@link CONVERSATION_PROMPT_CACHE}. */
     readonly promptCache?: PromptCachePolicy;
@@ -176,48 +188,95 @@ export interface RunChatTurnParams {
     readonly conversationBudget?: number;
 }
 
+/** The values of one whole turn. */
+export type RunChatTurnParams = OpenChatTurnParams & RunOpenChatTurnParams;
+
 export type ChatTurnOutcome =
     | { readonly status: "done"; readonly finish: AgentFinish }
     | { readonly status: "aborted"; readonly finish?: AgentFinish }
     | { readonly status: "failed"; readonly reason: string; readonly cause: unknown };
 
-export type ChatTurnResult =
+/** A turn that ended before its run. It wrote no row and no turn record. */
+export type ChatTurnRefusal =
     | { readonly kind: "prepare_failed"; readonly cause: unknown }
     | { readonly kind: "not_found" }
-    | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType }
-    | {
-          readonly kind: "ran";
-          readonly outcome: ChatTurnOutcome;
-          /** True when the opening of the turn landed. */
-          readonly opened: boolean;
-          /** The error of the last write, when rows of the turn or its close did not land. */
-          readonly storeError?: DbError;
-          readonly durationMs: number;
-          readonly turnUsage?: TokenUsageRollup;
-          /** The final text of a run that returned. */
-          readonly fallbackText?: string;
-      };
+    | { readonly kind: "agent_unresolved"; readonly threadType: ThreadType };
+
+export interface ChatTurnRan {
+    readonly kind: "ran";
+    readonly outcome: ChatTurnOutcome;
+    /** True when the opening of the turn landed. */
+    readonly opened: boolean;
+    /** The error of the last write, when rows of the turn or its close did not land. */
+    readonly storeError?: DbError;
+    readonly durationMs: number;
+    readonly turnUsage?: TokenUsageRollup;
+    /** The final text of a run that returned. */
+    readonly fallbackText?: string;
+}
+
+export type ChatTurnResult = ChatTurnRefusal | ChatTurnRan;
 
 /**
- * Run one chat turn: prepare it, resolve its agent, store its opening, run the root loop with a
- * round sink that stores each round, and close the turn with its outcome.
+ * A turn that is prepared, with its agent resolved. Call `run` one time: each call stores a new
+ * opening of the same user message.
  */
-export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnParams): Promise<ChatTurnResult> {
-    const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
-    const startedAtMs = params.startedAtMs ?? Date.now();
+export interface OpenChatTurn {
+    readonly kind: "ready";
+    /** The agent that runs the turn. The harness stamps its provenance on the session of the run. */
+    readonly agent: AgentDefinition;
+    readonly run: (params: RunOpenChatTurnParams) => Promise<ChatTurnRan>;
+}
 
+/**
+ * Open one chat turn: prepare it and resolve its agent. A refusal comes back before any row of the
+ * turn exists, thus a host can answer it before it starts a stream.
+ */
+export async function openChatTurn(deps: RunChatTurnDeps, params: OpenChatTurnParams): Promise<OpenChatTurn | ChatTurnRefusal> {
+    const openedAtMs = Date.now();
     let prepared: PrepareChatTurnResult;
     try {
-        prepared = await prepareChatTurn(deps, { analysisId: params.analysisId, threadId: params.threadId, userInput: params.userInput });
+        prepared = await prepareChatTurn(deps, params);
     } catch (cause) {
         return { kind: "prepare_failed", cause };
     }
     if (prepared.kind === "not_found") return prepared;
     const agent = deps.agents.forThread(prepared.threadType);
     if (agent.isErr()) return { kind: "agent_unresolved", threadType: prepared.threadType };
+    const ready = prepared;
+    return {
+        kind: "ready",
+        agent: agent.value,
+        run: (run) => runOpenTurn(deps, params, ready, agent.value, { ...run, startedAtMs: run.startedAtMs ?? openedAtMs }),
+    };
+}
 
+/**
+ * Run one chat turn: open it, store its opening, run the root loop with a round sink that stores
+ * each round, and close the turn with its outcome.
+ */
+export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnParams): Promise<ChatTurnResult> {
+    const { analysisId, threadId, userInput, ...run } = params;
+    const opened = await openChatTurn(deps, { analysisId, threadId, userInput });
+    if (opened.kind !== "ready") return opened;
+    return opened.run(run);
+}
+
+async function runOpenTurn(
+    deps: RunChatTurnDeps,
+    turn: OpenChatTurnParams,
+    prepared: Extract<PrepareChatTurnResult, { kind: "ok" }>,
+    agent: AgentDefinition,
+    params: RunOpenChatTurnParams & { readonly startedAtMs: number },
+): Promise<ChatTurnRan> {
+    const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
+    const session: RequestSession = { ...params.session, provenance: { agentId: agent.id, callPath: [agent.id] } };
     const history = createThreadHistory(deps.pool, deps.logger);
-    const recorder = createConversationDisplayRecorder({ userText: params.userInput, topLevelCallPath: params.session.provenance.callPath, sink: params.emit });
+    const recorder = createConversationDisplayRecorder({
+        userText: userTextOf(prepared.userMessage),
+        topLevelCallPath: session.provenance.callPath,
+        sink: params.emit,
+    });
     // The groups that did not land yet, in the order of the turn. A failed write keeps them for the next write.
     let pending: ConversationTurn[] = [
         {
@@ -234,7 +293,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
         if (pending.length === 0 && close === undefined) return;
         const closing = close === undefined ? {} : { close };
         const write = startSeq === undefined ? { opening: pending[0]!, rounds: pending.slice(1), ...closing } : { startSeq, rounds: pending, ...closing };
-        (await history.writeTurn(params.threadId, write)).match(
+        (await history.writeTurn(turn.threadId, write)).match(
             (written) => {
                 pending = [];
                 startSeq = written.startSeq;
@@ -242,7 +301,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
             },
             (error) => {
                 storeError = error;
-                logger.warn("chat turn write failed", { threadId: params.threadId, op: error.op, ...logger.errorFields(error.cause) });
+                logger.warn("chat turn write failed", { threadId: turn.threadId, op: error.op, ...logger.errorFields(error.cause) });
             },
         );
     };
@@ -252,7 +311,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
     let outcome: ChatTurnOutcome;
     let fallbackText: string | undefined;
     try {
-        const run = await runAgent(agent.value, prepared.messages, params.session, {
+        const run = await runAgent(agent, prepared.messages, session, {
             provider: params.chat(recorder.emit),
             signal: params.signal,
             emit: recorder.emit,
@@ -260,7 +319,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
             usageRecorder: params.usageRecorder,
             toolOutputStore: createToolOutputStore(deps.pool),
             promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
-            compaction: compactionPolicy(deps, params, prepared.threadType, agent.value, recorder.emit),
+            compaction: compactionPolicy(deps, turn.analysisId, params, prepared.threadType, agent, recorder.emit),
             ...(deps.logger === undefined ? {} : { logger: deps.logger }),
             ...(ask === undefined ? {} : { ask: (request: AskRequest) => ask(request, recorder.emit) }),
             onRound: async (round) => {
@@ -277,7 +336,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
         outcome = aborted ? { status: "aborted" } : { status: "failed", reason: failureReasonOf(cause), cause };
     }
 
-    const durationMs = Date.now() - startedAtMs;
+    const durationMs = Date.now() - params.startedAtMs;
     const turnUsage = outcome.status === "failed" ? undefined : outcome.finish?.turnUsage;
     await flush({
         status: outcome.status,
@@ -297,9 +356,22 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
     };
 }
 
+/** The sanitized text of the user message, thus the display never holds a secret that the model does not see. */
+function userTextOf(message: ModelMessage): string {
+    if (typeof message.content === "string") return message.content;
+    return message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+}
+
 const WORKING_MEMORY_TOOL_ID = "update_working_memory";
 
-function compactionPolicy(deps: RunChatTurnDeps, params: RunChatTurnParams, threadType: ThreadType, agent: AgentDefinition, emit: EmitFn): CompactionPolicy {
+function compactionPolicy(
+    deps: RunChatTurnDeps,
+    analysisId: string,
+    params: RunOpenChatTurnParams,
+    threadType: ThreadType,
+    agent: AgentDefinition,
+    emit: EmitFn,
+): CompactionPolicy {
     // A report thread reads a frozen copy of the working memory, thus its agent declares no memory tool.
     const remembers = agent.tools.some((tool) => tool.id === WORKING_MEMORY_TOOL_ID);
     const workingMemory = createWorkingMemory(deps.pool);
@@ -311,7 +383,7 @@ function compactionPolicy(deps: RunChatTurnDeps, params: RunChatTurnParams, thre
         mask: remembers ? { allow: [WORKING_MEMORY_TOOL_ID] } : "none",
         keepFirstTurn: threadType === "report",
         recordsAfter: async (view) =>
-            contextRecordsFor({ threadType, analysisId: params.analysisId, workingMemory, ...(await readTurnContext(deps.pool, params.analysisId)) }, view),
+            contextRecordsFor({ threadType, analysisId, workingMemory, ...(await readTurnContext(deps.pool, analysisId)) }, view),
     };
 }
 
