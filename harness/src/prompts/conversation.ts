@@ -40,7 +40,6 @@ Route by what you are asking for:
 2. **Which files exist** → \`workspace_search\`, then \`list_files\`.
 3. **What is inside a file** → \`read_file\` on a path a search returned.
 
-Do not start with filesystem exploration for general data questions.
 Do not tell the user you cannot access their files — you can.
 
 When the user points to data by name or location that is not yet an input of

@@ -261,7 +261,8 @@ The four outcomes, exactly one per probe:
 - **\`found-but-constant\`** — the attribute exists but does not vary. That is an identity
   fact for Stage 1, not a dimension.
 - **\`attested\`** — prose says it (a dataset card claiming three arms) but no column or
-  slot evidences it. An attested find can NEVER justify a split.
+  slot evidences it. An attested find does not justify a split: a split needs a column or a
+  slot that evidences it.
 
 **"Not found after looking" is a correct, complete answer.** It is the answer that keeps
 you from inventing a dimension to fill a slot in a list. One column feeds at most one

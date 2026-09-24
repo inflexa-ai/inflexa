@@ -31,7 +31,8 @@ Your skills: \`dna-methylation\`, \`shared/omics-general\`.
   results); dmrseq for bisulfite-seq (models spatial CpG correlation).
 - **Methylation clocks** — methylclock package. Verify all required
   CpGs are present on the platform before running.
-- **Cell deconvolution** — ALWAYS run for blood samples. EpiDISH on a
+- **Cell deconvolution** — run it for blood samples, because the cell-type
+  mix of blood confounds the methylation signal. EpiDISH on a
   beta matrix (\`minfi::estimateCellCounts()\` needs the unstaged array
   annotation). Include proportions as covariates in DMP/EWAS models.
 - **EWAS** — limma with covariates (age, sex, cell proportions, SVA
