@@ -349,13 +349,13 @@ is an embedder concern.
   `ArtifactRegistry`, then the index in the vector store. The metadata and the
   summary continue the conversation of the step agent. The final step of the
   parent is the literature-grounded synthesis.
-- **Chat turn** (`app/chat-turn.ts`): the preparation half of one turn only.
-  `prepareChatTurn` resolves the thread ownership, seeds the title, loads the
-  analysis status, and assembles the message array. It has none of the transport.
-  The caller runs `runAgent` with its own `emit`, then it persists the turn with
-  `appendTurn` (`memory/thread-history.ts`). A turn is
-  `prepareChatTurn → runAgent → appendTurn`. The host wraps this in its own
-  request handler, because the harness ships no HTTP route layer.
+- **Chat turn** (`app/chat-turn.ts`): a turn is `runChatTurn`. The host gives
+  only its transport values: the emit sink, the signal, the provider factory, the
+  usage recorder, and the approval binding. `runChatTurn` prepares the turn with
+  `prepareChatTurn`, resolves the agent of the thread type, and stores the opening.
+  Then it runs `runAgent` with a round sink that stores each round, and it closes
+  the turn with its outcome. The host wraps this in its own request handler,
+  because the harness ships no HTTP route layer.
 - **Run-event stream**: a single DBOS-backed stream for each workflow. The
   workflow bodies produce it, and a reader of the typed run-event parts of the
   harness (`harness/src/contracts/`) consumes it. There is no standalone route file

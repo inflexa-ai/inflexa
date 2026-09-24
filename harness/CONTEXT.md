@@ -395,7 +395,7 @@ its process bootstrap, and any adapter that is not local.
   - no choice of the sink that `emit` writes to
   - no choice of the billing that the injected `embedder` carries.
 
-  Its members include `prepareChatTurn`,
+  Its members include `runChatTurn`, `prepareChatTurn`,
   `assembleMessages`, `synthesizeRun`, and `data-profile-policy`.
 
 ### Decomposition
@@ -679,6 +679,12 @@ Other facts:
   exit, the loop answers each tool call that has no result with a not-run error
   result. It removes no message, and it changes no message.
 
+  `RunAgentOptions.onRound` is an optional round sink. The loop gives the sink each
+  message that it appended, one round at a time. It calls the sink before each model
+  request, at each exit, and before a throw. The loop awaits the sink, and it knows
+  no store. A durable loop passes no sink, because a DBOS replay runs the loop body
+  again.
+
   A `finishReason: "length"` truncation is a
   **recoverable soft-error, not a stop**. Only the final content part can be
   truncated. Thus the loop does **not** execute a truncated trailing tool call,
@@ -731,16 +737,24 @@ Other facts:
 
 - **Thread history** — the `messages` table. A row stores an AI SDK model message
   in a versioned envelope (`{kind: "ai-sdk-model-message", aiSdkMajor, message}`).
-  A legacy Anthropic row is backfilled at startup. `appendTurn` writes a turn
-  atomically. `loadRecent` walks newest-first to a token budget, and it snaps the
+  A legacy Anthropic row is backfilled at startup. A host runs a chat turn with
+  `runChatTurn` (`app/chat-turn.ts`). The turn stores its opening, and then each
+  round when the round completes. The store appends each round in one transaction.
+
+  The table `cortex_thread_turns` holds one turn record for each chat turn: the
+  outcome, the usage rollup, and the duration. The outcome is `open` while the
+  turn runs, and then `done`, `aborted`, or `failed`. The transcript read merges
+  the rounds of a turn into one assistant message.
+
+  `loadRecent` walks newest-first to a token budget, and it snaps the
   window to a valid turn boundary, thus it never gives an orphan tool-result
   continuation. It is conversation-scoped.
 - **Working memory** — `cortex_working_memory`, one JSONB row for each analysis.
   It has four sections: `goal`, `constraints`, and `hypotheses` are analysis-flat,
   and `findings` is run-scoped, keyed by `runId`. The agent maintains it section by
   section with one `updateWorkingMemory` tool, and it does not rewrite the whole
-  blob. It is rendered to Markdown and injected as a user message in the window
-  tail, which is cache-safe.
+  blob. Its Markdown render is a context record after the user message of a turn.
+  A turn stores a new record only when the render changed.
 - **There is no semantic recall.** A conversation operates inside the
   token-bounded thread window only. Refer to
   [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
