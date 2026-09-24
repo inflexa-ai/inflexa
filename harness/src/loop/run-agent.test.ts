@@ -13,9 +13,17 @@ import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
 import { defineTool, withToolResultImage, withToolResultImages, type Tool } from "../tools/define-tool.js";
-import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, thinkingBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
+import {
+    isWrapUpRequest,
+    makeMessage,
+    scriptedProvider,
+    type ScriptedProvider,
+    textBlock,
+    thinkingBlock,
+    toolUseBlock,
+} from "./__fixtures__/scripted-provider.js";
 import { continueAgent } from "./continue-agent.js";
-import { runAgent, type RunAgentOptions } from "./run-agent.js";
+import { runAgent, WRAP_UP_REQUEST, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
 import type { AgentDefinition, EmitEvent, RunStep } from "./types.js";
 
@@ -238,26 +246,101 @@ describe("runAgent — workflow tools run unwrapped, in order", () => {
 // ── 5.6 — max-iteration wrap-up ─────────────────────────────────────
 
 describe("runAgent — max-iteration wrap-up", () => {
-    it("forces one call that forbids tools at the cap and returns without throwing", async () => {
-        // The provider never stops asking for tools — except when a call
-        // forbids one, which forces the wrap-up text reply.
+    /** A counting echo tool, thus a test can see that the wrap-up ran no tool. */
+    function countedEcho(): { tool: Tool; runs: () => number } {
+        let count = 0;
+        const tool = defineTool({
+            id: "echo",
+            description: "Echo the label back.",
+            inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
+            execute: async ({ label }) => {
+                count++;
+                return ok({ label });
+            },
+        });
+        return { tool, runs: () => count };
+    }
+
+    const toolCall = (callIndex: number): ChatResponse => makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use");
+
+    it("wraps up at the cap with the tools and the tool choice of the loop, and returns without throwing", async () => {
+        // The provider asks for a tool on each loop request, and answers in text
+        // once the wrap-up request is in the transcript.
         const provider = scriptedProvider((callIndex, request) =>
-            request.toolChoice === "none"
-                ? makeMessage([textBlock("here is where I reached")], "end_turn")
-                : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
+            isWrapUpRequest(request) ? makeMessage([textBlock("here is where I reached")], "end_turn") : toolCall(callIndex),
         );
+        const rec = recordingStep();
 
-        const { messages } = await runAgent(agentDef([echoTool()], 3), GO, makeSession(), opts(provider));
+        const { messages, finish } = await runAgent(agentDef([echoTool()], 3), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolChoice: "auto" }));
 
-        // 3 capped iterations + 1 forced wrap-up call.
+        // 3 capped iterations + 1 wrap-up request.
         expect(provider.calls).toHaveLength(4);
-        expect(provider.calls[3]!.toolChoice).toBe("none");
+        expect(provider.calls.map((call) => call.toolChoice)).toEqual(["auto", "auto", "auto", "auto"]);
         expect(Object.keys(provider.calls[3]!.tools)).toEqual(Object.keys(provider.calls[2]!.tools));
+        // The first wrap-up request keeps the step name of the single wrap-up call of an earlier version.
+        expect(rec.names.filter((name) => name.startsWith("llm-"))).toEqual(["llm-0", "llm-1", "llm-2", "llm-3"]);
 
+        // The wrap-up request is a synthetic user message, thus it opens no turn.
+        const wrapUpRequest = messages.at(-2)!;
+        expect(isSyntheticUserMessage(wrapUpRequest)).toBe(true);
+        expect(wrapUpRequest.content).toBe(WRAP_UP_REQUEST);
         const last = messages.at(-1)!;
         expect(last.role).toBe("assistant");
         const content = last.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
         expect(content.some((b) => b.type === "text" && b.text === "here is where I reached")).toBe(true);
+        expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
+    });
+
+    it("refuses a call of the wrap-up and sends a second request", async () => {
+        const { tool, runs } = countedEcho();
+        const provider = scriptedProvider((callIndex) => (callIndex < 4 ? toolCall(callIndex) : makeMessage([textBlock("answer")], "end_turn")));
+
+        const { messages, finish } = await runAgent(agentDef([tool], 3), GO, makeSession(), opts(provider));
+
+        // 3 loop requests + 2 wrap-up requests; the call of the first wrap-up reply did not run.
+        expect(provider.calls).toHaveLength(5);
+        expect(runs()).toBe(3);
+        const refused = toolResultParts(messages.at(-2))[0]!;
+        expect(refused.toolCallId).toBe("tu-3");
+        expect(String(outputValue(refused))).toContain("No tool can run for this request");
+        expect(messages.at(-1)!.content).toEqual([{ type: "text", text: "answer" }]);
+        expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
+    });
+
+    it("ends after 2 wrap-up requests when the model calls a tool in each reply", async () => {
+        const { tool, runs } = countedEcho();
+        const provider = scriptedProvider((callIndex) => toolCall(callIndex));
+        const rec = recordingStep();
+        const iterations: [number, boolean][] = [];
+
+        const { messages, finish } = await runAgent(
+            agentDef([tool], 3),
+            GO,
+            makeSession(),
+            opts(provider, {
+                runStep: rec.runStep,
+                emit: (event) => {
+                    if (event.type === "iteration") iterations.push([event.index, event.final]);
+                },
+            }),
+        );
+
+        expect(provider.calls).toHaveLength(5);
+        expect(runs()).toBe(3);
+        expect(rec.names.filter((name) => name.startsWith("llm-"))).toEqual(["llm-0", "llm-1", "llm-2", "llm-3", "llm-4"]);
+        // Wrap-up request `k` has the index `maxIterations + k`, and the last one is final.
+        expect(iterations).toEqual([
+            [0, false],
+            [1, false],
+            [2, false],
+            [3, false],
+            [4, true],
+        ]);
+        // The transcript ends with the refusal of the second wrap-up reply, and no call lacks a result.
+        expect(toolResultParts(messages.at(-1)).map((r) => [r.toolCallId, isErrorResult(r)])).toEqual([["tu-4", true]]);
+        expect(provider.calls.every((call) => call.toolChoice === undefined)).toBe(true);
+        expect(finish).toMatchObject({ reason: "max_iterations", cappedOut: true });
     });
 });
 
@@ -1031,10 +1114,10 @@ describe("runAgent — aborted terminal path", () => {
 
 describe("runAgent — aborted wrap-up path", () => {
     // A provider that never stops asking for tools in-loop — burning every iteration —
-    // and, when the wrap-up call forbids a tool, resolves an abort carrying `partial`.
+    // and, once the wrap-up request is in the transcript, resolves an abort carrying `partial`.
     function abortsAtWrapUp(partial: string): ScriptedProvider {
         return scriptedProvider((callIndex, request) =>
-            request.toolChoice === "none" ? abortedReply(partial) : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
+            isWrapUpRequest(request) ? abortedReply(partial) : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );
     }
 
@@ -1063,8 +1146,9 @@ describe("runAgent — aborted wrap-up path", () => {
         expect(finish.reason).toBe("aborted");
         expect(finish.cappedOut).toBe(true);
 
-        // No empty assistant shell appended — the tail is the final tool-result message.
-        expect(messages.at(-1)!.role).toBe("tool");
+        // No empty assistant shell appended — the tail is the wrap-up request.
+        expect(messages.at(-1)!.role).toBe("user");
+        expect(isSyntheticUserMessage(messages.at(-1)!)).toBe(true);
 
         // The marker rides the last assistant step the loop produced (the final tool-calling step).
         const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")!;
@@ -1218,7 +1302,7 @@ describe("runAgent — finish signal", () => {
 
     it("reports cappedOut with reason max_iterations on the wrap-up path", async () => {
         const provider = scriptedProvider((callIndex, request) =>
-            request.toolChoice === "none"
+            isWrapUpRequest(request)
                 ? makeMessage([textBlock("reached")], "end_turn")
                 : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );

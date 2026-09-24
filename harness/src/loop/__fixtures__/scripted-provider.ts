@@ -2,6 +2,7 @@ import type { ChatResponse, ChatProvider, ChatRequest, ChatStreamEvent, ChatUsag
 import { type ResultAsync, okAsync } from "neverthrow";
 import type { ProviderError } from "../../providers/errors.js";
 import type { AgentSession as Session } from "../../auth/types.js";
+import { WRAP_UP_REQUEST } from "../run-agent.js";
 
 export type TextBlock = { type: "text"; text: string };
 export type ThinkingBlock = { type: "reasoning"; text: string; providerOptions?: { anthropic: { signature: string } } };
@@ -35,6 +36,15 @@ export function makeMessage(
         ...(mapped === finishReason ? {} : { rawFinishReason: finishReason }),
         usage,
     };
+}
+
+/**
+ * Whether a request belongs to the wrap-up of a run at its iteration cap: its
+ * messages carry the wrap-up request of the loop. The wrap-up keeps the tools and
+ * the tool choice of the loop, thus only the messages tell its requests apart.
+ */
+export function isWrapUpRequest(request: ChatRequest): boolean {
+    return request.messages.some((message) => message.role === "user" && message.content === WRAP_UP_REQUEST);
 }
 
 export function textBlock(text: string): TextBlock {

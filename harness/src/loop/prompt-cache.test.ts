@@ -57,7 +57,7 @@ function opts(provider: RunAgentOptions["provider"], overrides: Partial<RunAgent
     };
 }
 
-/** A script that never terminates on its own, forcing the loop to the wrap-up call. */
+/** A script that calls a tool in each reply, thus the loop runs both wrap-up requests. */
 function neverTerminating(): ScriptedProvider {
     return scriptedProvider(() => makeMessage([toolUseBlock("t", "echo", {})], "tool_use"));
 }
@@ -230,19 +230,20 @@ describe("runAgent prompt-cache directive", () => {
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        // 3 iterations + the forced wrap-up.
-        expect(chat.calls).toHaveLength(4);
+        // 3 iterations + 2 wrap-up requests.
+        expect(chat.calls).toHaveLength(5);
         for (const call of chat.calls) {
             expect(breakpointsOf(call.messages)).toEqual([call.messages.length - 1]);
             expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
 
-        // The wrap-up carries the loop's tool set and forbids a call. The Anthropic
-        // package removes tools for `toolChoice: "none"`, so the prefix may not hold.
-        const wrapUp = chat.calls.at(-1)!;
-        expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
-        expect(wrapUp.toolChoice).toBe("none");
-        expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
+        // Each wrap-up request carries the tool set of the loop and no tool
+        // choice, thus it keeps the prefix. A mask refuses each call.
+        for (const wrapUp of chat.calls.slice(3)) {
+            expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
+            expect("toolChoice" in wrapUp).toBe(false);
+            expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
+        }
     });
 
     it("sends the same marked system message on every call, the wrap-up included", async () => {
@@ -250,9 +251,9 @@ describe("runAgent prompt-cache directive", () => {
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        // The system prompt depends only on the agent's type, so one marked message
-        // serves the whole run.
-        expect(chat.calls).toHaveLength(4);
+        // 3 iterations + 2 wrap-up requests. The system prompt depends only on the
+        // agent's type, so one marked message serves the whole run.
+        expect(chat.calls).toHaveLength(5);
         for (const call of chat.calls) {
             expect(call.system).toEqual({
                 role: "system",
@@ -313,7 +314,8 @@ describe("runAgent prompt-cache directive", () => {
 
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
-        expect(chat.calls).toHaveLength(3);
+        // 2 iterations + 2 wrap-up requests.
+        expect(chat.calls).toHaveLength(4);
         // Caching off leaves no marker, no bag, and a plain-string system prompt.
         // The loop sends no reasoning, so it writes no vendor key either.
         for (const call of chat.calls) {
@@ -331,9 +333,9 @@ describe("runAgent reasoning directive", () => {
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        // The provider applies its configured effort when a request sets none,
-        // so the loop omits the field.
-        expect(chat.calls).toHaveLength(4);
+        // 3 iterations + 2 wrap-up requests. The provider applies its configured
+        // effort when a request sets none, so the loop omits the field.
+        expect(chat.calls).toHaveLength(5);
         for (const call of chat.calls) {
             expect("reasoning" in call).toBe(false);
             // A provider option would bypass the per-model table, so the request carries none.
@@ -346,8 +348,8 @@ describe("runAgent reasoning directive", () => {
 
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { reasoning: "low" }));
 
-        expect(chat.calls).toHaveLength(3);
-        expect(chat.calls.at(-1)?.toolChoice).toBe("none");
+        // 2 iterations + 2 wrap-up requests.
+        expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
             expect(call.reasoning).toBe("low");
         }
@@ -438,16 +440,20 @@ describe("runAgent cache-token metrics", () => {
         expect(await counterTotal(CACHE_WRITE_METRIC, labels)).toBe(1000);
     });
 
-    it("counts the wrap-up call's tokens too", async () => {
+    it("counts the tokens of each wrap-up request too", async () => {
         const usage = { inputTokens: 500, outputTokens: 10, cacheCreationInputTokens: 500, cacheReadInputTokens: 0 };
         const chat = scriptedProvider(() => makeMessage([toolUseBlock("t", "echo", {})], "tool_use", usage));
 
         await runAgent(agentDef(2), GO, makeSession(), opts(chat));
 
-        // 2 iterations + wrap-up = 3 calls, all reporting the same usage.
-        expect(chat.calls).toHaveLength(3);
-        expect(await counterTotal(INPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(1500);
-        expect(await counterTotal(CACHE_WRITE_METRIC, { agent_id: "cache-agent" })).toBe(1500);
+        // 2 iterations + 2 wrap-up requests = 4 calls, all reporting the same usage.
+        expect(chat.calls).toHaveLength(4);
+        for (const wrapUp of chat.calls.slice(2)) {
+            expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
+            expect("toolChoice" in wrapUp).toBe(false);
+        }
+        expect(await counterTotal(INPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(2000);
+        expect(await counterTotal(CACHE_WRITE_METRIC, { agent_id: "cache-agent" })).toBe(2000);
     });
 
     it("records nothing rather than a false zero when the provider reports no usage", async () => {

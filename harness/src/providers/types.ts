@@ -53,6 +53,12 @@ export interface ChatRequest {
     /**
      * A forced choice (`required`, or one named tool) is absent on purpose: some
      * Claude models reject it with a 400, and the model is chosen at run time.
+     *
+     * CAUTION: `@ai-sdk/anthropic` implements `"none"` by removing the tools from
+     * the request, and Anthropic drops its message cache when `tool_choice`
+     * changes. Thus the request reads nothing back from the cache, and a model that
+     * binds its signed thinking blocks to the prefix drops them or refuses the
+     * request. A loop never sends `"none"`: a tool mask refuses a call instead.
      */
     readonly toolChoice?: "auto" | "none";
     /**

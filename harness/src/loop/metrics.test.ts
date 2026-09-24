@@ -9,7 +9,7 @@ import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ProviderError } from "../providers/errors.js";
 import type { AgentChat, ChatResponse } from "../providers/types.js";
 import { defineTool } from "../tools/define-tool.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
+import { isWrapUpRequest, makeMessage, scriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { continueAgent } from "./continue-agent.js";
 import { __resetMetricsForTest } from "./metrics.js";
 import { runAgent } from "./run-agent.js";
@@ -112,10 +112,10 @@ describe("runAgent metrics", () => {
     });
 
     it("increments the cap-hit counter exactly once for a capped run", async () => {
-        // Never terminates on its own — only the wrap-up call, which forbids a
-        // tool, ends it.
+        // Never terminates on its own — only the text reply to the wrap-up
+        // request ends it.
         const chat = scriptedProvider((_callIndex, request) =>
-            request.toolChoice === "none" ? makeMessage([textBlock("wrap-up")], "end_turn") : makeMessage([toolUseBlock("t", "echo", {})], "tool_use"),
+            isWrapUpRequest(request) ? makeMessage([textBlock("wrap-up")], "end_turn") : makeMessage([toolUseBlock("t", "echo", {})], "tool_use"),
         );
 
         await runAgent(agentDef(2), GO, makeSession(), runOpts(chat));
@@ -156,7 +156,7 @@ describe("runAgent token counters for each call", () => {
 
     it("grows each counter for each call, with the agent, the served model, and the provider as labels", async () => {
         const chat = scriptedProvider((callIndex, request) =>
-            request.toolChoice === "none" ? served(makeMessage([textBlock("done")], "end_turn")) : toolCall(callIndex),
+            isWrapUpRequest(request) ? served(makeMessage([textBlock("done")], "end_turn")) : toolCall(callIndex),
         );
 
         await runAgent(agentDef(2), GO, agentSession(), runOpts(chat));
@@ -225,7 +225,7 @@ describe("runAgent token counters for each call", () => {
             },
         };
         const chat = scriptedProvider((callIndex, request) =>
-            request.toolChoice === "none" ? served(makeMessage([textBlock("done")], "end_turn")) : toolCall(callIndex),
+            isWrapUpRequest(request) ? served(makeMessage([textBlock("done")], "end_turn")) : toolCall(callIndex),
         );
         const session = { ...agentSession(), runFrame: { runId: "run-1", stepId: "step-1" } };
         const run = () => runAgent(agentDef(2), GO, session, { ...runOpts(chat), runStep: replayingStep, usageRecorder });

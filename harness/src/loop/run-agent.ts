@@ -98,8 +98,13 @@ export interface RunAgentOptions {
     readonly runStep: RunStep;
     readonly formatStepName?: StepNameFormatter;
     readonly isFatalLoopError?: (err: unknown) => boolean;
-    /** Tool-selection policy for in-loop model calls. The cap wrap-up forbids a
-     * tool call regardless. */
+    /**
+     * The tool choice of each request of this run. The loop sends the same value
+     * on each request, because the tool choice is part of the prefix that the
+     * prompt cache and a signed thinking block bind to. The wrap-up at the
+     * iteration cap keeps the tools and this tool choice, and its mask refuses
+     * each call.
+     */
     readonly toolChoice?: ChatRequest["toolChoice"];
     /**
      * Optional outcome predicate for loop-driving agents whose result is
@@ -180,12 +185,36 @@ export function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[]
     return traceAgentRun(agent.id, session, isTurnRoot(opts), () => runAgentLoop(agent, initial, session, opts));
 }
 
+/** The harness request of the wrap-up at the iteration cap. */
+export const WRAP_UP_REQUEST = "You reached the limit of tool rounds for this run, thus no tool can run now. Answer in text with the results that you have.";
+
+/** The cap of wrap-up requests: one answer, and one more request after a refused call. */
+export const WRAP_UP_MAX_REQUESTS = 2;
+
 async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
     const formatStepName = opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER;
     const loop = openLoop(agent, initial, session, opts, agent.id);
     const task = await loop.runSegment({ mask: opts.toolMask, maxRequests: agent.maxIterations, stepNames: formatStepName, firstIndex: 0 });
     if (task !== "capped") return task;
-    return loop.legacyWrapUp(formatStepName.llm(agent.maxIterations));
+
+    // The wrap-up is a continuation of the same conversation: the requests keep
+    // the tool set and the tool choice of the loop, and the mask `"none"` refuses
+    // each call. `toolChoice: "none"` is not an option: `@ai-sdk/anthropic`
+    // implements it by removing the tools, and Anthropic drops its message cache
+    // when `tool_choice` changes. Thus that request would read nothing back from
+    // the cache, and a model that binds its signed thinking blocks to the prefix
+    // would drop them or refuse the request. Request `k` keeps the step name
+    // `llm(maxIterations + k)`, thus the first one keeps the name of the single
+    // wrap-up call of an earlier version, and a replay finds its stored reply.
+    const wrapUp = await loop.runSegment({
+        mask: "none",
+        maxRequests: WRAP_UP_MAX_REQUESTS,
+        stepNames: { llm: (k) => formatStepName.llm(agent.maxIterations + k), tool: formatStepName.tool },
+        firstIndex: agent.maxIterations,
+        requestText: WRAP_UP_REQUEST,
+        closesCappedRun: true,
+    });
+    return wrapUp === "capped" ? loop.endCapped() : wrapUp;
 }
 
 /** One stretch of model requests of a conversation, under one mask. */
@@ -200,6 +229,13 @@ export interface LoopSegment {
     readonly firstIndex: number;
     /** A harness request that the segment appends, as a synthetic user message, before its first request. */
     readonly requestText?: string;
+    /**
+     * The segment runs after the run used its iteration cap: a reply that ends it
+     * gives the capped finish, `max_iterations` or `aborted`, and its requests do
+     * not count as iterations of the run. Its last request emits the final
+     * `iteration` event, whatever its reply.
+     */
+    readonly closesCappedRun?: boolean;
 }
 
 /**
@@ -214,8 +250,6 @@ export interface OpenLoop {
     runSegment(segment: LoopSegment): Promise<RunAgentResult | "capped">;
     /** End a run whose last segment used its cap: settle the transcript, record the run, and give the capped finish. */
     endCapped(): Promise<RunAgentResult>;
-    /** The single wrap-up call of a run at its iteration cap. */
-    legacyWrapUp(stepName: string): Promise<RunAgentResult>;
 }
 
 /**
@@ -367,15 +401,17 @@ export function openLoop(
 
     /**
      * One model request over the transcript so far, under the prefix of the
-     * conversation. The token counters grow inside the step body, thus a replayed
-     * step, which returns the stored reply, does not count the call again.
+     * conversation: the same system prompt, the same tool set, and the same tool
+     * choice on each request of each segment. The token counters grow inside the
+     * step body, thus a replayed step, which returns the stored reply, does not
+     * count the call again.
      */
-    const callModel = async (stepName: string, toolChoice: ChatRequest["toolChoice"]): Promise<ChatResponse> => {
+    const callModel = async (stepName: string): Promise<ChatResponse> => {
         const request: ChatRequest = {
             system,
             messages: withPromptCacheBreakpoint(messages, promptCache),
             tools: toolDefs,
-            ...(toolChoice !== undefined ? { toolChoice } : {}),
+            ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
             ...reasoningField,
         };
         const reply = await resultStep(callStep)(stepName, () => provider.chat(request, session, signal).map(countChatTokens(metricAgentId)));
@@ -507,8 +543,11 @@ export function openLoop(
         if (segment.requestText !== undefined) messages.push(syntheticUserMessage(segment.requestText));
         for (let k = 0; k < segment.maxRequests; k++) {
             const index = segment.firstIndex + k;
-            iterations++;
-            const reply = await callModel(names.llm(k), opts.toolChoice);
+            // The last request of a segment that closes a capped run ends the run,
+            // whatever its reply, thus its `iteration` event is the final one.
+            const endsRun = segment.closesCappedRun === true && k === segment.maxRequests - 1;
+            if (segment.closesCappedRun !== true) iterations++;
+            const reply = await callModel(names.llm(k));
 
             if (reply.finishReason === "aborted") {
                 // An interrupted turn keeps whatever the model produced before the cut, but
@@ -527,7 +566,7 @@ export function openLoop(
             const toolCalls = toolCallParts(reply.message);
             if (reply.finishReason === "length") {
                 truncationRecoveries++;
-                await emit({ type: "iteration", source, index, final: false });
+                await emit({ type: "iteration", source, index, final: endsRun });
                 // `tools` is what the model asked for; the trailing call was cut off at the
                 // output limit and is never dispatched, which the distinct message records.
                 log.debug("iteration truncated at output limit", { iteration: index, tools: toolCalls.map((t) => t.toolName), truncationRecoveries });
@@ -579,6 +618,15 @@ export function openLoop(
             if (!dispatchesRound) {
                 settleTranscript();
                 await emit({ type: "iteration", source, index, final: true });
+                if (segment.closesCappedRun === true) {
+                    // The run used its cap before this reply, thus it reports the
+                    // cap. An abort is still the user cutting the turn, and the
+                    // reason carries it beside `cappedOut`.
+                    const reason = reply.finishReason === "aborted" ? "aborted" : "max_iterations";
+                    recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
+                    logFinish("warn", reason, true);
+                    return { messages, finish: { reason, cappedOut: true, truncationRecoveries, ...finishUsage() } };
+                }
                 recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: false });
                 logFinish("info", reply.finishReason, false);
                 return {
@@ -593,7 +641,7 @@ export function openLoop(
                 };
             }
 
-            await emit({ type: "iteration", source, index, final: false });
+            await emit({ type: "iteration", source, index, final: endsRun });
             log.debug("iteration", { iteration: index, tools: toolCalls.map((t) => t.toolName) });
             const details = roundDetails(toolCalls);
             for (const [idx, tu] of toolCalls.entries()) {
@@ -617,37 +665,7 @@ export function openLoop(
         return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
     };
 
-    // `toolChoice: "none"` keeps tools on the wire for the OpenAI arm (prefix
-    // stable), but `@ai-sdk/anthropic` drops them, breaking the cache and
-    // risking a rejected or dropped signed-thinking block.
-    const legacyWrapUp = async (stepName: string): Promise<RunAgentResult> => {
-        const wrapUp = await callModel(stepName, "none");
-
-        if (wrapUp.finishReason === "aborted") {
-            // An abort during the wrap-up is still the user cutting the turn — the
-            // same event the in-loop path handles — so it gets the identical treatment: keep a
-            // partial only when it carries content, and stamp the marker on the last assistant
-            // this run produced. Reporting it as a plain cap-out would hide the interruption
-            // from every downstream reader; `cappedOut` stays true because the loop genuinely
-            // exhausted its iterations, while the reason carries the abort.
-            if (assistantHasContent(wrapUp.message)) messages.push(wrapUp.message);
-            settleTranscript();
-            markLastLoopAssistant(messages, initial.length);
-            await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-            recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
-            logFinish("warn", "aborted", true);
-            return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries, ...finishUsage() } };
-        }
-
-        messages.push(wrapUp.message);
-        settleTranscript();
-        await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-        recordAgentRun({ agentId: metricAgentId, iterations, cappedOut: true });
-        logFinish("warn", "max_iterations", true);
-        return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
-    };
-
-    return { runSegment, endCapped, legacyWrapUp };
+    return { runSegment, endCapped };
 }
 
 /** What one completed LLM call is accounted under. */
