@@ -23,8 +23,6 @@ Write a markdown summary that covers:
 - limitations of the analysis
 
 Use markdown headings and bullets freely — there is no fixed schema.
-Report only numbers that exist in a persisted artifact. Do not fabricate
-results and do not report a number that appears only in command stdout.
 
 If there are no output files, say so plainly — state that the step produced
 no output files and summarize only what the execution history shows was

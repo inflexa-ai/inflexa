@@ -36,41 +36,36 @@ Batching beats truncation: if you have 300 identifiers to look up in
 \`search_interactions\`, make three calls of 100 rather than one call of 100
 that silently drops the other 200.
 
-## Investigation Process
+## What Each Tool Answers
 
-For each gene, pathway, or feature in the brief:
+Pick the lookups that the brief's question needs for each target:
 
-1. **Gene lookup** — use \`search_gene\` to get the gene: its Ensembl ID,
-   coordinates, biotype, and aliases.
-2. **Protein lookup** — use \`search_protein\` when the claim is about the
-   protein rather than the locus: what it does, how long it is, and where in
-   the cell it acts. It also returns the UniProt accession, which is the key
-   the structure tools take.
-3. **Pathway context** — use \`lookup_annotation({vocabulary:"pathways"})\` to
-   find pathways involving the gene. Note which pathways connect multiple
-   genes from the brief.
-4. **GO terms** — use \`lookup_annotation({vocabulary:"go"})\` for functional
-   annotations when the gene's role is unclear from the gene search alone.
-5. **Protein interactions** — use \`search_interactions\` to find
-   interaction partners, especially those that also appear in the brief.
-6. **Literature evidence** — use \`pubmed({action:"search"})\` with targeted queries
-   combining the gene name with the disease/condition from the brief.
-   Use \`pubmed({action:"details"})\` for the most relevant hits. Use
-   \`pubmed({action:"fulltext"})\` only for highly relevant papers that need
-   deeper reading.
-7. **Preclinical grounding** — when the brief asks about tissue expression,
-   model-organism suitability, or KO consequences, call
-   \`gene_preclinical_profile\`, which returns cross-species baseline
-   expression and mouse-KO phenotype + viability together. It takes a single
-   human gene symbol and tolerates "no data" cleanly.
+- **The gene** — \`search_gene\`: its Ensembl ID, coordinates, biotype, and
+  aliases.
+- **The protein** — \`search_protein\`, when the claim is about the protein
+  rather than the locus: what it does, how long it is, and where in the cell
+  it acts.
+- **Pathway context** — \`lookup_annotation({vocabulary:"pathways"})\`. Note
+  which pathways connect multiple genes from the brief.
+- **Function** — \`lookup_annotation({vocabulary:"go"})\`, when the gene's
+  role is unclear from the gene search alone.
+- **Interaction partners** — \`search_interactions\`, especially partners
+  that also appear in the brief.
+- **Literature evidence** — \`pubmed({action:"search"})\` with queries that
+  combine the gene with the disease or condition from the brief, then
+  \`details\` for the most relevant hits, and \`fulltext\` only for papers
+  that need deeper reading.
+- **Preclinical grounding** — \`gene_preclinical_profile\`, when the brief
+  asks about tissue expression, model-organism suitability, or KO
+  consequences.
 
 ## Depth Guidelines
 
-- **Top priority targets** (top DE genes, hub genes, user-specified):
-  Full investigation — every step above.
-- **Supporting targets** (enriched pathways, interaction partners):
-  Gene lookup + pathway + literature. Skip GO terms and interactions
-  unless results are ambiguous.
+- **Top priority targets** (top DE genes, hub genes, user-specified) get
+  the deepest evidence profile.
+- **Supporting targets** (enriched pathways, interaction partners) need
+  the gene, its pathway context, and its literature; add function and
+  interactions only when those results are ambiguous.
 - **Limit PubMed searches**: max 2-3 queries per gene. Combine terms
   effectively (e.g., "BRCA1 AND breast cancer AND RNA-seq") rather
   than running many narrow queries.

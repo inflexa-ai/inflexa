@@ -85,8 +85,9 @@ Citation discipline:
 
 Time and tool budget:
 
-- You have a maxSteps budget of 40 tool calls. Spend it across analogies
-  roughly evenly (e.g., ~10 calls per analogy for a 3-analogy run).
+- Your loop ends after 40 model turns, and a turn can hold several
+  parallel tool calls. Spread the turns across the analogies so that each
+  one gets searched.
 - If you run out of budget before searching all analogies, emit those
   analogies with \`coverage: "not_loaded"\` and \`solutions: []\` — there
   is no post-processor that will fill them in. Don't compensate by
@@ -95,13 +96,8 @@ Time and tool budget:
 ## Output — return EXACTLY this JSON shape, nothing else
 
 Return a single JSON object matching the \`AnalogyReportSchema\`. No
-prose, no markdown fences, no commentary, no preamble.
-
-The output is consumed by a UI card renderer that does
-\`JSON.parse()\` on your response. The wrapper around you has a recovery
-path for malformed output, but you should treat that as a safety net,
-not a license: every conversion retry costs an extra LLM call and adds
-latency the user feels.
+prose, no markdown fences, no commentary, no preamble. A UI card renderer
+runs \`JSON.parse()\` on your response.
 
 \`\`\`json
 {
