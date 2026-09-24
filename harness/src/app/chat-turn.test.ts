@@ -23,8 +23,10 @@ import type { ProviderError } from "../providers/errors.js";
 import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../providers/types.js";
 import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { insertRun, updateRunStatus } from "../state/index.js";
+import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { SessionProvenanceEvent } from "../provenance/seam.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
 import { prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
 
@@ -542,6 +544,34 @@ describe("runChatTurn", () => {
         await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { usageRecorder }));
 
         expect(records.map((record) => [record.agentId, record.usage])).toEqual([["conversation-agent", { inputTokens: 10, outputTokens: 2 }]]);
+    });
+
+    it("stores the excerpt of a long tool result in its round, and keeps the whole text under the reference of the excerpt", async () => {
+        // Words, not one long run of a character: the write-time token count is slow on a long unbroken word.
+        const text = "TP53 7 ".repeat(7_143).slice(0, 50_000);
+        const long = defineTool({
+            id: "long",
+            description: "Give a long text.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => ok(text),
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "long", {})], "tool_use"), makeMessage([textBlock("read it")], "end_turn")]);
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([long, createReadToolOutputTool(createToolOutputStore(pool))])) }, params(provider));
+
+        const round = (await storedRows()).find((row) => row.message.role === "tool")!;
+        const output = (round.message.content as ToolResultPart[])[0]!.output;
+        expect(output.type).toBe("text");
+        const excerpt = (output as { value: string }).value;
+        expect(excerpt.startsWith("[Tool result cut: 50002 characters")).toBe(true);
+        expect(excerpt.length).toBeLessThan(text.length);
+        const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt)![1]!;
+        const { rows } = await pool.query<{ thread_id: string | null; content: string; total_length: number }>(
+            "SELECT thread_id, content, total_length FROM cortex_tool_outputs WHERE analysis_id = $1 AND ref = $2",
+            [ANALYSIS_A, ref],
+        );
+        expect(rows).toEqual([{ thread_id: THREAD, content: JSON.stringify(text), total_length: 50_002 }]);
     });
 
     it("sends the 1-hour cache directive from the root loop", async () => {

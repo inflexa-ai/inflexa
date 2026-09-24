@@ -23,6 +23,7 @@ import { CONVERSATION_PROMPT_CACHE } from "../providers/prompt-cache.js";
 import type { AgentChat, PromptCachePolicy } from "../providers/types.js";
 import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { loadAnalysisStatus, queryNonTerminalRunsByAnalysis } from "../state/index.js";
+import { createToolOutputStore } from "../state/tool-outputs.js";
 import type { AskApproval, AskRequest } from "../tools/approval/contract.js";
 import { suspensionOfFailure } from "../workflows/suspension.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
@@ -246,6 +247,7 @@ export async function runChatTurn(deps: RunChatTurnDeps, params: RunChatTurnPara
             emit: recorder.emit,
             runStep: passthroughStep,
             usageRecorder: params.usageRecorder,
+            toolOutputStore: createToolOutputStore(deps.pool),
             promptCache: params.promptCache ?? CONVERSATION_PROMPT_CACHE,
             ...(deps.logger === undefined ? {} : { logger: deps.logger }),
             ...(ask === undefined ? {} : { ask: (request: AskRequest) => ask(request, recorder.emit) }),
