@@ -57,16 +57,24 @@ An unknown `SandboxToolName` MUST throw at composition time, not at the first LL
 
 A step agent MUST get a terminal `report_blocker({ reason })` tool when a blocker cell is supplied. The step agent MUST NOT get a `submit` or `done` tool for its task, because the deliverable of a step is its persisted files. A clean end of the turn after the agent writes the files is the implicit success. The `submit_file_metadata` output tool does not end a task: the task masks it, and only the file-metadata continuation lets it run.
 
-A call of `report_blocker` MUST record `{ kind: "blocker", reason }` into the cell of the run, and the workflow body reads the cell after `runAgent`. `blocked` MUST be a distinct terminal step status, separate from `failed` and `completed`. It carries the reason to the `cortex_step_executions.blocked_reason` column, to a `data-step-blocked` run-event part, and to the step return.
+A call of `report_blocker` MUST record `{ kind: "blocker", reason }` into the cell of the run. After `runAgent`, the workflow body MUST read the blocker from the transcript: the reason of the first `report_blocker` call whose result is ok. The cell is the fallback. A durable replay returns the cached result of the tool step and runs no `execute`, thus the cell of a replayed body stays empty. The transcript holds the call and its result on each replay.
+
+`blocked` MUST be a distinct terminal step status, separate from `failed` and `completed`. It carries the reason to the `cortex_step_executions.blocked_reason` column, to a `data-step-blocked` run-event part, and to the step return.
 
 The parent scheduler MUST treat a blocker exactly like a step failure: only the transitive dependents of the blocked step become unreachable. In-flight siblings and independent ready steps continue (refer to the harness-durable-runtime capability). The harness MUST NOT infer a failure from output or artifact counts. A step that is empty for a valid reason (no files, no blocker, a clean finish) MUST stay `completed`.
 
 #### Scenario: Blocker yields a distinct blocked status
 
 - **GIVEN** a step agent that calls `report_blocker({ reason })` and stops
-- **WHEN** the workflow body reads the blocker cell after the loop
+- **WHEN** the workflow body reads the blocker after the loop
 - **THEN** the step MUST end with the status `blocked`, persist the reason to `blocked_reason`, and emit a `data-step-blocked` part
 - **AND** the in-flight siblings MUST continue, and only the transitive dependents of the blocked step are never dispatched
+
+#### Scenario: A replayed blocker keeps the blocked status
+
+- **GIVEN** a durable step whose agent called `report_blocker`, and a recovery that replays the step
+- **WHEN** the replay returns the cached result of the tool step, and the cell stays empty
+- **THEN** the body reads the blocker from the transcript, and the step ends `blocked` with the same reason
 
 #### Scenario: Empty step is not auto-failed
 

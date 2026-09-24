@@ -141,8 +141,9 @@ export interface SandboxAgentDeps extends EnvironmentStorePaths {
     /**
      * Per-run blocker cell (see the harness-sandbox-agents spec). When present, the agent gets a
      * `report_blocker` tool that records `{ kind: "blocker", reason }` into it;
-     * the sandbox-step body reads `holder.outcome` after the loop. Omit for
-     * agents that have no terminal status to declare (such as the data profiler).
+     * the sandbox-step body reads the blocker from the transcript after the
+     * loop, with the cell as its fallback. Omit for agents that have no
+     * terminal status to declare (such as the data profiler).
      */
     readonly blockerHolder?: BlockerHolder;
     /**

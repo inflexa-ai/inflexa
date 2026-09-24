@@ -72,7 +72,7 @@ import type { ResourceSpec } from "../config/resource-limits.js";
 import type { SandboxRef, SandboxSpec } from "../sandbox/types.js";
 import { keepSuspendingRefusal } from "../sandbox/sandbox-error.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
-import { createBlockerHolder, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
+import { createBlockerHolder, recordedBlocker, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { cancelSelf, suspensionOfFailure, suspensionOfRefusal, suspensionOfSpawnRefusal, type Suspension } from "./suspension.js";
 
@@ -247,9 +247,9 @@ export interface SandboxAgentBuildContext {
      */
     readonly lineageCollector: ProvenanceCollector;
     /**
-     * Per-run blocker cell (see the harness-sandbox-agents spec). The body owns it and reads
-     * `holder.outcome` after `runAgent`; the agent factory adds `report_blocker`
-     * bound to this holder.
+     * Per-run blocker cell (see the harness-sandbox-agents spec). The agent
+     * factory adds `report_blocker` bound to this holder. After `runAgent`, the
+     * body reads the blocker from the transcript, and the cell is its fallback.
      */
     readonly blockerHolder: BlockerHolder;
     /**
@@ -785,7 +785,12 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // status would attest an empty step. A blocker outcome keeps its own
     // reason. A capped-out step WITH artifacts stays on the completed path,
     // because partial output is real output.
-    const blockerOutcome = blockerHolder.outcome;
+    //
+    // The transcript, not the cell, is the account of a blocker. A durable
+    // replay returns the cached result of the `report_blocker` step and runs no
+    // `execute`, thus the cell of a replayed body stays empty. The cell stays
+    // the fallback for an agent whose blocker tool is not the one of the harness.
+    const blockerOutcome = recordedBlocker(transcript) ?? blockerHolder.outcome;
     const cappedOutEmpty = hitMaxSteps && manifest.length === 0;
     if (blockerOutcome || cappedOutEmpty) {
         const blockedReason = blockerOutcome?.reason ?? CAPPED_OUT_EMPTY_REASON;
