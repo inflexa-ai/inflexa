@@ -5,7 +5,7 @@
  *
  * Contract:
  *   - Sends the step agent's system prompt and tools, masked to `read_file`
- *     and `grep` in the step's output tree, and emits the markdown
+ *     and `grep` in the step's output tree plus `read_tool_output`, and emits the markdown
  *     summary as its final assistant text.
  *   - Returns `{ stepId, agentId, markdown }` on non-empty final text;
  *     `undefined` on empty text, on a throw, or when the request cap is hit
