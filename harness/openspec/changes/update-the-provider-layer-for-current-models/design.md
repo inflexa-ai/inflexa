@@ -42,16 +42,18 @@ This design rejects a map from agent identifier to effort in the runtime depende
 
 Each provider call gets a `Session`. Its scope holds `analysisId` and an optional `threadId`. Its run frame holds `runId` and an optional `stepId`.
 
-The provider makes the key from the first rule that applies:
+The provider makes an identifier string from the first rule that applies:
 
 1. A run frame with a step gives `<analysisId>:<runId>:<stepId>`.
 2. A run frame without a step gives `<analysisId>:<runId>`.
 3. A scope with a thread gives `<analysisId>:<threadId>`.
-4. Else, the key is `<analysisId>`.
+4. Else, the string is `<analysisId>`.
 
 The run frame comes first, because a run that a chat starts can carry the thread of that chat in its scope. The steps of that run must not share the key of the chat.
 
-The key holds only identifiers. It goes to the vendor, thus it must not hold a name or an address.
+The string holds only identifiers. It must not hold a name or an address.
+
+The key that goes to the vendor is the base64url SHA-256 digest of that string, with 43 characters. The string of a step holds three identifiers, and it has more than 64 characters. OpenAI and Azure refuse a `prompt_cache_key` longer than 64 characters with HTTP 400, and no retry passes that error. Anthropic recommends a hash or another opaque value for `metadata.user_id`. One string always gives one digest, thus the gateway still keeps the calls of one session on one account.
 
 The Anthropic arm sends the key through `providerOptions.anthropic.metadata.userId`. The OpenAI Responses arm sends it through `providerOptions.openai.promptCacheKey`. The OpenAI-compatible arm has no standard field, thus it sends no key.
 

@@ -26,7 +26,8 @@ Some parameters and comments are stale:
 - Each provider configuration takes an optional `reasoning`. The provider applies it to each request that does not set `ChatRequest.reasoning`. Without a configured value, the provider uses `DEFAULT_REASONING`.
 - `runAgent` sends a reasoning value only when its caller gives one. Thus the configuration controls the loops.
 - The provider sends a session key on each call. The Anthropic arm sends it as `metadata.user_id`. The OpenAI Responses arm sends it as `prompt_cache_key`.
-- The key holds only identifiers: `<analysisId>:<runId>:<stepId>` for a step, `<analysisId>:<runId>` for a run without a step, and `<analysisId>:<threadId>` for a chat thread. A sub-agent uses the key of its parent.
+- The key comes from an identifier string: `<analysisId>:<runId>:<stepId>` for a step, `<analysisId>:<runId>` for a run without a step, and `<analysisId>:<threadId>` for a chat thread. A sub-agent uses the key of its parent.
+- The vendor gets the base64url SHA-256 digest of that string, with 43 characters. OpenAI and Azure refuse a `prompt_cache_key` longer than 64 characters, and the string of a step is longer. Anthropic recommends a hash or another opaque value for `metadata.user_id`.
 - The Anthropic arm sends a thinking-binding mode: `drop_block` by default, `error`, or `off`. The provider logs each thinking block that the response reports as dropped, with its path and its reason.
 - The prompt cache policy also marks the end of the system prompt. A request then holds two breakpoints of the harness.
 - The harness metrics get the labels `model` and `provider`, and a counter for reasoning tokens. The loop records each call when the call completes.

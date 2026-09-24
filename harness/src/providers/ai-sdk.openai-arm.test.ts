@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 
 import { makeSession } from "./__fixtures__/session.js";
 import { createConfiguredAiSdkProvider, type AiSdkProviderConfig } from "./ai-sdk.js";
@@ -238,7 +239,7 @@ describe("openai arm store directive", () => {
 
         expect(result.isOk()).toBe(true);
         expect(cap.bodies[0]?.store).toBe(true);
-        expect(cap.bodies[0]?.prompt_cache_key).toBe("a1:t1");
+        expect(cap.bodies[0]?.prompt_cache_key).toBe(createHash("sha256").update("a1:t1").digest("base64url"));
         expect(JSON.stringify(cap.bodies[0])).not.toContain("cache_control");
         expect(JSON.stringify(cap.bodies[0])).not.toContain("cachePoint");
     });
@@ -253,7 +254,7 @@ describe("openai arm store directive", () => {
 
         expect(result.isOk()).toBe(true);
         expect(cap.bodies[0]?.store).toBe(false);
-        expect(cap.bodies[0]?.prompt_cache_key).toBe("a1:t1");
+        expect(cap.bodies[0]?.prompt_cache_key).toBe(createHash("sha256").update("a1:t1").digest("base64url"));
     });
 });
 

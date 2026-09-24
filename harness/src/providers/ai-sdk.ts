@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
     streamText,
     wrapLanguageModel,
@@ -341,20 +343,21 @@ function workloadOf(session: AgentSession): string {
 }
 
 /**
- * The session key of a call. A gateway keeps the calls of one key on one
- * account, and thus on one prompt cache.
+ * The identifier string of the session key of a call. A gateway keeps the calls
+ * of one key on one account, and thus on one prompt cache. The vendor never gets
+ * this string, only its digest ({@link sessionKeyDigestOf}).
  *
- * The key goes to the vendor, thus it holds only identifiers: never a name, an
- * address, or the `identity` of the session. It reads only the scope and the
- * run frame. `forSubAgent` changes only the provenance, thus a sub-agent sends
- * the key of its parent.
+ * The string holds only identifiers: never a name, an address, or the
+ * `identity` of the session. It reads only the scope and the run frame.
+ * `forSubAgent` changes only the provenance, thus a sub-agent sends the key of
+ * its parent.
  *
- * The first rule that applies gives the key:
+ * The first rule that applies gives the string:
  *
  * 1. A run frame with a step gives `<analysisId>:<runId>:<stepId>`.
  * 2. A run frame without a step gives `<analysisId>:<runId>`.
  * 3. A scope with a thread gives `<analysisId>:<threadId>`.
- * 4. Else, the key is `<analysisId>`.
+ * 4. Else, the string is `<analysisId>`.
  *
  * The run frame comes first, because a run that a chat starts can carry the
  * thread of that chat in its scope, and the steps of that run must not share the
@@ -367,6 +370,20 @@ export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">):
         return runFrame.stepId === undefined ? `${scope.analysisId}:${runFrame.runId}` : `${scope.analysisId}:${runFrame.runId}:${runFrame.stepId}`;
     }
     return scope.threadId === undefined ? scope.analysisId : `${scope.analysisId}:${scope.threadId}`;
+}
+
+/**
+ * The session key that goes to the vendor: the base64url SHA-256 digest of the
+ * identifier string of {@link sessionKeyOf}, always 43 characters.
+ *
+ * The identifier string of a step holds three identifiers and passes 64
+ * characters. OpenAI and Azure refuse a `prompt_cache_key` longer than 64
+ * characters with a 400 that no retry passes. Anthropic recommends a hash or
+ * another opaque value for `metadata.user_id`. One string always gives one
+ * digest, thus a gateway still keeps the calls of one session on one account.
+ */
+export function sessionKeyDigestOf(session: Pick<AgentSession, "scope" | "runFrame">): string {
+    return createHash("sha256").update(sessionKeyOf(session)).digest("base64url");
 }
 
 /**
@@ -1235,7 +1252,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             // `thinking.block_binding`.
             providerOptionsFor: ({ session, reasoning }) => ({
                 anthropic: {
-                    metadata: { userId: sessionKeyOf(session) },
+                    metadata: { userId: sessionKeyDigestOf(session) },
                     ...(binding !== undefined ? { thinking: thinkingWithBinding(reasoning, binding) } : {}),
                 } satisfies AnthropicLanguageModelOptions,
             }),
@@ -1275,7 +1292,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
             // The package sends the key as `prompt_cache_key`. The store
             // directive merges into the same namespace, and it keeps this key.
-            providerOptionsFor: ({ session }) => ({ openai: { promptCacheKey: sessionKeyOf(session) } }),
+            providerOptionsFor: ({ session }) => ({ openai: { promptCacheKey: sessionKeyDigestOf(session) } }),
         });
     }
 

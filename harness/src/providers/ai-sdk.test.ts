@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { APICallError } from "@ai-sdk/provider";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type {
@@ -19,6 +20,7 @@ import {
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
     RETRY_MAX_RETRIES,
+    sessionKeyDigestOf,
     sessionKeyOf,
 } from "./ai-sdk.js";
 import { forSubAgent, type AgentSession, type RunFrame, type Scope } from "../auth/types.js";
@@ -651,6 +653,41 @@ describe("sessionKeyOf", () => {
 
         expect(child.provenance).not.toEqual(parent.provenance);
         expect(sessionKeyOf(child)).toBe(sessionKeyOf(parent));
+    });
+});
+
+describe("sessionKeyDigestOf", () => {
+    /** A step session with identifiers of production length: two UUIDs and a plan step id. */
+    function stepSession(stepId: string): AgentSession {
+        return {
+            ...makeSession({ scope: { kind: "analysis", analysisId: "0b7f3c52-6f0e-4d8a-9a51-2f6c1e9d4b3a", threadId: "t1" } }),
+            runFrame: { runId: "5c2e9a10-8d4b-4f7e-b1a3-6e0d2c9f7a84", stepId },
+        };
+    }
+
+    it("gives a key within the limit of 64 characters of the vendor", () => {
+        const session = stepSession("T1S1");
+
+        // The identifier string alone passes the limit.
+        expect(sessionKeyOf(session).length).toBeGreaterThan(64);
+        expect(sessionKeyDigestOf(session)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    });
+
+    it("gives the base64url SHA-256 digest of the identifier string, the same each time", () => {
+        const session = stepSession("T1S1");
+
+        expect(sessionKeyDigestOf(session)).toBe(createHash("sha256").update(sessionKeyOf(session)).digest("base64url"));
+        expect(sessionKeyDigestOf(session)).toBe(sessionKeyDigestOf(stepSession("T1S1")));
+    });
+
+    it("gives a sub-agent the key of its parent", () => {
+        const parent = stepSession("T1S1");
+
+        expect(sessionKeyDigestOf(forSubAgent(parent, "literature-reviewer"))).toBe(sessionKeyDigestOf(parent));
+    });
+
+    it("gives two steps of one run different keys", () => {
+        expect(sessionKeyDigestOf(stepSession("T1S1"))).not.toBe(sessionKeyDigestOf(stepSession("T1S2")));
     });
 });
 
