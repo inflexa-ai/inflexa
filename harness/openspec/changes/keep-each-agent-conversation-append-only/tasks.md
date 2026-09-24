@@ -181,11 +181,11 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 10. Documents
 
-- [ ] 10.1 In `CONTEXT.md`, section "Loop primitives", write the item "The loop" again. The wrap-up is a continuation with the mask `"none"`, and the loop answers each unanswered call.
-- [ ] 10.2 In the same section, add one item for the tool mask and the tool budget, and one item for `continueAgent`.
-- [ ] 10.3 In `CONTEXT.md`, section "Post-step pipeline", write the paragraph "File metadata is lossless" again. The file metadata and the summary are continuations of the conversation of the step agent.
-- [ ] 10.4 Write each changed sentence in STE. Run `bun ../.claude/hooks/ste-check.ts --file CONTEXT.md`, and fix each hard finding in the changed text.
-- [ ] 10.5 This group changes no file under `src/`, thus it has no build step. Do not format a markdown file, as `CLAUDE.md` states.
+- [x] 10.1 In `CONTEXT.md`, section "Loop primitives", write the item "The loop" again. The wrap-up is a continuation with the mask `"none"`, and the loop answers each unanswered call.
+- [x] 10.2 In the same section, add one item for the tool mask and the tool budget, and one item for `continueAgent`.
+- [x] 10.3 In `CONTEXT.md`, section "Post-step pipeline", write the paragraph "File metadata is lossless" again. The file metadata and the summary are continuations of the conversation of the step agent.
+- [x] 10.4 Write each changed sentence in STE. Run `bun ../.claude/hooks/ste-check.ts --file CONTEXT.md`, and fix each hard finding in the changed text.
+- [x] 10.5 This group changes no file under `src/`, thus it has no build step. Do not format a markdown file, as `CLAUDE.md` states.
 
 ## 11. Final checks
 

@@ -438,17 +438,23 @@ other stages (walk, reconcile, sync, index) still run inline and run again on
 replay. A durable cache for them is a deferred follow-up that the typed returns
 make possible.
 
-**File metadata is lossless.** `generateFileMetadata` describes an artifact
-through a focused `runAgent` tool-call loop, which mirrors `generatePlan`. The
-describer agent calls `submit_file_metadata` keyed **by path**, and the tool
-validates each path against the known artifact set. A path that the model
-invented is rejected with feedback, and a file with no coverage is reported as
-`remaining`. A description matches a file by path, never by array position, thus
-a dropped or reordered entry cannot land on the wrong file. Each input artifact
-gives exactly one result entry. A file that the model never describes gets a
-**deterministic description with no LLM**: the path, the inferred type, and the
-size. That fallback is logged, and a file is never dropped in silence and never
-chunked out of the index.
+**The file metadata and the summary continue the conversation of the step
+agent** (`continueAgent`). Each request extends the prefix that the task cached.
+Thus each continuation reads that prefix from the cache. The step agent declares
+`submit_file_metadata` from its first request, and the task masks it. The
+file-metadata continuation lets `submit_file_metadata`, `read_file`, and `grep`
+run. The summary continuation follows the file-metadata exchange, and it lets
+`read_file` and `grep` run.
+
+**File metadata is lossless.** The model calls `submit_file_metadata` keyed **by
+path**, and the tool validates each path against the known artifact set. A path
+that the model invented is rejected with feedback, and a file with no coverage is
+reported as `remaining`. A description matches a file by path, never by array
+position, thus a dropped or reordered entry cannot land on the wrong file. Each
+input artifact gives exactly one result entry. A file that the model never
+describes gets a **deterministic description with no LLM**: the path, the
+inferred type, and the size. That fallback is logged, and a file is never
+dropped in silence and never chunked out of the index.
 
 ### Workflow recovery
 
@@ -662,8 +668,18 @@ Other facts:
   finish reason, whether the iteration cap was hit, and how many truncations were
   recovered. `runStep` is injected: a passthrough in chat, and `DBOS.runStep` in a
   workflow. The loop emits orchestration events stamped with `source` from
-  `session.callPath`. At the iteration cap it forces a final tool-less wrap-up
-  call, and it does not throw. A `finishReason: "length"` truncation is a
+  `session.callPath`.
+
+  Each request of a conversation declares the same tools and the same tool
+  choice. A signed thinking block and the prompt cache bind to that prefix.
+
+  At the iteration cap, the loop does not throw. It runs the wrap-up, a
+  continuation with the mask `"none"` and a cap of 2 requests. The wrap-up
+  request asks for a text answer, and the mask refuses each tool call. At each
+  exit, the loop answers each tool call that has no result with a not-run error
+  result. It removes no message, and it changes no message.
+
+  A `finishReason: "length"` truncation is a
   **recoverable soft-error, not a stop**. Only the final content part can be
   truncated. Thus the loop does **not** execute a truncated trailing tool call,
   because its input can be incomplete in silence. It feeds back a retryable error
@@ -672,6 +688,27 @@ Other facts:
   lands a partial file. The step names (`llm-${i}`, `tool-${name}-${id}`) are a
   documented, deterministic contract. Refer to
   [harness-thread-store](openspec/specs/harness-thread-store/spec.md).
+- **The tool mask and the tool budget** (`loop/tool-mask.ts`) —
+  `RunAgentOptions.toolMask` gives the tools that can run for each request. It is
+  `"none"`, or `{ allow: [...] }` with the ids of the tools.
+  `RunAgentOptions.toolBudget` gives the maximum count of calls of a tool in one
+  run. A request still declares each tool of the agent.
+
+  The loop applies the two at dispatch, in the order of the calls of a round. A
+  refused call gets an error result that gives the reason, and its tool does not
+  run. Refer to [harness-agent-loop](openspec/specs/harness-agent-loop/spec.md).
+- **The continuation** (`loop/continue-agent.ts`) —
+  `continueAgent(agent, conversation, request, session, opts)` continues an
+  existing conversation of an agent with one harness request. It appends the
+  request as a synthetic user message, thus the request opens no turn in a stored
+  thread. It sends the system prompt, the declared tools, and the tool choice of
+  the conversation, and a mask limits the tools that run. It returns only the new
+  messages and the finish, and it runs no wrap-up at its cap.
+
+  Its step names carry a namespace (`salvage:llm-0`, `file-metadata:llm-0`), thus
+  a durable key cannot match a key of the conversation. An accounting agent id
+  names its usage records, its token counters, and its run metrics. The salvage of
+  `runToTerminal`, the file metadata, and the step summary are continuations.
 - **Execution-mode partitioned dispatch**
   ([harness-tools](openspec/specs/harness-tools/spec.md)). The dispatch obeys the
   `executionMode` of each tool. A `step` tool is the default: the ~35 external bio
