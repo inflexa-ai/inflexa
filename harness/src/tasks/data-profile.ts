@@ -33,6 +33,7 @@ import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { DbError } from "../lib/db-result.js";
 import { deliverNotice, passGate, type GateRefusal } from "../lib/hooks.js";
@@ -140,6 +141,8 @@ export interface DataProfileDeps extends EnvironmentStorePaths {
     readonly skillsDir: string;
     /** LLM usage-accounting seam for the profiler agent loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the profiler loop and of its read tool. */
+    readonly toolOutputStore?: ToolOutputStore;
     /**
      * The farm-extension seam of the embedder. Bound, it rides into the
      * profiler agent deps, and the substrate attaches `link_packages`. Thus
@@ -425,6 +428,7 @@ export function profilerSandboxAgentDeps(deps: DataProfileDeps, step: SandboxAge
         ...(deps.imagePackagesFile ? { imagePackagesFile: deps.imagePackagesFile } : {}),
         ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
         ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
+        ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
         bioKeys: deps.bioKeys,
         step,
     };
@@ -754,6 +758,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     runStep: durableStep,
                     resolved: () => accepted !== null,
                     usageRecorder: deps.usageRecorder,
+                    toolOutputStore: deps.toolOutputStore,
                     isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
                 },
                 {

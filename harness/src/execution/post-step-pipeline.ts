@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { ToolOutputStore } from "../loop/tool-output.js";
 import type { LoopMessage } from "../loop/types.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
@@ -47,6 +48,8 @@ export interface PostStepPipelineDeps {
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the metadata + summary continuations; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the task, thus a reference of the task stays readable in the metadata + summary continuations. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** Non-streaming chat — the provider of the task, which the metadata + summary continuations extend. */
     readonly provider: AgentChat;
     /** Write-side embedder for the vector index. */
@@ -86,6 +89,7 @@ export async function generateStepFileMetadata(
         logger: deps.logger,
         provider: deps.provider,
         usageRecorder: deps.usageRecorder,
+        toolOutputStore: deps.toolOutputStore,
         session,
         agent,
         cell: fileMetadata,
@@ -118,6 +122,7 @@ export async function generateStepSummaryAndWrite(
         logger: deps.logger,
         provider: deps.provider,
         usageRecorder: deps.usageRecorder,
+        toolOutputStore: deps.toolOutputStore,
         session,
         agent,
         conversation: [...transcript, ...metadataMessages],

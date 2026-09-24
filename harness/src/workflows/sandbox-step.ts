@@ -45,6 +45,7 @@ import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
 import { maskExcept } from "../loop/tool-mask.js";
+import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import { lastExecOutcome } from "../sandbox/exec-outcome.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta, stepPartId } from "../sandbox/sandbox-step-translate.js";
 import { createDetailResolver } from "../tools/detail-resolver.js";
@@ -258,6 +259,8 @@ export interface SandboxAgentBuildContext {
     readonly fileMetadata: FileMetadataCell;
     /** Shared host-side citation resolver for allowlisted sandbox agents. */
     readonly citationResolver: CitationResolver;
+    /** Give it to `SandboxAgentDeps.toolOutputStore`: each loop of the step keeps its texts in it. */
+    readonly toolOutputStore?: ToolOutputStore;
 }
 
 /**
@@ -281,6 +284,8 @@ export interface SandboxStepDeps {
      * post-step continuations alike; omitted falls back to the no-op recorder.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the task, of the two post-step continuations, and of the read tool of the step agent. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** Shared resolver threaded from `assembleCoreRuntime`. */
     readonly citationResolver: CitationResolver;
     /** Non-streaming chat — drives the agent loop + the post-step continuations. */
@@ -540,7 +545,11 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         blockerHolder,
         fileMetadata,
         citationResolver: deps.citationResolver,
+        ...(deps.toolOutputStore ? { toolOutputStore: deps.toolOutputStore } : {}),
     });
+    if (deps.toolOutputStore !== undefined && !agent.tools.some((tool) => tool.id === READ_TOOL_OUTPUT_TOOL_ID)) {
+        logger.warn("the step agent declares no read_tool_output, thus its loops keep no text of a cut tool result");
+    }
 
     // Built over THIS agent's tools, not a shared table: a sandbox agent's roster
     // differs per agent type, and each tool describes its own calls.
@@ -694,6 +703,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             emit,
             runStep: durableStep,
             usageRecorder: deps.usageRecorder,
+            toolOutputStore: deps.toolOutputStore,
             formatStepName: {
                 llm: (iteration) => `llm:${iteration}`,
                 tool: (toolName, toolUseId) => `tool:${toolName}:${toolUseId}`,

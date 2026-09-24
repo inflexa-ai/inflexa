@@ -7,12 +7,14 @@ import { errAsync, ok, okAsync } from "neverthrow";
 import type { ModelMessage, ToolResultPart } from "ai";
 import { z } from "zod";
 
+import type { KeptToolOutput, ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { toProviderError } from "../providers/errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse } from "../providers/types.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { makeMessage, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
 import { createGrepTool, createReadFileTool } from "../tools/workspace/index.js";
 import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../workspace/filesystem.js";
 
@@ -204,12 +206,56 @@ describe("generateStepSummary", () => {
         expect(JSON.stringify(read!.output)).toContain("TP53");
         expect(write!.output.type).toBe("error-text");
         expect(JSON.stringify(write!.output)).toContain("The tool write_file is not available for this request");
+        expect(JSON.stringify(write!.output)).toContain("The tools that can run now: read_file, grep, read_tool_output.");
         expect(
             await access(target).then(
                 () => true,
                 () => false,
             ),
         ).toBe(false);
+    });
+
+    it("reads the rest of a long read_file result with read_tool_output, in the store of its options", async () => {
+        const base = await mkdtemp(join(tmpdir(), "step-summary-long-"));
+        const stepDir = join(base, "analysis-001", "runs", "run-1", "step-1");
+        await mkdir(join(stepDir, "output"), { recursive: true });
+        await writeFile(join(stepDir, "output", "long.txt"), "x".repeat(90_000));
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
+        const kept: KeptToolOutput[] = [];
+        const store: ToolOutputStore = {
+            put: (output) => {
+                kept.push(output);
+                return okAsync(undefined);
+            },
+            get: (analysisId, ref) => okAsync(kept.find((k) => k.analysisId === analysisId && k.ref === ref) ?? null),
+        };
+        const requests: ChatRequest[] = [];
+        const provider: ChatProvider = {
+            capabilities: { toolCalling: true },
+            chat(req) {
+                requests.push({ ...req, messages: [...req.messages] });
+                if (requests.length === 1) return okAsync(readFileCall("r1", "output/long.txt"));
+                if (requests.length === 2) {
+                    const excerpt = toolResults(req).find((r) => r.toolCallId === "r1")!.output as { value: string };
+                    const ref = /reference "(to_[0-9a-f]{20})"/.exec(excerpt.value)![1]!;
+                    return okAsync(makeMessage([toolUseBlock("k1", "read_tool_output", { ref, offset: 60_000 })], "tool_use"));
+                }
+                return okAsync(textMessage("# Long\n\n- all read"));
+            },
+            chatStream() {
+                throw new Error("not used");
+            },
+        };
+
+        const out = await generateStepSummary(
+            options(provider, { agent: stepAgent(fs, stepDir, [createReadToolOutputTool(store)]), artifactPaths: ["output/long.txt"], toolOutputStore: store }),
+        );
+
+        expect(out?.markdown).toContain("all read");
+        expect(kept).toHaveLength(1);
+        const page = toolResults(requests[2]!).find((r) => r.toolCallId === "k1")!;
+        expect(page.output.type).toBe("json");
+        expect((page.output as { value: unknown }).value).toMatchObject({ status: "ok", offset: 60_000 });
     });
 
     it("produces an honest no-output summary for an empty-artifact step (no fabrication)", async () => {

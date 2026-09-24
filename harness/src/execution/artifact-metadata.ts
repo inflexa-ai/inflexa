@@ -20,6 +20,7 @@
 import type { AgentSession } from "../auth/types.js";
 import { continueAgent } from "../loop/continue-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
+import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { inferArtifactType } from "../schemas/artifact-manifest.js";
@@ -43,6 +44,8 @@ export interface GenerateFileMetadataOptions {
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the continuation; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the task, thus the loop of the continuation keeps its texts where the read tool of the agent reads them. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** The provider of the task, thus each request extends the prefix that the task cached. */
     readonly provider: AgentChat;
     readonly session: AgentSession;
@@ -83,7 +86,7 @@ const DESCRIBER_AGENT_ID = "file-metadata-describer";
 const DESCRIBER_MAX_REQUESTS = 8;
 
 /** Tool ids the continuation's mask allows; each must be a tool the step agent already declares. */
-const DESCRIBER_TOOLS = [SUBMIT_FILE_METADATA_TOOL_ID, "read_file", "grep"];
+const DESCRIBER_TOOLS = [SUBMIT_FILE_METADATA_TOOL_ID, "read_file", "grep", READ_TOOL_OUTPUT_TOOL_ID];
 
 const DESCRIBER_INSTRUCTIONS = `Your work on this step has ended. Now describe its output files.
 
@@ -187,6 +190,7 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
                 emit: () => {},
                 runStep: passthroughStep,
                 usageRecorder: opts.usageRecorder,
+                toolOutputStore: opts.toolOutputStore,
             },
         );
         messages = continued.messages;

@@ -26,6 +26,7 @@ import type { AgentSession } from "../auth/types.js";
 import { continueAgent, type ContinuationResult } from "../loop/continue-agent.js";
 import { finalText } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
+import { READ_TOOL_OUTPUT_TOOL_ID, type ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { stepSummaryPrompt } from "../prompts/execute-analysis/step-summary.js";
@@ -50,7 +51,7 @@ const SUMMARY_AGENT_ID = "step-summary-writer";
 const SUMMARY_MAX_REQUESTS = 12;
 
 /** Must already be declared tools of the step agent — the mask only narrows. */
-const SUMMARY_TOOLS = ["read_file", "grep"];
+const SUMMARY_TOOLS = ["read_file", "grep", READ_TOOL_OUTPUT_TOOL_ID];
 
 function summaryRequest(artifactPaths: readonly string[]): string {
     return `${SYSTEM_PROMPT}\n\n${stepSummaryPrompt(artifactPaths.join("\n"))}`;
@@ -61,6 +62,8 @@ export interface GenerateStepSummaryOptions {
     readonly logger?: Logger;
     /** LLM usage-accounting seam for the continuation; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** The store of the task, thus the loop of the continuation keeps its texts where the read tool of the agent reads them. */
+    readonly toolOutputStore?: ToolOutputStore;
     /** The provider of the task, thus each request extends the prefix that the task cached. */
     readonly provider: AgentChat;
     readonly session: AgentSession;
@@ -98,6 +101,7 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
                 emit: () => {},
                 runStep: passthroughStep,
                 usageRecorder: opts.usageRecorder,
+                toolOutputStore: opts.toolOutputStore,
             },
         );
     } catch (err) {

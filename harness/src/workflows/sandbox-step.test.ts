@@ -40,8 +40,11 @@ import type { ArtifactRegistry, ArtifactSyncInput } from "../execution/artifact-
 import type { GateFailure } from "../lib/hooks.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
+import type { KeptToolOutput, ToolOutputStore } from "../loop/tool-output.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
+import { createReadToolOutputTool } from "../tools/read-tool-output.js";
+import { createExecuteCommandTool } from "../tools/workspace/execute-command.js";
 import { createReportBlockerTool, type BlockerHolder } from "../tools/sandbox/report-blocker.js";
 import { createSubmitFileMetadataTool, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { CAPPED_OUT_EMPTY_REASON, createLineageCollector, runSandboxStepBody, type SandboxStepDeps, type SandboxStepInput } from "./sandbox-step.js";
@@ -500,6 +503,123 @@ describe("sandbox-step post-step continuations", () => {
         expect(provider.calls).toHaveLength(2);
         expect(provider.calls[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "cached description" })]);
+    });
+});
+
+// ── the kept text of a cut tool result ──────────────────────────────
+
+describe("sandbox-step kept tool outputs", () => {
+    function memoryStore(): ToolOutputStore & { readonly puts: KeptToolOutput[] } {
+        const puts: KeptToolOutput[] = [];
+        return {
+            puts,
+            put: (output) => {
+                puts.push(output);
+                return okAsync(undefined);
+            },
+            get: (analysisId, ref) => okAsync(puts.find((kept) => kept.analysisId === analysisId && kept.ref === ref) ?? null),
+        };
+    }
+
+    /** The reference in the first excerpt of the messages of a request. */
+    function referenceIn(request: ChatRequest): string {
+        const excerpt = request.messages
+            .flatMap((message) => (message.role === "tool" ? message.content : []))
+            .map((part) => (part.type === "tool-result" && part.output.type === "text" ? part.output.value : ""))
+            .find((text) => text.startsWith("[Tool result cut: "));
+        return /reference "(to_[0-9a-f]{20})"/.exec(excerpt ?? "")![1]!;
+    }
+
+    it("keeps the text of a long execute_command result of the task in the store of the step", async () => {
+        const store = memoryStore();
+        const stderr = "Traceback (most recent call last):\nValueError: no batch column";
+        const sandboxClient = {
+            ...makeSandboxClient(),
+            awaitExec: async (_ref: SandboxRef, execId: string) => ({
+                execId,
+                exitCode: 1,
+                stdout: "row\n".repeat(50_000),
+                stderr,
+                durationMs: 5,
+                timedOut: false,
+            }),
+        } as unknown as SandboxClient;
+        const provider = scriptedProvider((i) =>
+            i === 0
+                ? makeMessage([toolUseBlock("tu-x", "execute_command", { command: ["python", "run.py"] })], "tool_use")
+                : makeMessage([textBlock("done")], "end_turn"),
+        );
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            provider,
+            sandboxClient,
+            toolOutputStore: store,
+            buildAgent: (ctx) =>
+                stepAgent(ctx.fileMetadata, [
+                    createExecuteCommandTool({
+                        sandboxClient,
+                        sandbox: ctx.sandbox,
+                        workflowId: ctx.workflowId,
+                        stepId: ctx.input.stepId,
+                        nextFunctionId: ctx.nextFunctionId,
+                        deadlineMs: ctx.deadlineMs,
+                        defaultCwd: `/${ANALYSIS_ID}`,
+                    }),
+                    createReadToolOutputTool(ctx.toolOutputStore!),
+                ]),
+        };
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(store.puts).toHaveLength(1);
+        expect(store.puts[0]).toMatchObject({ analysisId: ANALYSIS_ID, toolName: "execute_command", toolCallId: "tu-x" });
+        expect(store.puts[0]).not.toHaveProperty("threadId");
+        const excerpt = toolResultIn(provider.calls[1]!, "tu-x")!;
+        expect(excerpt.output.type).toBe("text");
+        const tail = (excerpt.output as { value: string }).value.split("\n").at(-1)!;
+        expect(tail).toContain("ValueError: no batch column");
+        expect(tail).toContain('"timedOut":false');
+    });
+
+    it("lets the summary continuation read a kept text of the task with read_tool_output", async () => {
+        const store = memoryStore();
+        const big = defineTool({
+            id: "big",
+            description: "Give a long text.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => ok("x".repeat(40_000)),
+        });
+        const provider = scriptedProvider((i, request) => {
+            if (i === 0) return makeMessage([toolUseBlock("tu-big", "big", {})], "tool_use");
+            if (i === 1) return makeMessage([textBlock("done")], "end_turn");
+            if (i === 2) return makeMessage([toolUseBlock("tu-read", "read_tool_output", { ref: referenceIn(request) })], "tool_use");
+            return makeMessage([textBlock("## Summary")], "end_turn");
+        });
+        const deps: SandboxStepDeps = {
+            ...usageStepDeps(undefined),
+            provider,
+            toolOutputStore: store,
+            buildAgent: (ctx) => stepAgent(ctx.fileMetadata, [big, createReadToolOutputTool(ctx.toolOutputStore!)]),
+        };
+
+        const result = await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(result.status).toBe("complete");
+        expect(provider.calls).toHaveLength(4);
+        const read = toolResultIn(provider.calls[3]!, "tu-read")!;
+        expect(read.output.type).toBe("json");
+        expect((read.output as { value: unknown }).value).toMatchObject({ status: "ok", offset: 0 });
+    });
+
+    it("logs one warn when the step has a store and its agent declares no read_tool_output", async () => {
+        const logger = createCapturingLogger();
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), logger, toolOutputStore: memoryStore() };
+
+        await runSandboxStepBody(usageStepInput(), deps);
+
+        expect(logger.records.filter((r) => r.level === "warn" && r.msg.includes("declares no read_tool_output"))).toHaveLength(1);
     });
 });
 
