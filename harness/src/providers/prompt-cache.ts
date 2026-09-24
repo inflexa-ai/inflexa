@@ -58,8 +58,8 @@
  * salvage, and a step's file-metadata and summary continuations each keep the
  * system prompt, the tools, and the tool choice of their conversation, and a
  * tool mask refuses each call that must not run (`loop/run-agent.ts`,
- * `loop/continue-agent.ts`). `toolChoice: "none"` would be a defeater — see the
- * CAUTION on `ChatRequest.toolChoice`.
+ * `loop/continue-agent.ts`). A tool choice that forbids a call would be a
+ * defeater — see the CAUTION on `ChatRequest.toolChoice` (`providers/types.ts`).
  *
  * `loadRecent` shifts the prefix once per `EVICTION_BLOCK_TURNS` block, not every
  * turn (`memory/thread-history.ts`).

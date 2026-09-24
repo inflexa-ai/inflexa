@@ -199,13 +199,11 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 
     // The wrap-up is a continuation of the same conversation: the requests keep
     // the tool set and the tool choice of the loop, and the mask `"none"` refuses
-    // each call. `toolChoice: "none"` is not an option: `@ai-sdk/anthropic`
-    // implements it by removing the tools, and Anthropic drops its message cache
-    // when `tool_choice` changes. Thus that request would read nothing back from
-    // the cache, and a model that binds its signed thinking blocks to the prefix
-    // would drop them or refuse the request. Request `k` keeps the step name
-    // `llm(maxIterations + k)`, thus the first one keeps the name of the single
-    // wrap-up call of an earlier version, and a replay finds its stored reply.
+    // each call. A tool choice that forbids a call is not an option: the CAUTION
+    // of `ChatRequest.toolChoice` gives the reason. Request `k` keeps the step
+    // name `llm(maxIterations + k)`, thus the first one keeps the name of the
+    // single wrap-up call of an earlier version, and a replay finds its stored
+    // reply.
     const wrapUp = await loop.runSegment({
         mask: "none",
         maxRequests: WRAP_UP_MAX_REQUESTS,
