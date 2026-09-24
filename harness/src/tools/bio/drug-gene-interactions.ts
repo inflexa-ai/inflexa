@@ -158,11 +158,12 @@ export function createDrugGeneInteractionsTool(deps: { drugbankApiKey: string; l
             "Drug↔gene interactions across DGIdb (the Drug Gene Interaction Database), DrugBank and PharmGKB, in one call — 'what drugs hit these " +
             "genes?' and 'what genes does this drug act on?'. See `direction` and `sources` for the modes.\n" +
             "ACCEPTED IDENTIFIERS: a HUGO gene symbol ('EGFR') for direction 'gene_to_drugs'; a drug name ('imatinib'), a DrugBank ID ('DB00619') or a " +
-            "DGIdb concept ID for 'drug_to_genes'. A brand name and a non-HUGO symbol match nothing — resolve the symbol with search_gene and the brand " +
-            "name with search_faers({action:'label'}) first.\n" +
-            "It answers whether an interaction is KNOWN, by whom, and of what type. For quotable POTENCY (IC50/Ki) use chembl({action:'bioactivity'}) instead.\n" +
+            "DGIdb concept ID for 'drug_to_genes'. A brand name and a non-HUGO symbol match nothing — resolve the symbol with search_gene, and pass " +
+            "the generic drug name, not the brand name.\n" +
+            "It answers whether an interaction is KNOWN, by whom, and of what type. It carries no potency value (IC50/Ki).\n" +
             "Verbose fields (`includeAttributes`, `includeDrugRecord`) are off by default — both cost a lot of context and are rarely what the question needs.\n" +
-            "ALWAYS read `perSource` before concluding an interaction is unknown: 'no_data' means that corpus has nothing; 'unavailable' means it could " +
+            "`perSource` gives the outcome of each corpus, and a conclusion that an interaction is unknown rests on it: 'no_data' means that corpus " +
+            "has nothing; 'unavailable' means it could " +
             "not be reached (a missing DRUGBANK_API_KEY lands here — tell the user and proceed with DGIdb). A `found: false` entry means the identifier " +
             "is not in DGIdb at all, usually a non-HUGO symbol or a brand name. Neither is worth retrying unchanged.",
         inputSchema,

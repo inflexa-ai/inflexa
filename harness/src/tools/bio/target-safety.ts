@@ -134,7 +134,8 @@ export const targetSafetyTool = defineTool({
     description:
         "TARGET-level, mechanism-based safety liability — the curated secondary-pharmacology panel and Open Targets' curated liabilities in one call. " +
         "Judges what engaging a target is likely to do to an organ system, before any specific molecule exists.\n" +
-        "ACCEPTED IDENTIFIERS, mixed freely in one call: a HUGO gene symbol ('HERG', 'KCNH2'), a ChEMBL target ID ('CHEMBL240'), a UniProt accession " +
+        "ACCEPTED IDENTIFIERS, mixed freely in one call: an approved HUGO gene symbol ('KCNH2' — an alias such as 'hERG' matches no panel entry), a " +
+        "ChEMBL target ID ('CHEMBL240'), a UniProt accession " +
         "('Q12809') and an Ensembl gene ID ('ENSG00000055118').\n" +
         "This is the safety of the TARGET, not of a drug. For a marketed molecule's post-market adverse events use search_faers; for a chemical's " +
         "toxicology use comptox; for what removing the gene does in vivo use gene_preclinical_profile.\n" +

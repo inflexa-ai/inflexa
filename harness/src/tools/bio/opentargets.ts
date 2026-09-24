@@ -44,7 +44,9 @@ const inputSchema = z
             .enum(["target", "disease", "resolve_disease"])
             .describe(
                 "'target' (needs ensemblId) — the diseases associated with the gene: targetInfo (approvedSymbol, approvedName, " +
-                    "tractability across small molecule / antibody / other modalities) plus associations[], each with an overall score and " +
+                    "tractability — for smallMolecule, antibody and otherModalities, the labels of the positive Open Targets buckets, from " +
+                    "'Approved Drug' and 'Advanced Clinical' down to 'High-Quality Pocket' or 'UniProt loc high conf'; an empty list means no " +
+                    "positive bucket and null means no assessment) plus associations[], each with an overall score and " +
                     "its per-datatype breakdown — genetic association, known drug, literature, animal model, somatic mutation. " +
                     "'disease' (needs efoId) — the targets ranked for that disease; each association carries targetId/targetSymbol/targetName " +
                     "and the same score breakdown. " +
@@ -99,11 +101,11 @@ type OpenTargetsOutput =
 export const openTargetsTool = defineTool({
     id: "opentargets",
     description:
-        "Query the Open Targets Platform — the integrated target-disease evidence corpus of EMBL-EBI, GSK and their partners — the preferred FIRST call " +
-        "for target assessment, since one 'target' query yields the genetic evidence, tractability, and drug landscape together, already scored and " +
-        "ranked. See the action parameter for what each mode needs and returns.\n" +
-        "It is the integrated view; the underlying records live elsewhere. For the raw genetic evidence (individual SNPs from the GWAS Catalog, DisGeNET " +
-        "GDA scores, ClinVar variant pathogenicity) use gene_disease_evidence. For this target's mechanism-based safety liabilities use target_safety.\n" +
+        "Query the Open Targets Platform — the integrated target-disease evidence corpus of EMBL-EBI, GSK and their partners. One 'target' query " +
+        "gives the tractability of the target and its disease associations, already scored and ranked, each with a per-datatype score for genetic " +
+        "association, known drug, literature, animal model and somatic mutation. See the action parameter for what each mode needs and returns.\n" +
+        "It is the integrated view, not the underlying records: it names no drug, no SNP, no effect size, no ClinVar call and no PMID, and it " +
+        "holds no safety liability.\n" +
         "ACCEPTED IDENTIFIERS: an Ensembl gene ID for action 'target' (ENSG00000141510); an Open Targets disease ID for action 'disease' — EFO " +
         "(EFO_0000311), MONDO (MONDO_0005148) or HP (HP_0001250), because Open Targets keys a disease on EFO and EFO imports the other two; and a plain " +
         "disease NAME for action 'resolve_disease' ('type 2 diabetes'), which is how you obtain that disease ID. A bare gene symbol is NOT accepted by " +

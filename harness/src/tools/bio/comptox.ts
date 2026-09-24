@@ -68,8 +68,8 @@ const inputSchema = z
         query: z
             .string()
             .describe(
-                "Chemical identifier (all datasets). A DTXSID ('DTXSID7020182') is used directly; a CASRN ('80-05-7'), a name ('bisphenol A'), or — for " +
-                    "dataset 'chemical' — an InChIKey is resolved by EXACT match, so a non-canonical or misspelled name yields found: false.",
+                "Chemical identifier (all datasets). A DTXSID ('DTXSID7020182') is used directly; a CASRN ('80-05-7'), a name ('bisphenol A'), or " +
+                    "an InChIKey is resolved by EXACT match, so a non-canonical or misspelled name yields found: false.",
             ),
         dataType: z
             .enum(["toxval", "genetox", "cancer", "seem", "httk", "functional-use", "product-data", "all"])
@@ -147,8 +147,8 @@ export function createComptoxTool(deps: { apiKey: string }) {
             "bioactivity), 'hazard' (in-vivo: " +
             "NOAEL/LOAEL/LD50, genotoxicity, cancer), 'chemical' (identity + physicochemical/ADMET), 'exposure' (SEEM predictions, toxicokinetics, uses, " +
             "products). See `dataset` for what each returns; all four resolve `query` to a DTXSID first.\n" +
-            "ACCEPTED IDENTIFIERS: a DTXSID ('DTXSID7020182') used directly, or a CASRN ('80-05-7'), a chemical name ('bisphenol A') or — for dataset " +
-            "'chemical' — an InChIKey, each resolved by EXACT match.\n" +
+            "ACCEPTED IDENTIFIERS, for every dataset: a DTXSID ('DTXSID7020182') used directly, or a CASRN ('80-05-7'), a chemical name " +
+            "('bisphenol A') or an InChIKey, each resolved by EXACT match.\n" +
             "Requires EPA_CCTE_API_KEY — a missing key fails terminally: do NOT retry, tell the user the key needs configuring and proceed without EPA data.\n" +
             "found: false means the query did not resolve to a chemical; a present-but-empty section is likewise valid no-data. Do not retry either.\n" +
             "This is environmental/industrial-chemical data: for drug-like compounds prefer PubChem or ChEMBL — dataset 'chemical' returns " +

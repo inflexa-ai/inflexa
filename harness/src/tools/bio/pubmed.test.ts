@@ -291,7 +291,7 @@ describe("pubmed — action 'details'", () => {
 });
 
 describe("pubmed — action 'fulltext'", () => {
-    it("returns available: true with the body text and its sections", async () => {
+    it("returns available: true with the body text and its outline", async () => {
         const seen = stubNcbi(() => xml(PMC_XML));
 
         const { ctx } = makeToolContext();
@@ -305,10 +305,6 @@ describe("pubmed — action 'fulltext'", () => {
             pmcId: "PMC7654321",
             available: true,
             fullText: "## Introduction\n\nBRCA1 is a tumour suppressor.\n\n## Results\n\nWe observed resistance.\n\nIt was dose dependent.",
-            sections: [
-                { heading: "Introduction", text: "BRCA1 is a tumour suppressor." },
-                { heading: "Results", text: "We observed resistance.\n\nIt was dose dependent." },
-            ],
             // The outline covers every section, so a follow-up can name one.
             outline: [
                 { heading: "Introduction", chars: 29, included: true },
@@ -326,7 +322,7 @@ describe("pubmed — action 'fulltext'", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321", sections: ["results"] }, ctx))._unsafeUnwrap();
 
-        expect(result.sections.map((s) => s.heading)).toEqual(["Results"]);
+        expect(result.fullText).toBe("## Results\n\nWe observed resistance.\n\nIt was dose dependent.");
         expect(result.outline.map((o) => [o.heading, o.included])).toEqual([
             ["Introduction", false],
             ["Results", true],
@@ -341,7 +337,7 @@ describe("pubmed — action 'fulltext'", () => {
         const { ctx } = makeToolContext();
         const result = (await tool.execute({ action: "fulltext", pmcId: "PMC7654321", maxChars: 500 }, ctx))._unsafeUnwrap();
 
-        expect(result.sections).toHaveLength(2);
+        expect(result.outline.every((o) => o.included)).toBe(true);
         expect(result.truncated).toBe(false);
         expect(result.returnedChars).toBe(result.totalChars);
     });

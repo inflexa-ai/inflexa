@@ -28,10 +28,15 @@ export interface Association {
     literaturePmids: string[];
 }
 
+/**
+ * The positive tractability buckets of each modality, by their Open Targets label
+ * ('Approved Drug', 'Structure with Ligand', 'UniProt loc high conf', …). An empty
+ * list means no positive bucket. `null` means Open Targets gives no row for the modality.
+ */
 export interface TargetTractability {
-    smallMolecule: boolean | null;
-    antibody: boolean | null;
-    otherModalities: boolean | null;
+    smallMolecule: string[] | null;
+    antibody: string[] | null;
+    otherModalities: string[] | null;
 }
 
 export interface TargetInfo {
@@ -372,10 +377,18 @@ export async function searchTargetAssociations(ensemblId: string, limit = 25): P
     if (!target) return null;
 
     const tractabilityEntries = target.tractability ?? [];
+    // Open Targets gives one row for each bucket of a modality, from 'Approved Drug' down to a
+    // predicted pocket or a localization. The first row alone is the 'Approved Drug' bucket, thus
+    // each modality keeps the labels of all of its positive rows.
+    const positiveLabels = (modality: string): string[] | null => {
+        const rows = tractabilityEntries.filter((t) => t.modality === modality);
+        if (rows.length === 0) return null;
+        return rows.flatMap((t) => (t.value === true && t.label ? [t.label] : []));
+    };
     const tractability: TargetTractability = {
-        smallMolecule: tractabilityEntries.find((t) => t.modality === "SM")?.value ?? null,
-        antibody: tractabilityEntries.find((t) => t.modality === "AB")?.value ?? null,
-        otherModalities: tractabilityEntries.find((t) => t.modality === "OC")?.value ?? null,
+        smallMolecule: positiveLabels("SM"),
+        antibody: positiveLabels("AB"),
+        otherModalities: positiveLabels("OC"),
     };
 
     const rows = data.associations?.associatedDiseases?.rows ?? [];
