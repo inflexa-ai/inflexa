@@ -10,22 +10,22 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 1. The marks of a compaction
 
-- [ ] 1.1 In `src/memory/ai-sdk-message-storage.ts`, add `COMPACTION_EXCHANGE_KEY = "compactionExchange"` and `COMPACTION_MARKER_KEY = "compactionMarker"`.
-- [ ] 1.2 Export `type CompactionMarker`. The `summary` arm holds `id`, `tokensBefore`, `tokensAfter`, and `durationMs`. The `drop` arm holds the same fields and `keptTurns`.
-- [ ] 1.3 Export `markCompactionExchange(message: ModelMessage, id: string): ModelMessage`. It gives a copy whose harness namespace holds the id. Expected result: each other namespace stays, the `anthropic` signatures included.
-- [ ] 1.4 Export `compactionExchangeOf(message: ModelMessage): string | undefined`. A message without the key gives `undefined`.
-- [ ] 1.5 Export `summaryMarkerMessage(summary: string, marker: CompactionMarker): ModelMessage`. It gives a `user` message with the text `[Conversation Summary]`, a new line, and the summary.
-- [ ] 1.6 The harness namespace of that message holds `synthetic: true` and the marker. It holds no `syntheticRecord`.
-- [ ] 1.7 Export `dropMarkerMessage(marker: CompactionMarker): ModelMessage`. It gives a `user` message with the text `[Compaction Failed]`, `synthetic: true`, and the marker.
-- [ ] 1.8 Export `compactionMarkerOf(message: ModelMessage): CompactionMarker | undefined`. A message without the key gives `undefined`.
-- [ ] 1.9 Write the doc comment of each export. Say that the view rule reads the marks, and that no provider reads the harness namespace.
-- [ ] 1.10 In `src/memory/ai-sdk-message-storage.test.ts`, add these tests:
+- [x] 1.1 In `src/memory/ai-sdk-message-storage.ts`, add `COMPACTION_EXCHANGE_KEY = "compactionExchange"` and `COMPACTION_MARKER_KEY = "compactionMarker"`.
+- [x] 1.2 Export `type CompactionMarker`. The `summary` arm holds `id`, `tokensBefore`, `tokensAfter`, and `durationMs`. The `drop` arm holds the same fields and `keptTurns`.
+- [x] 1.3 Export `markCompactionExchange(message: ModelMessage, id: string): ModelMessage`. It gives a copy whose harness namespace holds the id. Expected result: each other namespace stays, the `anthropic` signatures included.
+- [x] 1.4 Export `compactionExchangeOf(message: ModelMessage): string | undefined`. A message without the key gives `undefined`.
+- [x] 1.5 Export `summaryMarkerMessage(summary: string, marker: CompactionMarker): ModelMessage`. It gives a `user` message with the text `[Conversation Summary]`, a new line, and the summary.
+- [x] 1.6 The harness namespace of that message holds `synthetic: true` and the marker. It holds no `syntheticRecord`.
+- [x] 1.7 Export `dropMarkerMessage(marker: CompactionMarker): ModelMessage`. It gives a `user` message with the text `[Compaction Failed]`, `synthetic: true`, and the marker.
+- [x] 1.8 Export `compactionMarkerOf(message: ModelMessage): CompactionMarker | undefined`. A message without the key gives `undefined`.
+- [x] 1.9 Write the doc comment of each export. Say that the view rule reads the marks, and that no provider reads the harness namespace.
+- [x] 1.10 In `src/memory/ai-sdk-message-storage.test.ts`, add these tests:
   - A summary marker and a drop marker round-trip through `envelopeMessage` and `parseStoredMessageEnvelope`.
   - `isSyntheticUserMessage` is true for a marker, and `isSyntheticRecordMessage` is false.
   - A marked assistant message keeps its `anthropic` signature.
   - A plain message gives no marker and no exchange id.
-- [ ] 1.11 In `src/providers/configured-provider.barrel.test.ts`, add a wire test. Expected result: an `anthropic` body with a marker and an exchange message holds no key of the `cortex` namespace.
-- [ ] 1.12 Run `tsc -p tsconfig.json`. Run `bun test src/memory/ai-sdk-message-storage.test.ts src/providers/configured-provider.barrel.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 1.11 In `src/providers/configured-provider.barrel.test.ts`, add a wire test. Expected result: an `anthropic` body with a marker and an exchange message holds no key of the `cortex` namespace.
+- [x] 1.12 Run `tsc -p tsconfig.json`. Run `bun test src/memory/ai-sdk-message-storage.test.ts src/providers/configured-provider.barrel.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 2. The view rule
 
