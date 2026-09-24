@@ -1538,3 +1538,81 @@ describe("failure logging", () => {
         expect(errors).toHaveLength(0);
     });
 });
+
+describe("dropped thinking blocks", () => {
+    /** A logger that keeps the records emitted at `warn`. */
+    function recordingLogger(): { logger: Logger; warnings: { msg: string; fields?: LogFields }[] } {
+        const warnings: { msg: string; fields?: LogFields }[] = [];
+        const base = createNoopLogger();
+        const logger: Logger = {
+            ...base,
+            warn: (msg, fields) => {
+                warnings.push(fields === undefined ? { msg } : { msg, fields });
+            },
+            with: () => logger,
+            named: () => logger,
+        };
+        return { logger, warnings };
+    }
+
+    /** The drop records among the warn records. */
+    const dropRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) => warnings.filter((w) => w.msg === "thinking block dropped");
+
+    // The harness passes each field of an entry through as it is, thus the
+    // values here are only data to read back.
+    const DROPS = [
+        { type: "thinking", path: "messages.3.content.0", reason: "prefix_binding_mismatch" },
+        { type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
+    ];
+
+    /** A model whose response reports the two drops on its finish part, with the text of `text`. */
+    function droppingModel(text?: string): LanguageModelV4 {
+        return fakeModel(async () => ({
+            ...okResult(),
+            content: text === undefined ? [] : [{ type: "text", text }],
+            providerMetadata: { anthropic: { inputTransformations: DROPS } },
+        }));
+    }
+
+    it("writes one warn record for each drop on chat, and chat returns ok", async () => {
+        const { logger, warnings } = recordingLogger();
+        const provider = createAiSdkProvider({ model: droppingModel("done"), logger });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(dropRecords(warnings).map((w) => w.fields)).toEqual([
+            { workload: "analysis:analysis-001", type: "thinking", path: "messages.3.content.0", reason: "prefix_binding_mismatch" },
+            { workload: "analysis:analysis-001", type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
+        ]);
+    });
+
+    it("writes the same records on each terminal path of chatStream, before the done event", async () => {
+        // A reply with text drains the live stream. A reply with no text ends
+        // inside the envelope. The two paths build the done event apart.
+        for (const text of ["done", undefined]) {
+            const { logger, warnings } = recordingLogger();
+            const provider = createAiSdkProvider({ model: droppingModel(text), logger });
+
+            let recordsAtDone: number | undefined;
+            for await (const event of provider.chatStream(request, makeSession())) {
+                if (event.type === "done") recordsAtDone = dropRecords(warnings).length;
+            }
+
+            expect(recordsAtDone).toBe(2);
+            expect(dropRecords(warnings).map((w) => w.fields?.["path"])).toEqual(["messages.3.content.0", "messages.5.content.0"]);
+        }
+    });
+
+    it("writes no drop record for a response without drops", async () => {
+        const { logger, warnings } = recordingLogger();
+        const provider = createAiSdkProvider({ model: fakeModel(async () => okResult()), logger });
+
+        (await provider.chat(request, makeSession()))._unsafeUnwrap();
+        for await (const _event of provider.chatStream(request, makeSession())) {
+            // Drain the stream, thus the call completes.
+        }
+
+        expect(dropRecords(warnings)).toEqual([]);
+    });
+});

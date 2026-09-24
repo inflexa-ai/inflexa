@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
-import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps } from "@inflexa-ai/harness";
+import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
 
 import { makeSession } from "./__fixtures__/session.js";
 import type { FetchLike } from "./types.js";
@@ -246,6 +246,77 @@ describe("the session key on the wire", () => {
         expect(body).not.toHaveProperty("prompt_cache_key");
         expect(body).not.toHaveProperty("metadata");
         expect(JSON.stringify(body)).not.toContain("a1:r1");
+    });
+});
+
+describe("the thinking binding on the wire", () => {
+    const BINDING_BETA = "thinking-binding-controls-2026-08-01";
+
+    /** Run one chat at `reasoning` over an anthropic arm bound to `model`, and give the request that reached the wire. */
+    async function anthropicWire(
+        model: string,
+        reasoning: ReasoningPolicy,
+        thinkingBinding?: "drop_block" | "error" | "off",
+    ): Promise<{ body: Record<string, unknown>; headers: Record<string, string> }> {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model,
+                fetch: cap.fetch,
+                ...(thinkingBinding !== undefined ? { thinkingBinding } : {}),
+            },
+        });
+
+        const result = await provider.chat({ ...request, reasoning }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        return cap.requests[0]!;
+    }
+
+    it("binds the blocks of claude-opus-5-5 in the drop_block mode by default, and keeps the thinking selection of the package", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "xhigh");
+
+        expect(wire.body["thinking"]).toEqual({ type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+        expect(wire.body["output_config"]).toMatchObject({ effort: "xhigh" });
+        expect(wire.headers["anthropic-beta"]).toContain(BINDING_BETA);
+    });
+
+    it("binds a call at none, which the package sends to claude-opus-5-5 at the effort low", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "none");
+
+        // The package selects no thinking type for this effort, thus the binding
+        // rides alone and the model keeps its default thinking mode.
+        expect(wire.body["thinking"]).toEqual({ block_binding: { prefix_mismatch_behavior: "drop_block" } });
+        expect(wire.body["output_config"]).toMatchObject({ effort: "low" });
+    });
+
+    it("sends the error mode", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "xhigh", "error");
+
+        expect(wire.body["thinking"]).toMatchObject({ block_binding: { prefix_mismatch_behavior: "error" } });
+    });
+
+    it("sends no binding and no binding beta header in the off mode", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "xhigh", "off");
+
+        expect(wire.body["thinking"]).not.toHaveProperty("block_binding");
+        expect(wire.headers["anthropic-beta"] ?? "").not.toContain(BINDING_BETA);
+    });
+
+    it("sends no binding to claude-opus-4-7, which can run without thinking", async () => {
+        const wire = await anthropicWire("claude-opus-4-7", "xhigh");
+
+        expect(wire.body["thinking"]).toMatchObject({ type: "adaptive" });
+        expect(wire.body["thinking"]).not.toHaveProperty("block_binding");
+    });
+
+    it("sends no binding to claude-sonnet-4-5 at none, and the package turns thinking off", async () => {
+        const wire = await anthropicWire("claude-sonnet-4-5", "none");
+
+        expect(wire.body["thinking"]).toEqual({ type: "disabled" });
     });
 });
 
