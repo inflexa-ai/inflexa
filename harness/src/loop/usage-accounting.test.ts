@@ -18,7 +18,7 @@ import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsag
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 import { unusedCitationResolver } from "../citations/__fixtures__/resolver.js";
-import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
+import { isWrapUpRequest, makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent, type AgentFinish, type RunAgentOptions } from "./run-agent.js";
 import { passthroughStep } from "./run-step.js";
 import type { AgentDefinition, RunStep } from "./types.js";
@@ -96,10 +96,10 @@ const echoTool: Tool = defineTool({
     execute: async ({ label }) => ok({ label }),
 });
 
-/** Never stops asking for tools — only the wrap-up call, which forbids one, ends the run. */
+/** Never stops asking for tools — only the text reply to the wrap-up request ends the run. */
 function neverTerminates(replyUsage: ChatUsage): ScriptedProvider {
     return scriptedProvider((callIndex, request) =>
-        request.toolChoice === "none"
+        isWrapUpRequest(request)
             ? makeMessage([textBlock("wrap-up")], "end_turn", replyUsage)
             : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use", replyUsage),
     );
@@ -113,7 +113,7 @@ describe("runAgent usage records — one per completed call", () => {
 
         await runAgent(agentDef([echoTool], 3), GO, makeSession(), opts(neverTerminates(usage(10, 2)), recorder));
 
-        // 3 capped iterations + 1 forced wrap-up call.
+        // 3 capped iterations + 1 wrap-up request.
         expect(records).toHaveLength(4);
         expect(records.every((r) => r.usage.inputTokens === 10)).toBe(true);
     });

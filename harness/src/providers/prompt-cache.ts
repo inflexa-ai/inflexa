@@ -54,13 +54,14 @@
  * ## Cache defeaters — what silently kills the hit rate
  *
  * The cache keys on an *exact prefix*, so anything that perturbs the head of the
- * request invalidates everything after it. Known defeaters:
+ * request invalidates everything after it. `runAgent`'s wrap-up is not one: it
+ * keeps the tools and the tool choice, and a tool mask refuses each call
+ * (`loop/run-agent.ts`). `toolChoice: "none"` would be one — see the CAUTION on
+ * `ChatRequest.toolChoice`. Known defeaters:
  *
- *  1. `runAgent`'s Anthropic-arm wrap-up drops tools via `toolChoice: "none"`
- *     (`loop/run-agent.ts`); the openai arm keeps them on the wire.
- *  2. `runToTerminal`'s salvage run swaps in terminal-only tools
+ *  1. `runToTerminal`'s salvage run swaps in terminal-only tools
  *     (`loop/run-to-terminal.ts`).
- *  3. Step summary and file metadata replay a step's transcript under their own
+ *  2. Step summary and file metadata replay a step's transcript under their own
  *     prompt and tools (`execution/step-summary.ts`, `execution/artifact-metadata.ts`).
  *
  * `loadRecent` shifts the prefix once per `EVICTION_BLOCK_TURNS` block, not every

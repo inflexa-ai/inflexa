@@ -65,23 +65,23 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 4. The wrap-up as a continuation
 
-- [ ] 4.1 In `src/loop/run-agent.ts`, add `WRAP_UP_REQUEST` and `WRAP_UP_MAX_REQUESTS = 2`. The request says that the run reached its iteration limit, that no tool can run, and that the model must answer in text.
-- [ ] 4.2 Replace the single wrap-up call with the wrap-up segment: the request `WRAP_UP_REQUEST`, the mask `"none"`, and the cap `WRAP_UP_MAX_REQUESTS`.
-- [ ] 4.3 Name wrap-up request `k` `formatStepName.llm(agent.maxIterations + k)`. Expected result: each request sends `tools: toolDefs` and the `toolChoice` of `opts`, and no request sends `toolChoice: "none"`.
-- [ ] 4.4 Keep the finish of a capped run: `max_iterations` with `cappedOut: true`, or `aborted` with `cappedOut: true`. Keep the terminal record at `warn`.
-- [ ] 4.5 Emit the `iteration` event of wrap-up request `k` with `index: agent.maxIterations + k`. Set `final: true` on the last request.
-- [ ] 4.6 Write the doc comment of `RunAgentOptions.toolChoice` in `src/loop/run-agent.ts` again. Also write `AgentDefinition.maxIterations` and the `index` of the `iteration` event in `src/loop/types.ts` again.
-- [ ] 4.7 Each comment of 4.6 says that the wrap-up keeps the tools and the tool choice, and that a mask refuses each call.
-- [ ] 4.8 In `src/providers/types.ts`, add a CAUTION to the doc comment of `ChatRequest.toolChoice`. `@ai-sdk/anthropic` removes the tools for `"none"`, and Anthropic drops its message cache when `tool_choice` changes.
-- [ ] 4.9 In the header of `src/providers/prompt-cache.ts`, remove the wrap-up from the list of the section "Cache defeaters". State that the wrap-up keeps the tool set and the tool choice, and that a mask refuses each call.
-- [ ] 4.10 In `src/loop/run-agent.test.ts`, change `describe("runAgent — max-iteration wrap-up")`, `describe("runAgent — aborted wrap-up path")`, and `describe("runAgent — finish signal")`. Add these tests:
+- [x] 4.1 In `src/loop/run-agent.ts`, add `WRAP_UP_REQUEST` and `WRAP_UP_MAX_REQUESTS = 2`. The request says that the run reached its iteration limit, that no tool can run, and that the model must answer in text.
+- [x] 4.2 Replace the single wrap-up call with the wrap-up segment: the request `WRAP_UP_REQUEST`, the mask `"none"`, and the cap `WRAP_UP_MAX_REQUESTS`.
+- [x] 4.3 Name wrap-up request `k` `formatStepName.llm(agent.maxIterations + k)`. Expected result: each request sends `tools: toolDefs` and the `toolChoice` of `opts`, and no request sends `toolChoice: "none"`.
+- [x] 4.4 Keep the finish of a capped run: `max_iterations` with `cappedOut: true`, or `aborted` with `cappedOut: true`. Keep the terminal record at `warn`.
+- [x] 4.5 Emit the `iteration` event of wrap-up request `k` with `index: agent.maxIterations + k`. Set `final: true` on the last request.
+- [x] 4.6 Write the doc comment of `RunAgentOptions.toolChoice` in `src/loop/run-agent.ts` again. Also write `AgentDefinition.maxIterations` and the `index` of the `iteration` event in `src/loop/types.ts` again.
+- [x] 4.7 Each comment of 4.6 says that the wrap-up keeps the tools and the tool choice, and that a mask refuses each call.
+- [x] 4.8 In `src/providers/types.ts`, add a CAUTION to the doc comment of `ChatRequest.toolChoice`. `@ai-sdk/anthropic` removes the tools for `"none"`, and Anthropic drops its message cache when `tool_choice` changes.
+- [x] 4.9 In the header of `src/providers/prompt-cache.ts`, remove the wrap-up from the list of the section "Cache defeaters". State that the wrap-up keeps the tool set and the tool choice, and that a mask refuses each call.
+- [x] 4.10 In `src/loop/run-agent.test.ts`, change `describe("runAgent — max-iteration wrap-up")`, `describe("runAgent — aborted wrap-up path")`, and `describe("runAgent — finish signal")`. Add these tests:
   - The wrap-up sends the tools and the `toolChoice` of the run.
   - A text reply ends the wrap-up after one request, under the step name `llm-${maxIterations}`.
   - A refused call gets a second request.
   - The wrap-up ends after 2 requests.
-- [ ] 4.11 In `src/loop/prompt-cache.test.ts`, change `"marks the last message on every iteration, the wrap-up included"` and `"counts the wrap-up call's tokens too"`. Expected result: each wrap-up request has one message breakpoint and no `toolChoice`.
-- [ ] 4.12 Change each other test in `src/loop` that counts the calls of a capped run. A provider that always calls a tool now gets 2 wrap-up requests.
-- [ ] 4.13 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 4.11 In `src/loop/prompt-cache.test.ts`, change `"marks the last message on every iteration, the wrap-up included"` and `"counts the wrap-up call's tokens too"`. Expected result: each wrap-up request has one message breakpoint and no `toolChoice`.
+- [x] 4.12 Change each other test in `src/loop` that counts the calls of a capped run. A provider that always calls a tool now gets 2 wrap-up requests.
+- [x] 4.13 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 5. The salvage as a continuation
 
