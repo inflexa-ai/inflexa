@@ -285,8 +285,9 @@ export type {
 } from "./providers/types.js";
 // Two cache markers (loop + `withPromptCacheBreakpoint`) count against a vendor's
 // breakpoint cap (four for Anthropic). Never attach `promptCacheProviderOptions`
-// to the request itself, or a proxy miscounts.
-export { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "./providers/prompt-cache.js";
+// to the request itself, or a proxy miscounts. The root chat loop gets
+// `CONVERSATION_PROMPT_CACHE` (1h), because a person can reply minutes later.
+export { CONVERSATION_PROMPT_CACHE, DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "./providers/prompt-cache.js";
 // Effort resolves in order: `ChatRequest.reasoning`, the provider config's
 // `reasoning`, then `DEFAULT_REASONING`, downgraded to what the model accepts.
 // A model with no reasoning support takes `"provider-default"`.
@@ -314,13 +315,20 @@ export type { Suspension } from "./workflows/suspension.js";
 // gets live token streaming out of the otherwise non-streaming loop.
 export { createStreamingChat } from "./providers/streaming-chat.js";
 
-// Conversation turn + thread memory — the transport-free halves of one chat
-// turn a same-process host drives itself. `prepareChatTurn` assembles the model
-// message array; `createConversationDisplayRecorder` records the independently
-// replayable UI projection while forwarding live events; `appendTurn` persists
-// both atomically. `createThreadStore` owns thread metadata (create/list/title).
-export { prepareChatTurn } from "./app/chat-turn.js";
-export type { PrepareChatTurnDeps, PrepareChatTurnParams, PrepareChatTurnResult } from "./app/chat-turn.js";
+// Conversation turn + thread memory. A host runs a chat turn with `runChatTurn`
+// and gives only its transport values: the harness stores the opening, each round,
+// and the outcome. `appendTurn` stays for a record of a host. `createThreadStore`
+// owns thread metadata (create/list/title).
+export { prepareChatTurn, runChatTurn } from "./app/chat-turn.js";
+export type {
+    ChatTurnOutcome,
+    ChatTurnResult,
+    PrepareChatTurnDeps,
+    PrepareChatTurnParams,
+    PrepareChatTurnResult,
+    RunChatTurnDeps,
+    RunChatTurnParams,
+} from "./app/chat-turn.js";
 export { createThreadStore } from "./memory/thread-store.js";
 // `ThreadType` and `ThreadInputError` ride out with the shapes that carry them:
 // `Thread.threadType` and `CreateThreadInput.type` are unwritable by an embedder
@@ -328,7 +336,17 @@ export { createThreadStore } from "./memory/thread-store.js";
 // without the variants it can return beside `DbError`.
 export type { ThreadStore, Thread, ThreadType, ThreadInputError, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
 export { createThreadHistory, conversationRecordTurn } from "./memory/thread-history.js";
-export type { ThreadHistory, StoredMessage, RetractOutcome, ConversationTurn } from "./memory/thread-history.js";
+export type {
+    ThreadHistory,
+    StoredMessage,
+    RetractOutcome,
+    ConversationTurn,
+    TurnWrite,
+    TurnWriteResult,
+    TurnClose,
+    TurnStatus,
+    StoredTurnRecord,
+} from "./memory/thread-history.js";
 // The synthetic-message primitives. A host appends a record of out-of-band work (an analysis run's
 // outcome) into a thread through `appendTurn`, and needs a message the model reads but that is not
 // user input — which is exactly what the marker denotes. The constructor is exported rather than

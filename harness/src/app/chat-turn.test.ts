@@ -1,15 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { ToolResultPart } from "ai";
+import { err, errAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
+import { z } from "zod";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
+import { forSubAgent } from "../auth/types.js";
+import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
+import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
+import { runAgent } from "../loop/run-agent.js";
+import type { AgentDefinition } from "../loop/types.js";
 import { contextRecordOf } from "../memory/ai-sdk-message-storage.js";
+import { storedMessagesToCortex } from "../memory/conversation-display-replay.js";
 import { createThreadStore } from "../memory/thread-store.js";
-import { createThreadHistory } from "../memory/thread-history.js";
+import { createThreadHistory, type StoredMessage } from "../memory/thread-history.js";
+import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
+import { makeSession } from "../providers/__fixtures__/session.js";
+import type { ProviderError } from "../providers/errors.js";
+import type { AgentChat, ChatRequest, ChatResponse, ChatUsage } from "../providers/types.js";
+import type { ThreadAgentResolver } from "../runtime/assemble.js";
 import { insertRun, updateRunStatus } from "../state/index.js";
 import type { SessionProvenanceEvent } from "../provenance/seam.js";
-import { prepareChatTurn } from "./chat-turn.js";
+import { defineTool, type Tool } from "../tools/define-tool.js";
+import { suspensionOfFailure } from "../workflows/suspension.js";
+import { prepareChatTurn, runChatTurn, type RunChatTurnParams } from "./chat-turn.js";
 
 const ANALYSIS_A = "analysis-a";
 const ANALYSIS_B = "analysis-b";
@@ -314,5 +330,293 @@ describe("prepareChatTurn", () => {
         const joined = result.messages.map((message) => contentText(message.content)).join("\n");
         expect(joined).toContain("# Working Memory");
         expect(joined).toContain("Find the driver genes.");
+    });
+});
+
+// --- runChatTurn ------------------------------------------------------------
+
+describe("runChatTurn", () => {
+    const THREAD = "t-turn";
+
+    function echoTool(): Tool {
+        return defineTool({
+            id: "echo",
+            description: "Echo the label back.",
+            inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
+            execute: async ({ label }) => ok({ label }),
+        });
+    }
+
+    function agentWith(tools: Tool[], systemPrompt = "You are the test conversation agent."): AgentDefinition {
+        return { id: "conversation-agent", systemPrompt, model: "claude-test", tools, maxIterations: 8 };
+    }
+
+    function resolverFor(agent: AgentDefinition): ThreadAgentResolver {
+        return { forThread: (type) => (type === "conversation" ? ok(agent) : err({ type: "unregistered_thread_type", threadType: type })) };
+    }
+
+    function params(provider: AgentChat, overrides: Partial<RunChatTurnParams> = {}): RunChatTurnParams {
+        return {
+            analysisId: ANALYSIS_A,
+            threadId: THREAD,
+            userInput: "compare the two groups",
+            session: makeSession({ scope: { kind: "analysis", analysisId: ANALYSIS_A, threadId: THREAD } }),
+            chat: () => provider,
+            emit: () => {},
+            signal: new AbortController().signal,
+            usageRecorder: createNoopUsageRecorder(),
+            ...overrides,
+        };
+    }
+
+    const toolCall = (id: string, usage?: ChatUsage): ChatResponse => makeMessage([toolUseBlock(id, "echo", { label: id })], "tool_use", usage);
+
+    /** A provider that answers with `replies`, and then fails each later request with `failure`. */
+    function failingAfter(replies: readonly ChatResponse[], failure: ProviderError): AgentChat {
+        let calls = 0;
+        return {
+            capabilities: { toolCalling: true },
+            chat: () => (calls < replies.length ? okAsync(replies[calls++]!) : errAsync(failure)),
+        };
+    }
+
+    /** The cache directive on the system prompt of a request. */
+    function systemDirective(request: ChatRequest): unknown {
+        return typeof request.system === "string" ? undefined : request.system.providerOptions?.["anthropic"]?.["cacheControl"];
+    }
+
+    async function storedRows(threadId = THREAD): Promise<StoredMessage[]> {
+        return (await createThreadHistory(pool).loadAll(threadId))._unsafeUnwrap().flat();
+    }
+
+    async function turnRecords(threadId = THREAD): Promise<{ status: string; reason: string | null }[]> {
+        const { rows } = await pool.query<{ status: string; reason: string | null }>(
+            "SELECT status, reason FROM cortex_thread_turns WHERE thread_id = $1 ORDER BY start_seq",
+            [threadId],
+        );
+        return rows;
+    }
+
+    it("stores the opening, each round, and a done record with the rollup and the duration", async () => {
+        const provider = scriptedProvider([
+            toolCall("tu-1", { inputTokens: 100, outputTokens: 10 }),
+            makeMessage([textBlock("the groups differ")], "end_turn", { inputTokens: 120, outputTokens: 20 }),
+        ]);
+
+        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { startedAtMs: Date.now() - 1_000 }));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true, turnUsage: { inputTokens: 220, outputTokens: 30 } });
+        expect("storeError" in result).toBe(false);
+        const rows = await storedRows();
+        expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "assistant"]);
+        expect(rows.slice(1, 3).map((row) => contextRecordOf(row.message)?.kind)).toEqual(["run-activity", "working-memory"]);
+        expect(rows[0]!.turn).toMatchObject({ status: "done", usage: { inputTokens: 220, outputTokens: 30 } });
+        expect(rows[0]!.turn!.durationMs).toBeGreaterThanOrEqual(1_000);
+    });
+
+    it("reads a stored turn back as one user message and one assistant message", async () => {
+        const provider = scriptedProvider([toolCall("tu-1"), makeMessage([textBlock("the groups differ")], "end_turn")]);
+        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+
+        const replay = storedMessagesToCortex(await storedRows());
+
+        expect(replay.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(replay[1]!.parts).toEqual([
+            { type: "tool-call", toolCallId: "tu-1", toolName: "echo", outcome: "ok" },
+            { type: "text", text: "the groups differ" },
+        ]);
+    });
+
+    it("keeps two rounds, adds the note, and closes failed when the third request fails on the credential", async () => {
+        const provider = failingAfter([toolCall("tu-1"), toolCall("tu-2")], {
+            type: "auth",
+            retryable: false,
+            message: "401 Unauthorized at https://models.example/v1 with key sk-secret-123",
+        });
+
+        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The model endpoint refused the credential." } });
+        const rows = await storedRows();
+        expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "assistant", "tool", "user"]);
+        expect(rows.at(-1)!.message.content).toBe(
+            "[Turn Failed]\nThe turn stopped before it finished. Reason: The model endpoint refused the credential.\nThe rounds above this note ran, and their results are stored.",
+        );
+        expect(JSON.stringify(rows.map((row) => row.message))).not.toContain("sk-secret-123");
+        expect(await turnRecords()).toEqual([{ status: "failed", reason: "The model endpoint refused the credential." }]);
+    });
+
+    it("starts the next turn with each stored row of the failed turn, byte-identical", async () => {
+        const failing = failingAfter([toolCall("tu-1"), toolCall("tu-2")], { type: "auth", retryable: false, message: "401" });
+        const agents = resolverFor(agentWith([echoTool()]));
+        await runChatTurn({ pool, agents }, params(failing));
+        const stored = (await storedRows()).map((row) => row.message);
+        const next = scriptedProvider([makeMessage([textBlock("continuing")], "end_turn")]);
+
+        await runChatTurn({ pool, agents }, params(next, { userInput: "try again", promptCache: "off" }));
+
+        expect(JSON.stringify(next.calls[0]!.messages.slice(0, stored.length))).toBe(JSON.stringify(stored));
+    });
+
+    it("closes failed with the reason of the host on a suspend error", async () => {
+        const provider = failingAfter([], { type: "suspend", retryable: false, reason: "payment_required", status: 402, message: "Payment Required" });
+
+        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "payment_required" } });
+        if (result.kind !== "ran" || result.outcome.status !== "failed") throw new Error("unreachable");
+        expect(suspensionOfFailure(result.outcome.cause)).toEqual({ kind: "suspended", reason: "payment_required" });
+        expect(await turnRecords()).toEqual([{ status: "failed", reason: "payment_required" }]);
+    });
+
+    it("stores the opening and closes aborted on an abort before any output", async () => {
+        const controller = new AbortController();
+        const provider = scriptedProvider((): ChatResponse => {
+            controller.abort();
+            return { message: { role: "assistant", content: "" }, finishReason: "aborted" };
+        });
+
+        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { signal: controller.signal }));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "aborted" }, opened: true });
+        expect((await storedRows()).map((row) => row.message.role)).toEqual(["user", "user", "user"]);
+        expect(await turnRecords()).toEqual([{ status: "aborted", reason: null }]);
+    });
+
+    it("closes failed on an AbortError of a tool under a live signal, and keeps the call with a not-run result", async () => {
+        const stall = defineTool({
+            id: "stall",
+            description: "Throws an AbortError that no abort of the turn caused.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async () => {
+                throw new DOMException("The operation was aborted", "AbortError");
+            },
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "stall", {})], "tool_use")]);
+
+        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([stall])) }, params(provider));
+
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "failed", reason: "The turn stopped on an internal error." } });
+        const rows = await storedRows();
+        expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "tool", "user"]);
+        const answer = rows[4]!.message.content as ToolResultPart[];
+        expect(answer.map((part) => [part.toolCallId, part.output])).toEqual([["tu-1", { type: "error-text", value: NOT_RUN_TOOL_RESULT }]]);
+    });
+
+    it("writes no row and no record when the resolver refuses the thread type", async () => {
+        (await createThreadStore(pool).createThread({ threadId: THREAD, analysisId: ANALYSIS_A, title: "A report", type: "report" }))._unsafeUnwrap();
+        const provider = scriptedProvider([]);
+
+        const result = await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+
+        expect(result).toEqual({ kind: "agent_unresolved", threadType: "report" });
+        expect(await storedRows()).toEqual([]);
+        expect(await turnRecords()).toEqual([]);
+        expect(provider.calls).toEqual([]);
+    });
+
+    it("adds no context record on a second turn with no change", async () => {
+        const agents = resolverFor(agentWith([echoTool()]));
+        await runChatTurn({ pool, agents }, params(scriptedProvider([makeMessage([textBlock("first answer")], "end_turn")])));
+
+        await runChatTurn({ pool, agents }, params(scriptedProvider([makeMessage([textBlock("second answer")], "end_turn")]), { userInput: "and now?" }));
+
+        const rows = await storedRows();
+        expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user", "assistant"]);
+        expect(contextRecordOf(rows[4]!.message)).toBeUndefined();
+    });
+
+    it("sends the 1-hour cache directive from the root loop", async () => {
+        const provider = scriptedProvider([makeMessage([textBlock("hi")], "end_turn")]);
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+
+        const request = provider.calls[0]!;
+        expect(systemDirective(request)).toEqual({ type: "ephemeral", ttl: "1h" });
+        expect(request.messages.at(-1)!.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual({ type: "ephemeral", ttl: "1h" });
+    });
+
+    it("sends the cache directive of a host policy", async () => {
+        const provider = scriptedProvider([makeMessage([textBlock("hi")], "end_turn")]);
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { promptCache: { ttl: "5m" } }));
+
+        expect(systemDirective(provider.calls[0]!)).toEqual({ type: "ephemeral", ttl: "5m" });
+    });
+
+    it("sends the 5-minute cache directive from a sub-agent loop of the turn", async () => {
+        const SUB_PROMPT = "You are the test sub-agent.";
+        const provider = scriptedProvider((callIndex, request) => {
+            if (request.system !== undefined && JSON.stringify(request.system).includes(SUB_PROMPT)) return makeMessage([textBlock("sub answer")], "end_turn");
+            return callIndex === 0 ? makeMessage([toolUseBlock("tu-1", "delegate", {})], "tool_use") : makeMessage([textBlock("done")], "end_turn");
+        });
+        const delegate = defineTool({
+            id: "delegate",
+            description: "Run a sub-agent.",
+            inputSchema: z.object({}),
+            describeCall: "none",
+            execute: async (_input, ctx) => {
+                const sub = await runAgent(agentWith([], SUB_PROMPT), [{ role: "user", content: "brief" }], forSubAgent(ctx.session, "sub-agent"), {
+                    provider,
+                    signal: ctx.signal,
+                    emit: ctx.emit,
+                    runStep: ctx.runStep,
+                    ...(ctx.turnUsage === undefined ? {} : { turnUsage: ctx.turnUsage }),
+                });
+                return ok({ answer: sub.finish.reason });
+            },
+        });
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([delegate])) }, params(provider));
+
+        expect(provider.calls.map((call) => [JSON.stringify(call.system).includes(SUB_PROMPT), systemDirective(call)])).toEqual([
+            [false, { type: "ephemeral", ttl: "1h" }],
+            [true, { type: "ephemeral", ttl: "5m" }],
+            [false, { type: "ephemeral", ttl: "1h" }],
+        ]);
+    });
+
+    it("stores a round that failed to land with the next round, in order", async () => {
+        let failed = false;
+        const failingOnce = new Proxy(pool, {
+            get(target, prop, receiver) {
+                if (prop !== "connect") {
+                    const value: unknown = Reflect.get(target, prop, receiver);
+                    return typeof value === "function" ? value.bind(target) : value;
+                }
+                return async () => {
+                    const client = await target.connect();
+                    return new Proxy(client, {
+                        get(inner, key, innerReceiver) {
+                            const value: unknown = Reflect.get(inner, key, innerReceiver);
+                            if (key !== "query" || typeof value !== "function") return typeof value === "function" ? value.bind(inner) : value;
+                            return (text: unknown, values?: unknown[]) => {
+                                // The first row of the first round takes seq 3, after the three rows of the opening.
+                                if (!failed && typeof text === "string" && text.includes("INSERT INTO messages") && values?.[1] === 3) {
+                                    failed = true;
+                                    return Promise.reject(new Error("simulated insert failure"));
+                                }
+                                return value.call(inner, text, values);
+                            };
+                        },
+                    });
+                };
+            },
+        });
+        const provider = scriptedProvider([toolCall("tu-1"), toolCall("tu-2"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const result = await runChatTurn({ pool: failingOnce, agents: resolverFor(agentWith([echoTool()])) }, params(provider));
+
+        expect(failed).toBe(true);
+        expect(result).toMatchObject({ kind: "ran", outcome: { status: "done" }, opened: true });
+        expect("storeError" in result).toBe(false);
+        const rows = await storedRows();
+        expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+        expect(rows.filter((row) => row.message.role === "tool").map((row) => (row.message.content as ToolResultPart[])[0]!.toolCallId)).toEqual([
+            "tu-1",
+            "tu-2",
+        ]);
     });
 });

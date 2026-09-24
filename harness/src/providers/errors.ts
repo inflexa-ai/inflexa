@@ -106,6 +106,15 @@ export function findSuspendError(err: unknown): SuspendError | undefined {
     );
 }
 
+/** Find a `ProviderError` of any kind, by the walk of {@link findSuspendError}. */
+export function findProviderError(err: unknown): ProviderError | undefined {
+    const asProviderError = (value: unknown): ProviderError | undefined => (isProviderError(value) ? value : undefined);
+    return findInCauseChain(
+        err,
+        (link) => asProviderError(link) ?? (typeof link === "object" && link !== null ? asProviderError((link as { value?: unknown }).value) : undefined),
+    );
+}
+
 /**
  * Turn a caught SDK throwable into a `ProviderError` value. Routes through
  * `classifyProviderError` with the `suspendOn` map of the provider, so the

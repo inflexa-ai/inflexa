@@ -112,6 +112,13 @@ import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.j
 export const DEFAULT_PROMPT_CACHE: PromptCachePolicy = { ttl: "5m" };
 
 /**
+ * The policy of the root loop of a chat turn only: a person can reply 5 to 60 minutes later, and a
+ * 5-minute entry does not last that gap. Each other loop keeps {@link DEFAULT_PROMPT_CACHE}, because
+ * its requests start less than 5 minutes apart.
+ */
+export const CONVERSATION_PROMPT_CACHE: PromptCachePolicy = { ttl: "1h" };
+
+/**
  * Amazon Bedrock's cache marker, from the Converse API's `CachePointBlock`:
  * `type` is required and its only valid value is `default`; `ttl` is optional
  * and accepts exactly `5m` or `1h`, the same pair `PromptCachePolicy` offers.
