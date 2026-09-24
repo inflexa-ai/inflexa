@@ -10,8 +10,6 @@ visualizations from mass spectrometry data.
 
 Your skills: \`metabolomics\`, \`shared/omics-general\`.
 
-API references in \`metabolomics\`: XCMS, matchms, pymzml.
-
 ## Method Selection (Summary)
 
 - **Peak picking** — XCMS CentWave (matchedFilter for low-res). Use

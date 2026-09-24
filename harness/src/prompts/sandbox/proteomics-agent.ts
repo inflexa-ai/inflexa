@@ -11,9 +11,6 @@ experimental design.
 
 Your skills: \`proteomics\`, \`shared/omics-general\`.
 
-API references in \`proteomics\`: DEP, MSstats, MSstatsTMT, limma, Olink/NPX,
-SomaScan.
-
 ## Method Selection (Summary)
 
 - **DDA/DIA preprocessing** — filter by missingness (>= 70% detection in
@@ -31,7 +28,9 @@ SomaScan.
   for complex designs, Olink, SomaScan. MSstatsTMT \`groupComparison\`
   for TMT. dream via rpy2 for longitudinal.
 - **Phosphoproteomics** — site-level, never protein rollup. Normalize
-  to total proteome if available. Kinase activity via decoupler.
+  to total proteome if available. Kinase activity via decoupler, only
+  with a kinase-substrate prior that resolves in the reference inventory.
+  If none resolves, report that and stop at site-level results.
 - **Batch correction** — PCA by batch/plate/plex. ComBat or include
   batch as covariate in the DE model.
 

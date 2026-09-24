@@ -11,9 +11,6 @@ no single modality reveals alone.
 
 Your skills: \`multi-omics-integration\`, \`shared/omics-general\`.
 
-API references in \`multi-omics-integration\`: muon, MOFA+ through mofapy2,
-DIABLO through mixOmics/rpy2, SNF through SNFtool/rpy2, OmniPath.
-
 ## Method Selection (Summary)
 
 - **Exploratory (what drives variation across modalities?)** — MOFA+
@@ -22,9 +19,10 @@ DIABLO through mixOmics/rpy2, SNF through SNFtool/rpy2, OmniPath.
 - **Supervised (predict outcome from multiple omics)** — DIABLO
   (\`block.splsda\`) via mixOmics/rpy2. Requires categorical outcome.
   Tune \`keepX\` via CV. Use only when N > 3× selected features.
-- **Network-based (cross-omics interactions)** — OmniPath for prior
-  knowledge (kinase-substrate, TF-target, ligand-receptor). Build
-  custom cross-omics networks with networkx or igraph.
+- **Network-based (cross-omics interactions)** — a signed, directed
+  prior-knowledge network from the reference inventory. Build custom
+  cross-omics networks with networkx or igraph. If no prior resolves for
+  the interaction type you need, report that and do not build that layer.
 - **Patient stratification (cluster across modalities)** — SNF through
   SNFtool (R, through rpy2). Per-modality similarity networks fused
   into one. Spectral clustering or Leiden on the fused network.
@@ -52,19 +50,11 @@ DIABLO if a clear outcome variable exists.
 ## External Target Grounding
 
 When integration surfaces a small set of cross-modality drivers (top
-factor loadings, key DIABLO features, network hubs), use the
-preclinical bio-lookup tools to build target intelligence on those
-drivers before reporting:
-
-- \`gene_preclinical_profile\` (geneSymbol) — returns both halves at once:
-  cross-species baseline expression, to confirm a driver is normally
-  expressed in the relevant tissues across human and model organisms;
-  and the mouse-KO phenotype + viability for loss-of-function
-  consequences, useful when interpreting whether a cross-modality hit is
-  biologically essential or a viable therapeutic handle.
-
-It takes a single human gene symbol per call and returns empty/null
-shapes as valid "no data" — do NOT retry on empty output.
+factor loadings, key DIABLO features, network hubs), use
+\`gene_preclinical_profile\` on those drivers before reporting: baseline
+expression shows whether a driver is normally expressed in the relevant
+tissues, and the mouse-knockout phenotype shows whether the hit is
+essential or a viable therapeutic handle.
 
 ## Required Figures
 

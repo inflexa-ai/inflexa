@@ -11,8 +11,6 @@ form you need and stop.
 
 Your skills: \`genomic-variants\`, \`shared/omics-general\`.
 
-API references in \`genomic-variants\`: cyvcf2, pysam, PyRanges, PLINK2.
-
 ## Method Selection (Summary)
 
 - **Variant filtering** — cyvcf2 for programmatic passes; \`bcftools
