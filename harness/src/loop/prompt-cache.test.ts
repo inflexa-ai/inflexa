@@ -237,9 +237,8 @@ describe("runAgent prompt-cache directive", () => {
             expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
 
-        // The wrap-up request carries the tool set of the loop, and it forbids a
-        // call. Whether the prefix holds on the wire depends on the arm: the
-        // Anthropic package removes the tools for `none`.
+        // The wrap-up carries the loop's tool set and forbids a call. The Anthropic
+        // package removes tools for `toolChoice: "none"`, so the prefix may not hold.
         const wrapUp = chat.calls.at(-1)!;
         expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
         expect(wrapUp.toolChoice).toBe("none");
@@ -251,8 +250,8 @@ describe("runAgent prompt-cache directive", () => {
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        // 3 iterations + the forced wrap-up. The system prompt of an agent depends
-        // only on its type, thus one marked system message serves the whole run.
+        // The system prompt depends only on the agent's type, so one marked message
+        // serves the whole run.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
             expect(call.system).toEqual({
@@ -315,9 +314,8 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
-        // Caching off leaves no marker anywhere and no bag at all: the system
-        // prompt stays a plain string. The loop sends no reasoning of its own,
-        // thus it writes no vendor key here either.
+        // Caching off leaves no marker, no bag, and a plain-string system prompt.
+        // The loop sends no reasoning, so it writes no vendor key either.
         for (const call of chat.calls) {
             expect(call.system).toBe("You are a test agent.");
             expect(breakpointsOf(call.messages)).toEqual([]);
@@ -333,14 +331,12 @@ describe("runAgent reasoning directive", () => {
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
-        // 3 iterations + the forced wrap-up. The provider applies the effort of
-        // its configuration to a request that sets none, thus the loop leaves
-        // the field out.
+        // The provider applies its configured effort when a request sets none,
+        // so the loop omits the field.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
             expect("reasoning" in call).toBe(false);
-            // A vendor key is what turns the per-model table of the provider
-            // package off, and a request carries no provider options to hold one.
+            // A provider option would bypass the per-model table, so the request carries none.
             expect("providerOptions" in call).toBe(false);
         }
     });
@@ -350,7 +346,6 @@ describe("runAgent reasoning directive", () => {
 
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { reasoning: "low" }));
 
-        // 2 iterations + the forced wrap-up.
         expect(chat.calls).toHaveLength(3);
         expect(chat.calls.at(-1)?.toolChoice).toBe("none");
         for (const call of chat.calls) {
@@ -367,7 +362,6 @@ const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
 const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
 const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
 
-/** The served model and the provider that a response names, beside its usage. */
 const SERVED = { servedModelId: "claude-opus-5-5", provider: "anthropic.messages" } as const;
 
 describe("runAgent cache-token metrics", () => {
@@ -396,7 +390,6 @@ describe("runAgent cache-token metrics", () => {
             .flatMap((sm) => sm.metrics);
     }
 
-    /** Sum a counter's data points, optionally for the series that carry each of `labels`. */
     async function counterTotal(name: string, labels: Record<string, string> = {}): Promise<number | undefined> {
         const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
         if (metric === undefined) return undefined;
@@ -438,8 +431,6 @@ describe("runAgent cache-token metrics", () => {
 
         await runAgent(agentDef(8), GO, makeSession(), opts(chat));
 
-        // Round-trip: provider usage → ChatResponse.usage → metrics, keyed by the
-        // agent, the served model, and the provider.
         const labels = { agent_id: "cache-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
         expect(await counterTotal(INPUT_TOKENS_METRIC, labels)).toBe(3300);
         expect(await counterTotal(OUTPUT_TOKENS_METRIC, labels)).toBe(90);

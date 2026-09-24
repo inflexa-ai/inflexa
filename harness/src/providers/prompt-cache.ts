@@ -17,31 +17,15 @@
  *
  * ## What the Anthropic namespace does, and where the markers must go
  *
- * A request holds two markers of the harness, each on a block, and never one on
- * the request itself. The render order is tools → system → messages, and the
- * cache keys on a prefix, thus each marker caches everything before it:
+ * A request carries two markers, each on a block, never on the request itself:
+ * {@link withSystemPromptBreakpoint} at the end of the system prompt, and
+ * {@link withPromptCacheBreakpoint} at the last eligible message.
  *
- *  - {@link withSystemPromptBreakpoint} marks the end of the system prompt. The
- *    system prompt of an agent depends only on its type, thus this marker caches
- *    the tools and the system prompt as one entry. A new thread reads that entry
- *    back, and so does the first request after a shift of the message prefix.
- *  - {@link withPromptCacheBreakpoint} marks the last message that can carry a
- *    marker. It rolls forward with the transcript, thus each call reads back what
- *    the call before it wrote.
- *
- * These two functions are the only writers.
- *
- * A REQUEST-level `cacheControl` makes the provider emit a top-level
- * `cache_control` field instead of a per-block marker, and the server then
- * places the breakpoint itself. Such a field is invisible to an intermediary
- * that counts breakpoints to stay under Anthropic's cap of four, because it
- * counts BLOCKS. CLIProxyAPI — what the OSS CLI routes through on the Claude
- * OAuth path — injects up to four block markers of its own and trims the total
- * to four by that count. It counts both markers of the harness, thus it trims
- * them correctly. A top-level field is a breakpoint that it does not count: the
- * request then fails with `A maximum of 4 blocks with cache_control may be
- * provided. Found 5.` (HTTP 400, non-retryable — the thread is wedged, because
- * the next turn builds the same shape again).
+ * A REQUEST-level `cacheControl` emits an invisible top-level field instead.
+ * CLIProxyAPI (the Claude OAuth path) counts BLOCKS toward Anthropic's cap of
+ * four, not this field, so the uncounted marker overflows it and fails with
+ * `A maximum of 4 blocks with cache_control may be provided. Found 5.`
+ * (HTTP 400, non-retryable — the thread stays wedged).
  *
  * ## Which vendors need a marker at all
  *
@@ -69,28 +53,18 @@
  *
  * ## Cache defeaters — what silently kills the hit rate
  *
- * The cache keys on an *exact prefix*. Anything that perturbs the head of the
- * request invalidates everything after it. These defeaters remain in this
- * codebase:
+ * The cache keys on an *exact prefix*, so anything that perturbs the head of the
+ * request invalidates everything after it. Known defeaters:
  *
- *  1. The forced wrap-up of `runAgent` on the Anthropic arm. The loop sends the
- *     same tool set with `toolChoice: "none"`, but `@ai-sdk/anthropic`
- *     implements `none` by removing the tools from the request. Tools sit at the
- *     very front of the prefix, thus that one call reads nothing back and writes
- *     the cache again (`loop/run-agent.ts`). The openai arm keeps the tools on
- *     the wire.
- *  2. The salvage run of `runToTerminal` swaps the tool set for the terminal
- *     tools of the salvage (`loop/run-to-terminal.ts`), thus its first call
- *     writes the prefix again.
- *  3. The step summary and the file metadata replay the transcript of a step
- *     under their own system prompt and their own tools
- *     (`execution/step-summary.ts`, `execution/artifact-metadata.ts`), thus they
- *     read nothing back from the cache of the step.
+ *  1. `runAgent`'s Anthropic-arm wrap-up drops tools via `toolChoice: "none"`
+ *     (`loop/run-agent.ts`); the openai arm keeps them on the wire.
+ *  2. `runToTerminal`'s salvage run swaps in terminal-only tools
+ *     (`loop/run-to-terminal.ts`).
+ *  3. Step summary and file metadata replay a step's transcript under their own
+ *     prompt and tools (`execution/step-summary.ts`, `execution/artifact-metadata.ts`).
  *
- * `loadRecent` moves the window start of the thread history in whole
- * `EVICTION_BLOCK_TURNS` blocks (`memory/thread-history.ts`). Thus the message
- * prefix shifts one time for each block, and it holds still between two block
- * boundaries.
+ * `loadRecent` shifts the prefix once per `EVICTION_BLOCK_TURNS` block, not every
+ * turn (`memory/thread-history.ts`).
  *
  * A sandbox agent's system prompt is NOT one of them: it is a pure function of
  * its agent type, byte-identical across every step of every run, and the per-step
@@ -187,17 +161,10 @@ export function promptCacheProviderOptions(policy: PromptCachePolicy): ProviderO
 }
 
 /**
- * Mark the end of the system prompt with the cache breakpoint of `policy`.
+ * Marks the end of the system prompt, the sibling marker of {@link withPromptCacheBreakpoint}.
  *
- * The system prompt of an agent depends only on its type, thus each call of that
- * agent sends the same tools and the same system prompt, and this marker caches
- * the two as one entry. The marker is one of the two markers of a request; the
- * other one is {@link withPromptCacheBreakpoint}.
- *
- * With `"off"` the prompt stays a plain string. An empty prompt stays a plain
- * string too, thus no cache marker lands on an empty text block. The Anthropic
- * package renders an empty prompt as an empty text block in both forms, thus
- * the plain form keeps only the marker off that block.
+ * Skips an empty prompt — the Anthropic package renders it as an empty text
+ * block, which cannot carry a marker.
  */
 export function withSystemPromptBreakpoint(system: string, policy: PromptCachePolicy): string | SystemModelMessage {
     const providerOptions = promptCacheProviderOptions(policy);
@@ -282,10 +249,8 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
 }
 
 /**
- * Place the message breakpoint of the request, on the last message that can host
- * it. A request holds two markers of the harness: this one, and the one at the
- * end of the system prompt ({@link withSystemPromptBreakpoint}). An intermediary
- * that trims to the cap of four counts both, because each one sits on a block.
+ * Places the message-level breakpoint on the last eligible message — the sibling
+ * marker sits at the end of the system prompt ({@link withSystemPromptBreakpoint}).
  *
  * Returns a copy — the caller's array is the transcript the loop keeps pushing
  * onto and the host later persists, and a marker written into it would ride into

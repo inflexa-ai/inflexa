@@ -575,11 +575,7 @@ describe("usage reporting", () => {
 });
 
 describe("the order of the reasoning effort", () => {
-    /**
-     * A provider over a model that records the `reasoning` of each model call.
-     * `chat` and `chatStream` both reach the model through `doStream`, thus one
-     * record holds the calls of the two paths.
-     */
+    /** Records `reasoning` from `doStream`, reached by both `chat` and `chatStream`. */
     function recordingProvider(configured?: ReasoningPolicy): { provider: ChatProvider; sent: (ReasoningPolicy | undefined)[] } {
         const sent: (ReasoningPolicy | undefined)[] = [];
         const provider = createAiSdkProvider({
@@ -592,7 +588,6 @@ describe("the order of the reasoning effort", () => {
         return { provider, sent };
     }
 
-    /** One `chat` call and one drained `chatStream` call with the same request. */
     async function callBothPaths(provider: ChatProvider, req: ChatRequest): Promise<void> {
         (await provider.chat(req, makeSession()))._unsafeUnwrap();
         for await (const _event of provider.chatStream(req, makeSession())) {
@@ -626,7 +621,6 @@ describe("the order of the reasoning effort", () => {
 });
 
 describe("sessionKeyOf", () => {
-    /** A session over the analysis `a1`, with the thread and the run frame of one case. */
     function sessionWith(threadId?: string, runFrame?: RunFrame): AgentSession {
         const scope: Scope = { kind: "analysis", analysisId: "a1", ...(threadId !== undefined ? { threadId } : {}) };
         return { ...makeSession({ scope }), ...(runFrame !== undefined ? { runFrame } : {}) };
@@ -1564,7 +1558,6 @@ describe("failure logging", () => {
 });
 
 describe("dropped thinking blocks", () => {
-    /** A logger that keeps the records emitted at `warn`. */
     function recordingLogger(): { logger: Logger; warnings: { msg: string; fields?: LogFields }[] } {
         const warnings: { msg: string; fields?: LogFields }[] = [];
         const base = createNoopLogger();
@@ -1579,7 +1572,6 @@ describe("dropped thinking blocks", () => {
         return { logger, warnings };
     }
 
-    /** The drop records among the warn records. */
     const dropRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) => warnings.filter((w) => w.msg === "thinking block dropped");
 
     // The harness passes each field of an entry through as it is, thus the
@@ -1589,7 +1581,6 @@ describe("dropped thinking blocks", () => {
         { type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
     ];
 
-    /** A model whose response reports the two drops on its finish part, with the text of `text`. */
     function droppingModel(text?: string): LanguageModelV4 {
         return fakeModel(async () => ({
             ...okResult(),

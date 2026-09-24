@@ -221,10 +221,8 @@ describe("openai arm store directive", () => {
     });
 
     it("keeps the other provider options beside the store value", async () => {
-        // The session key of the provider rides the `openai` namespace of the
-        // call, thus it carries the proof: the merge adds, and it does not
-        // replace. The cache markers of the other vendors ride the system prompt
-        // and the last message, and they are inert on this wire.
+        // The session key rides the `openai` namespace, proving merge-not-replace.
+        // Other vendors' cache markers ride the system prompt/messages, inert here.
         const cap = capturingFetch(() => responsesSse(["Hello, world"]));
         const provider = createConfiguredAiSdkProvider({ config: openaiArm(cap.fetch, { store: true }) });
 

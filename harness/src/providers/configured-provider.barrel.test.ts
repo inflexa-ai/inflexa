@@ -57,18 +57,13 @@ function responsesSse(text: string, model: string): Response {
     ]);
 }
 
-/** One outbound request as it reached the wire: the whole JSON body, and the headers with lowercase names. */
+/** Header names are folded to lowercase. */
 interface CapturedRequest {
     readonly body: Record<string, unknown>;
     readonly headers: Record<string, string>;
 }
 
-/**
- * Records each outbound request, its whole body and its headers, so a test can
- * assert on what reached the wire, for example the model that the provider
- * bound at construction (the request itself carries no model field). The reply
- * echoes the `model` of the body.
- */
+/** Captures each request so a test can assert on the wire model, since the request itself carries no model field. */
 function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; requests: CapturedRequest[] } {
     const requests: CapturedRequest[] = [];
     const fetch: FetchLike = async (_input, init) => {
@@ -201,11 +196,8 @@ describe("the reasoning effort of the configuration", () => {
 });
 
 describe("the session key on the wire", () => {
-    /** A step of the run `r1` of the analysis `a1`. */
     const stepSession = { ...makeSession({ scope: { kind: "analysis", analysisId: "a1" } }), runFrame: { runId: "r1", stepId: "s1" } };
-    /** A chat call on the thread `t1` of the analysis `a1`. */
     const chatSession = makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } });
-    /** The key that the vendor gets for an identifier string: its base64url SHA-256 digest. */
     const digestOf = (identifier: string): string => createHash("sha256").update(identifier).digest("base64url");
 
     it("sends the key as metadata.user_id on the anthropic arm", async () => {
@@ -257,7 +249,6 @@ describe("the session key on the wire", () => {
 describe("the thinking binding on the wire", () => {
     const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
-    /** Run one chat at `reasoning` over an anthropic arm bound to `model`, and give the request that reached the wire. */
     async function anthropicWire(
         model: string,
         reasoning: ReasoningPolicy,

@@ -1,38 +1,16 @@
 /**
  * Agent-loop OTel metrics, exported through the global MeterProvider.
  *
- * Each LLM call records its token counters when it completes, the forced
- * wrap-up included. Thus a run that throws keeps the counts of the calls that
- * completed before the throw:
- *   - cortex.harness.agent.input_tokens — input tokens billed, cache reads
- *     included.
- *   - cortex.harness.agent.output_tokens — output tokens generated.
- *   - cortex.harness.agent.cache_read_tokens — prefix tokens served from the
- *     prompt cache.
- *   - cortex.harness.agent.cache_write_tokens — prefix tokens written into it
- *     (billed at a premium; only pays off once something reads it).
- *   - cortex.harness.agent.reasoning_tokens — reasoning tokens, as the provider
- *     reports them.
+ * Each LLM call records its token counters when it completes. A durable step
+ * that a recovery replays returns its stored reply and skips the body, so a
+ * replay never double-counts a call.
  *
- * The counters grow inside the step body of the call ({@link countChatTokens}).
- * A durable step that a recovery replays returns its stored reply and does not
- * run its body, thus the replay does not count the call again. A counter is
- * cumulative for the life of a process, and nothing downstream can take a
- * second count off it.
- *
- * Each token counter carries three labels:
- *   - agent_id — the id of the agent that makes the call: the `agent.id` of the
- *     loop, or the fixed agent id of a direct call. The provenance of the
- *     session is no label: a host can give one root provenance to different
- *     agents, and their tokens would then merge.
- *   - model — the served model of the response. Absent when the response
- *     reports no served model.
- *   - provider — the provider id of the bound model, for example
- *     `anthropic.messages`. Absent when the response names no provider.
- *
- * Providers do not agree on whether `outputTokens` includes the reasoning
- * tokens. The `provider` label keeps each reasoning series to one provider,
- * thus one series sums figures of one meaning.
+ * Cache-write tokens are billed at a premium and only pay off once something
+ * reads them. Each counter carries `agent_id`, plus `model` and `provider`
+ * when the response reports them. Session provenance is not a label: agents
+ * that share one root provenance also share one series. Providers do not
+ * agree on whether `outputTokens` includes the reasoning tokens, so the
+ * reasoning counter keeps a `provider` label.
  *
  * Each `runAgent` completion also records, with the `agent_id` label only:
  *   - cortex.harness.agent.iterations — histogram of LLM iterations per run.
@@ -109,14 +87,9 @@ function getInstruments(): Instruments {
 }
 
 /**
- * Token usage summed over LLM calls: the calls of one `runAgent`, or the calls
- * of a whole turn. Each field stays `undefined` until some call actually reports
- * it, so "the provider told us nothing" never masquerades as a measured zero.
- *
- * The same figures also grow the counters of each call (see the module header).
- * A rollup sums `reasoningTokens` as the providers report it. The reasoning
- * counter carries the `provider` label, because providers do not agree on
- * whether `outputTokens` includes the reasoning tokens.
+ * Token usage summed over LLM calls, either one `runAgent` run or a whole
+ * turn. A field stays `undefined` until a call reports it, so an unreported
+ * field never masquerades as a measured zero.
  */
 export interface AgentRunUsage {
     inputTokens?: number;
@@ -162,11 +135,9 @@ export function hasReportedUsage(usage: AgentRunUsage | ChatUsage | TokenUsageRo
 }
 
 /**
- * A mapper that grows the token counters of a completed call under `agentId`,
- * and passes the response through. A caller maps the call with it inside the
- * step body of the call, `provider.chat(...).map(countChatTokens(agentId))`: a
- * replayed step returns its stored reply and does not run the body, thus the
- * replay does not count the call again. A call that gives `err` counts nothing.
+ * Maps a step's response to grow its token counters. Use inside the step
+ * body, `provider.chat(...).map(countChatTokens(agentId))`. A call that gives
+ * `err` counts nothing.
  */
 export function countChatTokens(agentId: string): (response: ChatResponse) => ChatResponse {
     return (response) => {
@@ -175,13 +146,6 @@ export function countChatTokens(agentId: string): (response: ChatResponse) => Ch
     };
 }
 
-/**
- * Record the token counters of one completed LLM call.
- *
- * Each field that the response reports grows its counter. An absent field grows
- * nothing, not even by zero. A label whose value the response does not give is
- * omitted.
- */
 export function recordChatCall(call: { readonly agentId: string; readonly response: ChatResponse }): void {
     const { usage, servedModelId, provider } = call.response;
     if (usage === undefined) return;

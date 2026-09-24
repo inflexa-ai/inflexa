@@ -44,7 +44,7 @@ import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "analogical-reasoner";
 
-/** The fixed call name of the conversion call in its usage record key. It cannot collide with a loop step name such as `llm-0`. */
+/** Must not collide with a loop step name in the usage record key, such as `llm-0`. */
 const CONVERSION_CALL_NAME = "analogy-conversion";
 
 /** Tool-call budget for the inner research agent. */
@@ -193,7 +193,7 @@ export interface GenerateAnalogyReportDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /** Operational logging seam; omitted falls back to no-op. The reason of a recorder `err` of the conversion call lands here. */
+    /** Logging seam; omitted falls back to no-op. Logs an accounting error from the conversion call. */
     readonly logger?: Logger;
 }
 
@@ -281,7 +281,6 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             // raw output into a valid envelope. The parse+validate+envelope
             // cascade below is the safety net.
             try {
-                // The token counters grow with the call, under the id of the reasoner.
                 const reply = unwrapOrThrow(
                     await deps.provider
                         .chat(
@@ -301,9 +300,6 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                         )
                         .map(countChatTokens(AGENT_ID)),
                 );
-                // The conversion call reaches the recorder and the turn total
-                // through the accounting path of the loop. Its fixed call name
-                // keeps its record key apart from each key of the research loop.
                 accountForChatCall(reply, {
                     session: childSession,
                     agentId: AGENT_ID,

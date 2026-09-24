@@ -119,17 +119,9 @@ export interface RunAgentOptions {
      */
     readonly promptCache?: PromptCachePolicy;
     /**
-     * The reasoning effort of each LLM call of this run, the forced wrap-up
-     * included. The provider selects the effort of a call in this order: the
-     * value of the request, the `reasoning` of the provider configuration, then
-     * `DEFAULT_REASONING` (`xhigh`). Thus a value here wins for this run, and an
-     * absent value lets the configuration of the provider apply. The loop
-     * applies no default of its own, because a default here would hide that
-     * configuration.
-     *
-     * The loop sends one value, or no value, on each call of a run, thus the
-     * effort stays the same across the conversation. Anthropic discards its
-     * message cache when the top-level effort changes.
+     * The reasoning effort for each LLM call of this run, the forced wrap-up
+     * included. Anthropic discards its message cache when the top-level
+     * effort changes, so the run must send the same value, or none, throughout.
      */
     readonly reasoning?: ReasoningPolicy;
     /**
@@ -257,14 +249,10 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     // Resolved once, not per iteration: an identical policy across every call is
     // itself part of the cache contract — the request prefix has to be
     // byte-identical to be read back. The message breakpoint is re-derived per
-    // call, because it rides the last message and the transcript grows. The
-    // system prompt of an agent depends only on its type, thus its marked form
-    // is made once and each call of the run sends the same one.
+    // call because it rides the transcript. The system prompt depends only on
+    // the agent type, so it is computed once.
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
     const system = withSystemPromptBreakpoint(agent.systemPrompt, promptCache);
-    // The loop sends the effort of its caller on each call, or no effort at all.
-    // With no effort on the request, the provider applies the effort of its
-    // configuration. A default here would hide that configuration.
     const reasoningField: Pick<ChatRequest, "reasoning"> = opts.reasoning === undefined ? {} : { reasoning: opts.reasoning };
     const usage: AgentRunUsage = {};
 
@@ -299,8 +287,6 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 
     const usageRecorder = opts.usageRecorder ?? createNoopUsageRecorder();
 
-    // What each call of this loop is accounted under. Only the step name differs
-    // from one call to the next.
     const accounting: Omit<ChatCallAccounting, "stepName"> = {
         session,
         agentId: source.agentId,
@@ -409,8 +395,8 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             ...reasoningField,
         };
         const llmStepName = formatStepName.llm(i);
-        // The token counters grow inside the step body, thus a replayed step,
-        // which returns the stored reply, does not count the call again.
+        // Counters grow inside the step body, so a replayed step (which returns
+        // the stored reply) does not double-count the call.
         const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal).map(countChatTokens(agent.id)));
         accountForChatCall(reply, { ...accounting, stepName: llmStepName });
 
@@ -525,13 +511,9 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         if (opts.resolved?.()) return stopOnResolved(i);
     }
 
-    // The wrap-up sends the tool set of the loop and forbids a call through
-    // `toolChoice`. The openai arm keeps the tools on the wire, thus the call
-    // keeps the prefix there. `@ai-sdk/anthropic` implements `none` by removing
-    // the tools, thus on the Anthropic arm this call changes the prefix: it reads
-    // nothing back from the cache, and a model that binds its signed thinking
-    // blocks to the prefix drops them or refuses the request, by the mode of
-    // the binding.
+    // `toolChoice: "none"` keeps tools on the wire for the OpenAI arm (prefix
+    // stable), but `@ai-sdk/anthropic` drops them, breaking the cache and
+    // risking a rejected or dropped signed-thinking block.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
         provider
@@ -571,13 +553,11 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 /** What one completed LLM call is accounted under. */
 export interface ChatCallAccounting {
     readonly session: AgentSession;
-    /** The agent that made the call, as its usage record names it. */
     readonly agentId: string;
     readonly callPath: readonly string[];
     /**
-     * The deterministic name of the call in its record key: the step name of a
-     * loop call (`llm-{n}`), or a fixed call name for a direct `provider.chat`
-     * call, for example `adhoc-route`.
+     * The deterministic name inside the record key, for example `llm-{n}` for
+     * a loop call or `adhoc-route` for a direct call.
      */
     readonly stepName: string;
     /** The id of the tool call that makes the call, when the call runs inside a tool dispatch. */
@@ -590,26 +570,11 @@ export interface ChatCallAccounting {
 }
 
 /**
- * Account for one completed LLM call: fold its usage into each rollup, and hand
- * the attributed record to the recorder. The loop calls it at the fold point,
- * with the reply in hand — before any branch that can end the run — so a call
- * that completed is accounted for even when the run later aborts or dies. A
- * direct `provider.chat` call outside the loop uses the same path, thus its call
- * reaches the same surfaces.
- *
- * The token counters are not grown here. The caller grows them inside the step
- * body of the call (`countChatTokens`), because a replayed step also returns its
- * stored reply to this function. A replay folds the rollups of the recovered
- * run again, which holds them in memory only, and it delivers the record again
- * under the same idempotency key, which an upserting sink counts once.
- *
- * A call that reported nothing produces no record. Model ids are identity,
- * not usage: a reply carrying only `requestedModelId`/`servedModelId` still
- * reported nothing to account for, so it is folded (to no effect) and left
- * out of the ledger rather than entered as an all-absent record.
- *
- * `record` is a notice. The caller does not wait for its result, thus a
- * recorder that blocks does not make the call slower.
+ * Called at the fold point, before any run-ending branch, so an aborted or
+ * dead run is still accounted. Token counters grow inside the call's step
+ * body, not here, because a replay re-delivers the stored reply to this
+ * function too; the record re-sends under the same idempotency key, which an
+ * upserting sink counts once.
  */
 export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting): void {
     for (const rollup of call.rollups) addChatUsage(rollup, reply.usage);
