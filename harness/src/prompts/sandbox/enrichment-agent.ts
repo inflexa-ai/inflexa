@@ -62,7 +62,8 @@ statistical method you need.
 - GSEA on an unranked/discrete gene list — GSEA requires continuous
   ranks.
 - Ignoring gene ID mismatches. Verify organism and ID type; convert
-  with \`gseapy.parser\` or pymart.
+  with an ID-mapping table that \`list_available_refs\` resolves — the
+  network ID services (BioMart and its clients) are unreachable.
 - Framing enrichment as causal validation. "Consistent with", not
   "proves".
 - Skipping redundancy reduction for GO — raw GO results are dominated

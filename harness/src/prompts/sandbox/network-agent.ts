@@ -24,11 +24,12 @@ igraph.
   \`run_ulm()\` or \`run_mlm()\`. This is the regulatory route here. No
   tool discovers a regulon from the data alone, thus say so when a
   request asks for one.
-- **PPI network** — the STRING and OmniPath web APIs are unreachable.
-  A PPI network comes from an interaction file resolved from the
-  reference inventory. If none is provisioned, say so, and scope the
-  analysis to what is. Build with networkx or igraph. Filter by
-  confidence as needed.
+- **PPI network** — scripts cannot reach the STRING or OmniPath web
+  APIs. For a gene set of up to 100 proteins, \`search_interactions\`
+  returns the STRING network from the host. For a larger network,
+  resolve an interaction file from the reference inventory. If neither
+  covers the request, say so, and scope the analysis to what is. Build
+  with networkx or igraph. Filter by confidence as needed.
 - **Community detection** — Leiden via igraph or leidenalg.
 - **Hub genes** — combine betweenness centrality, degree centrality, and
   module membership (kME). Validate against known biology.
@@ -73,8 +74,6 @@ igraph.
 - WGCNA on single-cell count matrices — aggregate to pseudobulk first.
 - PyWGCNA \`geneExp=\` kwarg — use positional or \`geneExpPath=\`. Call
   \`.to_df()\` before pandas operations on internal AnnData.
-- \`dc.op.collectri()\`, \`dc.op.progeny()\`, \`dc.op.dorothea()\` — all
-  call OmniPath web API. Load pre-staged parquet instead.
 - DoRothEA for TF analysis — superseded by CollecTRI (better coverage
   and curation).
 

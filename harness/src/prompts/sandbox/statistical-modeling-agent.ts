@@ -51,7 +51,7 @@ scikit-learn, xgboost, SHAP, statsmodels, pingouin.
   \`sklearn.Pipeline\`. Doing it before the split is data leakage.
 - Hold out 20-30% as a final test set. Never tune hyperparameters on
   test.
-- **CRITICAL**: Verify survival censoring encoding before fitting any
+- Verify survival censoring encoding before fitting any
   survival model. Standard convention: 1 = event occurred, 0 = censored.
   Swapping silently inverts all hazard ratios and survival curves.
 - For small N (<100), prefer simple models (logistic regression, Cox

@@ -53,8 +53,7 @@ metabolites) or you need to bridge identifiers:
   structure that ChEMBL may not recognize — PubChem covers 110M+
   compounds vs ChEMBL's 2.4M.
 - **PubChem cross-refs** to bridge: resolve in PubChem, get ChEMBL ID,
-  then query ChEMBL for curated activity. Most powerful combined
-  workflow.
+  then query ChEMBL for curated activity.
 - **PubChem assays** for broad screening coverage when ChEMBL has no
   bioactivity.
 
@@ -140,14 +139,6 @@ When working with CSV/TSV:
 - See skill guide for occupancy thresholds and residence time
   classification.
 
-### Drug Perturbation Signature Matching (CMap-Style)
-- **Query signature** — top N up/down-regulated genes from DE analysis.
-- **Connectivity scoring** — KS-based enrichment or \`gseapy.prerank\`
-  against reference perturbation profiles.
-- Negative score = reference reverses query (therapeutic candidate).
-- Positive score = reference mimics query.
-- Always assess significance via permutation (1000x).
-
 ### Selectivity Profiling
 - **Kinase panels** — S-score (S(3μM)), Gini coefficient, selectivity
   entropy. Report top off-target kinases.
@@ -190,8 +181,6 @@ values.
 - Chemical space UMAP without reporting fingerprint parameters.
 - Reporting occupancy without specifying free (unbound) drug
   concentration — total plasma concentration overestimates engagement.
-- CMap connectivity scoring without permutation significance testing —
-  raw scores are not interpretable without a null distribution.
 - Selectivity claims based on a single off-target — always report
   against the full panel.
 - Using Gini coefficient on IC50 values directly — convert to
@@ -201,20 +190,10 @@ values.
 
 - Property tables CSV: columns \`smiles\`, \`name\`, \`mw\`, \`logp\`,
   \`tpsa\`, \`hbd\`, \`hba\`, \`rot_bonds\`, \`scaffold\`, \`alerts\`.
-- Tractability assessment (when evaluating targets): one structured
-  JSON per target in \`output/\`, e.g.
-  \`\`\`json
-  {
-    "target": "EGFR",
-    "chembl_id": "CHEMBL203",
-    "compound_count": 4523,
-    "series_count": 12,
-    "best_potency_nM": 0.3,
-    "pains_clean_pct": 94.2,
-    "drug_like_pct": 78.5,
-    "clinical_compounds": 8,
-    "tractability_verdict": "highly tractable",
-    "top_scaffolds": [...]
-  }
-  \`\`\`
+- Tractability assessment (when evaluating targets): one JSON object per
+  target in \`output/\`, with the keys \`target\`, \`chembl_id\`,
+  \`compound_count\`, \`series_count\`, \`best_potency_nM\`,
+  \`pains_clean_pct\`, \`drug_like_pct\`, \`clinical_compounds\`,
+  \`tractability_verdict\` (a short verdict phrase), and \`top_scaffolds\`
+  (the leading scaffold series).
 `;
