@@ -10,17 +10,32 @@
  * streams before the stop reason arrives, and only a `tool-calls` (and, for its
  * leading calls, a `length`) finish dispatches it.
  *
- * The repair is a STRIP, never an invented result. A call that was not
- * dispatched did not happen, and a fabricated result would record an execution
- * that did not occur — the model would read it as ground truth on the next
- * turn. The prose of the message survives the strip; a message left with
- * nothing the wire can render disappears entirely.
+ * The repair is an ANSWER: one error result that states that the call did not
+ * run. It removes no message and changes none, because the transcript is
+ * append-only. A signed thinking block binds to the exact prefix that made it,
+ * and the prompt cache keys on the same prefix, thus an edit of an earlier
+ * message breaks both. The answer invents no execution: it states a fact that
+ * the model can read. It is one constant text, thus the loop and the history
+ * load give byte-identical answers, and each turn sends the same prefix.
  */
 
-import type { ModelMessage, ToolCallPart } from "ai";
+import type { ModelMessage, ToolCallPart, ToolResultPart } from "ai";
 
-/** One tool call removed by {@link stripUnansweredToolCalls}, identified for the caller's diagnostic record. */
-export interface DroppedToolCall {
+/** The text of the result that answers a call that never ran. */
+export const NOT_RUN_TOOL_RESULT = "Not run: the turn ended before this call ran.";
+
+/** The error result that answers a call that never ran. */
+export function notRunResult(call: Pick<ToolCallPart, "toolCallId" | "toolName">): ToolResultPart {
+    return {
+        type: "tool-result",
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: { type: "error-text", value: NOT_RUN_TOOL_RESULT },
+    };
+}
+
+/** One tool call that {@link answerUnansweredToolCalls} answered, identified for the caller's diagnostic record. */
+export interface AnsweredToolCall {
     readonly toolCallId: string;
     readonly toolName: string;
 }
@@ -29,34 +44,31 @@ export interface DroppedToolCall {
  * Whether this tool call needs a client-supplied result. A provider-executed
  * call is answered by the provider inside the same assistant message, so the
  * wire contract makes no demand on the client for it — the AI SDK's own
- * missing-result validation skips these, and so does the strip.
+ * missing-result validation skips these, and so does the answer.
  */
 function needsClientResult(part: ToolCallPart): boolean {
     return part.providerExecuted !== true;
 }
 
 /**
- * Remove, in place, every tool-call part at or past `fromIndex` that has no
- * matching tool result anywhere in `messages`. Returns the removed calls in
- * transcript order — empty on the healthy path — so the caller can log what
- * a reader of the stored thread would otherwise never learn.
+ * Answer, in place, every tool call at or past `fromIndex` that has no matching
+ * tool result anywhere in `messages`. For each assistant message with such calls,
+ * one `tool` message with a {@link notRunResult} for each call goes directly
+ * after the assistant message and the `tool` messages that follow it. No message
+ * is removed or changed. Returns the answered calls in transcript order — empty
+ * on the healthy path — so the caller can log what a reader of the stored thread
+ * would otherwise never learn.
  *
  * Results are matched by id across the whole array, not by adjacency: the loop
  * appends a round's results directly after its assistant message, but a
  * deferred-image user message can ride between rounds, and the stored shape is
  * not this function's to assume.
  *
- * A message that keeps a text or file part survives the strip — refusal prose
- * is the one account the reader has of a filtered reply. A message left with
- * no such part (a call-only message, or reasoning beside the removed call) is
- * removed whole: reasoning without the output it preceded is not replayable,
- * and an empty assistant message is itself a wire violation.
- *
  * `fromIndex` bounds the REPAIR, not the result scan. The loop passes its
- * `initial.length` so it never rewrites the caller's prefix; the assembly
- * repair passes nothing and covers the whole stored window.
+ * `initial.length` so it never answers inside the caller's prefix; the history
+ * load passes nothing and covers the whole loaded window.
  */
-export function stripUnansweredToolCalls(messages: ModelMessage[], fromIndex = 0): DroppedToolCall[] {
+export function answerUnansweredToolCalls(messages: ModelMessage[], fromIndex = 0): AnsweredToolCall[] {
     const resultIds = new Set<string>();
     for (const message of messages) {
         if (message.role === "tool") {
@@ -70,29 +82,22 @@ export function stripUnansweredToolCalls(messages: ModelMessage[], fromIndex = 0
         }
     }
 
-    type AssistantPart = Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>[number];
-
-    const dropped: DroppedToolCall[] = [];
-    // Backward, so a whole-message removal cannot shift an index this loop has
-    // yet to visit.
+    const answered: AnsweredToolCall[] = [];
+    // Backward, so an insertion after a message cannot shift an index this walk
+    // has yet to visit.
     for (let idx = messages.length - 1; idx >= fromIndex; idx--) {
         const message = messages[idx]!;
         if (message.role !== "assistant" || typeof message.content === "string") continue;
-        const removed: ToolCallPart[] = [];
-        for (const part of message.content) {
-            if (part.type === "tool-call" && needsClientResult(part) && !resultIds.has(part.toolCallId)) removed.push(part);
-        }
-        if (removed.length === 0) continue;
+        const unanswered = message.content.filter(
+            (part): part is ToolCallPart => part.type === "tool-call" && needsClientResult(part) && !resultIds.has(part.toolCallId),
+        );
+        if (unanswered.length === 0) continue;
+        let insertAt = idx + 1;
+        while (insertAt < messages.length && messages[insertAt]!.role === "tool") insertAt++;
+        messages.splice(insertAt, 0, { role: "tool", content: unanswered.map((part) => notRunResult(part)) });
         // Prepended as a batch: the walk visits messages tail-first, but the
         // caller's record reads in transcript order.
-        dropped.unshift(...removed.map((part) => ({ toolCallId: part.toolCallId, toolName: part.toolName })));
-        const removedParts = new Set<AssistantPart>(removed);
-        const kept = message.content.filter((part) => !removedParts.has(part));
-        if (kept.some((part) => part.type === "text" || part.type === "file" || part.type === "tool-call" || part.type === "tool-result")) {
-            messages[idx] = { ...message, content: kept };
-        } else {
-            messages.splice(idx, 1);
-        }
+        answered.unshift(...unanswered.map((part) => ({ toolCallId: part.toolCallId, toolName: part.toolName })));
     }
-    return dropped;
+    return answered;
 }

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
+import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
@@ -1093,7 +1094,7 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
         );
     }
 
-    it("strips the call a content-filter finish carried, keeps the prose, and never executes it", async () => {
+    it("answers the call a content-filter finish carried with the not-run result, keeps the prose, and never executes it", async () => {
         const { tool, wasExecuted } = probeTool();
         const provider = scriptedProvider([makeMessage([textBlock("I cannot continue with this."), toolUseBlock("tu-x", "probe", {})], "refusal")]);
         const logger = createCapturingLogger();
@@ -1103,15 +1104,21 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
         expect(finish.reason).toBe("content-filter");
         expect(finish.rawFinishReason).toBe("refusal");
         expect(wasExecuted()).toBe(false);
-        expect(toolCallIdsOf(messages)).toEqual([]);
-        const last = messages.at(-1)!;
-        expect(last.role).toBe("assistant");
-        expect(last.content).toEqual([{ type: "text", text: "I cannot continue with this." }]);
-        const warn = logger.records.find((r) => r.level === "warn" && r.msg.includes("undispatched tool calls stripped"));
+        // [user, assistant(prose + tu-x), tool(not run)] — the reply stays whole.
+        expect(messages).toHaveLength(3);
+        expect(toolCallIdsOf(messages)).toEqual(["tu-x"]);
+        expect(messages[1]!.content).toEqual([
+            { type: "text", text: "I cannot continue with this." },
+            { type: "tool-call", toolCallId: "tu-x", toolName: "probe", input: {} },
+        ]);
+        const [answer] = toolResultParts(messages[2]);
+        expect(answer!.toolCallId).toBe("tu-x");
+        expect(answer!.output).toEqual({ type: "error-text", value: NOT_RUN_TOOL_RESULT });
+        const warn = logger.records.find((r) => r.level === "warn" && r.msg.includes("unanswered tool calls answered at run exit"));
         expect(warn?.fields).toMatchObject({ toolCallIds: ["tu-x"], tools: ["probe"] });
     });
 
-    it("keeps the earlier, dispatched round intact and removes only the trailing call-only reply", async () => {
+    it("keeps the earlier, dispatched round intact and answers the trailing call-only reply", async () => {
         const { tool, wasExecuted } = probeTool();
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "probe", {})], "tool_use"),
@@ -1122,10 +1129,11 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
 
         expect(finish.reason).toBe("content-filter");
         expect(wasExecuted()).toBe(true);
-        // [user, assistant(tu-1), tool(result tu-1)] — the call-only filtered reply is gone whole.
-        expect(messages).toHaveLength(3);
-        expect(toolCallIdsOf(messages)).toEqual(["tu-1"]);
+        // [user, assistant(tu-1), tool(result tu-1), assistant(tu-2), tool(not run tu-2)]
+        expect(messages).toHaveLength(5);
+        expect(toolCallIdsOf(messages)).toEqual(["tu-1", "tu-2"]);
         expect(toolResultParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-1"]);
+        expect(toolResultParts(messages[4]).map((r) => [r.toolCallId, outputValue(r)])).toEqual([["tu-2", NOT_RUN_TOOL_RESULT]]);
     });
 
     it("dispatches a call that rides a stop finish, because a local model labels its tool replies stop", async () => {
@@ -1150,10 +1158,12 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
 
         expect(finish.reason).toBe("unknown");
         expect(wasExecuted()).toBe(false);
-        expect(messages).toEqual([...GO]);
+        // [user, assistant(tu-x), tool(not run)]
+        expect(messages).toHaveLength(3);
+        expect(toolResultParts(messages[2]).map((r) => [r.toolCallId, outputValue(r)])).toEqual([["tu-x", NOT_RUN_TOOL_RESULT]]);
     });
 
-    it("re-marks the surviving step when the strip removes a call-only aborted partial", async () => {
+    it("keeps a call-only aborted partial, marked, and answers its call", async () => {
         const { tool } = probeTool();
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "probe", {})], "tool_use"),
@@ -1163,11 +1173,27 @@ describe("runAgent — undispatched tool calls at a terminal finish", () => {
         const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
 
         expect(finish.reason).toBe("aborted");
-        // [user, assistant(tu-1), tool(result)] — the aborted call-only partial is gone.
+        // [user, assistant(tu-1), tool(result), assistant(tu-2), tool(not run)]
+        expect(messages).toHaveLength(5);
+        expect(toolCallIdsOf(messages)).toEqual(["tu-1", "tu-2"]);
+        // The interruption marker rides the aborted partial, the last assistant of the run.
+        expect(isInterruptedMessage(messages[3]!)).toBe(true);
+        expect(isInterruptedMessage(messages[1]!)).toBe(false);
+        expect(toolResultParts(messages[4]).map((r) => [r.toolCallId, outputValue(r)])).toEqual([["tu-2", NOT_RUN_TOOL_RESULT]]);
+    });
+
+    it("keeps an aborted partial with prose and a complete call, and answers the call", async () => {
+        const { tool, wasExecuted } = probeTool();
+        const provider = scriptedProvider([makeMessage([textBlock("Let me check"), toolUseBlock("tu-x", "probe", {})], "aborted")]);
+
+        const { messages, finish } = await runAgent(agentDef([tool]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("aborted");
+        expect(wasExecuted()).toBe(false);
+        // [user, assistant(prose + tu-x, marked), tool(not run)]
         expect(messages).toHaveLength(3);
-        expect(toolCallIdsOf(messages)).toEqual(["tu-1"]);
-        // The interruption marker rides the last assistant that survived the strip.
         expect(isInterruptedMessage(messages[1]!)).toBe(true);
+        expect(toolResultParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-x"]);
     });
 });
 

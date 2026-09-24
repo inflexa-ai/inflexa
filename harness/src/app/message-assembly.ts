@@ -43,7 +43,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import type { LoopMessage } from "../loop/types.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
 import type { ThreadType } from "../memory/thread-store.js";
-import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
+import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 
@@ -101,12 +101,14 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
     // result. The loop upholds it at every exit, but the store outlives any one
     // writer — a row an older build wrote, or a hand-edited database, can carry
     // an unanswered call, and the provider boundary then refuses the WHOLE
-    // transcript on every turn: the thread is wedged forever. Stripping the
-    // orphan here degrades one message instead. The warning is the only account
-    // a reader gets that the stored thread and the assembled one differ.
-    const repaired = stripUnansweredToolCalls(history);
+    // transcript on every turn: the thread is wedged forever. The answer here is
+    // the same not-run result that the loop gives, inserted after the call, and
+    // no stored message changes. It is deterministic, thus each turn that loads
+    // this window sends the same prefix. The warning is the only account a
+    // reader gets that the stored thread and the assembled one differ.
+    const repaired = answerUnansweredToolCalls(history);
     if (repaired.length > 0) {
-        (args.logger ?? createNoopLogger()).named("assembly").warn("unanswered tool calls stripped from thread history", {
+        (args.logger ?? createNoopLogger()).named("assembly").warn("unanswered tool calls answered in thread history", {
             threadId: args.threadId,
             toolCallIds: repaired.map((d) => d.toolCallId),
             tools: repaired.map((d) => d.toolName),

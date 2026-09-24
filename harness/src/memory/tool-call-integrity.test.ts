@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { AssistantModelMessage, ModelMessage } from "ai";
+import type { AssistantModelMessage, ModelMessage, ToolResultPart } from "ai";
 
-import { stripUnansweredToolCalls } from "./tool-call-integrity.js";
+import { answerUnansweredToolCalls, NOT_RUN_TOOL_RESULT, notRunResult } from "./tool-call-integrity.js";
 
 function toolCall(toolCallId: string, toolName = "echo"): { type: "tool-call"; toolCallId: string; toolName: string; input: unknown } {
     return { type: "tool-call", toolCallId, toolName, input: {} };
@@ -21,55 +21,56 @@ function assistantContent(message: ModelMessage | undefined): AssistantModelMess
     return message!.content as AssistantModelMessage["content"];
 }
 
-describe("stripUnansweredToolCalls", () => {
+function toolParts(message: ModelMessage | undefined): ToolResultPart[] {
+    expect(message).toBeDefined();
+    expect(message!.role).toBe("tool");
+    return message!.content as ToolResultPart[];
+}
+
+describe("answerUnansweredToolCalls", () => {
     it("keeps an answered call and reports nothing", () => {
         const messages: ModelMessage[] = [{ role: "user", content: "go" }, { role: "assistant", content: [toolCall("tu-1")] }, toolResult("tu-1")];
 
-        const dropped = stripUnansweredToolCalls(messages);
+        const answered = answerUnansweredToolCalls(messages);
 
-        expect(dropped).toEqual([]);
+        expect(answered).toEqual([]);
         expect(messages.length).toBe(3);
         expect(assistantContent(messages[1])).toEqual([toolCall("tu-1")]);
     });
 
-    it("strips an unanswered call and keeps the text beside it", () => {
+    it("answers an unanswered call and keeps the message whole", () => {
         const messages: ModelMessage[] = [
             { role: "user", content: "go" },
             { role: "assistant", content: [{ type: "text", text: "I cannot continue." }, toolCall("tu-x", "update_working_memory")] },
         ];
 
-        const dropped = stripUnansweredToolCalls(messages);
+        const answered = answerUnansweredToolCalls(messages);
 
-        expect(dropped).toEqual([{ toolCallId: "tu-x", toolName: "update_working_memory" }]);
-        expect(messages.length).toBe(2);
-        expect(assistantContent(messages[1])).toEqual([{ type: "text", text: "I cannot continue." }]);
+        expect(answered).toEqual([{ toolCallId: "tu-x", toolName: "update_working_memory" }]);
+        expect(messages.length).toBe(3);
+        expect(assistantContent(messages[1])).toEqual([{ type: "text", text: "I cannot continue." }, toolCall("tu-x", "update_working_memory")]);
+        expect(toolParts(messages[2])).toEqual([notRunResult({ toolCallId: "tu-x", toolName: "update_working_memory" })]);
     });
 
-    it("removes a call-only message whole", () => {
-        const messages: ModelMessage[] = [
-            { role: "user", content: "go" },
-            { role: "assistant", content: [toolCall("tu-x")] },
-        ];
+    it("gives one constant error text that states that the call did not run", () => {
+        const result = notRunResult({ toolCallId: "tu-1", toolName: "echo" });
 
-        const dropped = stripUnansweredToolCalls(messages);
-
-        expect(dropped).toEqual([{ toolCallId: "tu-x", toolName: "echo" }]);
-        expect(messages).toEqual([{ role: "user", content: "go" }]);
+        expect(result).toEqual({ type: "tool-result", toolCallId: "tu-1", toolName: "echo", output: { type: "error-text", value: NOT_RUN_TOOL_RESULT } });
+        expect(NOT_RUN_TOOL_RESULT).toBe("Not run: the turn ended before this call ran.");
     });
 
-    it("removes a message whose remainder is reasoning only", () => {
-        const messages: ModelMessage[] = [
-            { role: "user", content: "go" },
-            { role: "assistant", content: [{ type: "reasoning", text: "thinking" }, toolCall("tu-x")] },
-        ];
+    it("keeps a message whose other part is reasoning only", () => {
+        const reasoning = { role: "assistant" as const, content: [{ type: "reasoning" as const, text: "thinking" }, toolCall("tu-x")] };
+        const messages: ModelMessage[] = [{ role: "user", content: "go" }, reasoning];
 
-        const dropped = stripUnansweredToolCalls(messages);
+        const answered = answerUnansweredToolCalls(messages);
 
-        expect(dropped.length).toBe(1);
-        expect(messages).toEqual([{ role: "user", content: "go" }]);
+        expect(answered.length).toBe(1);
+        expect(messages[1]).toBe(reasoning);
+        expect(toolParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-x"]);
     });
 
-    it("repairs a dangling call in the middle of a transcript", () => {
+    it("answers a dangling call in the middle of a transcript after its existing results", () => {
         const messages: ModelMessage[] = [
             { role: "user", content: "go" },
             { role: "assistant", content: [toolCall("tu-1"), toolCall("tu-2")] },
@@ -78,25 +79,30 @@ describe("stripUnansweredToolCalls", () => {
             { role: "assistant", content: [{ type: "text", text: "done" }] },
         ];
 
-        const dropped = stripUnansweredToolCalls(messages);
+        const answered = answerUnansweredToolCalls(messages);
 
-        expect(dropped).toEqual([{ toolCallId: "tu-2", toolName: "echo" }]);
-        expect(assistantContent(messages[1])).toEqual([toolCall("tu-1")]);
-        expect(messages.length).toBe(5);
+        expect(answered).toEqual([{ toolCallId: "tu-2", toolName: "echo" }]);
+        expect(assistantContent(messages[1])).toEqual([toolCall("tu-1"), toolCall("tu-2")]);
+        // [user, assistant, tool(tu-1), tool(tu-2 not run), user, assistant]
+        expect(messages.length).toBe(6);
+        expect(toolParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-1"]);
+        expect(toolParts(messages[3]).map((r) => [r.toolCallId, r.output.type])).toEqual([["tu-2", "error-text"]]);
+        expect(messages[4]).toEqual({ role: "user", content: "next turn" });
     });
 
-    it("does not repair before fromIndex, and still scans the whole array for results", () => {
+    it("does not answer before fromIndex, and still scans the whole array for results", () => {
         const messages: ModelMessage[] = [
             { role: "assistant", content: [toolCall("tu-prefix")] },
             { role: "assistant", content: [toolCall("tu-loop")] },
         ];
 
-        const dropped = stripUnansweredToolCalls(messages, 1);
+        const answered = answerUnansweredToolCalls(messages, 1);
 
-        // The prefix message is not this caller's to repair; the in-range call goes.
-        expect(dropped).toEqual([{ toolCallId: "tu-loop", toolName: "echo" }]);
-        expect(messages.length).toBe(1);
+        // The prefix message is not this caller's to repair; the in-range call is answered.
+        expect(answered).toEqual([{ toolCallId: "tu-loop", toolName: "echo" }]);
+        expect(messages.length).toBe(3);
         expect(assistantContent(messages[0])).toEqual([toolCall("tu-prefix")]);
+        expect(toolParts(messages[2]).map((r) => r.toolCallId)).toEqual(["tu-loop"]);
     });
 
     it("skips a provider-executed call whose result rides the same message", () => {
@@ -110,20 +116,37 @@ describe("stripUnansweredToolCalls", () => {
             },
         ];
 
-        const dropped = stripUnansweredToolCalls(messages);
+        const answered = answerUnansweredToolCalls(messages);
 
-        expect(dropped).toEqual([]);
+        expect(answered).toEqual([]);
         expect(messages.length).toBe(1);
     });
 
-    it("reports removals across messages in transcript order", () => {
+    it("reports answers across messages in transcript order", () => {
         const messages: ModelMessage[] = [
             { role: "assistant", content: [{ type: "text", text: "a" }, toolCall("tu-1"), toolCall("tu-2")] },
             { role: "assistant", content: [{ type: "text", text: "b" }, toolCall("tu-3")] },
         ];
 
-        const dropped = stripUnansweredToolCalls(messages);
+        const answered = answerUnansweredToolCalls(messages);
 
-        expect(dropped.map((d) => d.toolCallId)).toEqual(["tu-1", "tu-2", "tu-3"]);
+        expect(answered.map((d) => d.toolCallId)).toEqual(["tu-1", "tu-2", "tu-3"]);
+        // Each answer goes directly after its own assistant message.
+        expect(messages.map((m) => m.role)).toEqual(["assistant", "tool", "assistant", "tool"]);
+    });
+
+    it("gives the same messages for the same window each time", () => {
+        const window = (): ModelMessage[] => [
+            { role: "user", content: "go" },
+            { role: "assistant", content: [toolCall("tu-x")] },
+            { role: "user", content: "again" },
+        ];
+        const first = window();
+        const second = window();
+
+        answerUnansweredToolCalls(first);
+        answerUnansweredToolCalls(second);
+
+        expect(JSON.stringify(first)).toBe(JSON.stringify(second));
     });
 });

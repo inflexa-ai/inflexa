@@ -6,6 +6,7 @@ import { okAsync } from "neverthrow";
 import { assembleMessages } from "./message-assembly.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
+import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { emptyWorkingMemory } from "../memory/working-memory.js";
 
@@ -225,9 +226,9 @@ describe("assembleMessages", () => {
         };
     }
 
-    test("repairs a stored dangling tool call and logs the strip", async () => {
-        const logger = createCapturingLogger();
-        const window: ModelMessage[] = [
+    /** A stored window whose middle turn left a call unanswered, fresh on each read like a real store. */
+    function danglingWindow(): ModelMessage[] {
+        return [
             { role: "user", content: "earlier question" },
             {
                 role: "assistant",
@@ -236,25 +237,54 @@ describe("assembleMessages", () => {
                     { type: "tool-call", toolCallId: "tu-x", toolName: "update_working_memory", input: {} },
                 ],
             },
+            { role: "user", content: "and then?" },
         ];
+    }
 
-        const { messages } = await assembleMessages({
+    function assembleDangling(logger = createCapturingLogger()) {
+        return assembleMessages({
             threadId: "thread-1",
             threadType: "conversation",
             analysisId: "analysis-1",
             userInput: "what happened?",
             analysisContext: null,
             runActivityContext: RUN_ACTIVITY,
-            history: modelHistory(window),
+            history: { ...stubHistory([]), loadRecent: () => okAsync(danglingWindow()) },
             workingMemory: stubWorkingMemory(),
             logger,
         });
+    }
 
-        // The unanswered call is gone; the prose of the turn survives.
-        expect(messages[1]).toEqual({ role: "assistant", content: [{ type: "text", text: "on it" }] });
+    test("answers a stored dangling tool call in place and logs the answer", async () => {
+        const logger = createCapturingLogger();
+
+        const { messages } = await assembleDangling(logger);
+
+        // The stored assistant message is unchanged, and the not-run result sits
+        // between it and the next user message.
+        expect(messages[1]).toEqual(danglingWindow()[1]!);
+        expect(messages[2]).toEqual({
+            role: "tool",
+            content: [
+                {
+                    type: "tool-result",
+                    toolCallId: "tu-x",
+                    toolName: "update_working_memory",
+                    output: { type: "error-text", value: NOT_RUN_TOOL_RESULT },
+                },
+            ],
+        });
+        expect(messages[3]).toEqual({ role: "user", content: "and then?" });
         const warn = logger.records.find((r) => r.level === "warn");
-        expect(warn?.msg).toContain("unanswered tool calls stripped from thread history");
+        expect(warn?.msg).toContain("unanswered tool calls answered in thread history");
         expect(warn?.fields).toMatchObject({ threadId: "thread-1", toolCallIds: ["tu-x"], tools: ["update_working_memory"] });
+    });
+
+    test("two assemblies of one window send byte-identical messages", async () => {
+        const first = await assembleDangling();
+        const second = await assembleDangling();
+
+        expect(JSON.stringify(second.messages)).toBe(JSON.stringify(first.messages));
     });
 
     test("keeps an answered tool call untouched and logs nothing", async () => {

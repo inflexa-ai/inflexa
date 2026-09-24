@@ -25,7 +25,7 @@ import { ResultError } from "../lib/result.js";
 import { describeZodIssueShapes } from "../lib/zod-issue-shape.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
-import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
+import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
@@ -282,20 +282,20 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
      * carry a complete tool call beside ANY finish reason, because the call
      * streams before the stop reason arrives, and only the dispatching branches
      * (`tool-calls`, a call-carrying `stop`, and `length`) run one. A call this
-     * run never dispatched is stripped
-     * rather than executed (a filtered or aborted reply must not act) or answered
-     * with an invented result (the model would read a fabrication as ground
-     * truth). Without the strip, the unanswered call violates the wire contract —
-     * every tool call carries a result — and the provider boundary then refuses
-     * the whole transcript on every later turn of the thread. Scoped past
+     * run never dispatched is not executed (a filtered or aborted reply must not
+     * act): it gets the not-run result, which states that the call did not run.
+     * Without an answer, the unanswered call violates the wire contract — every
+     * tool call carries a result — and the provider boundary then refuses the
+     * whole transcript on every later turn of the thread. The answer removes and
+     * changes no message, because the transcript is append-only. Scoped past
      * `initial`: the caller's prefix is not this run's to repair.
      */
     const settleTranscript = (): void => {
-        const droppedCalls = stripUnansweredToolCalls(messages, initial.length);
-        if (droppedCalls.length === 0) return;
-        log.warn("undispatched tool calls stripped at run exit", {
-            toolCallIds: droppedCalls.map((d) => d.toolCallId),
-            tools: droppedCalls.map((d) => d.toolName),
+        const answeredCalls = answerUnansweredToolCalls(messages, initial.length);
+        if (answeredCalls.length === 0) return;
+        log.warn("unanswered tool calls answered at run exit", {
+            toolCallIds: answeredCalls.map((d) => d.toolCallId),
+            tools: answeredCalls.map((d) => d.toolName),
         });
     };
 
@@ -506,15 +506,11 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         // A local model behind an OpenAI-compatible server routinely labels a
         // tool-calling reply `stop`. The calls are complete and the model waits
         // on their results, thus the mislabeled round dispatches like a
-        // `tool-calls` one. Every other terminal keeps the strip: a filtered or
-        // aborted reply must not act.
+        // `tool-calls` one. Every other terminal answers its calls with the
+        // not-run result: a filtered or aborted reply must not act.
         const dispatchesRound = reply.finishReason === "tool-calls" || (reply.finishReason === "stop" && toolCalls.length > 0);
         if (!dispatchesRound) {
             settleTranscript();
-            // The settle can remove a call-only aborted partial whole; the
-            // interruption marker then rides the last assistant that survived,
-            // matching the no-output abort contract above.
-            if (reply.finishReason === "aborted") markLastLoopAssistant(messages, initial.length);
             await emit({ type: "iteration", source, index: i, final: true });
             recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
             logFinish("info", reply.finishReason, false);
