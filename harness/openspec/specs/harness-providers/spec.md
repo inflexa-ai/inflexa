@@ -35,38 +35,118 @@ outside the Result channel.
 ## Requirements
 ### Requirement: Prompt caching is a vendor-neutral policy translated at one site
 
-The harness SHALL express prompt caching as `PromptCachePolicy` —
-`{ ttl: "5m" | "1h" }` to cache the request prefix (tools + system + message
-history) for that lifetime, or `"off"` to send no cache directive at all.
-`promptCacheProviderOptions(policy)` (`harness/src/providers/prompt-cache.ts`) SHALL
-be the ONLY place in the harness that names a vendor for caching: it SHALL return
-`undefined` for `"off"`, so the caller leaves `ChatRequest.providerOptions` unset
-rather than sending an empty bag, and otherwise SHALL emit a single request-level
-`cacheControl` directive in the provider's own namespace, letting the server place
-the breakpoint on the last cacheable block instead of the harness hand-placing
-per-block markers.
+The harness MUST express prompt caching as `PromptCachePolicy`. A value of
+`{ ttl: "5m" | "1h" }` caches the request prefix for that lifetime. The prefix is
+the tools, the system prompt, and the message history. A value of `"off"` sends no
+cache directive at all.
 
-The emitted options SHALL be safe on every provider: AI SDK `providerOptions` is a
-namespaced bag each provider reads only its own key from, so a directive for one
-vendor is inert — not an error — on another. A vendor that caches automatically
-(the OpenAI-compatible family does server-side prefix caching, unprompted) needs no
-directive, so the policy is a no-op for it.
+`providers/prompt-cache.ts` MUST be the ONLY place in the harness that names a
+vendor for caching. `promptCacheProviderOptions(policy)` MUST return `undefined`
+for `"off"`. For each other policy it MUST return one directive for each vendor
+that takes an explicit breakpoint, each in the namespace of that vendor:
+`anthropic.cacheControl` and `bedrock.cachePoint`. Both directives MUST carry the
+ttl of the policy.
+
+A provider reads only its own namespace, thus the directive of one vendor is
+inert on another. As a result the placement never learns which vendor serves the
+call. A vendor that caches without a marker gets none: the OpenAI family caches
+prefixes server-side and exposes no breakpoint, and Gemini caches implicitly.
+
+The two shapes differ in more than the name. Anthropic marks the last content
+block of the message. Bedrock appends a `cachePoint` block after it. Both land at
+the same position of the prefix.
+
+`withPromptCacheBreakpoint(messages, policy)` MUST place that directive, and it
+MUST be the only writer of one. It MUST put the directive on the LAST message that
+can carry it. It MUST remove the directive from each other message, thus a request
+holds exactly one breakpoint. It MUST return a copy of the messages.
+
+The harness MUST NOT attach the directive to a `ChatRequest`. A request-level
+directive reaches the wire as a top-level `cache_control` field. An intermediary
+counts blocks, thus it cannot see that field.
+
+CLIProxyAPI adds its own block markers, and it trims them to the Anthropic limit
+of four by that count. A top-level field then makes the total five, and the
+endpoint answers HTTP 400. The refusal is not retryable, and the next turn builds
+the same shape. Thus the thread stops.
+
+A copy is necessary because the caller keeps the transcript. A host writes that
+transcript to a thread store. A directive in the store comes back on each later
+turn, and the count grows by one per turn.
+
+The removal is necessary because `memory/ai-sdk-message-storage.ts` reads
+`cache_control` off a stored block. Thus a row from an older build can arrive with
+a directive on it. That directive spends a breakpoint that the harness did not
+budget.
+
+A message that ends with a thinking block cannot carry the directive. The provider
+drops it there and reports no error, thus each later call misses the cache.
+`withPromptCacheBreakpoint` MUST move back to the last message that can carry the
+directive. It MUST place none when no message can carry one.
+
+The emitted options MUST be safe on every provider. AI SDK `providerOptions` is a
+namespaced bag, and each provider reads only its own key from it. Thus a directive
+for one vendor is inert on another, and it is not an error. A vendor that caches
+automatically needs no directive, thus the policy is a no-op for it. The
+OpenAI-compatible family does server-side prefix caching, unprompted.
 
 #### Scenario: An off policy sends no directive
 
 - **WHEN** `promptCacheProviderOptions("off")` is called
-- **THEN** it SHALL return `undefined`, and the request SHALL carry no `providerOptions`
+- **THEN** it MUST return `undefined`, and the request MUST carry no `providerOptions`
 
-#### Scenario: A ttl policy emits one namespaced cache directive
+#### Scenario: A ttl policy emits one directive for each marker vendor
 
 - **WHEN** `promptCacheProviderOptions({ ttl: "1h" })` is called
-- **THEN** it SHALL return a single provider-namespaced `cacheControl` directive carrying that ttl
+- **THEN** it MUST return `anthropic.cacheControl` and `bedrock.cachePoint`, and each one MUST carry that ttl
+
+#### Scenario: The bedrock marker reaches the wire in the shape of that vendor
+
+- **GIVEN** a transcript that `withPromptCacheBreakpoint` marked with a ttl policy
+- **WHEN** the Bedrock provider renders the request
+- **THEN** a `cachePoint` block MUST come after the content of the last message, and it MUST carry the ttl
+
+#### Scenario: A marker of another vendor is removed from an earlier message
+
+- **GIVEN** a transcript whose first message carries a `bedrock.cachePoint` directive
+- **WHEN** `withPromptCacheBreakpoint` is called with a ttl policy
+- **THEN** the first message MUST lose that directive, because the one-breakpoint invariant holds per vendor
+
+#### Scenario: The breakpoint goes on the last message
+
+- **GIVEN** a transcript of three messages and a ttl policy
+- **WHEN** `withPromptCacheBreakpoint` is called
+- **THEN** only the third message MUST carry the directive
+
+#### Scenario: A directive on an earlier message is removed
+
+- **GIVEN** a transcript whose first message came from the store with a directive on it
+- **WHEN** `withPromptCacheBreakpoint` is called with a ttl policy
+- **THEN** the result MUST hold one directive, on the last message, and the first message MUST keep its other provider keys
+
+#### Scenario: The placement moves back past a thinking block
+
+- **GIVEN** a transcript whose last message is an assistant turn that ends with a thinking block
+- **WHEN** `withPromptCacheBreakpoint` is called with a ttl policy
+- **THEN** the directive MUST go on the message before it
+
+#### Scenario: The transcript of the caller stays unmarked
+
+- **GIVEN** a transcript that a host later writes to a thread store
+- **WHEN** `withPromptCacheBreakpoint` is called
+- **THEN** it MUST return a copy, and no message of the input MUST carry a directive
+
+#### Scenario: An off policy strips a stored directive
+
+- **GIVEN** a transcript whose first message came from the store with a directive on it
+- **WHEN** `withPromptCacheBreakpoint` is called with `"off"`
+- **THEN** the result MUST hold no directive at all
 
 #### Scenario: The directive is inert on a provider that did not ask for it
 
-- **GIVEN** a request carrying a cache directive in one provider's namespace
+- **GIVEN** a request that carries a cache directive in the namespace of one provider
 - **WHEN** it is sent to an OpenAI-compatible model
-- **THEN** the model SHALL ignore the foreign namespace and the call SHALL succeed
+- **THEN** the model MUST ignore the foreign namespace and the call MUST succeed
 
 ### Requirement: Chat usage reports the cache breakdown
 
@@ -394,3 +474,4 @@ The `ProviderCapabilities` set MUST carry two optional picture flags: `imageTool
 
 - **WHEN** a provider is constructed with no picture flag in its capability config
 - **THEN** the built provider advertises neither picture flag
+
