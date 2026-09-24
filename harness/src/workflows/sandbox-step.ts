@@ -302,14 +302,17 @@ export interface SandboxStepDeps {
     /**
      * Workspace read seam. No stage of the step body reads it: the metadata
      * and summary continuations run the `read_file` and `grep` of the step
-     * agent, which the agent factory wires.
+     * agent, which the agent factory wires. The field stays, because
+     * `src/index.ts` exports this type and an embedder builds it as an object
+     * literal, thus a removal breaks the build of the embedder.
      */
     readonly workspaceFs: WorkspaceFilesystem;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
      * Sandbox model id. No stage of the step body reads it: the step agent
-     * carries its own model id, and the continuations run that agent.
+     * carries its own model id, and the continuations run that agent. The
+     * field stays for the same reason as `workspaceFs`.
      */
     readonly model: string;
     /**
