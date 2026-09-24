@@ -52,7 +52,7 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [ ] 3.5 Export `continueAgent(agent, conversation, request, session, opts: RunAgentOptions): Promise<ContinuationResult>`. It appends `syntheticUserMessage(request.text)` and runs one segment with no wrap-up.
 - [ ] 3.6 Make `continueAgent` return the messages from the request to the end. Expected result: the messages of `conversation` stay unchanged.
 - [ ] 3.7 In `continueAgent`, name each step `${request.stepNamespace}:${name}`. `name` comes from `opts.formatStepName ?? DEFAULT_STEP_NAME_FORMATTER`. Expected result: the first model step of the namespace `file-metadata` is `file-metadata:llm-0`.
-- [ ] 3.8 With `accountingAgentId`, run the segment under `forSubAgent(session, accountingAgentId)`. Record the run metrics and the `traceAgentRun` span under that id. Expected result: the usage records, the token counters, and the iteration histogram carry the accounting id.
+- [ ] 3.8 With `accountingAgentId`, run the segment under `forSubAgent(session, accountingAgentId)`. Give that id to `countChatTokens`, `recordAgentRun`, and `traceAgentRun` in place of `agent.id`. Expected result: the usage records, the token counters, and the iteration histogram carry the accounting id.
 - [ ] 3.9 At its cap, make `continueAgent` return `finish.reason: "max_iterations"` with `cappedOut: true`, with no wrap-up request. On an abort, it returns `"aborted"`.
 - [ ] 3.10 In the doc comment of `CALL_PATH_DELIMITER` in `src/loop/run-agent.ts`, add the namespaces of the continuations to the list of step names.
 - [ ] 3.11 In `src/loop/run-agent.test.ts`, add `describe("continueAgent")` with these tests:
@@ -73,7 +73,7 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [ ] 4.6 Write the doc comment of `RunAgentOptions.toolChoice` in `src/loop/run-agent.ts` again. Also write `AgentDefinition.maxIterations` and the `index` of the `iteration` event in `src/loop/types.ts` again.
 - [ ] 4.7 Each comment of 4.6 says that the wrap-up keeps the tools and the tool choice, and that a mask refuses each call.
 - [ ] 4.8 In `src/providers/types.ts`, add a CAUTION to the doc comment of `ChatRequest.toolChoice`. `@ai-sdk/anthropic` removes the tools for `"none"`, and Anthropic drops its message cache when `tool_choice` changes.
-- [ ] 4.9 In the header of `src/providers/prompt-cache.ts`, write the section "Cache defeaters" again. The wrap-up keeps the tool set and the tool choice, and a mask refuses each call. Remove the claim that `toolChoice: "none"` keeps the prefix.
+- [ ] 4.9 In the header of `src/providers/prompt-cache.ts`, remove the wrap-up from the list of the section "Cache defeaters". State that the wrap-up keeps the tool set and the tool choice, and that a mask refuses each call.
 - [ ] 4.10 In `src/loop/run-agent.test.ts`, change `describe("runAgent — max-iteration wrap-up")`, `describe("runAgent — aborted wrap-up path")`, and `describe("runAgent — finish signal")`. Add these tests:
   - The wrap-up sends the tools and the `toolChoice` of the run.
   - A text reply ends the wrap-up after one request, under the step name `llm-${maxIterations}`.
@@ -89,7 +89,7 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [ ] 5.2 Remove `salvageAgent` and `salvageStepNames`. Return `[...first.messages, ...salvaged.messages]` as the messages of the result.
 - [ ] 5.3 Keep `sumUsage`, the `SalvageRecord`, and the warn record. Expected result: the step names stay `salvage:llm-0` and `salvage:tool-<name>-<id>`.
 - [ ] 5.4 Throw at the start of `runToTerminal` when a tool of `salvage.tools` is not in `agent.tools`. The message names the tool and the agent.
-- [ ] 5.5 Write the module header and the doc comments of `TerminalSalvage` again. The salvage keeps the declared tools, and the ids of `salvage.tools` make the mask.
+- [ ] 5.5 Write the module header and the doc comments of `TerminalSalvage` again. The salvage keeps the declared tools, and the ids of `salvage.tools` make the mask. Remove the salvage run from the list of cache defeaters in `src/providers/prompt-cache.ts`.
 - [ ] 5.6 In `src/loop/run-to-terminal.test.ts`, add these tests:
   - Each salvage request declares each tool of the agent.
   - A salvage call of a tool that is not terminal gets the error result of the mask.
@@ -141,7 +141,7 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [ ] 8.8 In `src/execution/step-summary.ts`, change `generateStepSummary` to take `agent` and a conversation: the transcript plus the metadata messages.
 - [ ] 8.9 Run `continueAgent` with the request `summaryRequest(artifactPaths)`, the mask `{ allow: ["read_file", "grep"] }`, and `maxRequests: 12`. Use `stepNamespace: "step-summary"` and `accountingAgentId: "step-summary-writer"`.
 - [ ] 8.10 Read the markdown with `finalText` on the new messages. Keep `incrementSummaryNullCount` for an empty text and for a throw.
-- [ ] 8.11 Remove `sanitizeTranscript`, the writer `AgentDefinition`, and the options `workspaceFs`, `workingDir`, and `maxIterations` from `src/execution/step-summary.ts`.
+- [ ] 8.11 Remove `sanitizeTranscript`, the writer `AgentDefinition`, and the options `workspaceFs`, `workingDir`, and `maxIterations` from `src/execution/step-summary.ts`. Remove the two post-step forks from the list of cache defeaters in `src/providers/prompt-cache.ts`.
 - [ ] 8.12 Keep `stepSummaryPrompt` in `src/prompts/execute-analysis/step-summary.ts` with no change. Its rules on `read_file` stay, because the mask lets `read_file` run.
 - [ ] 8.13 Make `summaryRequest` from the current `SYSTEM_PROMPT` of `src/execution/step-summary.ts` and `stepSummaryPrompt`, with no change of their text.
 - [ ] 8.14 In `src/execution/post-step-pipeline.ts`, make `generateStepFileMetadata` return `{ entries, messages }`. Give `postCtx.agent`, `postCtx.fileMetadata`, `deps.provider`, and `deps.usageRecorder` to the producer. Remove `workspaceFs` from `PostStepPipelineDeps`, because no stage reads it. Keep `SandboxStepDeps.workspaceFs`, and tell the user that it has no reader.
@@ -165,18 +165,19 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [ ] 9.4 Build the two tools, the cell, and the reasoner `AgentDefinition` in each call of `execute`. Put the two terminal tools after the search tools. Expected result: the tool definitions and their order are identical across calls.
 - [ ] 9.5 Run the reasoner through `runToTerminal`, with `resolved: () => cell.outcome !== null`. Give the salvage `{ tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE }`.
 - [ ] 9.6 Return the recorded report. For a blocker, return the `extraction-failed` envelope with the reason as its message. With no outcome, return `buildExtractionFailedEnvelope()`. Keep the envelope of a loop throw.
-- [ ] 9.7 Remove the conversion call and its `accountForChatCall`. Remove `buildConversionPrompt`, `tryParseEnvelope`, `stripFence`, `ParseSuccess`, and `ParseFailure`. Write the module header again.
-- [ ] 9.8 In `src/prompts/analogical-reasoner.ts`, write the output section again. The reasoner calls `submit_analogy_report` one time with the report. When phase 1 cannot run, it calls `report_blocker` with a one-line reason.
-- [ ] 9.9 In the same prompt, keep the shape of the report and the coverage rules. Remove the error JSON, and the text on the post-processor and on `JSON.parse()`.
-- [ ] 9.10 In the header of `src/tools/sandbox/report-blocker.ts`, name the analogical reasoner as the fourth loop that offers the tool.
-- [ ] 9.11 In the `description` of `generate_analogy_report`, write the sentence on the internal retry again: the wrapper salvages a run one time. Keep the text on the `extraction-failed` error.
-- [ ] 9.12 In `src/tools/research/generate-analogy-report.test.ts`, remove the tests of the conversion and of `tryParseEnvelope`. Add these tests:
+- [ ] 9.7 Remove the conversion call with its `countChatTokens` and its `accountForChatCall`, and remove `CONVERSION_CALL_NAME`. Remove `buildConversionPrompt`, `tryParseEnvelope`, `stripFence`, `ParseSuccess`, and `ParseFailure`. Write the module header again.
+- [ ] 9.8 Keep `deps.logger`, and give it to `runToTerminal`, thus the warn of a salvage reaches the log. Write the doc comment of the field again.
+- [ ] 9.9 In `src/prompts/analogical-reasoner.ts`, write the output section again. The reasoner calls `submit_analogy_report` one time with the report. When phase 1 cannot run, it calls `report_blocker` with a one-line reason.
+- [ ] 9.10 In the same prompt, keep the shape of the report and the coverage rules. Remove the error JSON, and the text on the post-processor and on `JSON.parse()`.
+- [ ] 9.11 In the header of `src/tools/sandbox/report-blocker.ts`, name the analogical reasoner as the fourth loop that offers the tool.
+- [ ] 9.12 In the `description` of `generate_analogy_report`, write the sentence on the internal retry again: the wrapper salvages a run one time. Keep the text on the `extraction-failed` error.
+- [ ] 9.13 In `src/tools/research/generate-analogy-report.test.ts`, remove the tests of the conversion and of `tryParseEnvelope`. Add these tests:
   - A submitted report is the result, and the provider gets no call after the submit.
   - A blocker gives the `extraction-failed` envelope with its reason as the message.
   - A run that ends on prose gets a salvage whose mask lets only the two terminal tools run.
   - No outcome after the salvage gives the `extraction-failed` envelope.
   - An invalid report gets an input validation error, and a second submit is accepted.
-- [ ] 9.13 Run `tsc -p tsconfig.json`. Run `bun test src/tools/research/generate-analogy-report.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [ ] 9.14 Run `tsc -p tsconfig.json`. Run `bun test src/tools/research/generate-analogy-report.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 10. Documents
 

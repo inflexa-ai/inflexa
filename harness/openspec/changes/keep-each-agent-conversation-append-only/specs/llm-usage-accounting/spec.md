@@ -56,10 +56,9 @@ The harness MUST deliver each record when its call completes. It MUST NOT defer 
 
 ### Requirement: A direct provider call uses the accounting path of the loop
 
-The ad hoc router calls `provider.chat` directly, outside `runAgent`. It MUST account for its call through the function that the loop uses for each call. That function MUST do these steps:
+The ad hoc router calls `provider.chat` directly, outside `runAgent`. It MUST grow the token counters of its call in the body that makes the call, as the harness-agent-loop capability describes. The router uses the agent id `adhoc-router`. It MUST then account for its call through the function that the loop uses for each call. That function MUST do these steps:
 
 - Fold the usage of the call into the turn accumulator of the tool context, when the context has one. Thus the root finish of the turn includes the call.
-- Record the token counters of the call, as the harness-agent-loop capability describes.
 - Deliver the usage record through the notice helper of the host-hooks capability.
 
 The record key MUST put the fixed call name `adhoc-route` in the slot of the step name. The key also carries the `invocationId` of the tool call that makes the direct call. Thus a replay gives the same key again, and the name cannot collide with a loop step name such as `llm-0`.
