@@ -33,7 +33,7 @@ const userMessage: ModelMessage = { role: "user", content: USER_INPUT };
 const assistantMessage: ModelMessage = { role: "assistant", content: "the answer" };
 const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model: "m", tools: [], maxIterations: 1 };
 const resolver: ThreadAgentResolver = { forThread: () => ok(conversationAgent) };
-const session = buildChatSession("cli-chat", ANALYSIS_ID, THREAD_ID);
+const session = buildChatSession(ANALYSIS_ID, THREAD_ID);
 const noopEmit: EmitFn = () => {};
 const DB_ERROR: DbError = { type: "mutation_failed", op: "thread-history.writeTurn", cause: new Error("db down") };
 
@@ -111,9 +111,9 @@ function runWith(
 }
 
 describe("buildChatSession", () => {
-    test("stamps the agent id into provenance with a length-1 callPath", () => {
-        const s = buildChatSession("tui-chat", "an-9", "t-9");
-        expect(s.provenance).toEqual({ agentId: "tui-chat", callPath: ["tui-chat"] });
+    test("scopes the session to the thread and leaves the provenance to the harness", () => {
+        const s = buildChatSession("an-9", "t-9");
+        expect("provenance" in s).toBe(false);
         expect(s.scope).toEqual({ kind: "analysis", analysisId: "an-9", threadId: "t-9" });
         expect(s.identity).toEqual({ user: "local" });
     });

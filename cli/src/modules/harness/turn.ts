@@ -5,10 +5,10 @@ import {
     runChatTurn as runHarnessChatTurn,
     type AgentChat,
     type AgentFinish,
-    type AgentSession,
     type AskApproval,
     type AskRequest,
     type ChatTurnResult,
+    type ChatTurnSession,
     type DbError,
     type EmitFn,
     type Pool,
@@ -74,8 +74,11 @@ export type RunChatTurnArgs = {
     readonly agents: ThreadAgentResolver;
     /** Builds the streaming provider over the recorder's emit sink. */
     readonly chat: (emit: EmitFn) => AgentChat;
-    /** Carries `threadId` in scope, so a plan launched here stamps `cortex_runs.thread_id`. */
-    readonly session: AgentSession;
+    /**
+     * Carries `threadId` in scope, so a plan launched here stamps `cortex_runs.thread_id`. The harness
+     * sets the provenance from the agent of the thread.
+     */
+    readonly session: ChatTurnSession;
     /** The surface's live event sink; the display recorder forwards every event here. */
     readonly emit: EmitFn;
     /**
@@ -112,20 +115,16 @@ export type ChatTurnSeams = {
 const realTurnSeams: ChatTurnSeams = { turn: runHarnessChatTurn, readAuthor: currentUserEmail };
 
 /**
- * Build the {@link AgentSession} a chat turn runs under. Parameterized
- * by `agentId` so the surfaces are distinguishable in provenance yet identical in
- * shape: the REPL passes `"cli-chat"`, the TUI `"tui-chat"`. `callPath` is
- * `[agentId]` — length 1, so this top-level agent's events PASS the printer's
- * sub-agent depth filter while planner / literature-reviewer traffic (deeper
- * callPaths) is dropped. `threadId` rides IN scope: `execute_analysis` reads
- * `session.scope.threadId` to stamp `cortex_runs.thread_id`, giving a
- * chat-launched run its thread lineage.
+ * Build the {@link ChatTurnSession} a chat turn runs under. The harness stamps the provenance of the
+ * agent that the thread resolves to, with a length-1 `callPath`, so its events PASS the printer's
+ * sub-agent depth filter. `threadId` rides IN scope: `execute_analysis` reads
+ * `session.scope.threadId` to stamp `cortex_runs.thread_id`, giving a chat-launched run its thread
+ * lineage.
  */
-export function buildChatSession(agentId: string, analysisId: string, threadId: string): AgentSession {
+export function buildChatSession(analysisId: string, threadId: string): ChatTurnSession {
     return {
         identity: { user: "local" },
         scope: { kind: "analysis", analysisId, threadId },
-        provenance: { agentId, callPath: [agentId] },
         auth: makeLocalAuth(),
     };
 }

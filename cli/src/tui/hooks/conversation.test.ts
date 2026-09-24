@@ -98,9 +98,8 @@ describe("send() drives the adapter + engine", () => {
         const args = seams.last();
         expect(args?.threadId).toBe(SID);
         expect(args?.analysisId).toBe(AID);
-        expect(args?.session.scope.kind).toBe("analysis");
-        expect(args?.session.provenance.agentId).toBe("tui-chat");
-        expect(args?.session.provenance.callPath).toEqual(["tui-chat"]);
+        expect(args?.session.scope).toEqual({ kind: "analysis", analysisId: AID, threadId: SID });
+        expect(args?.session).not.toHaveProperty("provenance");
     });
 
     test("text deltas accumulate live, then flush into the stored part on ok", async () => {

@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner, text, isCancel } from "@clack/prompts";
 import { type ResultAsync } from "neverthrow";
-import { createStreamingChat, createThreadStore, type AgentSession, type DbError, type EmitFn, type Thread } from "@inflexa-ai/harness";
+import { createStreamingChat, createThreadStore, type ChatTurnSession, type DbError, type EmitFn, type Thread } from "@inflexa-ai/harness";
 import type { OpenableEntry, OpenTarget, PresentationBody } from "../../../types/session.ts";
 
 import { describeCause } from "../../../lib/cause.ts";
@@ -154,7 +154,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
 }
 
 /**
- * The REPL. One printer and one `AgentSession` are built ONCE and reused every
+ * The REPL. One printer and one `ChatTurnSession` are built ONCE and reused every
  * turn (the thread is fixed for the invocation). Each turn is one `runChatTurn`
  * of the harness under a turn-scoped abort signal. The loop ends two
  * ways, both draining through `shutdown` from HERE (never from a signal handler):
@@ -168,11 +168,9 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
     // paths for their OSC 8 `file://` links.
     const printer = createChatPrinter(sink, { analysisId });
 
-    // The REPL runs as the `"cli-chat"` agent. `buildChatSession` puts `threadId`
-    // in scope (so a chat-launched plan stamps `cortex_runs.thread_id`) and gives
-    // a length-1 callPath (so this agent's events pass the printer's sub-agent
-    // depth filter) — see its docs for the full rationale.
-    const session: AgentSession = buildChatSession("cli-chat", analysisId, threadId);
+    // `buildChatSession` puts `threadId` in scope, so a chat-launched plan stamps
+    // `cortex_runs.thread_id` — see its docs for the full rationale.
+    const session = buildChatSession(analysisId, threadId);
 
     for (;;) {
         const answer = await text({ message: "you", placeholder: "Type a message — Ctrl+C to exit" });
@@ -235,7 +233,7 @@ async function runTurn(
     runtime: HarnessRuntime,
     printer: ReturnType<typeof createChatPrinter>,
     sink: ChatSink,
-    session: AgentSession,
+    session: ChatTurnSession,
     analysisId: string,
     threadId: string,
     userInput: string,
