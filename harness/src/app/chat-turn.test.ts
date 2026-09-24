@@ -7,6 +7,7 @@ import { z } from "zod";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { forSubAgent } from "../auth/types.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
+import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { runAgent } from "../loop/run-agent.js";
 import type { AgentDefinition } from "../loop/types.js";
@@ -526,6 +527,21 @@ describe("runChatTurn", () => {
         const rows = await storedRows();
         expect(rows.map((row) => row.message.role)).toEqual(["user", "user", "user", "assistant", "user", "assistant"]);
         expect(contextRecordOf(rows[4]!.message)).toBeUndefined();
+    });
+
+    it("gives the usage recorder of the host to the root loop", async () => {
+        const records: LlmUsageRecord[] = [];
+        const usageRecorder: UsageRecorder = {
+            record: (record) => {
+                records.push(record);
+                return okAsync(undefined);
+            },
+        };
+        const provider = scriptedProvider([makeMessage([textBlock("hi")], "end_turn", { inputTokens: 10, outputTokens: 2 })]);
+
+        await runChatTurn({ pool, agents: resolverFor(agentWith([echoTool()])) }, params(provider, { usageRecorder }));
+
+        expect(records.map((record) => [record.agentId, record.usage])).toEqual([["conversation-agent", { inputTokens: 10, outputTokens: 2 }]]);
     });
 
     it("sends the 1-hour cache directive from the root loop", async () => {
