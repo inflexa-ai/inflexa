@@ -34,7 +34,7 @@ A synthesis failure MUST throw again out of `synthesizeRun`, after a `failed` pr
 
 ### Requirement: The run synthesis limits the literature reviewer to three calls
 
-`generateRunSynthesis` MUST run the synthesizer with the tool budget `{ literature_reviewer: 3 }` (refer to the harness-agent-loop capability). A fourth call of `literature_reviewer` in the run MUST get an error result that gives the limit, and the sub-agent MUST NOT run. The prompt of the synthesizer already asks for 1 to 3 delegations for each run. The budget makes that limit a rule of the harness.
+`generateRunSynthesis` MUST run the synthesizer with the tool budget `{ literature_reviewer: 3 }` (refer to the harness-agent-loop capability). A fourth call of `literature_reviewer` in the run MUST get an error result that gives the limit, and the sub-agent MUST NOT run. Each delegation runs a full sub-agent loop, and the iteration budget of the synthesizer plans for 1 to 3 delegations for each run. The budget makes that plan a rule of the harness. The prompt of the synthesizer names no count.
 
 #### Scenario: The fourth delegation does not run
 

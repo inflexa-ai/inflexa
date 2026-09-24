@@ -2,7 +2,7 @@
 
 ### Requirement: The planner loop is iteration-capped with one salvage continuation
 
-The planner loop MUST have a cap of `PLANNER_MAX_ITERATIONS = 13`. When the planner ends without a terminal outcome, `runToTerminal` MUST run exactly one salvage continuation, opened by a corrective nudge. The salvage continuation MUST keep the declared tools of the planner, and its mask MUST let only the terminal tools run (refer to the harness-agent-loop capability).
+The planner loop MUST have an iteration cap, `PLANNER_MAX_ITERATIONS` in `src/tools/research/generate-plan.ts`. The constant owns the number. When the planner ends without a terminal outcome, `runToTerminal` MUST run exactly one salvage continuation, opened by a corrective nudge. The salvage continuation MUST keep the declared tools of the planner, and its mask MUST let only the terminal tools run (refer to the harness-agent-loop capability).
 
 #### Scenario: Salvage continuation on a missing terminal outcome
 

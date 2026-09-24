@@ -101,7 +101,7 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 ## 6. The budget of the synthesis
 
 - [x] 6.1 In `src/execution/run-synthesis.ts`, add `LITERATURE_REVIEWER_BUDGET = 3`. Give `toolBudget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET }` to `loopDeps`.
-- [x] 6.2 The comment of the constant names the text of the prompt: 1 to 3 delegations for each run. Do not change `src/prompts/synthesis-agent.ts`.
+- [x] 6.2 The comment of the constant names the 1 to 3 delegations for each run that the iteration budget of the synthesizer plans for. Do not change `src/prompts/synthesis-agent.ts`, because it names no count.
 - [x] 6.3 In `src/execution/run-synthesis.test.ts`, add a test in which the synthesizer calls `literature_reviewer` 4 times. Expected result: 3 reviewer loops run, and the fourth call gets the error result of the budget.
 - [x] 6.4 Run `tsc -p tsconfig.json`. Run `bun test src/execution/run-synthesis.test.ts`. Run `bun run lint`. Run `bun run format:file src/execution/run-synthesis.ts src/execution/run-synthesis.test.ts`.
 
