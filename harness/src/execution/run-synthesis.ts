@@ -76,6 +76,15 @@ export const SYNTHESIS_AGENT_ID = "run-synthesizer";
  */
 const SYNTHESIZER_MAX_ITERATIONS = 25;
 
+/**
+ * The maximum count of `literature_reviewer` calls in one synthesis run: the
+ * 1–3 delegations of each run that the iteration budget above plans for. The
+ * prompt names no count, because a model takes a number in a prompt as a
+ * target. A fourth call gets an error result that gives the limit, and no
+ * reviewer loop runs for it.
+ */
+const LITERATURE_REVIEWER_BUDGET = 3;
+
 // ── Types ────────────────────────────────────────────────────────────
 
 interface ValidationIssue {
@@ -498,6 +507,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         runStep: passthroughStep,
         resolved: () => holder.outcome !== null,
         usageRecorder: input.usageRecorder,
+        toolBudget: { [reviewer.id]: LITERATURE_REVIEWER_BUDGET },
     } as const;
 
     await runToTerminal(agent, [{ role: "user", content: prompt }], input.session, loopDeps, {
