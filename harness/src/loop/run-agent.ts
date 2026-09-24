@@ -497,36 +497,17 @@ export function openLoop(
 
     /**
      * Dispatch one round under a mask and the budget of the run. A refused call
-     * gets its error result at its own index, with no step and no span, and the
-     * calls that pass dispatch as usual. `results`, `durations` and
-     * `resultDetails` stay positionally aligned with `calls`.
+     * gets its error result at its own index, inside the step wrapper of its
+     * tool, and the calls that pass dispatch as usual. `results`, `durations`
+     * and `resultDetails` stay positionally aligned with `calls`.
      */
-    const dispatchRound = async (
+    const dispatchRound = (
         calls: readonly ToolCallPart[],
         mask: ToolMask | undefined,
         names: StepNameFormatter,
     ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> => {
         const refusals = refusalsFor(calls, mask, opts.toolBudget, used);
-        const admitted = calls.filter((_, idx) => refusals[idx] === undefined);
-        const dispatched = await dispatchTools(admitted, toolsById, (tu) => toolCtx(tu, names), isFatalLoopError, callStep, names.tool, encoding);
-        const results: ToolResultPart[] = [];
-        const durations: (number | undefined)[] = [];
-        const resultDetails: (ToolCallDetail | undefined)[] = [];
-        let next = 0;
-        for (const [idx, tu] of calls.entries()) {
-            const refused = refusals[idx];
-            if (refused !== undefined) {
-                results.push(errorResult(tu, refused));
-                durations.push(undefined);
-                resultDetails.push(undefined);
-                continue;
-            }
-            results.push(dispatched.results[next]!);
-            durations.push(dispatched.durations[next]);
-            resultDetails.push(dispatched.resultDetails[next]);
-            next++;
-        }
-        return { results, durations, resultDetails };
+        return dispatchTools(calls, refusals, toolsById, (tu) => toolCtx(tu, names), isFatalLoopError, callStep, names.tool, encoding);
     };
 
     const stopOnResolved = async (index: number): Promise<RunAgentResult> => {
@@ -889,15 +870,27 @@ function appendDeferredImages(messages: LoopMessage[], results: readonly ToolRes
 /**
  * Dispatch one round of tool calls, and measure the time of each call.
  *
- * `results`, `durations` and `resultDetails` are positionally aligned with `toolUses`.
+ * `refusals`, `results`, `durations` and `resultDetails` are positionally aligned with
+ * `toolUses`. A refusal is the model-visible text of a call that the mask or the budget
+ * refused, and `undefined` for a call that runs.
+ *
+ * A refused call runs inside the same wrapper, and under the same step name, as a
+ * dispatched call of its tool id: a durable step for a step-mode tool or an unknown
+ * id, and no wrapper for a workflow-mode or an inline-mode tool. Its body gives the
+ * refusal, and the tool does not run. Thus the step sequence of a round is the same
+ * with and without the mask. A replay also finds the step that an earlier build
+ * recorded for the call when that build dispatched it as an unknown tool, because the
+ * agent of that build did not declare the tool.
  *
  * Each measurement brackets the same unit that the loop awaits for that call. For a
  * step-mode call that unit is `runStep`, thus the figure includes the durable-step
  * wrapper. The wrapper is part of what the call cost, and a cached replay of a step
  * is genuinely fast. A bracket inside the step would report a body that did not run.
+ * A refused call gets no measurement, because nothing ran.
  */
 async function dispatchTools(
     toolUses: readonly ToolCallPart[],
+    refusals: readonly (string | undefined)[],
     toolsById: Map<string, Tool>,
     toolCtx: (tu: ToolCallPart) => ToolContext,
     isFatalLoopError: (err: unknown) => boolean,
@@ -905,16 +898,20 @@ async function dispatchTools(
     toolStepName: (toolName: string, toolUseId: string) => string,
     encoding: ResultEncoding,
 ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> {
-    const dispatch = (tu: ToolCallPart): Promise<DispatchedCall> =>
-        traceToolCall(
-            tu,
-            () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding),
-            (dispatched) => outcomeOf(dispatched.result),
-        );
+    // A refusal writes no tool span, because the tool does not run.
+    const dispatch = (tu: ToolCallPart, refusal: string | undefined): Promise<DispatchedCall> =>
+        refusal !== undefined
+            ? Promise.resolve({ result: errorResult(tu, refusal) })
+            : traceToolCall(
+                  tu,
+                  () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding),
+                  (dispatched) => outcomeOf(dispatched.result),
+              );
     const results = new Array<ToolResultPart>(toolUses.length);
     // The array starts with holes, which read as `undefined`. The element type
-    // says so, thus it agrees with what `settleRound` accepts. Every index is in
-    // fact assigned, because the mode partition below covers each call.
+    // says so, thus it agrees with what `settleRound` accepts. Every index is
+    // assigned except the index of a refused call, because the mode partition
+    // below covers each call.
     const durations = new Array<number | undefined>(toolUses.length);
     // A hole stays a hole for a call that described no result: an error, a
     // denial, and a tool with no result hook each leave the index unassigned,
@@ -933,9 +930,10 @@ async function dispatchTools(
 
     await Promise.all(
         stepTools.map(({ tu, idx }) => {
+            const refusal = refusals[idx];
             const startedAt = performance.now();
-            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatch(tu)).then((settled: DispatchedCall | ToolResultPart) => {
-                durations[idx] = elapsedMs(startedAt);
+            return runStep(toolStepName(tu.toolName, tu.toolCallId), () => dispatch(tu, refusal)).then((settled: DispatchedCall | ToolResultPart) => {
+                if (refusal === undefined) durations[idx] = elapsedMs(startedAt);
                 const dispatched = readDispatchedStep(settled);
                 results[idx] = dispatched.result;
                 if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
@@ -943,19 +941,14 @@ async function dispatchTools(
         }),
     );
 
-    for (const { tu, idx } of workflowTools) {
+    // A workflow-mode and an inline-mode call run unwrapped, one after another.
+    for (const { tu, idx } of [...workflowTools, ...inlineTools]) {
+        const refusal = refusals[idx];
         const startedAt = performance.now();
-        const dispatched = await dispatch(tu);
+        const dispatched = await dispatch(tu, refusal);
         results[idx] = dispatched.result;
         if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
-        durations[idx] = elapsedMs(startedAt);
-    }
-    for (const { tu, idx } of inlineTools) {
-        const startedAt = performance.now();
-        const dispatched = await dispatch(tu);
-        results[idx] = dispatched.result;
-        if (dispatched.detail !== undefined) resultDetails[idx] = dispatched.detail;
-        durations[idx] = elapsedMs(startedAt);
+        if (refusal === undefined) durations[idx] = elapsedMs(startedAt);
     }
 
     return { results, durations, resultDetails };

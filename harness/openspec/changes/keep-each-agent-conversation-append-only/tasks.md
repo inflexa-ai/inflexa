@@ -15,13 +15,13 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 - [x] 1.5 In the same file, export `maskExcept(tools: readonly Tool[], ids: readonly string[]): ToolMask`. It gives a mask of each tool id except `ids`.
 - [x] 1.6 In `src/loop/run-agent.ts`, add `readonly toolMask?: ToolMask` and `readonly toolBudget?: ToolBudget` to `RunAgentOptions`, each with a doc comment. Without a mask, each declared tool can run.
 - [x] 1.7 In `runAgentLoop`, keep one `used` map for each run. On both dispatch paths, call `refusalsFor` on the calls of the round before `dispatchTools`.
-- [x] 1.8 Give each refused call `errorResult(tu, refusal)` at its index, and dispatch only the calls that pass. Expected result: a refused call runs no tool and no step, and the results keep the order of the calls.
+- [x] 1.8 Give each refused call `errorResult(tu, refusal)` at its index, inside the step wrapper that a dispatched call of its tool id gets. Run the tool of each call that passes. Expected result: a refused call runs no tool, the step sequence of the round does not change, and the results keep the order of the calls.
 - [x] 1.9 Keep the `tool-started` event of each call before the dispatch. Give the refused results to `settleRound` with the dispatched results. Expected result: each refused call gets `tool-finished` with the outcome `error`, and it counts as a tool error.
 - [x] 1.10 In `src/loop/run-agent.test.ts`, add `describe("runAgent — tool mask and budget")` with these tests:
   - A call outside the mask does not run, and its result names the mask.
   - The budget refuses the fourth call of a tool.
   - The budget counts the earlier calls of the same round.
-  - A refused step-mode call records no step name.
+  - A refused step-mode call records the step name of its tool, and a replay of the step of an earlier build succeeds.
   - The round of a truncation applies the mask to its earlier calls.
   - A run with no mask dispatches each call as before.
 - [x] 1.11 Run `tsc -p tsconfig.json`. Run `bun test src/loop/run-agent.test.ts`. Run `bun run lint`. Run `bun run format:file src/loop/tool-mask.ts src/loop/run-agent.ts src/loop/run-agent.test.ts`.

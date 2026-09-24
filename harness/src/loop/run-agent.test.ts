@@ -982,16 +982,137 @@ describe("runAgent — tool mask and budget", () => {
         ]);
     });
 
-    it("runs no step for a refused step-mode call", async () => {
+    /**
+     * A durable step store that checks a replay the way DBOS does: each step
+     * takes its position when the loop starts it, and a replayed step at a
+     * position must carry the recorded name. A replayed step returns the stored
+     * value and runs no body.
+     */
+    function stepStore(): { record: RunStep; replay: RunStep; names: () => string[] } {
+        const steps: { name: string; value: unknown }[] = [];
+        let position = 0;
+        const record: RunStep = async (name, fn) => {
+            const slot = steps.length;
+            steps.push({ name, value: undefined });
+            const value = await fn();
+            steps[slot]!.value = value;
+            return value;
+        };
+        const replay: RunStep = async <T>(name: string, _fn: () => Promise<T>): Promise<T> => {
+            const step = steps[position++];
+            if (step === undefined) throw new Error(`the replay started the step ${name}, which the recording does not hold`);
+            if (step.name !== name) throw new Error(`the replay started the step ${name} where the recording holds ${step.name}`);
+            return step.value as T;
+        };
+        return { record, replay, names: () => steps.map((step) => step.name) };
+    }
+
+    /** A provider for a replay: each model step is cached, thus a call is a failure of the test. */
+    const noCallProvider = (): ScriptedProvider =>
+        scriptedProvider(() => {
+            throw new Error("the replay called the provider");
+        });
+
+    it("runs a refused step-mode call inside the step of its tool, and the tool does not run", async () => {
+        const counts = new Map<string, number>();
         const provider = scriptedProvider([
             makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
             makeMessage([textBlock("done")], "end_turn"),
         ]);
         const rec = recordingStep();
 
-        await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolMask: "none" }));
+        const { messages } = await runAgent(
+            agentDef([countingTool("echo", counts)]),
+            GO,
+            makeSession(),
+            opts(provider, { runStep: rec.runStep, toolMask: "none" }),
+        );
+
+        expect(rec.names).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
+        expect(counts.get("echo")).toBeUndefined();
+        expect(String(outputValue(toolResultParts(messages[2])[0]!))).toContain("No tool can run for this request");
+    });
+
+    it("keeps the step sequence of a round the same with and without the mask", async () => {
+        const reply = () =>
+            scriptedProvider([
+                makeMessage([toolUseBlock("tu-a", "echo", { label: "a" }), toolUseBlock("tu-w", "writer", { label: "w" })], "tool_use"),
+                makeMessage([textBlock("done")], "end_turn"),
+            ]);
+        const counts = new Map<string, number>();
+        const tools = [countingTool("echo", counts), countingTool("writer", counts)];
+        const unmasked = recordingStep();
+        const masked = recordingStep();
+
+        await runAgent(agentDef(tools), GO, makeSession(), opts(reply(), { runStep: unmasked.runStep }));
+        await runAgent(agentDef(tools), GO, makeSession(), opts(reply(), { runStep: masked.runStep, toolMask: { allow: ["echo"] } }));
+
+        expect(unmasked.names).toEqual(["llm-0", "tool-echo-tu-a", "tool-writer-tu-w", "llm-1"]);
+        expect(masked.names).toEqual(unmasked.names);
+        // The writer ran in the first run only.
+        expect(counts.get("writer")).toBe(1);
+    });
+
+    it("runs a refused workflow-mode call with no step, the same as its dispatch", async () => {
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-wf", "workflow_echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const rec = recordingStep();
+        const workflowEcho = defineTool({
+            id: "workflow_echo",
+            description: "A workflow-mode echo.",
+            executionMode: "workflow",
+            inputSchema: z.object({ label: z.string() }),
+            describeCall: "none",
+            execute: async ({ label }) => ok({ label }),
+        });
+
+        const { messages } = await runAgent(agentDef([workflowEcho]), GO, makeSession(), opts(provider, { runStep: rec.runStep, toolMask: "none" }));
 
         expect(rec.names).toEqual(["llm-0", "llm-1"]);
+        expect(isErrorResult(toolResultParts(messages[2])[0]!)).toBe(true);
+    });
+
+    it("replays a refused call from its cached step", async () => {
+        const store = stepStore();
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const first = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider, { runStep: store.record, toolMask: "none" }));
+
+        const replayed = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(noCallProvider(), { runStep: store.replay, toolMask: "none" }));
+
+        expect(store.names()).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
+        expect(JSON.stringify(replayed.messages)).toBe(JSON.stringify(first.messages));
+    });
+
+    it("replays the step that an earlier build recorded for a call of a tool that its agent did not declare", async () => {
+        // An earlier build ran a salvage with only the terminal tools, thus a call
+        // of another tool dispatched as an unknown tool, in a step. This build
+        // declares the tool, and the mask refuses the call. The refusal must take
+        // the same step, or the replay of an in-flight workflow fails.
+        const store = stepStore();
+        const counts = new Map<string, number>();
+        const recording = scriptedProvider([
+            makeMessage([toolUseBlock("tu-1", "echo", { label: "x" })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        await runAgent(agentDef([]), GO, makeSession(), opts(recording, { runStep: store.record }));
+
+        const { messages, finish } = await runAgent(
+            agentDef([countingTool("echo", counts)]),
+            GO,
+            makeSession(),
+            opts(noCallProvider(), { runStep: store.replay, toolMask: "none" }),
+        );
+
+        expect(store.names()).toEqual(["llm-0", "tool-echo-tu-1", "llm-1"]);
+        expect(counts.get("echo")).toBeUndefined();
+        // The cached result of the earlier build is the result of the replay.
+        expect(String(outputValue(toolResultParts(messages[2])[0]!))).toContain("unknown tool: echo");
+        expect(finish.reason).toBe("stop");
     });
 
     it("applies the mask to the earlier calls of a truncated round", async () => {

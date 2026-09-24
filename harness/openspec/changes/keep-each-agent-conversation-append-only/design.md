@@ -46,7 +46,9 @@ This design rejects `toolChoice: "none"` for the wrap-up, because of the Anthrop
 
 The loop applies the check at dispatch, on both dispatch paths: the normal round and the round that a truncation cut. It reads the calls of a round in call order. A call passes when the mask names its tool and the budget of its tool has a unit left. A call that passes uses one unit, whatever its result. Thus with the budget 3, the fourth call fails, also when it is in the same round as the third.
 
-A refused call gets an error result that gives the reason. Its tool does not run, and no step runs for it. The loop emits `tool-started` and `tool-finished` for it with the outcome `error`, the same as for an unknown tool. The counters of the run count it as a tool error.
+A refused call gets an error result that gives the reason, and its tool does not run. The loop emits `tool-started` and `tool-finished` for it with the outcome `error`, the same as for an unknown tool. The counters of the run count it as a tool error.
+
+The refusal runs inside the step wrapper that a dispatched call of the same tool id gets, under the same step name. A step-mode tool and an unknown tool id thus get a durable step, and a workflow-mode or inline-mode tool gets no wrapper. Thus the step sequence of a round is the same with and without the mask. The earlier build dispatched a call of an undeclared tool as an unknown tool, in a step. This build declares that tool and refuses the call. When the tool is step-mode, the refusal takes the recorded step, and the replay gives the recorded result.
 
 The check is a pure function of the mask, the budget, and the calls of the run. Thus a durable replay refuses the same calls. A continuation counts only its own calls.
 
@@ -142,7 +144,21 @@ This design rejects one tool for the whole envelope. `AnalogicalReasonerOutputSc
 
 ## Migration Plan
 
-No data migration is necessary. A stored thread keeps its rows, and the history load answers an old unanswered call when it reads the window. A workflow that started on the earlier version replays its cached steps. The first wrap-up request keeps its old step name, and the body reads an old metadata checkpoint. A host that takes this version gives the metadata cell in its `buildAgent`.
+No data migration is necessary. A stored thread keeps its rows, and the history load answers an old unanswered call when it reads the window. A host that takes this version gives the metadata cell in its `buildAgent`.
+
+A workflow that started on the earlier version replays its cached steps in these cases:
+
+- The first wrap-up request keeps its old step name. Thus it replays the reply of the earlier single wrap-up call.
+- The body reads an old metadata checkpoint as entries with no messages.
+- A refused call of a step-mode tool takes the step that the earlier build recorded for the call as an unknown tool.
+
+A workflow that started on the earlier version does not replay in these cases:
+
+- The stored wrap-up reply calls a tool, because the endpoint ignored the tool choice `none`. The wrap-up then sends a second request that the recording does not hold.
+- A durable salvage of the earlier build called a workflow-mode or an inline-mode tool, for example `execute_command` in the salvage of the data profiler. The earlier build ran that call in a step, and the refusal runs no step.
+- A durable salvage of the earlier build used its cap, thus it sent one more wrap-up request. The salvage continuation sends no wrap-up request.
+
+The data profiler is the only caller of `runToTerminal` with durable steps. The other callers use `passthroughStep`, thus a salvage of theirs has no replay.
 
 A delta cannot change the Purpose of a spec. The Purpose sections of `harness-agent-loop`, `harness-sandbox-agents`, and `step-interpretation-summary` describe the forks and the salvage with only the terminal tools. Write those sections again when this change archives.
 
