@@ -28,20 +28,20 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 2. The answer to an unanswered tool call
 
-- [ ] 2.1 In `src/memory/tool-call-integrity.ts`, export `NOT_RUN_TOOL_RESULT = "Not run: the turn ended before this call ran."`. Export `notRunResult(call: ToolCallPart): ToolResultPart`, with the output `{ type: "error-text", value: NOT_RUN_TOOL_RESULT }`.
-- [ ] 2.2 Replace `stripUnansweredToolCalls` with `answerUnansweredToolCalls(messages: ModelMessage[], fromIndex = 0): AnsweredToolCall[]`. Rename `DroppedToolCall` to `AnsweredToolCall`.
-- [ ] 2.3 In `answerUnansweredToolCalls`, find each assistant message at or after `fromIndex` whose calls have no result. Insert one `tool` message with `notRunResult` for each such call.
-- [ ] 2.4 Insert that `tool` message after the assistant message and after the `tool` messages that follow it. Expected result: the function removes no message and changes no message.
-- [ ] 2.5 Keep `needsClientResult`, thus a call that the provider ran gets no answer. Write the module header again: the repair is a result that states that the call did not run.
-- [ ] 2.6 In `src/loop/run-agent.ts`, make `settleTranscript` call `answerUnansweredToolCalls(messages, initial.length)`. Change the warn message to `"unanswered tool calls answered at run exit"`, and keep its fields. Write the doc comment again.
-- [ ] 2.7 In `src/loop/run-agent.ts`, keep the interruption marker on the last assistant message of the run on each abort path. Remove each comment that says that the settle can remove a message.
-- [ ] 2.8 In `src/app/message-assembly.ts`, call `answerUnansweredToolCalls(history)` in place of the strip. Change the warn message to `"unanswered tool calls answered in thread history"`, and keep its fields. Write the comment again.
-- [ ] 2.9 In `src/memory/tool-call-integrity.test.ts`, change each strip test into an answer test. Expected result: the call and the prose stay, and the not-run result comes after the assistant message and its tool messages.
-- [ ] 2.10 In `src/loop/run-agent.test.ts`, change `describe("runAgent — undispatched tool calls at a terminal finish")` and the abort tests. Expected result: a `content-filter` call stays with a not-run result, and its tool never runs.
-- [ ] 2.11 In the same file, add a test for an aborted partial with a complete call. Expected result: the partial stays with the interruption marker, and a not-run result follows it.
-- [ ] 2.12 In `src/app/message-assembly.test.ts`, change `"repairs a stored dangling tool call and logs the strip"`. Expected result: the not-run result sits between the assistant message and the next user message.
-- [ ] 2.13 In the same file, add a test that two assemblies of one window give byte-identical messages.
-- [ ] 2.14 Run `tsc -p tsconfig.json`. Run `bun test src/memory/tool-call-integrity.test.ts src/loop/run-agent.test.ts src/app/message-assembly.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 2.1 In `src/memory/tool-call-integrity.ts`, export `NOT_RUN_TOOL_RESULT = "Not run: the turn ended before this call ran."`. Export `notRunResult(call: ToolCallPart): ToolResultPart`, with the output `{ type: "error-text", value: NOT_RUN_TOOL_RESULT }`.
+- [x] 2.2 Replace `stripUnansweredToolCalls` with `answerUnansweredToolCalls(messages: ModelMessage[], fromIndex = 0): AnsweredToolCall[]`. Rename `DroppedToolCall` to `AnsweredToolCall`.
+- [x] 2.3 In `answerUnansweredToolCalls`, find each assistant message at or after `fromIndex` whose calls have no result. Insert one `tool` message with `notRunResult` for each such call.
+- [x] 2.4 Insert that `tool` message after the assistant message and after the `tool` messages that follow it. Expected result: the function removes no message and changes no message.
+- [x] 2.5 Keep `needsClientResult`, thus a call that the provider ran gets no answer. Write the module header again: the repair is a result that states that the call did not run.
+- [x] 2.6 In `src/loop/run-agent.ts`, make `settleTranscript` call `answerUnansweredToolCalls(messages, initial.length)`. Change the warn message to `"unanswered tool calls answered at run exit"`, and keep its fields. Write the doc comment again.
+- [x] 2.7 In `src/loop/run-agent.ts`, keep the interruption marker on the last assistant message of the run on each abort path. Remove each comment that says that the settle can remove a message.
+- [x] 2.8 In `src/app/message-assembly.ts`, call `answerUnansweredToolCalls(history)` in place of the strip. Change the warn message to `"unanswered tool calls answered in thread history"`, and keep its fields. Write the comment again.
+- [x] 2.9 In `src/memory/tool-call-integrity.test.ts`, change each strip test into an answer test. Expected result: the call and the prose stay, and the not-run result comes after the assistant message and its tool messages.
+- [x] 2.10 In `src/loop/run-agent.test.ts`, change `describe("runAgent — undispatched tool calls at a terminal finish")` and the abort tests. Expected result: a `content-filter` call stays with a not-run result, and its tool never runs.
+- [x] 2.11 In the same file, add a test for an aborted partial with a complete call. Expected result: the partial stays with the interruption marker, and a not-run result follows it.
+- [x] 2.12 In `src/app/message-assembly.test.ts`, change `"repairs a stored dangling tool call and logs the strip"`. Expected result: the not-run result sits between the assistant message and the next user message.
+- [x] 2.13 In the same file, add a test that two assemblies of one window give byte-identical messages.
+- [x] 2.14 Run `tsc -p tsconfig.json`. Run `bun test src/memory/tool-call-integrity.test.ts src/loop/run-agent.test.ts src/app/message-assembly.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 3. The continuation
 
