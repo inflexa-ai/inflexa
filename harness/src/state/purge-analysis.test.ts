@@ -490,6 +490,36 @@ describe("createAnalysisPurge", () => {
         expect(await countMessages(threadIds)).toBe(0);
     });
 
+    it("removes the turn records of a conversation thread and of its child thread", async () => {
+        const doomed = await seedAnalysis(`purge-turns-${run}`, { vectorIndex: false });
+        const child = `turns-child-${run}`;
+        (
+            await createThreadStore(rig.pool).createThread({
+                threadId: child,
+                analysisId: doomed.analysisId,
+                title: "A report session",
+                type: "report",
+                parentThreadId: doomed.threadIds[0],
+                parentSeq: 2,
+            })
+        )._unsafeUnwrap();
+        const threadIds = [doomed.threadIds[0]!, child];
+        for (const threadId of threadIds) {
+            await rig.pool.query({
+                text: `INSERT INTO cortex_thread_turns (thread_id, start_seq, status, closed_at) VALUES ($1, 1, 'done', NOW())`,
+                values: [threadId],
+            });
+        }
+
+        (await purge.purgeAnalysis(doomed.analysisId))._unsafeUnwrap();
+
+        const { rows } = await rig.pool.query<{ n: number }>({
+            text: `SELECT COUNT(*)::int AS n FROM cortex_thread_turns WHERE thread_id = ANY($1)`,
+            values: [threadIds],
+        });
+        expect(rows[0]?.n).toBe(0);
+    });
+
     it("removes the analysis's plans on a schema that has no cascade to fall back on", async () => {
         // A schema of its own, with the plans-to-state foreign key removed, so the
         // plan row is reachable only by the purge's own statement. This is the shape

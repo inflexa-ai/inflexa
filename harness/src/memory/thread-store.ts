@@ -22,8 +22,8 @@
  * row and the thread reads as it did; a listing widened with `includeArchived`
  * is the only way to obtain the id it takes, so the recovery is reachable by a
  * host that holds no thread ids it obtained elsewhere.
- * `purgeThread` is not recoverable: it removes the `messages` rows, the report
- * session-state rows, and the metadata rows of the whole subtree in one
+ * `purgeThread` is not recoverable: it removes the `messages` rows, the turn
+ * records, the report session-state rows, and the metadata rows of the whole subtree in one
  * transaction, so a failure partway leaves them all — never a thread stripped of
  * its transcript, nor a transcript with nothing naming it. It is the thread-scoped member of this package's
  * reclamation vocabulary — `purgeAnalysis` reclaims an analysis's whole
@@ -245,7 +245,7 @@ export interface ThreadStore {
     /**
      * Reclaim the subtree's whole footprint: the named thread, every descendant
      * reachable through `parent_thread_id` at any depth, and the `messages` rows
-     * of every one of them, removed together in one transaction. Unrecoverable —
+     * and the turn records of every one of them, removed together in one transaction. Unrecoverable —
      * nothing survives, and no tombstone marks that any of it existed. A
      * `thread_id` with no row succeeds as a no-op.
      *
@@ -562,6 +562,15 @@ export function createThreadStore(pool: Pool): ThreadStore {
                     [threadId],
                 ),
             )
+                .andThen(() =>
+                    tryMutation("thread-store.purgeThread.turnRecords", () =>
+                        client.query(
+                            `${SUBTREE_CTE}
+         DELETE FROM cortex_thread_turns WHERE thread_id IN (SELECT thread_id FROM subtree)`,
+                            [threadId],
+                        ),
+                    ),
+                )
                 .andThen(() =>
                     tryMutation("thread-store.purgeThread.reportSessionState", () =>
                         client.query(

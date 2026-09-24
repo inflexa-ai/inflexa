@@ -8,10 +8,24 @@ import type { Pool } from "pg";
 import type { TokenUsageRollup } from "../contracts/usage.js";
 import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { envelopeMessage, isInterruptedMessage, markInterruptedMessage, syntheticRecordMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
+import {
+    contextRecordMessage,
+    envelopeMessage,
+    isInterruptedMessage,
+    markInterruptedMessage,
+    syntheticRecordMessage,
+    syntheticUserMessage,
+} from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import type { ConversationUIMessage } from "./conversation-display-storage.js";
-import { __resetThreadHistoryMetricsForTest, conversationRecordTurn, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
+import {
+    __resetThreadHistoryMetricsForTest,
+    conversationRecordTurn,
+    createThreadHistory,
+    EVICTION_BLOCK_TURNS,
+    type ConversationTurn,
+    type ThreadHistory,
+} from "./thread-history.js";
 import { createThreadStore } from "./thread-store.js";
 
 const THREAD = "analysis-thread-1";
@@ -100,8 +114,8 @@ let history: ThreadHistory;
  * projection is the honest input: nothing was displayed because no turn ran.
  * The display projection has its own suite below.
  */
-function append(threadId: string, modelMessages: readonly ModelMessage[], turnUsage?: TokenUsageRollup): ResultAsync<void, DbError> {
-    return history.appendTurn(threadId, { modelMessages, displayMessages: [], ...(turnUsage ? { turnUsage } : {}) });
+function append(threadId: string, modelMessages: readonly ModelMessage[]): ResultAsync<void, DbError> {
+    return history.appendTurn(threadId, { modelMessages, displayMessages: [] });
 }
 
 beforeEach(async () => {
@@ -1026,230 +1040,215 @@ describe("dual model/display turn persistence", () => {
     });
 });
 
-// --- turn usage rollup ------------------------------------------------------
+// --- figures of an older turn ------------------------------------------------
 
-describe("appendTurn turn usage rollup", () => {
-    const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340, cacheReadInputTokens: 900 };
-
-    /**
-     * Every row's stored rollup, oldest-first. Asserted at the column rather than
-     * through `loadAll`, because "on this row and on NO other" is a storage fact:
-     * a read that folded the figure onto a neighbour would satisfy a display-level
-     * assertion while the write was placing it wrong.
-     */
-    async function storedRollups(threadId = THREAD): Promise<(TokenUsageRollup | null)[]> {
-        const { rows } = await pool.query<{ reported_usage: TokenUsageRollup | null }>(
-            "SELECT reported_usage FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC",
-            [threadId],
+describe("the figures on the rows of an older turn", () => {
+    it("reads a row with the two figures back with its figures", async () => {
+        const rollup: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
+        await pool.query(
+            `INSERT INTO messages (thread_id, seq, message_envelope, tokens, reported_usage, turn_duration_ms)
+             VALUES ($1, 0, $2::json, 4, NULL, NULL), ($1, 1, $3::json, 4, $4::jsonb, 8412)`,
+            [
+                THREAD,
+                JSON.stringify(envelopeMessage(userText("an older question"))),
+                JSON.stringify(envelopeMessage(assistantText("an older answer"))),
+                JSON.stringify(rollup),
+            ],
         );
-        return rows.map((r) => r.reported_usage);
-    }
 
-    it("stores the rollup on the turn's last assistant row and on no other", async () => {
-        // A serial-tool turn: two assistant rows, and only the LAST one ends the turn.
-        const turn = [
-            userText("run the comparison"),
-            assistantToolUse("call-1", "run_pca", { k: 2 }),
-            userToolResult("call-1", "done"),
-            assistantText("here are the results"),
-        ];
-        (await append(THREAD, turn, ROLLUP))._unsafeUnwrap();
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
 
-        expect(await storedRollups()).toEqual([null, null, null, ROLLUP]);
+        expect(rows.map((row) => row.usage)).toEqual([undefined, rollup]);
+        expect(rows.map((row) => row.durationMs)).toEqual([undefined, 8412]);
+        expect("usage" in rows[0]!).toBe(false);
+        expect("durationMs" in rows[0]!).toBe(false);
     });
 
-    it("stores no rollup when the caller supplies none", async () => {
+    it("stores no figure on a row of appendTurn", async () => {
         (await append(THREAD, [userText("question one"), assistantText("answer one")]))._unsafeUnwrap();
 
-        expect(await storedRollups()).toEqual([null, null]);
+        const { rows } = await pool.query<{ reported_usage: unknown; turn_duration_ms: string | null }>(
+            "SELECT reported_usage, turn_duration_ms::text AS turn_duration_ms FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC",
+            [THREAD],
+        );
+        expect(rows).toEqual([
+            { reported_usage: null, turn_duration_ms: null },
+            { reported_usage: null, turn_duration_ms: null },
+        ]);
+    });
+});
+
+// --- writeTurn --------------------------------------------------------------
+
+describe("writeTurn", () => {
+    const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340, cacheReadInputTokens: 900 };
+
+    function display(id: string, role: "user" | "assistant", text: string): ConversationUIMessage {
+        return { id, role, parts: [{ type: "text", text, state: "done" }] };
+    }
+
+    function opening(text = "run the comparison"): ConversationTurn {
+        return {
+            modelMessages: [userText(text), contextRecordMessage("run-activity", "[Run Activity]\nNo runs are currently running or suspended.")],
+            displayMessages: [display(`user-${text}`, "user", text)],
+            author: "dr.chen@lab.example",
+        };
+    }
+
+    function round(id: string, text: string): ConversationTurn {
+        return {
+            modelMessages: [assistantToolUse(`call-${id}`, "run_pca", { k: 2 }), userToolResult(`call-${id}`, "done"), assistantText(text)],
+            displayMessages: [display("assistant-1", "assistant", text)],
+        };
+    }
+
+    interface TurnRecordRow {
+        readonly start_seq: string;
+        readonly status: string;
+        readonly reason: string | null;
+        readonly reported_usage: TokenUsageRollup | null;
+        readonly turn_duration_ms: string | null;
+        readonly closed: boolean;
+    }
+
+    async function turnRecords(threadId = THREAD): Promise<TurnRecordRow[]> {
+        const { rows } = await pool.query<TurnRecordRow>(
+            `SELECT start_seq::text AS start_seq, status, reason, reported_usage, turn_duration_ms::text AS turn_duration_ms, closed_at IS NOT NULL AS closed
+               FROM cortex_thread_turns WHERE thread_id = $1 ORDER BY start_seq`,
+            [threadId],
+        );
+        return rows;
+    }
+
+    /** Each stored row as text, which a byte-identity check compares. */
+    async function storedRowTexts(threadId = THREAD): Promise<string[]> {
+        const { rows } = await pool.query<{ row: string }>(
+            `SELECT seq::text || ' ' || message_envelope::text || ' ' || COALESCE(display_envelope::text, '-') || ' ' || COALESCE(author, '-') AS row
+               FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC`,
+            [threadId],
+        );
+        return rows.map((r) => r.row);
+    }
+
+    it("adds the rows of an opening and an open record, keyed by the seq of the user row", async () => {
+        (await append(THREAD, [userText("an earlier question"), assistantText("an earlier answer")]))._unsafeUnwrap();
+
+        const { startSeq } = (await history.writeTurn(THREAD, { opening: opening(), rounds: [] }))._unsafeUnwrap();
+
+        expect(startSeq).toBe(2);
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
+        expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3]);
+        expect(rows[2]!.author).toBe("dr.chen@lab.example");
+        expect(rows[3]!.author).toBeUndefined();
+        expect(await turnRecords()).toEqual([{ start_seq: "2", status: "open", reason: null, reported_usage: null, turn_duration_ms: null, closed: false }]);
     });
 
-    it("stores a rollup that reports no quantity at all as absent, not as a rollup of absences", async () => {
-        // Both shapes a caller can hand over for "nothing was reported". Storing
-        // either as a rollup would make a turn that was TOLD nothing read back as a
-        // turn that SPENT nothing — the distinction the whole capability rests on.
-        (await append(THREAD, [userText("question one"), assistantText("answer one")], {}))._unsafeUnwrap();
-        (await append(THREAD, [userText("question two"), assistantText("answer two")], { inputTokens: undefined }))._unsafeUnwrap();
+    it("appends each later round after the opening, with the display envelope of the round on its first row", async () => {
+        const { startSeq } = (await history.writeTurn(THREAD, { opening: opening(), rounds: [] }))._unsafeUnwrap();
+        (await history.writeTurn(THREAD, { startSeq, rounds: [round("a", "first round")] }))._unsafeUnwrap();
+        (await history.writeTurn(THREAD, { startSeq, rounds: [round("b", "second round")] }))._unsafeUnwrap();
 
-        expect(await storedRollups()).toEqual([null, null, null, null]);
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
+        expect(rows.map((row) => row.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+        expect(rows.map((row) => row.displayEnvelope !== undefined)).toEqual([true, false, true, false, false, true, false, false]);
+        expect(rows[2]!.displayEnvelope!.messages[0]!.parts).toEqual([{ type: "text", text: "first round", state: "done" }]);
+        expect(rows[5]!.displayEnvelope!.messages[0]!.parts).toEqual([{ type: "text", text: "second round", state: "done" }]);
     });
 
-    it("succeeds and stores nothing for a turn that persisted no assistant message", async () => {
-        // An abort before any output. There is no row on which the figure would mean
-        // anything, so it is dropped rather than parked on the user's own message.
-        const appended = await append(THREAD, [userText("aborted before any reply")], ROLLUP);
+    it("lands the opening, two rounds, and the close of one write in order", async () => {
+        const first = round("a", "first round");
+        const second = round("b", "second round");
 
-        expect(appended.isOk()).toBe(true);
-        expect(await storedRollups()).toEqual([null]);
+        (
+            await history.writeTurn(THREAD, { opening: opening(), rounds: [first, second], close: { status: "done", turnUsage: ROLLUP, turnDurationMs: 8412 } })
+        )._unsafeUnwrap();
+
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
+        expect(rows.map((row) => row.message)).toEqual([...opening().modelMessages, ...first.modelMessages, ...second.modelMessages]);
+        expect((await turnRecords()).map((record) => record.status)).toEqual(["done"]);
     });
 
-    it("leaves neither messages nor rollup when the turn's transaction rolls back", async () => {
-        // Fail the SECOND insert, so the rollup-bearing row is the one that never
-        // lands and a surviving first row is exactly what a leak would look like.
+    it("sets the status, the reason, the rollup, and the duration at the close, and stores the note last", async () => {
+        const { startSeq } = (await history.writeTurn(THREAD, { opening: opening(), rounds: [round("a", "first round")] }))._unsafeUnwrap();
+        const note = conversationRecordTurn("[Turn Failed]\nThe turn stopped before it finished. Reason: The model request failed.");
+
+        (
+            await history.writeTurn(THREAD, {
+                startSeq,
+                rounds: [],
+                close: { status: "failed", reason: "The model request failed.", turnUsage: ROLLUP, turnDurationMs: 8412, note },
+            })
+        )._unsafeUnwrap();
+
+        expect(await turnRecords()).toEqual([
+            { start_seq: "0", status: "failed", reason: "The model request failed.", reported_usage: ROLLUP, turn_duration_ms: "8412", closed: true },
+        ]);
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
+        expect(rows.at(-1)!.message).toEqual(note.modelMessages[0]!);
+    });
+
+    it("stores a rollup with no quantity as absent, and a second close changes nothing", async () => {
+        const { startSeq } = (
+            await history.writeTurn(THREAD, { opening: opening(), rounds: [], close: { status: "done", turnUsage: {}, turnDurationMs: 0 } })
+        )._unsafeUnwrap();
+
+        (await history.writeTurn(THREAD, { startSeq, rounds: [], close: { status: "failed", reason: "The model request failed." } }))._unsafeUnwrap();
+
+        expect(await turnRecords()).toEqual([{ start_seq: "0", status: "done", reason: null, reported_usage: null, turn_duration_ms: "0", closed: true }]);
+    });
+
+    it("leaves no row and no record when a write fails", async () => {
         await pool.query(
             `CREATE FUNCTION boom_insert() RETURNS trigger AS $$ BEGIN
-               IF NEW.seq = 1 THEN RAISE EXCEPTION 'simulated insert failure'; END IF;
+               IF NEW.seq = 2 THEN RAISE EXCEPTION 'simulated insert failure'; END IF;
                RETURN NEW;
              END; $$ LANGUAGE plpgsql`,
         );
         await pool.query("CREATE TRIGGER boom_insert_trg BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION boom_insert()");
 
-        const appended = await append(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP);
+        const written = await history.writeTurn(THREAD, { opening: opening(), rounds: [round("a", "first round")] });
 
-        expect(appended.isErr()).toBe(true);
-        expect(await storedRollups()).toEqual([]);
+        expect(written.isErr()).toBe(true);
+        expect(await storedRowTexts()).toEqual([]);
+        expect(await turnRecords()).toEqual([]);
     });
 
-    it("takes the rollup with it when the tail turn is retracted", async () => {
-        // Free by construction — the rollup is a column on the row — and pinned here
-        // so a future move to a side table cannot silently orphan a turn's cost
-        // behind a transcript that no longer holds the turn.
-        (await append(THREAD, [userText("first question"), assistantText("first answer")], ROLLUP))._unsafeUnwrap();
-        (await append(THREAD, [userText("second question"), assistantText("second answer")], ROLLUP))._unsafeUnwrap();
-        expect(await storedRollups()).toEqual([null, ROLLUP, null, ROLLUP]);
-
-        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
-
-        expect(await storedRollups()).toEqual([null, ROLLUP]);
-    });
-
-    it("reads a row written before the column existed back as absent", async () => {
-        // The migration is additive with no backfill, so a pre-existing row is
-        // indistinguishable from a turn that reported nothing — the honest value,
-        // those figures never having been recorded. An INSERT naming neither the
-        // column nor a default is exactly that row.
-        await pool.query("INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ($1, 0, $2::json, 4)", [
-            THREAD,
-            JSON.stringify(envelopeMessage(userText("written before rollups existed"))),
-        ]);
-
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat()[0]!.usage).toBeUndefined();
-        // Absent, not present-and-undefined: a consumer spreading the row must not
-        // acquire a `usage` key that overwrites one.
-        expect("usage" in page.flat()[0]!).toBe(false);
-    });
-
-    it("surfaces the stored rollup on the display read", async () => {
-        const turn = [userText("question one"), assistantText("answer one")];
-        (await append(THREAD, turn, ROLLUP))._unsafeUnwrap();
-
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat().map((m) => m.usage)).toEqual([undefined, ROLLUP]);
-        // Nothing else about the display read changes — same rows, same order.
-        expect(page.flat().map((m) => m.message)).toEqual(turn);
-    });
-});
-
-// --- turn duration ----------------------------------------------------------
-
-describe("appendTurn turn duration", () => {
-    const ROLLUP: TokenUsageRollup = { inputTokens: 1200, outputTokens: 340 };
-    const DURATION_MS = 8_412;
-
-    /**
-     * Every row's stored duration, oldest-first, as the column holds it. Asserted
-     * at the column rather than through `loadAll`, because "on this row and on NO
-     * other" is a storage fact: a read that folded the figure onto a neighbour
-     * would satisfy a display-level assertion while the write placed it wrong.
-     */
-    async function storedDurations(threadId = THREAD): Promise<(string | null)[]> {
-        const { rows } = await pool.query<{ turn_duration_ms: string | null }>(
-            "SELECT turn_duration_ms::text AS turn_duration_ms FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC",
-            [threadId],
-        );
-        return rows.map((r) => r.turn_duration_ms);
-    }
-
-    it("stores the duration on the turn's last assistant row and reads it back beside the rollup", async () => {
-        // A serial-tool turn: two assistant rows, and only the LAST one ends the turn.
-        const turn = [
-            userText("run the comparison"),
-            assistantToolUse("call-1", "run_pca", { k: 2 }),
-            userToolResult("call-1", "done"),
-            assistantText("here are the results"),
-        ];
-        (await history.appendTurn(THREAD, { modelMessages: turn, displayMessages: [], turnUsage: ROLLUP, turnDurationMs: DURATION_MS }))._unsafeUnwrap();
-
-        expect(await storedDurations()).toEqual([null, null, null, String(DURATION_MS)]);
-
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat().map((m) => m.durationMs)).toEqual([undefined, undefined, undefined, DURATION_MS]);
-        // The two figures ride one row, thus a reloaded header carries both of them.
-        expect(page.flat().at(-1)!.usage).toEqual(ROLLUP);
-    });
-
-    it("keeps the duration of a turn that reported no quantity", async () => {
-        // The rollup goes absent under its own predicate. The duration holds a
-        // column of its own, thus the measured time survives that absence — the
-        // reason the two figures are not one stored record.
+    it("retracts the rows and the record of the last turn, and keeps the earlier turn byte-identical", async () => {
         (
-            await history.appendTurn(THREAD, {
-                modelMessages: [userText("question one"), assistantText("answer one")],
-                displayMessages: [],
-                turnUsage: {},
-                turnDurationMs: DURATION_MS,
+            await history.writeTurn(THREAD, {
+                opening: opening("first question"),
+                rounds: [round("a", "first answer")],
+                close: { status: "done", turnDurationMs: 10 },
             })
         )._unsafeUnwrap();
-
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat()[1]!.durationMs).toBe(DURATION_MS);
-        expect(page.flat()[1]!.usage).toBeUndefined();
-    });
-
-    it("stores no duration when the caller supplies none", async () => {
-        (await append(THREAD, [userText("question one"), assistantText("answer one")], ROLLUP))._unsafeUnwrap();
-
-        expect(await storedDurations()).toEqual([null, null]);
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat()[1]!.durationMs).toBeUndefined();
-        // Absent, not present-and-undefined: a consumer that spreads the row must
-        // not acquire a `durationMs` key that overwrites one.
-        expect("durationMs" in page.flat()[1]!).toBe(false);
-    });
-
-    it("reads a row written before the column existed back as absent", async () => {
-        // The migration is additive with no backfill, thus a row that predates the
-        // column is indistinguishable from a turn that nobody measured. An INSERT
-        // that names neither the column nor a default is exactly that row.
-        await pool.query("INSERT INTO messages (thread_id, seq, message_envelope, tokens) VALUES ($1, 0, $2::json, 4)", [
-            THREAD,
-            JSON.stringify(envelopeMessage(userText("written before durations existed"))),
-        ]);
-
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat()[0]!.durationMs).toBeUndefined();
-        expect("durationMs" in page.flat()[0]!).toBe(false);
-    });
-
-    it("takes the duration with it when the tail turn is retracted", async () => {
-        // Free by construction — the duration is a column on the row — and pinned
-        // here so a later move to a side table cannot orphan the time of a turn
-        // behind a transcript that no longer holds that turn.
+        const earlierRows = await storedRowTexts();
+        const earlierRecords = await turnRecords();
         (
-            await history.appendTurn(THREAD, {
-                modelMessages: [userText("first question"), assistantText("first answer")],
-                displayMessages: [],
-                turnUsage: ROLLUP,
-                turnDurationMs: DURATION_MS,
+            await history.writeTurn(THREAD, { opening: opening("second question"), rounds: [round("b", "second answer")], close: { status: "aborted" } })
+        )._unsafeUnwrap();
+
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+
+        expect(outcome).toEqual({ kind: "retracted", messages: 5 });
+        expect(await storedRowTexts()).toEqual(earlierRows);
+        expect(await turnRecords()).toEqual(earlierRecords);
+    });
+
+    it("gives the record on the user row only, and a host record makes no record", async () => {
+        (
+            await history.writeTurn(THREAD, {
+                opening: opening(),
+                rounds: [round("a", "an answer")],
+                close: { status: "done", turnUsage: ROLLUP, turnDurationMs: 8412 },
             })
         )._unsafeUnwrap();
-        (
-            await history.appendTurn(THREAD, {
-                modelMessages: [userText("second question"), assistantText("second answer")],
-                displayMessages: [],
-                turnUsage: ROLLUP,
-                turnDurationMs: 2_000,
-            })
-        )._unsafeUnwrap();
-        expect(await storedDurations()).toEqual([null, String(DURATION_MS), null, "2000"]);
+        (await history.appendTurn(THREAD, conversationRecordTurn("Run run-1 completed.")))._unsafeUnwrap();
 
-        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        const rows = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
 
-        expect(await storedDurations()).toEqual([null, String(DURATION_MS)]);
-        const page = (await history.loadAll(THREAD))._unsafeUnwrap();
-        expect(page.flat().map((m) => m.durationMs)).toEqual([undefined, DURATION_MS]);
-        expect(page.flat().map((m) => m.usage)).toEqual([undefined, ROLLUP]);
+        expect(rows.map((row) => row.turn !== undefined)).toEqual([true, false, false, false, false, false]);
+        expect(rows[0]!.turn).toEqual({ status: "done", usage: ROLLUP, durationMs: 8412 });
+        expect(await turnRecords()).toHaveLength(1);
     });
 });
 
@@ -1490,9 +1489,14 @@ describe("loadRecent ignores the stored rollup", () => {
         const huge: TokenUsageRollup = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
         const labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
         for (const label of labels) {
-            (await append("with-rollups", labeledTurn(label), huge))._unsafeUnwrap();
+            (await append("with-rollups", labeledTurn(label)))._unsafeUnwrap();
             (await append("no-rollups", labeledTurn(label)))._unsafeUnwrap();
         }
+        await pool.query(
+            `UPDATE messages SET reported_usage = $2::jsonb
+              WHERE thread_id = $1 AND message_envelope->'message'->>'role' = 'assistant'`,
+            ["with-rollups", JSON.stringify(huge)],
+        );
         const budget = turnCost(labeledTurn("a")) * 3;
 
         const withRollups = (await history.loadRecent("with-rollups", budget))._unsafeUnwrap();

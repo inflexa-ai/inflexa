@@ -62,23 +62,23 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 3. The turn record and the store writes
 
-- [ ] 3.1 In `src/state/init.ts`, add the table `cortex_thread_turns` of the design, after the table `messages`. Write a comment block for its columns, the same as the block of `messages`.
-- [ ] 3.2 In that block, say that the table holds the state of a turn and no message. Say that `messages.reported_usage` and `messages.turn_duration_ms` hold the figures of the older turns.
-- [ ] 3.3 In `src/memory/thread-history.ts`, remove `turnUsage` and `turnDurationMs` from `ConversationTurn`. Remove the write of the two columns. Keep their read in `readTurns`.
-- [ ] 3.4 Move the insert of one group out of `appendTurn` into `insertGroup(client, threadId, startSeq, group)`. Expected result: `appendTurn` and `writeTurn` store one group the same way.
-- [ ] 3.5 Export `type TurnStatus = "open" | "done" | "aborted" | "failed"`. Export `TurnClose` with `status: Exclude<TurnStatus, "open">`, `reason?`, `turnUsage?`, `turnDurationMs?`, and `note?: ConversationTurn`.
-- [ ] 3.6 Export `TurnWrite` as a union of two shapes. One shape holds `opening`, and the other holds `startSeq`. Both hold `rounds` and an optional `close`. Export `TurnWriteResult` with `startSeq`.
-- [ ] 3.7 Add `writeTurn(threadId, write): ResultAsync<TurnWriteResult, DbError>` to `ThreadHistory`. Do the write in one `withTransaction`, under the advisory lock of `appendTurn`.
-- [ ] 3.8 In `writeTurn`, insert the opening group, and then the turn record with the status `open`, keyed by the `seq` of the first opening row. Then insert each round group, and then the note group.
-- [ ] 3.9 When `close` is present, update the record where the status is `open`. Set the status, the reason, `closed_at`, the rollup under `hasReportedUsage`, and the duration.
-- [ ] 3.10 In `writeTurn`, touch `cortex_analysis_threads.updated_at` one time, with the savepoint of `appendTurn`.
-- [ ] 3.11 In `retractLastTurn`, delete each row of `cortex_thread_turns` with `start_seq >= boundary`, in the same transaction.
-- [ ] 3.12 Write the doc comment of `retractLastTurn` again. When the last turn goes, each earlier prefix stays byte-identical. A later request never sees a changed earlier record, and only the last turn can go.
-- [ ] 3.13 Export `StoredTurnRecord` with `status`, `reason?`, `usage?`, and `durationMs?`. Add `readonly turn?: StoredTurnRecord` to `StoredMessage`.
-- [ ] 3.14 In `readTurns`, join `cortex_thread_turns` on the thread id and on `start_seq = messages.seq`. Set `turn` only on a row with a record. Set each member only when its column is not null.
-- [ ] 3.15 In `src/memory/thread-store.ts`, make `purgeThread` delete the rows of `cortex_thread_turns` of the subtree. Do it after the messages and before the thread rows.
-- [ ] 3.16 In `src/state/purge-analysis.ts`, make `deleteCortexRows` delete the rows of `cortex_thread_turns` through the thread rows, before the thread rows.
-- [ ] 3.17 In `src/memory/thread-history.test.ts`, add `describe("writeTurn")` with these tests:
+- [x] 3.1 In `src/state/init.ts`, add the table `cortex_thread_turns` of the design, after the table `messages`. Write a comment block for its columns, the same as the block of `messages`.
+- [x] 3.2 In that block, say that the table holds the state of a turn and no message. Say that `messages.reported_usage` and `messages.turn_duration_ms` hold the figures of the older turns.
+- [x] 3.3 In `src/memory/thread-history.ts`, remove `turnUsage` and `turnDurationMs` from `ConversationTurn`. Remove the write of the two columns. Keep their read in `readTurns`.
+- [x] 3.4 Move the insert of one group out of `appendTurn` into `insertGroup(client, threadId, startSeq, group)`. Expected result: `appendTurn` and `writeTurn` store one group the same way.
+- [x] 3.5 Export `type TurnStatus = "open" | "done" | "aborted" | "failed"`. Export `TurnClose` with `status: Exclude<TurnStatus, "open">`, `reason?`, `turnUsage?`, `turnDurationMs?`, and `note?: ConversationTurn`.
+- [x] 3.6 Export `TurnWrite` as a union of two shapes. One shape holds `opening`, and the other holds `startSeq`. Both hold `rounds` and an optional `close`. Export `TurnWriteResult` with `startSeq`.
+- [x] 3.7 Add `writeTurn(threadId, write): ResultAsync<TurnWriteResult, DbError>` to `ThreadHistory`. Do the write in one `withTransaction`, under the advisory lock of `appendTurn`.
+- [x] 3.8 In `writeTurn`, insert the opening group, and then the turn record with the status `open`, keyed by the `seq` of the first opening row. Then insert each round group, and then the note group.
+- [x] 3.9 When `close` is present, update the record where the status is `open`. Set the status, the reason, `closed_at`, the rollup under `hasReportedUsage`, and the duration.
+- [x] 3.10 In `writeTurn`, touch `cortex_analysis_threads.updated_at` one time, with the savepoint of `appendTurn`.
+- [x] 3.11 In `retractLastTurn`, delete each row of `cortex_thread_turns` with `start_seq >= boundary`, in the same transaction.
+- [x] 3.12 Write the doc comment of `retractLastTurn` again. When the last turn goes, each earlier prefix stays byte-identical. A later request never sees a changed earlier record, and only the last turn can go.
+- [x] 3.13 Export `StoredTurnRecord` with `status`, `reason?`, `usage?`, and `durationMs?`. Add `readonly turn?: StoredTurnRecord` to `StoredMessage`.
+- [x] 3.14 In `readTurns`, join `cortex_thread_turns` on the thread id and on `start_seq = messages.seq`. Set `turn` only on a row with a record. Set each member only when its column is not null.
+- [x] 3.15 In `src/memory/thread-store.ts`, make `purgeThread` delete the rows of `cortex_thread_turns` of the subtree. Do it after the messages and before the thread rows.
+- [x] 3.16 In `src/state/purge-analysis.ts`, make `deleteCortexRows` delete the rows of `cortex_thread_turns` through the thread rows, before the thread rows.
+- [x] 3.17 In `src/memory/thread-history.test.ts`, add `describe("writeTurn")` with these tests:
   - An opening adds its rows and an `open` record, keyed by the `seq` of the user row.
   - A later write appends its rounds after the opening, and each round has its display envelope.
   - One write with the opening, two rounds, and the close lands each part, in order.
@@ -87,9 +87,9 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
   - A failed write leaves no row and no record.
   - The retract removes the rows and the record of the last turn, and the rows of the earlier turn stay byte-identical.
   - `loadAll` gives the record on the user row only, and `appendTurn` of a host record adds no record.
-- [ ] 3.18 In the same file, remove the tests of the rollup and the duration that `appendTurn` wrote. Keep a test that an old row with the two columns reads back with its figures.
-- [ ] 3.19 In `src/memory/thread-store.test.ts` and `src/state/purge-analysis.test.ts`, add one test each. Expected result: the purge removes the turn records.
-- [ ] 3.20 Run `tsc -p tsconfig.json`. Run `bun test src/memory/thread-history.test.ts src/memory/thread-store.test.ts src/state/purge-analysis.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 3.18 In the same file, remove the tests of the rollup and the duration that `appendTurn` wrote. Keep a test that an old row with the two columns reads back with its figures.
+- [x] 3.19 In `src/memory/thread-store.test.ts` and `src/state/purge-analysis.test.ts`, add one test each. Expected result: the purge removes the turn records.
+- [x] 3.20 Run `tsc -p tsconfig.json`. Run `bun test src/memory/thread-history.test.ts src/memory/thread-store.test.ts src/state/purge-analysis.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 4. The display of each round
 

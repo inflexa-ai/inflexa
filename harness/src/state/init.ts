@@ -246,8 +246,8 @@ CREATE INDEX IF NOT EXISTS idx_cortex_regulatory_chunks_metadata
 -- the JSON operators retractLastTurn uses work the same on either type.
 --
 -- reported_usage holds a whole turn's TokenUsageRollup — what providers reported
--- for the turn this row completed — and is written only on the LAST assistant row
--- of a turn, so a reloaded transcript can show the figure the live turn showed.
+-- for the turn this row completed — on the LAST assistant row of an older turn
+-- only. cortex_thread_turns holds the figures of each later turn.
 -- It is NOT the tokens column beside it, and the two must never be read for
 -- each other: tokens is an offline js-tiktoken estimate stamped on EVERY row so
 -- the read path can window by budget without a provider round trip, and it exists
@@ -287,8 +287,8 @@ CREATE TABLE IF NOT EXISTS messages (
   role          TEXT,
   content_jsonb JSONB,
   message_envelope JSON,
-  -- Versioned AI SDK UIMessage projection for the whole turn. Present only
-  -- on the genuine-user-start row. Model-history reads never select it.
+  -- Versioned AI SDK UIMessage projection of one written group, on the first
+  -- row of that group. Model-history reads never select it.
   display_envelope JSONB,
   tokens        INTEGER NOT NULL,
   reported_usage JSONB,
@@ -296,6 +296,24 @@ CREATE TABLE IF NOT EXISTS messages (
   author        TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, seq)
+);
+
+-- The state of one chat turn, and no message: a close never changes a row of
+-- messages. messages.reported_usage and messages.turn_duration_ms hold the
+-- figures of the older turns, which have no record here.
+CREATE TABLE IF NOT EXISTS cortex_thread_turns (
+  thread_id        TEXT NOT NULL,
+  -- The seq of the user row that opens the turn.
+  start_seq        BIGINT NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('open', 'done', 'aborted', 'failed')),
+  -- A short text from the class of the error, never its message, because each later turn sends the note.
+  reason           TEXT,
+  -- Absent when no provider reported a quantity, the same as messages.reported_usage.
+  reported_usage   JSONB,
+  turn_duration_ms BIGINT,
+  opened_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at        TIMESTAMPTZ,
+  PRIMARY KEY (thread_id, start_seq)
 );
 
 -- Conversation thread metadata — the harness ThreadStore module's table,

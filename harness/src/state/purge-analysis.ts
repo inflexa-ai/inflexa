@@ -191,6 +191,15 @@ export function createAnalysisPurge({ pool, workflows, logger: injected }: Analy
                 analysisId,
             )
                 .andThen((messages) =>
+                    deleteRows(
+                        client,
+                        "purgeAnalysis.turnRecords",
+                        `DELETE FROM cortex_thread_turns
+                 WHERE thread_id IN (SELECT thread_id FROM cortex_analysis_threads WHERE analysis_id = $1)`,
+                        analysisId,
+                    ).map(() => messages),
+                )
+                .andThen((messages) =>
                     deleteRows(client, "purgeAnalysis.threads", "DELETE FROM cortex_analysis_threads WHERE analysis_id = $1", analysisId).map((threads) => ({
                         threads,
                         messages,
