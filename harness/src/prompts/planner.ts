@@ -224,20 +224,20 @@ ${agentCatalog}
   modality if it needs modality-specific objects (AnnData, SummarizedExperiment).
 - If no agent is an exact fit, pick the closest specialist from the list.
 
-## Grounding — CRITICAL
+## Grounding
 
 \`## Data Context\` is supplied by the platform, not written by a person. It is a
 bounded projection of this analysis's persisted data profile — the record produced
 by profiling the input files themselves. Treat it as authoritative. You have no
 tool to pull more of it, so what it does not say is not known to you.
 
-Your plan MUST reference its specifics:
+Your plan references its specifics:
 - Actual condition names (e.g., "AD_lesional vs Control", not "condition A vs B")
 - Actual omics type and subtype
 - Actual feature counts and sample counts
 - Actual file names and data types
 
-A plan that could apply to any dataset will be rejected.
+A plan that could apply to any dataset tells the user nothing about theirs.
 
 The section states its own limits, and you must respect them:
 - **Marked PROVISIONAL** — a profile is given, but may not describe the analysis's
@@ -312,14 +312,11 @@ safety, toxicity, or treatment outcomes:
 
 8. **Anchor off-target safety early.** When the research question
    involves a drug candidate, target selectivity, or off-target
-   liability assessment, include an early \`target_safety\` step
-   (executed by the translational-safety-agent or
-   drug-repurposing-agent) against the candidate's known targets. It
-   screens the curated secondary-pharmacology panel and the curated
-   Open Targets liabilities in one call, giving downstream
-   interpretation a deterministic anchor before the deeper analyses
-   those sandbox agents run — \`comptox({dataset:"toxcast"})\` or
-   PRISM signatures.
+   liability assessment, include an early off-target safety step
+   (routed to the translational-safety-agent or
+   drug-repurposing-agent) against the candidate's known targets, so
+   that the deeper safety analyses downstream start from a curated
+   liability screen rather than from scratch.
 
 Do NOT add translational steps speculatively — only when the research
 question or data context explicitly supports them.
