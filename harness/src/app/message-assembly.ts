@@ -1,8 +1,9 @@
 /**
- * Chat-turn message assembly: the history window, the user message, and then the context records. A
- * kind gets a new record only when the window holds none of that kind, or when the hash of its text differs.
+ * Chat-turn message assembly: the view of the latest compaction marker, the user message, and then the
+ * context records. A kind gets a new record only when the view holds none of that kind, or when the hash
+ * of its text differs. The root loop compacts the view past its budget.
  *
- * The window of a `report` thread keeps the first turn, because that turn is the seed: the one record of
+ * The view of a `report` thread keeps the first turn, because that turn is the seed: the one record of
  * the brief and of the copied working memory.
  */
 
@@ -19,17 +20,10 @@ import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
 import { normalizeUnicode, redactSecrets } from "../input-sanitization.js";
 
-/**
- * Token budget for the `loadRecent` history window. Sized to leave headroom
- * under the model context window for the system prompt, tool definitions,
- * the three tail messages, and the output budget.
- */
-export const DEFAULT_HISTORY_TOKEN_BUDGET = 120_000;
-
 export interface AssembleMessagesArgs {
     /** The conversation thread — a UI-generated UUID, never the analysisId. */
     readonly threadId: string;
-    /** The type of the thread. A `report` thread gets no working-memory record, and its window keeps the seed. */
+    /** The type of the thread. A `report` thread gets no working-memory record, and its view keeps the seed. */
     readonly threadType: ThreadType;
     /** The analysis scope — keys working memory and (separately) the context. */
     readonly analysisId: string;
@@ -39,12 +33,10 @@ export interface AssembleMessagesArgs {
     readonly analysisContext: string | null;
     /** The analysis-wide run activity that chat-turn preparation rendered for this turn. */
     readonly runActivityContext: string;
-    /** The conversation message store — supplies the history window. */
+    /** The conversation message store — supplies the view of the thread. */
     readonly history: ThreadHistory;
     /** The working-memory store — rendered into a context record. */
     readonly workingMemory: WorkingMemoryStore;
-    /** History-window token budget. Defaults to {@link DEFAULT_HISTORY_TOKEN_BUDGET}. */
-    readonly tokenBudget?: number;
     /** Diagnostic seam for the history repair record; omitted falls back to no-op. */
     readonly logger?: Logger;
 }
@@ -59,13 +51,11 @@ export interface AssembledMessages {
 }
 
 /**
- * Assemble the message array for one chat turn. Async — it reads the history
- * window and renders working memory.
+ * Assemble the message array for one chat turn. Async — it reads the view of
+ * the thread and renders working memory.
  */
 export async function assembleMessages(args: AssembleMessagesArgs): Promise<AssembledMessages> {
-    const budget = args.tokenBudget ?? DEFAULT_HISTORY_TOKEN_BUDGET;
-
-    const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, budget, { keepFirstTurn: args.threadType === "report" }));
+    const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, { keepFirstTurn: args.threadType === "report" }));
 
     // Read-side safety net for the wire contract: every tool call carries a
     // result. The loop upholds it at every exit, but the store outlives any one

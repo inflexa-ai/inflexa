@@ -3,8 +3,9 @@
  *
  * Conversation-scoped store with an explicit two-method interface and
  * nothing else bundled in (no semantic recall, no working memory, no title
- * generation). It is also the home of context-window management — the read
- * side, `loadRecent`, returns a token-bounded window.
+ * generation). The read side, `loadRecent`, gives the view of the latest
+ * compaction marker: the stored markers decide what a turn sends, and the store
+ * deletes no row.
  *
  * Scope (see the harness-thread-store spec): conversation threads only. A `threadId` is the
  * UI-generated id of one conversation thread (a random UUID — an analysis
@@ -14,10 +15,10 @@
  * conversation-turn shaped on purpose, so reaching for it inside a
  * workflow step feels immediately wrong.
  *
- * The window is always a valid AI SDK model-message sequence: it begins on a
- * `user` message that is genuine user input — never a `tool`-role
- * continuation — and never splits a tool-call/tool-result pair. `loadRecent`
- * rounds the budget walk to turn boundaries, and each write of a group is atomic.
+ * The view is always a valid AI SDK model-message sequence: it begins on a
+ * `user` message — never a `tool`-role continuation — and never splits a
+ * tool-call/tool-result pair. A compaction starts only between two rounds, a
+ * drop keeps whole turns, and each write of a group is atomic.
  */
 
 import { randomUUID } from "node:crypto";
@@ -33,7 +34,7 @@ import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-
 import type { Logger } from "../lib/logger.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
-import { groupTurns, isGenuineUserStart } from "./conversation-view.js";
+import { conversationView, groupTurns, isGenuineUserStart } from "./conversation-view.js";
 import {
     HARNESS_PROVIDER_NAMESPACE,
     SYNTHETIC_MESSAGE_KEY,
@@ -70,7 +71,7 @@ export interface StoredMessage {
      * What providers reported for the whole TURN this row completed — present
      * only on the last assistant row of an older turn that stored a rollup on its
      * rows. A later turn keeps its rollup on its {@link StoredMessage.turn}. Not a
-     * per-row figure, and unrelated to the `tokens` count `loadRecent` windows by
+     * per-row figure, and unrelated to the `tokens` count of the row
      * (see the `reported_usage` column comment in the state-init DDL).
      */
     readonly usage?: TokenUsageRollup;
@@ -186,16 +187,9 @@ export interface StoredTurnRecord {
  */
 export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "empty-thread" } | { kind: "no-user-turn" };
 
-/**
- * The read options of {@link ThreadHistory.loadRecent}. An absent option gives
- * the default window.
- */
+/** The read options of {@link ThreadHistory.loadRecent}. */
 export interface LoadRecentOptions {
-    /**
-     * Keep the first turn of the thread in the window, past the eviction. The
-     * default is `false`, and the eviction then drops the first turn with the
-     * rest of the oldest block.
-     */
+    /** Keep the first turn of the thread, the seed of a report thread, in front of the latest summary. */
     readonly keepFirstTurn?: boolean;
 }
 
@@ -215,27 +209,13 @@ export interface ThreadHistory {
      */
     writeTurn(threadId: string, write: TurnWrite): ResultAsync<TurnWriteResult, DbError>;
     /**
-     * Return a recent-turns window that fits `tokenBudget`, oldest-first,
-     * snapped to a valid AI SDK model-message sequence. The window START advances
-     * in whole `EVICTION_BLOCK_TURNS` blocks (see the constant) so the prompt-cache
-     * prefix stays byte-stable across appends; the window may therefore carry a
-     * little less than the budget would strictly allow, but never more.
-     *
-     * `keepFirstTurn` keeps the first turn of the thread. The eviction then drops
-     * the oldest turns after it, and the window holds the first turn and that
-     * retained suffix. The first turn appears one time only.
-     *
-     * The retained turn can carry the window past `tokenBudget`. The cost is
-     * bounded. A report session seeds one turn, its brief carries a length bound,
-     * and its copy of the working-memory render is one row. The retained head also
-     * holds `messages[0]` byte-identical for the life of the thread, thus the
-     * prompt-cache prefix of the provider stays still.
+     * The view of the thread: the stored markers decide which rows a turn sends, and a thread with no
+     * marker gives each row. The loop computes each request with the same rule.
      */
-    loadRecent(threadId: string, tokenBudget: number, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError>;
+    loadRecent(threadId: string, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError>;
     /**
      * Return a thread's messages oldest-first for UI display, grouped into turns.
-     * NOT token-windowed — that is `loadRecent`'s job for the agent loop — and no
-     * eviction.
+     * It gives each row, and the view of the agent loop is `loadRecent`'s job.
      *
      * There is no paginated form, because a page could never cost less: the read
      * selects and parses every row of the thread and would slice only afterwards,
@@ -345,11 +325,11 @@ function getInstruments(): ThreadInstruments {
         const meter = metrics.getMeter("cortex.harness.memory");
         instruments = {
             totalTokens: meter.createHistogram("cortex.harness.thread.total_tokens", {
-                description: "Total token count of a conversation thread, sampled on every loadRecent",
+                description: "Total estimated token count of the rows of a conversation thread, sampled on every loadRecent",
                 unit: "{token}",
             }),
             turnsEvicted: meter.createHistogram("cortex.harness.thread.turns_evicted", {
-                description: "Conversation turns dropped by loadRecent's token-budget window",
+                description: "Conversation turns of which the view of loadRecent holds no message",
                 unit: "{turn}",
             }),
         };
@@ -364,29 +344,6 @@ function getInstruments(): ThreadInstruments {
 export function __resetThreadHistoryMetricsForTest(): void {
     instruments = undefined;
 }
-
-/**
- * Chunked-eviction block size, in whole turns — the granularity at which
- * `loadRecent`'s retained window may advance its START turn.
- *
- * `loadRecent` snaps its eviction count UP to a multiple of this block, so the
- * window's first turn — hence `messages[0]` and the whole tools+system+history
- * prompt-cache prefix — stays byte-identical across a run of appends and shifts
- * only once per block instead of once per turn. That single shift is the only
- * message-cache miss the block costs.
- *
- * The block is at once (a) the cache-miss cadence — one prefix shift per
- * `EVICTION_BLOCK_TURNS` appends once a thread is over budget — and (b) the most
- * extra context ever sacrificed: snapping up drops up to `EVICTION_BLOCK_TURNS -
- * 1` oldest turns the budget alone would have kept, trading a little history for
- * a still prefix. 4 holds the prefix for ~4 turns at a cost of at most 3 turns of
- * headroom — negligible against a ~120k-token budget that spans far more turns,
- * while cutting cache misses on a long thread roughly fourfold. A turn-count
- * block (not a token block) is deliberate: a cache miss is triggered by the START
- * turn moving, a per-turn event, so counting in turns makes the miss cadence
- * exact and independent of how large any individual turn is.
- */
-export const EVICTION_BLOCK_TURNS = 4;
 
 /**
  * Serialize the writes of one thread — without the lock, two transactions can
@@ -576,7 +533,7 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
         );
     }
 
-    function loadRecent(threadId: string, tokenBudget: number, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError> {
+    function loadRecent(threadId: string, options?: LoadRecentOptions): ResultAsync<ModelMessage[], DbError> {
         return tryQuery("thread-history.loadRecent", async () => {
             const { rows } = await pool.query<MessageRow>(
                 // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
@@ -585,78 +542,37 @@ export function createThreadHistory(pool: Pool, logger?: Logger): ThreadHistory 
                 // "10" before "2". Scrambled order splits a tool-call/tool-result pair
                 // across an intervening turn. The qualified name forces the bigint column.
                 //
-                // `reported_usage` is deliberately NOT selected. Windowing budgets on
-                // `tokens` — an offline estimate every row carries — and a turn that
-                // reported nothing has no rollup at all, so budgeting on the rollup
-                // would silently stop evicting on exactly those threads. The two are
-                // different measurements sharing a unit; see the column comments.
+                // `reported_usage` is deliberately NOT selected. The metric reads the
+                // `tokens` estimate that every row carries, and a turn that reported
+                // nothing has no rollup at all. The two are different measurements
+                // sharing a unit; see the column comments.
                 `SELECT seq::text AS seq, message_envelope, tokens
          FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC`,
                 [threadId],
             );
-            const parsed = rows.map((row) => ({
+            const parsed = rows.map((row, index) => ({
+                index,
                 message: parseStoredMessageEnvelope(row.message_envelope, `${threadId}/${row.seq}`).message,
                 tokens: row.tokens,
             }));
 
+            const view = conversationView(
+                parsed.map((row) => row.message),
+                options ?? {},
+            );
+            const held = new Set(view.sources);
             const turns = groupTurns(parsed, (row) => isGenuineUserStart(row.message));
-            const turnTokens = turns.map((turn) => turn.reduce((sum, row) => sum + row.tokens, 0));
-            const threadTotal = turnTokens.reduce((sum, n) => sum + n, 0);
+            const turnsLeftOut = turns.filter((turn) => !turn.some((row) => held.has(row.index))).length;
 
-            // Chunked eviction holds the prompt-cache prefix still. The budget alone
-            // evicts the OLDEST turns newest-first, so the window START — the stable
-            // head of the tools+system+history cache prefix — advances by ~one turn
-            // per appended turn; every turn then ships a shifted `messages[0]` and
-            // rewrites the whole message cache instead of reading it back (watch
-            // `cortex.harness.agent.cache_read_tokens` collapse on long threads).
-            // Instead, take the budget-minimal eviction and snap it UP to a whole
-            // `EVICTION_BLOCK_TURNS` block: `evicted` stays constant while the minimum
-            // sits inside a block and jumps by a block when it crosses, so
-            // `messages[0]` is byte-identical for a block of appends (the cache reads
-            // survive) and shifts only once per block. Snapping UP retains a subset of
-            // the budget-minimal window, so the kept tokens never exceed `tokenBudget`.
-            //
-            // Budget-minimal fill: walk newest-first, always keeping the most recent
-            // turn (a valid over-budget single turn beats an under-budget cut), then
-            // add older turns while they fit.
-            let included = 0;
-            let cumulative = 0;
-            for (let t = turns.length - 1; t >= 0; t--) {
-                if (included > 0 && cumulative + turnTokens[t]! > tokenBudget) break;
-                cumulative += turnTokens[t]!;
-                included++;
-            }
-            const minimalEvicted = turns.length - included;
-            // Snap the eviction count up to a block boundary, clamped below the last
-            // turn so the most recent turn always ships. Both terms of the min are
-            // >= `minimalEvicted`, so `turnsEvicted >= minimalEvicted`: the retained
-            // suffix is a subset of the budget-minimal one and stays within budget.
-            const turnsEvicted = turns.length === 0 ? 0 : Math.min(Math.ceil(minimalEvicted / EVICTION_BLOCK_TURNS) * EVICTION_BLOCK_TURNS, turns.length - 1);
+            const { totalTokens, turnsEvicted } = getInstruments();
+            const attributes = { eviction: turnsLeftOut > 0 };
+            totalTokens.record(
+                parsed.reduce((sum, row) => sum + row.tokens, 0),
+                attributes,
+            );
+            turnsEvicted.record(turnsLeftOut, attributes);
 
-            // The retained head. The first turn of a report session carries the
-            // brief and the copy of the working-memory render, and no tail message
-            // replaces them. Thus `keepFirstTurn` puts that turn in front of the
-            // retained suffix, and `messages[0]` never moves again. An eviction of
-            // zero already holds the first turn at the head, thus the option adds
-            // nothing there and the window never carries the turn two times.
-            const keepsFirstTurn = options?.keepFirstTurn === true && turnsEvicted > 0;
-
-            const { totalTokens, turnsEvicted: turnsEvictedHist } = getInstruments();
-            // A retained head gives one evicted turn back to the window, thus the
-            // histogram reports one turn less than the budget walk cut.
-            const turnsDropped = keepsFirstTurn ? turnsEvicted - 1 : turnsEvicted;
-            // The flag reads the cut of the budget walk, and never the count that
-            // the retained head reduced. The two answer different questions: the
-            // flag says that the window lost a turn, and the histogram says how
-            // many. A walk that cut one block, under a block size of one, drops
-            // its whole cut back into the window. The flag must still report the
-            // eviction, because the thread crossed its budget.
-            const attributes = { eviction: turnsEvicted > 0 };
-            totalTokens.record(threadTotal, attributes);
-            turnsEvictedHist.record(turnsDropped, attributes);
-
-            const retained = turns.slice(turnsEvicted);
-            return (keepsFirstTurn ? [turns[0]!, ...retained] : retained).flat().map((row) => row.message);
+            return view.messages;
         });
     }
 

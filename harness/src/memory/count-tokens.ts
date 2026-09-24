@@ -1,9 +1,7 @@
 /**
- * Write-time token counting for the conversation message store.
- *
- * `appendTurn` stamps a `tokens` count on every message row so `loadRecent`
- * windows by token budget without tokenizing on the read path. Counted once
- * at write, applied at load.
+ * Token counting for the conversation. The store stamps the count of each message
+ * row as its `tokens` column, and the loop estimates the view of a request with the
+ * same count. `loadRecent` has no budget.
  *
  * Providers do not publish one shared offline tokenizer,
  * so this uses `js-tiktoken`'s `cl100k_base` BPE. It is an approximation:
@@ -28,8 +26,8 @@ function enc(): Tiktoken {
  * the text is prompt text. A file rides the wire as an attachment, and the
  * provider bills it at its own rate, thus its bytes count as `0` — the same rule
  * as a top-level `file` block. A file that is stringified into the count inflates
- * the row of the message by tens of thousands of tokens, and the load window then
- * drops the true history.
+ * the row of the message by tens of thousands of tokens, and the loop then
+ * compacts the view too early.
  *
  * Each other output arm is plain JSON, thus it is stringified whole.
  */
@@ -77,8 +75,8 @@ function tokenizableText(block: unknown): string {
 }
 
 /**
- * Token count of a message's content. Used only at write time. Empty
- * content (an empty array or empty string) counts as `0`.
+ * Token count of a message's content. Empty content (an empty array or empty
+ * string) counts as `0`.
  */
 export function countTokens(content: ModelMessage["content"]): number {
     if (typeof content === "string") {

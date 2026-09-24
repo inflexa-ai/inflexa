@@ -10,9 +10,12 @@ import type { DbError } from "../lib/db-result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import {
     contextRecordMessage,
+    dropMarkerMessage,
     envelopeMessage,
     isInterruptedMessage,
+    markCompactionExchange,
     markInterruptedMessage,
+    summaryMarkerMessage,
     syntheticRecordMessage,
     syntheticUserMessage,
 } from "./ai-sdk-message-storage.js";
@@ -22,7 +25,6 @@ import {
     __resetThreadHistoryMetricsForTest,
     conversationRecordTurn,
     createThreadHistory,
-    EVICTION_BLOCK_TURNS,
     type ConversationTurn,
     type ThreadHistory,
 } from "./thread-history.js";
@@ -52,11 +54,6 @@ function assistantThinking(thinking: string, signature: string): ModelMessage {
     return { role: "assistant", content: [{ type: "reasoning", text: thinking, providerOptions: { anthropic: { signature } } }] };
 }
 
-/** Token cost of a turn — the same per-message count `appendTurn` stamps. */
-function turnCost(messages: readonly ModelMessage[]): number {
-    return messages.reduce((sum, m) => sum + countTokens(m.content), 0);
-}
-
 /** Assert a loaded window is a valid AI SDK model-message sequence. */
 function assertValidSequence(messages: readonly ModelMessage[]): void {
     const first = messages[0];
@@ -74,16 +71,7 @@ function assertValidSequence(messages: readonly ModelMessage[]): void {
     }
 }
 
-/** Total token cost of a flat window — the sum `loadRecent` budgets against. */
-function windowCost(messages: readonly ModelMessage[]): number {
-    return messages.reduce((sum, m) => sum + countTokens(m.content), 0);
-}
-
-/**
- * A fixed-cost two-message turn tagged by a single-token `label`, so every turn
- * costs the same while its opening `user` message stays unique — letting a test
- * detect exactly when the window START (`messages[0]`) shifts.
- */
+/** A two-message turn whose opening `user` message the `label` makes unique. */
 function labeledTurn(label: string): ModelMessage[] {
     return [userText(`question ${label} about the staged dataset here`), assistantText(`answer ${label} about the staged dataset here`)];
 }
@@ -110,7 +98,7 @@ let history: ThreadHistory;
 
 /**
  * Append a model-only turn. Most suites here exercise the model projection —
- * sequencing, windowing, eviction, retraction — where an empty display
+ * sequencing, the view, retraction — where an empty display
  * projection is the honest input: nothing was displayed because no turn ran.
  * The display projection has its own suite below.
  */
@@ -148,7 +136,7 @@ describe("appendTurn / loadRecent round-trip", () => {
         (await append(THREAD, turn1))._unsafeUnwrap();
         (await append(THREAD, turn2))._unsafeUnwrap();
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(loaded).toEqual([...turn1, ...turn2]);
 
         const { rows } = await pool.query<{ seq: string }>("SELECT seq FROM messages WHERE thread_id = $1 ORDER BY seq ASC", [THREAD]);
@@ -163,7 +151,7 @@ describe("appendTurn / loadRecent round-trip", () => {
         const signature = "Ev4BCkYIBx+gC/sig/abc==DEF09+xyz";
         (await append(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]))._unsafeUnwrap();
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         const reasoning = loaded.flatMap((m) => (typeof m.content === "string" ? [] : m.content)).find((b) => b.type === "reasoning");
         expect(reasoning).toMatchObject({
             type: "reasoning",
@@ -172,7 +160,7 @@ describe("appendTurn / loadRecent round-trip", () => {
     });
 
     it("returns an empty array for a thread with no messages", async () => {
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([]);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([]);
     });
 });
 
@@ -217,7 +205,7 @@ describe("envelope marshalling fidelity", () => {
         ];
         (await append(THREAD, turn))._unsafeUnwrap();
 
-        assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap());
+        assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD))._unsafeUnwrap());
     });
 
     it("preserves key order in every free-form payload a ModelMessage can carry", async () => {
@@ -248,7 +236,7 @@ describe("envelope marshalling fidelity", () => {
         ];
         (await append(THREAD, turn))._unsafeUnwrap();
 
-        assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap());
+        assertMarshalsVerbatim(turn, (await history.loadRecent(THREAD))._unsafeUnwrap());
     });
 
     it("holds the earlier turns of a thread byte-identical as later turns land on top", async () => {
@@ -257,10 +245,10 @@ describe("envelope marshalling fidelity", () => {
         const turn1 = [userText("first question"), assistantToolUse("toolu_3", "search_gene", { symbol: "EGFR", species: "human", limit: 5 })];
         const turn2 = [userToolResult("toolu_3", JSON.stringify({ hits: 3 })), assistantText("EGFR is well characterized.")];
         (await append(THREAD, turn1))._unsafeUnwrap();
-        const afterFirst = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const afterFirst = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         (await append(THREAD, turn2))._unsafeUnwrap();
-        const afterSecond = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const afterSecond = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         assertMarshalsVerbatim(turn1, afterFirst);
         expect(JSON.stringify(afterSecond.slice(0, turn1.length))).toBe(JSON.stringify(afterFirst));
@@ -279,7 +267,7 @@ describe("envelope marshalling fidelity", () => {
 
         assertMarshalsVerbatim(
             [userText("read the binary header"), userToolResult("toolu_4", "MAGICrest")],
-            (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap(),
+            (await history.loadRecent(THREAD))._unsafeUnwrap(),
         );
         expect((await history.retractLastTurn(THREAD))._unsafeUnwrap()).toEqual({ kind: "retracted", messages: 2 });
     });
@@ -328,7 +316,7 @@ describe("appendTurn thread activity", () => {
 
         // The turn committed with the failed touch rolled back out of it, not
         // alongside it: both rows are readable.
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn);
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM messages WHERE thread_id = $1", [THREAD]);
         expect(Number(rows[0]!.count)).toBe(turn.length);
     });
@@ -356,7 +344,7 @@ describe("appendTurn thread activity", () => {
         // A deleted thread keeps its messages, so the turn still lands — but the
         // tombstone is not a live row and the touch must neither revive it nor
         // advance its activity clock.
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn);
         const after = await readTombstone();
         expect(after.deleted_at).not.toBeNull();
         expect(after.updated_at).toBe(before.updated_at);
@@ -366,226 +354,115 @@ describe("appendTurn thread activity", () => {
         const turn = [userText("question one"), assistantText("answer one")];
         (await append(THREAD, turn))._unsafeUnwrap();
 
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn);
 
         const { rows } = await pool.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM cortex_analysis_threads WHERE thread_id = $1", [THREAD]);
         expect(Number(rows[0]!.count)).toBe(0);
     });
 });
 
-// --- token windowing --------------------------------------------------------
+// --- the view of the latest marker -----------------------------------------
 
-describe("loadRecent token windowing", () => {
-    it("evicts the oldest turns, keeping a within-budget window that ends at the most recent turn", async () => {
-        const K = EVICTION_BLOCK_TURNS;
-        const turns = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            .slice(0, 3 * K)
-            .split("")
-            .map(labeledTurn);
+/** The stored messages of one compaction exchange: the request, a memory edit, and the summary reply. */
+function exchangeOf(id: string): ModelMessage[] {
+    return [
+        syntheticUserMessage("Reply with the summary."),
+        assistantToolUse(`${id}-memory`, "update_working_memory", { section: "goal", text: "Compare the groups." }),
+        userToolResult(`${id}-memory`, JSON.stringify({ ok: true })),
+        assistantText(`summary ${id}`),
+    ].map((message) => markCompactionExchange(message, id));
+}
+
+function summaryMarker(id: string, text: string): ModelMessage {
+    return summaryMarkerMessage(text, { kind: "summary", id, tokensBefore: 1_000, tokensAfter: 100, durationMs: 20 });
+}
+
+function dropMarker(id: string, keptTurns: number): ModelMessage {
+    return dropMarkerMessage({ kind: "drop", id, tokensBefore: 1_000, tokensAfter: 500, durationMs: 20, keptTurns });
+}
+
+const runRecord = (text: string): ModelMessage => contextRecordMessage("run-activity", `[Run Activity]\n${text}`);
+
+describe("loadRecent view of the latest marker", () => {
+    it("gives each row of a thread with no marker", async () => {
+        const turns = ["A", "B", "C", "D", "E", "F"].map(labeledTurn);
         for (const turn of turns) {
             (await append(THREAD, turn))._unsafeUnwrap();
         }
 
-        // Budget fits only K of the 3K equal-cost turns, so the thread is well
-        // over budget and the oldest turns must be evicted.
-        const budget = K * turnCost(turns[0]!);
-        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
-
-        assertValidSequence(loaded);
-        // The retained window never exceeds the budget...
-        expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
-        // ...always ends at the most recent turn...
-        expect(loaded.slice(-2)).toEqual(turns.at(-1)!);
-        // ...and is a genuine window, not the whole thread.
-        expect(loaded.length).toBeLessThan(turns.flat().length);
-    });
-
-    it("returns an oversized single turn in full", async () => {
-        const small = [userText("hi"), assistantText("hello")];
-        const oversized = [
-            userText("a long and detailed multi-part research question"),
-            assistantToolUse("toolu_1", "search_gene", { symbol: "TP53" }),
-            userToolResult("toolu_1", JSON.stringify({ hits: 12, genes: ["TP53"] })),
-            assistantText("a thorough synthesis of every result returned above"),
-        ];
-        (await append(THREAD, small))._unsafeUnwrap();
-        (await append(THREAD, oversized))._unsafeUnwrap();
-
-        // Budget far below the most recent turn's own cost.
-        const loaded = (await history.loadRecent(THREAD, 1))._unsafeUnwrap();
-
-        expect(loaded).toEqual(oversized);
-        assertValidSequence(loaded);
-    });
-});
-
-// --- prefix stability (prompt-cache regression guard) -----------------------
-
-describe("loadRecent prefix stability", () => {
-    it("holds messages[0] byte-identical across a block of appends, shifting only on block boundaries", async () => {
-        const K = EVICTION_BLOCK_TURNS;
-        const turns = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            .slice(0, 3 * K + 2)
-            .split("")
-            .map(labeledTurn);
-
-        // Equal per-turn cost is the precondition the block math relies on — a
-        // single-token label keeps every turn the same size.
-        const costs = turns.map(turnCost);
-        expect(new Set(costs).size).toBe(1);
-        const perTurn = costs[0]!;
-
-        // Budget fits exactly K+1 newest turns; the (K+2)th present turn is the
-        // first that must be evicted.
-        const fitTurns = K + 1;
-        const budget = fitTurns * perTurn;
-
-        // Seed right up to the budget: whole thread returned, window opens on the
-        // very first turn.
-        for (let i = 0; i < fitTurns; i++) {
-            (await append(THREAD, turns[i]!))._unsafeUnwrap();
-        }
-        const seeded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
-        expect(seeded).toEqual(turns.slice(0, fitTurns).flat());
-
-        // Now append past the budget, capturing the window's first message after
-        // each append. Two full blocks show the pattern: stable, jump, stable.
-        const appendsToObserve = 2 * K + 1;
-        const firstMessages: string[] = [];
-        for (let i = fitTurns; i < fitTurns + appendsToObserve; i++) {
-            (await append(THREAD, turns[i]!))._unsafeUnwrap();
-            const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
-            assertValidSequence(loaded);
-            expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
-            // The most recent turn is always present, whatever the window start.
-            expect(loaded.slice(-2)).toEqual(turns[i]!);
-            firstMessages.push(JSON.stringify(loaded[0]));
-        }
-
-        // The regression guard: messages[0] must NOT advance every append. Within
-        // each block of K appends it is byte-identical; it changes exactly once,
-        // at the block boundary.
-        for (let j = 1; j < K; j++) {
-            expect(firstMessages[j]).toBe(firstMessages[0]!);
-        }
-        expect(firstMessages[K]).not.toBe(firstMessages[K - 1]!);
-        for (let j = K + 1; j < 2 * K; j++) {
-            expect(firstMessages[j]).toBe(firstMessages[K]!);
-        }
-
-        // Over 2K+1 appends a naive per-turn window would show 2K+1 distinct
-        // starts; the chunked window shows just three (two full blocks + the
-        // start of a third).
-        expect(new Set(firstMessages).size).toBe(3);
-    });
-});
-
-// --- the retained first turn ------------------------------------------------
-
-describe("loadRecent retained first turn", () => {
-    const K = EVICTION_BLOCK_TURNS;
-
-    /** Seed 3K equal-cost turns and give a budget that fits K of them. */
-    async function seedOverBudget(): Promise<{ turns: ModelMessage[][]; budget: number }> {
-        const turns = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            .slice(0, 3 * K)
-            .split("")
-            .map(labeledTurn);
-        for (const turn of turns) {
-            (await append(THREAD, turn))._unsafeUnwrap();
-        }
-        return { turns, budget: K * turnCost(turns[0]!) };
-    }
-
-    it("keeps the first turn in front of the retained suffix when the thread is over budget", async () => {
-        const { turns, budget } = await seedOverBudget();
-
-        const evicting = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
-        const loaded = (await history.loadRecent(THREAD, budget, { keepFirstTurn: true }))._unsafeUnwrap();
-
-        // The window is the first turn plus exactly the suffix the default read
-        // retains — the seed rides at the head, and it rides one time only.
-        expect(loaded).toEqual([...turns[0]!, ...evicting]);
-        expect(loaded.slice(0, 2)).toEqual(turns[0]!);
-        expect(loaded.slice(-2)).toEqual(turns.at(-1)!);
-        assertValidSequence(loaded);
-        // The retained head is the accepted cost: it carries the window past the
-        // budget, and the default read stays under it.
-        expect(windowCost(loaded)).toBeGreaterThan(budget);
-        expect(windowCost(evicting)).toBeLessThanOrEqual(budget);
-    });
-
-    it("evicts the oldest turns when the option is absent", async () => {
-        const { turns, budget } = await seedOverBudget();
-
-        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
-
-        // Two whole blocks go, and the first turn goes with them.
-        expect(loaded).toEqual(turns.slice(2 * K).flat());
-        expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
-        assertValidSequence(loaded);
-    });
-
-    it("returns the whole thread when nothing is evicted", async () => {
-        const turns = ["A", "B", "C"].map(labeledTurn);
-        for (const turn of turns) {
-            (await append(THREAD, turn))._unsafeUnwrap();
-        }
-
-        const loaded = (await history.loadRecent(THREAD, 1_000_000, { keepFirstTurn: true }))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         expect(loaded).toEqual(turns.flat());
         assertValidSequence(loaded);
     });
-});
 
-// --- boundary snapping ------------------------------------------------------
+    it("starts the view at a stored summary marker, and holds no message of the stored exchange", async () => {
+        const marker = summaryMarker("c-1", "The user compares two groups.");
+        (await append(THREAD, labeledTurn("A")))._unsafeUnwrap();
+        (
+            await append(THREAD, [userText("question B"), assistantToolUse("toolu_b", "search_gene", { symbol: "EGFR" }), userToolResult("toolu_b", "{}")])
+        )._unsafeUnwrap();
+        (await append(THREAD, [...exchangeOf("c-1"), marker, runRecord("none"), assistantText("answer B")]))._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("C")))._unsafeUnwrap();
 
-describe("loadRecent boundary snapping", () => {
-    it("snaps past an orphan tool_result to a genuine user turn", async () => {
-        const turn1 = [
-            userText("question that needs a tool call"),
-            assistantToolUse("toolu_a", "search_gene", { symbol: "EGFR" }),
-            userToolResult("toolu_a", JSON.stringify({ hits: 3 })),
-            assistantText("answer grounded in the tool result"),
-        ];
-        const turn2 = [userText("a simple follow-up question"), assistantText("a simple follow-up answer")];
-        (await append(THREAD, turn1))._unsafeUnwrap();
-        (await append(THREAD, turn2))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
-        // A naive newest-first cut at this budget would include turn2 plus the
-        // tail of turn1 — landing the window start on turn1's tool_result-only
-        // user message. The snap drops the partial turn1 entirely.
-        const budget = turnCost(turn2) + countTokens(turn1[3]!.content);
-        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
-
-        expect(loaded).toEqual(turn2);
+        expect(loaded).toEqual([marker, runRecord("none"), assistantText("answer B"), ...labeledTurn("C")]);
         assertValidSequence(loaded);
     });
 
-    it("never splits a tool_use / tool_result pair", async () => {
-        const turn1 = [userText("opening question"), assistantText("opening answer")];
-        const turn2 = [
-            userText("question driving a tool call"),
-            assistantToolUse("toolu_x", "search_pathway", { id: "R-HSA-1" }),
-            userToolResult("toolu_x", JSON.stringify({ pathway: "apoptosis" })),
-            assistantText("final answer using the pathway result"),
-        ];
-        (await append(THREAD, turn1))._unsafeUnwrap();
-        (await append(THREAD, turn2))._unsafeUnwrap();
+    it("gives each message except the exchange when no marker follows the exchange", async () => {
+        (await append(THREAD, labeledTurn("A")))._unsafeUnwrap();
+        (await append(THREAD, [userText("question B"), ...exchangeOf("c-1")]))._unsafeUnwrap();
 
-        // Budget lands between the tool_use and its tool_result if walked
-        // message-by-message. The turn-atomic window keeps the pair together.
-        const budget = countTokens(turn2[2]!.content) + countTokens(turn2[3]!.content);
-        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([...labeledTurn("A"), userText("question B")]);
+    });
 
-        expect(loaded).toEqual(turn2);
+    it("gives the seed and then the summary marker of a report thread with keepFirstTurn", async () => {
+        const seed = syntheticRecordMessage("[Report Brief]\nDraft the methods section.");
+        const marker = summaryMarker("c-1", "The draft covers the methods.");
+        (await append(THREAD, [seed]))._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("A")))._unsafeUnwrap();
+        (await append(THREAD, [userText("question B"), ...exchangeOf("c-1"), marker, runRecord("none")]))._unsafeUnwrap();
+
+        expect((await history.loadRecent(THREAD, { keepFirstTurn: true }))._unsafeUnwrap()).toEqual([seed, marker, runRecord("none")]);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([marker, runRecord("none")]);
+    });
+
+    it("gives the summary, the kept turns without reasoning, and the later rows after a stored drop marker", async () => {
+        const marker = summaryMarker("c-1", "first summary");
+        const kept: ModelMessage = {
+            role: "assistant",
+            content: [
+                { type: "reasoning", text: "kept reasoning", providerOptions: { anthropic: { signature: "SIG-kept" } } },
+                { type: "text", text: "answer C" },
+            ],
+        };
+        const later = assistantThinking("later reasoning", "SIG-later");
+        (await append(THREAD, [userText("question A"), ...exchangeOf("c-1"), marker, runRecord("r1")]))._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("B")))._unsafeUnwrap();
+        (await append(THREAD, [userText("question C"), kept]))._unsafeUnwrap();
+        (await append(THREAD, [userText("question D"), assistantText("answer D"), ...exchangeOf("c-2"), dropMarker("c-2", 2), later]))._unsafeUnwrap();
+
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
+
+        expect(loaded).toEqual([marker, userText("question C"), assistantText("answer C"), userText("question D"), assistantText("answer D"), later]);
         assertValidSequence(loaded);
+        const stored = (await history.loadAll(THREAD))._unsafeUnwrap().flat();
+        expect(stored.some((row) => JSON.stringify(row.message) === JSON.stringify(kept))).toBe(true);
+    });
 
-        const toolUseIdx = loaded.findIndex((m) => typeof m.content !== "string" && m.content.some((b) => b.type === "tool-call"));
-        const toolResultIdx = loaded.findIndex((m) => m.role === "tool" && typeof m.content !== "string" && m.content.some((b) => b.type === "tool-result"));
-        expect(toolUseIdx).toBeGreaterThanOrEqual(0);
-        expect(toolResultIdx).toBe(toolUseIdx + 1);
+    it("goes back to the earlier marker when a retract removes the last turn and its marker", async () => {
+        const first = summaryMarker("c-1", "first summary");
+        (await append(THREAD, [userText("question A"), ...exchangeOf("c-1"), first, runRecord("r1"), assistantText("answer A")]))._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("B")))._unsafeUnwrap();
+        const before = (await history.loadRecent(THREAD))._unsafeUnwrap();
+        (await append(THREAD, [userText("question C"), ...exchangeOf("c-2"), summaryMarker("c-2", "second summary"), runRecord("r2")]))._unsafeUnwrap();
+
+        (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(before);
+        expect(before[0]).toEqual(first);
     });
 });
 
@@ -617,7 +494,7 @@ describe("loadRecent numeric seq ordering", () => {
 
         // Budget far above the whole thread — every turn is included, so the only
         // thing under test is the read's ordering.
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         // Ascending numeric seq == insertion order, which we control end to end.
         expect(loaded).toEqual(inOrder.flat());
@@ -635,9 +512,9 @@ describe("loadRecent numeric seq ordering", () => {
 // --- overflow metric --------------------------------------------------------
 
 describe("loadRecent overflow metric", () => {
-    it("reports no eviction for a thread under budget", async () => {
+    it("reports no eviction for a thread with no marker", async () => {
         (await append(THREAD, [userText("a small question"), assistantText("a small answer")]))._unsafeUnwrap();
-        (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         const collected = await collectMetrics();
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
@@ -651,22 +528,23 @@ describe("loadRecent overflow metric", () => {
         expect((total!.dataPoints[0]!.value as { sum: number }).sum).toBeGreaterThan(0);
     });
 
-    it("reports the evicted-turn count for a thread over budget", async () => {
-        const turn1 = [userText("question one here"), assistantText("answer one here")];
-        const turn2 = [userText("question two here"), assistantText("answer two here")];
-        const turn3 = [userText("question three here"), assistantText("answer three here")];
-        (await append(THREAD, turn1))._unsafeUnwrap();
-        (await append(THREAD, turn2))._unsafeUnwrap();
-        (await append(THREAD, turn3))._unsafeUnwrap();
+    it("reports the turns before a summary marker in the sixth of eight turns", async () => {
+        for (const label of ["A", "B", "C", "D", "E"]) {
+            (await append(THREAD, labeledTurn(label)))._unsafeUnwrap();
+        }
+        (
+            await append(THREAD, [userText("question F"), ...exchangeOf("c-1"), summaryMarker("c-1", "summary"), runRecord("none"), assistantText("answer F")])
+        )._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("G")))._unsafeUnwrap();
+        (await append(THREAD, labeledTurn("H")))._unsafeUnwrap();
 
-        // Only the most recent turn fits — turns 1 and 2 are evicted.
-        (await history.loadRecent(THREAD, turnCost(turn3)))._unsafeUnwrap();
+        (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         const collected = await collectMetrics();
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
         expect(evicted).toBeDefined();
         const evictedPoint = evicted!.dataPoints[0]!;
-        expect((evictedPoint.value as { sum: number }).sum).toBe(2);
+        expect((evictedPoint.value as { sum: number }).sum).toBe(5);
         expect(evictedPoint.attributes.eviction).toBe(true);
     });
 });
@@ -683,14 +561,14 @@ describe("retractLastTurn", () => {
         // Snapshot the window, append one more (single-message) turn, then retract
         // it: the byte-stable prefix guarantee only holds if the retracted tail
         // restores the exact prior row set.
-        const before = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const before = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
         (await append(THREAD, [userText("question three")]))._unsafeUnwrap();
 
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 1 });
 
-        const after = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const after = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(after).toEqual(before);
     });
 
@@ -743,12 +621,12 @@ describe("retractLastTurn", () => {
         // First retract takes the newest turn off; the prior turn is now the tail.
         const first = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(first).toEqual({ kind: "retracted", messages: turn2.length });
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn1);
 
         // Second retract takes the remaining turn off; the thread is now empty.
         const second = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(second).toEqual({ kind: "retracted", messages: turn1.length });
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([]);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([]);
 
         // A third retract on the now-empty thread has nothing to remove.
         const third = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
@@ -768,7 +646,7 @@ describe("retractLastTurn", () => {
         // the thread — the outcome's count is the whole turn's row count.
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: turn.length });
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([]);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([]);
     });
 
     it("never leaves a partial turn when an append races a retract on one thread", async () => {
@@ -787,7 +665,7 @@ describe("retractLastTurn", () => {
         const retract = async () => (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         await Promise.all([append(), retract()]);
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(loaded.length === 0 || loaded.length === turn.length).toBe(true);
         if (loaded.length === turn.length) {
             expect(loaded).toEqual(turn);
@@ -814,12 +692,12 @@ describe("retractLastTurn", () => {
         expect(outcome).toEqual({ kind: "retracted", messages: 4 });
 
         // The whole tail turn came off and turn1 is intact — not a fragment of turn2.
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn1);
     });
 
     it("groups a loop-synthesized nudge into its turn rather than opening a new one", async () => {
-        // The same predicate on the read side: the nudge must not split one turn into two, or the
-        // token window can evict half a turn and `loadAll`'s turn grouping is wrong.
+        // The same predicate on the read side: the nudge must not split one turn into two, or a
+        // drop can keep half a turn and `loadAll`'s turn grouping is wrong.
         const turn = [
             userText("a question whose answer runs long"),
             assistantText("a reply cut off at the output-token limit"),
@@ -849,7 +727,7 @@ describe("retractLastTurn", () => {
         ];
         (await append(THREAD, turn))._unsafeUnwrap();
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(loaded).toEqual(turn);
         assertValidSequence(loaded);
     });
@@ -863,7 +741,7 @@ describe("interruption marker round-trip", () => {
         const turn = [userText("a question"), marked];
         (await append(THREAD, turn))._unsafeUnwrap();
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(loaded).toHaveLength(2);
         // The marker survives the store round-trip byte-identically...
         expect(loaded[1]).toEqual(marked);
@@ -872,7 +750,7 @@ describe("interruption marker round-trip", () => {
         expect(isInterruptedMessage(loaded[0]!)).toBe(false);
     });
 
-    it("snaps a window over a marked-tail turn exactly as over an unmarked one", async () => {
+    it("keeps a marked-tail turn through a drop exactly as an unmarked one", async () => {
         const turn1 = [
             userText("question that needs a tool call"),
             assistantToolUse("toolu_a", "search_gene", { symbol: "EGFR" }),
@@ -882,15 +760,13 @@ describe("interruption marker round-trip", () => {
         const turn2 = [userText("a simple follow-up question"), markInterruptedMessage(assistantText("a simple follow-up answer"))];
         (await append(THREAD, turn1))._unsafeUnwrap();
         (await append(THREAD, turn2))._unsafeUnwrap();
+        (await append(THREAD, [userText("question three"), ...exchangeOf("c-1"), dropMarker("c-1", 2)]))._unsafeUnwrap();
 
-        // The marker rides a non-boundary assistant role and does not change any
-        // message's content, so the window snaps past turn1's tool_result-only user
-        // message to turn2's genuine user start — exactly as an unmarked tail would —
-        // and the marker survives on the returned assistant message.
-        const budget = turnCost(turn2) + countTokens(turn1[3]!.content);
-        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+        // The marker rides a non-boundary assistant role, thus the drop keeps turn2
+        // whole, and the marker survives on the kept assistant message.
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
 
-        expect(loaded).toEqual(turn2);
+        expect(loaded).toEqual([...turn2, userText("question three")]);
         assertValidSequence(loaded);
         expect(isInterruptedMessage(loaded[1]!)).toBe(true);
     });
@@ -906,7 +782,7 @@ describe("interruption marker round-trip", () => {
         // unmarked turn does, leaving turn1 intact as the tail.
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 2 });
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn1);
     });
 });
 
@@ -920,12 +796,12 @@ describe("host-appended synthetic records", () => {
     // Built with `syntheticRecordMessage` — the constructor the HOST actually calls — not with
     // `syntheticUserMessage`. The two are separate markers that agree today, and every invariant
     // below rests on that agreement: if a record ever stopped carrying `SYNTHETIC_MESSAGE_KEY` it
-    // would read as a genuine turn start, splitting one turn in two for the token window and handing
+    // would read as a genuine turn start, splitting one turn in two for the view and handing
     // tail retraction a mid-turn cut point. Asserting against the loop's constructor instead would
     // leave that regression green.
     const runNotice = (): ModelMessage => syntheticRecordMessage("Run GSEA cross-species comparison completed: 3/3 steps in 4m12s.");
 
-    it("does not open a turn for paging or the token window", async () => {
+    it("does not open a turn for paging or the view", async () => {
         const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];
         (await append(THREAD, turn))._unsafeUnwrap();
         (await append(THREAD, [runNotice()]))._unsafeUnwrap();
@@ -936,14 +812,14 @@ describe("host-appended synthetic records", () => {
         expect(page.flat().length).toBe(3);
     });
 
-    it("is present in the window the next turn is assembled from", async () => {
+    it("is present in the view the next turn is assembled from", async () => {
         // This is what lets the agent answer "are you done?" without a tool call.
         const turn = [userText("kick off the analysis"), assistantText("launched — I'll report back")];
         (await append(THREAD, turn))._unsafeUnwrap();
         const notice = runNotice();
         (await append(THREAD, [notice]))._unsafeUnwrap();
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(loaded).toEqual([...turn, notice]);
         assertValidSequence(loaded);
     });
@@ -959,7 +835,7 @@ describe("host-appended synthetic records", () => {
         // it. The alternative — letting it open a turn — would hand retraction a mid-turn cut point.
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 3 });
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(turn1);
     });
 
     it("survives a retraction when a later genuine turn insulates it", async () => {
@@ -972,7 +848,7 @@ describe("host-appended synthetic records", () => {
 
         const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
         expect(outcome).toEqual({ kind: "retracted", messages: 2 });
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([...turn1, notice]);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual([...turn1, notice]);
     });
 });
 
@@ -997,7 +873,7 @@ describe("dual model/display turn persistence", () => {
 
         (await history.appendTurn(THREAD, { modelMessages, displayMessages }))._unsafeUnwrap();
 
-        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(modelMessages);
+        expect((await history.loadRecent(THREAD))._unsafeUnwrap()).toEqual(modelMessages);
         const page = (await history.loadAll(THREAD))._unsafeUnwrap();
         expect(page.flat()[0]!.displayEnvelope?.messages).toEqual(displayMessages);
         expect(page.flat()[1]!.displayEnvelope).toBeUndefined();
@@ -1349,7 +1225,7 @@ describe("appendTurn turn author", () => {
         const turn = [userText("question one"), assistantText("answer one")];
         (await appendAuthored(THREAD, turn, AUTHOR))._unsafeUnwrap();
 
-        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        const loaded = (await history.loadRecent(THREAD))._unsafeUnwrap();
         expect(loaded).toEqual(turn);
         expect(loaded.some((m) => "author" in m)).toBe(false);
     });
@@ -1479,34 +1355,28 @@ describe("countUserTurnsAfter", () => {
     });
 });
 
-// --- windowing is independent of the rollup ---------------------------------
+// --- the view is independent of the rollup ----------------------------------
 
 describe("loadRecent ignores the stored rollup", () => {
-    it("windows identically with and without rollups, including ones dwarfing the tokens counts", async () => {
-        // The regression this guards is silent: budgeting on the rollup would stop
-        // evicting on exactly the threads that reported nothing, and would evict
-        // nearly everything on a thread whose rollups dwarf its `tokens` counts.
+    it("gives the same view with and without a rollup on each row", async () => {
         const huge: TokenUsageRollup = { inputTokens: 5_000_000, outputTokens: 5_000_000 };
-        const labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
-        for (const label of labels) {
-            (await append("with-rollups", labeledTurn(label)))._unsafeUnwrap();
-            (await append("no-rollups", labeledTurn(label)))._unsafeUnwrap();
+        for (const threadId of ["with-rollups", "no-rollups"]) {
+            for (const label of ["a", "b", "c"]) {
+                (await append(threadId, labeledTurn(label)))._unsafeUnwrap();
+            }
+            (await append(threadId, [userText("question d"), ...exchangeOf("c-1"), dropMarker("c-1", 2), assistantText("answer d")]))._unsafeUnwrap();
         }
         await pool.query(
             `UPDATE messages SET reported_usage = $2::jsonb
               WHERE thread_id = $1 AND message_envelope->'message'->>'role' = 'assistant'`,
             ["with-rollups", JSON.stringify(huge)],
         );
-        const budget = turnCost(labeledTurn("a")) * 3;
 
-        const withRollups = (await history.loadRecent("with-rollups", budget))._unsafeUnwrap();
-        const withoutRollups = (await history.loadRecent("no-rollups", budget))._unsafeUnwrap();
+        const withRollups = (await history.loadRecent("with-rollups"))._unsafeUnwrap();
+        const withoutRollups = (await history.loadRecent("no-rollups"))._unsafeUnwrap();
 
         expect(withRollups).toEqual(withoutRollups);
-        // Eviction must actually have happened, or the equality above compares two
-        // full windows and proves nothing about budgeting.
-        expect(withRollups.length).toBeLessThan(labels.length * 2);
-        expect(windowCost(withRollups)).toBeLessThanOrEqual(budget);
+        expect(withRollups).toEqual([...labeledTurn("c"), userText("question d"), assistantText("answer d")]);
     });
 });
 
