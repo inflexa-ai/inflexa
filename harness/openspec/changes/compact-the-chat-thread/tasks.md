@@ -29,18 +29,18 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
 
 ## 2. The view rule
 
-- [ ] 2.1 Make `src/memory/conversation-view.ts`. Move `isGenuineUserStart` and `groupTurns` from `src/memory/thread-history.ts` into it, and export the two functions.
-- [ ] 2.2 In `src/memory/thread-history.ts`, import the two functions. Keep `GENUINE_USER_START_SQL`, and make its comment name the new home of its twin predicate.
-- [ ] 2.3 Export `interface ConversationViewOptions { readonly keepFirstTurn?: boolean }`.
-- [ ] 2.4 Export `interface ConversationView { readonly messages: ModelMessage[]; readonly sources: number[] }`. `sources[i]` is the index of the input message that gives `messages[i]`.
-- [ ] 2.5 Export `conversationView(messages, options): ConversationView`. Do the rule of the design: the head, the skip of an exchange message, the summary front, the drop, and the body.
-- [ ] 2.6 The head ends at the next genuine user start, or at the first message that carries a marker or an exchange mark.
-- [ ] 2.7 Export `withoutReasoning(message: ModelMessage): ModelMessage | undefined`. It gives an assistant message with no `reasoning` part, and `undefined` when no part is left. It gives each other message unchanged.
-- [ ] 2.8 Export `viewTokens(messages: readonly ModelMessage[]): number`. It gives the sum of `countTokens(message.content)`.
-- [ ] 2.9 Export `keptTurnsForDrop(messages, options, budget): number`. It walks the turns of the body of the current view, from the newest turn.
-- [ ] 2.10 The walk keeps the newest turn. It adds each older turn while `viewTokens` of the view stays within `budget`. Expected result: the count of the kept turns.
-- [ ] 2.11 Write the module header. It gives the rule, and it says that the loop and the reader call the same function.
-- [ ] 2.12 In the new `src/memory/conversation-view.test.ts`, add these tests:
+- [x] 2.1 Make `src/memory/conversation-view.ts`. Move `isGenuineUserStart` and `groupTurns` from `src/memory/thread-history.ts` into it, and export the two functions.
+- [x] 2.2 In `src/memory/thread-history.ts`, import the two functions. Keep `GENUINE_USER_START_SQL`, and make its comment name the new home of its twin predicate.
+- [x] 2.3 Export `interface ConversationViewOptions { readonly keepFirstTurn?: boolean }`.
+- [x] 2.4 Export `interface ConversationView { readonly messages: ModelMessage[]; readonly sources: number[] }`. `sources[i]` is the index of the input message that gives `messages[i]`.
+- [x] 2.5 Export `conversationView(messages, options): ConversationView`. Do the rule of the design: the head, the skip of an exchange message, the summary front, the drop, and the body.
+- [x] 2.6 The head ends at the next genuine user start, or at the first message that carries a marker or an exchange mark.
+- [x] 2.7 Export `withoutReasoning(message: ModelMessage): ModelMessage | undefined`. It gives an assistant message with no `reasoning` part, and `undefined` when no part is left. It gives each other message unchanged.
+- [x] 2.8 Export `viewTokens(messages: readonly ModelMessage[]): number`. It gives the sum of `countTokens(message.content)`.
+- [x] 2.9 Export `keptTurnsForDrop(messages, options, budget): number`. It walks the turns of the body of the current view, from the newest turn.
+- [x] 2.10 The walk keeps the newest turn. It adds each older turn while `viewTokens` of the view stays within `budget`. Expected result: the count of the kept turns.
+- [x] 2.11 Write the module header. It gives the rule, and it says that the loop and the reader call the same function.
+- [x] 2.12 In the new `src/memory/conversation-view.test.ts`, add these tests:
   - A list with no marker gives each message, and `sources` gives each index.
   - Only the latest summary marker counts.
   - No exchange message joins the view, also when no marker comes after the exchange.
@@ -50,7 +50,7 @@ Group 7 is the work of the CLI change `render-the-chat-compaction` in `cli/opens
   - An assistant message with only a reasoning part leaves the view of a drop.
   - The view of a view is byte-identical to the view.
   - `keptTurnsForDrop` keeps the newest turn when that turn alone exceeds the budget.
-- [ ] 2.13 Run `tsc -p tsconfig.json`. Run `bun test src/memory/conversation-view.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 2.13 Run `tsc -p tsconfig.json`. Run `bun test src/memory/conversation-view.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 3. The reader
 

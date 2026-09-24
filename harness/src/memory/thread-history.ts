@@ -33,11 +33,11 @@ import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-
 import type { Logger } from "../lib/logger.js";
 import { hasReportedUsage } from "../loop/metrics.js";
 import { countTokens } from "./count-tokens.js";
+import { groupTurns, isGenuineUserStart } from "./conversation-view.js";
 import {
     HARNESS_PROVIDER_NAMESPACE,
     SYNTHETIC_MESSAGE_KEY,
     envelopeMessage,
-    isSyntheticUserMessage,
     parseStoredMessageEnvelope,
     syntheticRecordMessage,
     type StoredMessageEnvelope,
@@ -303,35 +303,8 @@ export interface ThreadHistory {
 }
 
 /**
- * A turn starts on a `user` message that a human actually sent. Two kinds of
- * message carry the `user` role without opening a turn, and both are excluded
- * here:
- *
- * - a tool result, which in AI SDK terms is a `tool`-role message, so a mid-turn
- *   tool continuation never matches in the first place;
- * - a message the LOOP or the HOST synthesized (`syntheticUserMessage`) — the
- *   truncated-reply nudge the loop inserts mid-turn, and the record an embedder
- *   appends between turns for work that happened outside the conversation, such as
- *   an analysis run's outcome. Both carry the `user` role for the wire format and
- *   neither is user input. Reading one as a boundary would split one turn into
- *   two: the token window would evict half a turn, and `retractLastTurn` would cut
- *   its tail in the middle of a turn rather than at its head.
- *
- *   A host-appended record therefore belongs to the turn preceding it, so a tail
- *   retraction that removes that turn removes the record with it. That is the
- *   accepted consequence of the exclusion, not a defect — the alternative, letting
- *   it open a turn, is the exact failure the marker exists to prevent.
- *
- * {@link GENUINE_USER_START_SQL} is the twin of this predicate over stored
- * envelopes; the two are built from the same constants so they cannot drift.
- */
-function isGenuineUserStart(message: ModelMessage): boolean {
-    return message.role === "user" && !isSyntheticUserMessage(message);
-}
-
-/**
- * {@link isGenuineUserStart} expressed over a stored `message_envelope` — the
- * boundary predicate `retractLastTurn` cuts on.
+ * {@link isGenuineUserStart} (`conversation-view.ts`) expressed over a stored
+ * `message_envelope` — the boundary predicate `retractLastTurn` cuts on.
  *
  * Interpolating here, and only here, is safe: both interpolated values are
  * module constants shared with the TypeScript predicate, never caller input, so
@@ -358,24 +331,6 @@ const GENUINE_USER_START_SQL = `message_envelope->'message'->>'role' = 'user'
  */
 function serializeEnvelope(message: ModelMessage): string {
     return JSON.stringify(envelopeMessage(message), (_key, value: unknown) => (typeof value === "string" ? stripNulCharacters(value) : value));
-}
-
-/**
- * Group rows (oldest-first) into turns at genuine-user-start boundaries.
- * Generic over the row shape so the token-windowed read (`loadRecent`) and
- * the display read (`loadAll`) share it, each supplying its own start
- * predicate.
- */
-function groupTurns<T>(rows: readonly T[], isStart: (row: T) => boolean): T[][] {
-    const turns: T[][] = [];
-    for (const row of rows) {
-        if (turns.length === 0 || isStart(row)) {
-            turns.push([row]);
-        } else {
-            turns[turns.length - 1]!.push(row);
-        }
-    }
-    return turns;
 }
 
 interface ThreadInstruments {
