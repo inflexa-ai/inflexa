@@ -161,3 +161,68 @@ describe("conversation display recorder", () => {
         expect(streamed.finish({ fallbackText: "streamed in full" })[1]!.parts).toEqual([{ type: "text", text: "streamed", state: "done" }]);
     });
 });
+
+describe("conversation display recorder — rounds", () => {
+    it("gives the user message of the turn at the opening", () => {
+        const { recorder } = harness();
+
+        expect(recorder.takeOpening()).toEqual([{ id: "u1", role: "user", parts: [{ type: "text", text: "question", state: "done" }] }]);
+    });
+
+    it("gives the parts of each round under one assistant id", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "first" });
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+        await recorder.emit({ type: "tool-finished", source: TOP, toolUseId: "c1", name: "read_file", outcome: "ok" });
+        const first = recorder.takeRound([]);
+        await recorder.emit({ type: "text-delta", text: "second" });
+        const second = recorder.takeRound([]);
+
+        expect(first).toEqual([
+            {
+                id: "a1",
+                role: "assistant",
+                parts: [
+                    { type: "text", text: "first", state: "done" },
+                    { type: "data-tool-call", id: "c1", data: { toolCallId: "c1", toolName: "read_file", outcome: "ok" } },
+                ],
+            },
+        ]);
+        expect(second).toEqual([{ id: "a1", role: "assistant", parts: [{ type: "text", text: "second", state: "done" }] }]);
+    });
+
+    it("takes the text of the assistant message when the round streamed no text", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "tool-started", source: TOP, toolUseId: "c1", name: "read_file", input: {} });
+
+        const round = recorder.takeRound([
+            {
+                role: "assistant",
+                content: [
+                    { type: "text", text: "whole answer" },
+                    { type: "tool-call", toolCallId: "c1", toolName: "read_file", input: {} },
+                ],
+            },
+            { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "read_file", output: { type: "text", value: "x" } }] },
+        ]);
+
+        expect(round[0]!.parts.at(-1)).toEqual({ type: "text", text: "whole answer", state: "done" });
+    });
+
+    it("marks a pending approval aborted at the take", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run?", command: "inflexa run", status: "pending" } });
+
+        expect(recorder.takeRound([])[0]!.parts).toEqual([
+            { type: "data-ask", id: "ask-1", data: { id: "ask-1", title: "Run?", command: "inflexa run", status: "aborted" } },
+        ]);
+    });
+
+    it("gives no message for a round with no part", async () => {
+        const { recorder } = harness();
+        await recorder.emit({ type: "text-delta", text: "taken" });
+        recorder.takeRound([]);
+
+        expect(recorder.takeRound([{ role: "tool", content: [] }])).toEqual([]);
+    });
+});

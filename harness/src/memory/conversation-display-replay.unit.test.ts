@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { envelopeMessage } from "./ai-sdk-message-storage.js";
+import { envelopeMessage, syntheticRecordMessage } from "./ai-sdk-message-storage.js";
 import { storedMessagesToCortex } from "./conversation-display-replay.js";
 import { createConversationDisplayRecorder } from "./conversation-display-recorder.js";
-import { envelopeDisplayMessages } from "./conversation-display-storage.js";
+import { envelopeDisplayMessages, type ConversationUIMessage } from "./conversation-display-storage.js";
+import type { StoredMessage, StoredTurnRecord } from "./thread-history.js";
 
 const SOURCE = { agentId: "conversation", callPath: ["conversation"] };
 
@@ -267,5 +268,104 @@ describe("recorded conversation display replay", () => {
     it("skips a row with no stored projection rather than reconstructing one", () => {
         const model = { role: "user" as const, content: "written before display was persisted" };
         expect(storedMessagesToCortex([{ seq: 0, envelope: envelopeMessage(model), message: model }])).toEqual([]);
+    });
+});
+
+describe("replay of a turn stored in rounds", () => {
+    const user = { role: "user" as const, content: "q" };
+    const usage = { inputTokens: 10, outputTokens: 5 };
+
+    function openingRow(seq: number, turn?: StoredTurnRecord): StoredMessage {
+        return {
+            seq,
+            envelope: envelopeMessage(user),
+            message: user,
+            ...(turn === undefined ? {} : { turn }),
+            displayEnvelope: envelopeDisplayMessages([{ id: `u-${seq}`, role: "user", parts: [{ type: "text", text: "q" }] }]),
+        };
+    }
+
+    function roundRow(seq: number, parts: ConversationUIMessage["parts"], id = "a-1"): StoredMessage {
+        const reply = { role: "assistant" as const, content: "r" };
+        return { seq, envelope: envelopeMessage(reply), message: reply, displayEnvelope: envelopeDisplayMessages([{ id, role: "assistant", parts }]) };
+    }
+
+    function ask(status: "pending" | "resolved"): ConversationUIMessage["parts"][number] {
+        return { type: "data-ask", id: "ask-1", data: { id: "ask-1", title: "Run?", command: "inflexa run", status } };
+    }
+
+    it("gives one assistant message for two rounds with one id, with the parts in order", () => {
+        const replay = storedMessagesToCortex([openingRow(0), roundRow(1, [{ type: "text", text: "first" }]), roundRow(4, [{ type: "text", text: "second" }])]);
+
+        expect(replay.map((m) => m.role)).toEqual(["user", "assistant"]);
+        expect(replay[1]!.parts).toEqual([
+            { type: "text", text: "first" },
+            { type: "text", text: "second" },
+        ]);
+    });
+
+    it("replaces the earlier copy of a reconciling part in its position", () => {
+        const replay = storedMessagesToCortex([
+            openingRow(0),
+            roundRow(1, [{ type: "text", text: "before" }, ask("pending")]),
+            roundRow(4, [ask("resolved"), { type: "text", text: "after" }]),
+        ]);
+
+        expect(replay[1]!.parts).toEqual([
+            { type: "text", text: "before" },
+            { type: "data-ask", id: "ask-1", title: "Run?", command: "inflexa run", status: "resolved" },
+            { type: "text", text: "after" },
+        ]);
+    });
+
+    it("folds the rollup, the duration, and the interruption of an aborted turn record", () => {
+        const replay = storedMessagesToCortex([
+            openingRow(0, { status: "aborted", usage, durationMs: 4321 }),
+            roundRow(1, [{ type: "text", text: "first" }]),
+            roundRow(4, [{ type: "text", text: "partial" }]),
+        ]);
+
+        expect(replay[1]).toMatchObject({ usage, durationMs: 4321, interrupted: true });
+        expect("usage" in replay[0]!).toBe(false);
+    });
+
+    it("keeps the fold of the row figures for an older turn with no record", () => {
+        const older = { role: "assistant" as const, content: "an older answer" };
+        const newer = { inputTokens: 20, outputTokens: 7 };
+        const replay = storedMessagesToCortex([
+            {
+                ...openingRow(0),
+                displayEnvelope: envelopeDisplayMessages([
+                    { id: "u-0", role: "user", parts: [{ type: "text", text: "q" }] },
+                    { id: "a-0", role: "assistant", parts: [{ type: "text", text: "an older answer" }] },
+                ]),
+            },
+            { seq: 1, envelope: envelopeMessage(older), message: older, usage, durationMs: 1200 },
+            openingRow(2, { status: "done", usage: newer, durationMs: 800 }),
+            roundRow(3, [{ type: "text", text: "a newer answer" }]),
+        ]);
+
+        expect(replay.map((m) => m.usage)).toEqual([undefined, usage, undefined, newer]);
+        expect(replay.map((m) => m.durationMs)).toEqual([undefined, 1200, undefined, 800]);
+    });
+
+    it("keeps a failure note as a system message after the assistant message of its turn", () => {
+        const noteText = "[Turn Failed]\nThe turn stopped before it finished. Reason: The model request failed.";
+        const note = syntheticRecordMessage(noteText);
+        const replay = storedMessagesToCortex([
+            openingRow(0, { status: "failed", reason: "The model request failed.", usage }),
+            roundRow(1, [{ type: "text", text: "first" }]),
+            {
+                seq: 4,
+                envelope: envelopeMessage(note),
+                message: note,
+                displayEnvelope: envelopeDisplayMessages([{ id: "note", role: "system", parts: [{ type: "text", text: noteText }] }]),
+            },
+        ]);
+
+        expect(replay.map((m) => m.role)).toEqual(["user", "assistant", "system"]);
+        expect(replay[2]!.parts).toEqual([{ type: "text", text: noteText }]);
+        expect(replay[1]!.usage).toEqual(usage);
+        expect(replay[1]!.interrupted).toBeUndefined();
     });
 });
