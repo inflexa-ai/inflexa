@@ -62,7 +62,7 @@ afterEach(() => {
     __resetSidebarLiveForTest();
     // The MODELS section reads the boot store's agentModels cell + the ready-state connection; reset both
     // so one test's seed never bleeds into the next (mirrors __resetSidebarLiveForTest for the live sections).
-    __setAgentModelsForTest({ current: { conversation: "", sandbox: "", utility: "" }, pending: new Map() });
+    __setAgentModelsForTest({ current: { conversation: "", sandbox: "", utility: "" }, efforts: null, pending: new Map() });
     __setBootStateForTest({ phase: "idle" });
     // The SESSION section reads the open-thread snapshot (another module singleton) and the loaded-state
     // case repaints on a light theme; drop both so one case's seed never bleeds into the next.
@@ -758,15 +758,16 @@ describe("Sidebar MODELS section", () => {
         expect(frame).not.toContain("chat claude");
     });
 
-    test("renders each agent's active model", async () => {
+    test("renders each agent's active model and effort", async () => {
         __setAgentModelsForTest({
             current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
+            efforts: { conversation: "xhigh", sandbox: "medium", utility: "medium" },
             pending: new Map(),
         });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("MODELS");
         expect(frame).toContain("chat");
-        expect(frame).toContain("claude-opus-4-8");
+        expect(frame).toContain(`claude-opus-4-8 ${GLYPHS.middot} xhigh`);
         expect(frame).toContain("sandbox");
         expect(frame).toContain("claude-sonnet-4-5");
     });
@@ -774,11 +775,12 @@ describe("Sidebar MODELS section", () => {
     test("a scheduled switch shows the pending model on its own indicator line", async () => {
         __setAgentModelsForTest({
             current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
-            pending: new Map([["sandbox", "claude-haiku-4-5"]]),
+            efforts: null,
+            pending: new Map([["sandbox", { model: "claude-haiku-4-5", effort: "low" }]]),
         });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("claude-sonnet-4-5"); // still the active sandbox model
-        expect(frame).toContain("claude-haiku-4-5"); // the pending one
+        expect(frame).toContain(`claude-haiku-4-5 ${GLYPHS.middot} low`); // the pending selection
         expect(frame).toContain("pending");
     });
 });
@@ -793,6 +795,7 @@ describe("Sidebar MODELS connection line", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         __setAgentModelsForTest({
             current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
+            efforts: null,
             pending: new Map(),
         });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
@@ -804,7 +807,11 @@ describe("Sidebar MODELS connection line", () => {
 
     test("direct: shows the configured provider slug, never the mode", async () => {
         __setBootStateForTest({ phase: "ready", model: "deepseek-chat", connection: { provider: "deepseek", mode: "direct" } });
-        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-reasoner" }, pending: new Map() });
+        __setAgentModelsForTest({
+            current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-reasoner" },
+            efforts: null,
+            pending: new Map(),
+        });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("conn");
         expect(frame).toContain("deepseek"); // the configured provider slug

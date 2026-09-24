@@ -30,13 +30,16 @@ import {
     type BootSeams,
 } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
-import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
+import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
 
 /** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
 function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
     return { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", protocol: "openai-compatible", agents: {}, ...overrides };
 }
+
+/** One effort for each role, for a case about which roles share a model: the inner key then turns on the model only. */
+const UNIFORM_EFFORTS: Readonly<Record<AgentName, AgentEffort>> = { conversation: "medium", sandbox: "medium", utility: "medium" };
 
 /** A cliproxy connection with the given provider and optional agent overrides — for the boot resolution tests. */
 function cliproxyConnection(provider: string, agents: ResolvedModelConnection["agents"] = {}): ResolvedModelConnection {
@@ -288,15 +291,15 @@ describe("bootHarnessRuntime", () => {
             "registerNotificationSweep",
         ]);
         expect(calls).not.toContain("ingress");
-        // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it
-        // and share ONE underlying provider instance. Each role carries its own swappable HANDLE
-        // (so a later live switch of one agent re-points only that agent), but the
-        // handles delegate to the SAME inner, which is the referential invariant that matters.
+        // No `models.agents` and a single `harness.model` (claude-test-model): all roles resolve to it.
+        // Each role carries its own swappable HANDLE (so a later live switch of one agent re-points only
+        // that agent). Roles on the same model AND effort share ONE inner. The default efforts put
+        // conversation at high and sandbox and utility at medium, thus only those two share.
         expect(runtime.conversation.model).toBe("claude-test-model");
         expect(runtime.sandbox.model).toBe("claude-test-model");
         expect(runtime.utility.model).toBe("claude-test-model");
-        expect(agentProviderInner(runtime.sandbox.provider)).toBe(agentProviderInner(runtime.conversation.provider));
-        expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.conversation.provider));
+        expect(agentProviderInner(runtime.utility.provider)).toBe(agentProviderInner(runtime.sandbox.provider));
+        expect(agentProviderInner(runtime.conversation.provider)).not.toBe(agentProviderInner(runtime.sandbox.provider));
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
         // The assembled conversation agent + its agent provider are on the handle (the `chat` command
         // drives `runAgent(conversationAgent, …, conversation.provider)`). The agent is reached by thread
@@ -374,10 +377,12 @@ describe("bootHarnessRuntime", () => {
 
     test("resolves the model from the proxy only when config has none — all roles share the ONE auto-resolve", async () => {
         const calls: string[] = [];
-        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: null }) }))._unsafeUnwrap();
+        const runtime = (
+            await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: null }), efforts: UNIFORM_EFFORTS })
+        )._unsafeUnwrap();
 
         // All roles fall through to the proxy default; the auto-resolve is memoized, so `/models` is hit
-        // ONCE and all swappable handles delegate to the resulting id's single provider instance.
+        // ONCE and, at one effort, all swappable handles delegate to the resulting id's single provider instance.
         expect(runtime.conversation.model).toBe("claude-from-proxy");
         expect(runtime.sandbox.model).toBe("claude-from-proxy");
         expect(runtime.utility.model).toBe("claude-from-proxy");
@@ -622,6 +627,7 @@ describe("bootHarnessRuntime", () => {
             seams: recordingSeams(calls),
             config: testConfig({ model: "claude-test-model" }),
             connection: cliproxyConnection("anthropic", { sandbox: "claude-sonnet-4-5" }),
+            efforts: UNIFORM_EFFORTS,
         });
 
         const runtime = result._unsafeUnwrap();

@@ -30,7 +30,8 @@ import { pendingAddLines, storeFlightLines, transferLabel, transferReports, type
 import type { TransferReport } from "../../modules/libs/transfers.ts";
 import { openThread } from "../hooks/thread.ts";
 import { writeClipboard } from "../../lib/clipboard.ts";
-import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
+import type { AgentEffort, AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
+import type { AgentSelection } from "../../modules/harness/agent_switch.ts";
 import { getAnchor, getSessionUsageTotalsIncludingRuns, listAnalysisInputs } from "../../db/primary_query.ts";
 import type { LlmUsageTotals } from "../../db/primary_query.ts";
 import { formatTokenFigure, tokenFigureDetail } from "../../lib/usage_format.ts";
@@ -308,25 +309,29 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
 }
 
 /**
- * One MODELS-section row: an agent's currently-running model (an em dash until the runtime installs the
- * switch), and — when a switch is scheduled behind in-flight agent work — a warn-colored pending line
- * naming the model that will take effect once the work settles. Reads the live `agentModels` store
- * reactively, so a swap or a scheduled selection repaints without any wiring here.
+ * One MODELS-section row: an agent's currently-running model and effort (an em dash until the runtime
+ * installs the switch), and — when a switch is scheduled behind in-flight agent work — a warn-colored
+ * pending line naming the model and effort that will take effect once the work settles. Reads the live
+ * `agentModels` store reactively, so a swap or a scheduled selection repaints without any wiring here.
  */
 function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element {
     const current = (): string => agentModels().current[props.agent];
-    const pending = (): string | undefined => agentModels().pending.get(props.agent);
+    const effort = (): AgentEffort | undefined => agentModels().efforts?.[props.agent];
+    const pending = (): AgentSelection | undefined => agentModels().pending.get(props.agent);
     return (
         <>
             <text>
                 <Fg role="fgMuted">{`${props.label} `}</Fg>
                 <Fg role="fg">{current() || GLYPHS.emDash}</Fg>
+                <Show when={effort()}>
+                    <Fg role="fgMuted">{` ${GLYPHS.middot} ${effort()}`}</Fg>
+                </Show>
             </text>
             <Show when={pending()} keyed>
-                {(next: string) => (
+                {(next: AgentSelection) => (
                     <text>
                         <Fg role="warning">{`  ${GLYPHS.warning} ${GLYPHS.arrowRight} `}</Fg>
-                        <Fg role="fgMuted">{`${next} (pending)`}</Fg>
+                        <Fg role="fgMuted">{`${next.model} ${GLYPHS.middot} ${next.effort} (pending)`}</Fg>
                     </text>
                 )}
             </Show>

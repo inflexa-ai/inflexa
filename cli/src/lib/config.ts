@@ -180,6 +180,15 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
 ]);
 
 /**
+ * The reasoning efforts a user can select for an agent, from the shallowest to the deepest. These are the
+ * neutral names of the harness `ReasoningPolicy`, not the vendor names: the Anthropic provider sends
+ * `xhigh` as `max` to a model that has no `xhigh`, thus `max` has no name of its own here.
+ */
+export const AGENT_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+
+const agentEffortSchema = z.enum(AGENT_EFFORTS);
+
+/**
  * The top-level `models` block. `connection` selects the ONE shared chat backend; `agents` maps each
  * model role — `conversation` (the chat agent + its sub-agents), `sandbox`
  * (durable analysis workers), and `utility` (small bounded routing/classification
@@ -189,11 +198,13 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
  * resolves to the default connection, and an absent `agents` map means all roles resolve to the
  * single configured model — today's behavior verbatim. Per-agent model RESOLUTION
  * (`models.agents.<agent>` → `harness.model` → connection default) lives in `resolveModelConnection`
- * + boot, not in the schema.
+ * + boot, not in the schema. `efforts` maps each role to its reasoning effort. An absent role takes
+ * the default of `resolveAgentEfforts`.
  */
 export const modelsConfigSchema = z.object({
     connection: modelConnectionSchema.optional(),
     agents: z.object({ conversation: z.string().optional(), sandbox: z.string().optional(), utility: z.string().optional() }).optional(),
+    efforts: z.object({ conversation: agentEffortSchema.optional(), sandbox: agentEffortSchema.optional(), utility: agentEffortSchema.optional() }).optional(),
 });
 
 export type ConfigError = { type: "config_write_failed"; cause: unknown };

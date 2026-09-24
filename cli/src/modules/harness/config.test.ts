@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { env } from "../../lib/env.ts";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { resolveHarnessConfig, resolveModelConnection, writeAgentModel } from "./config.ts";
+import { DEFAULT_AGENT_EFFORTS, resolveAgentEfforts, resolveHarnessConfig, resolveModelConnection, writeAgentEffort, writeAgentModel } from "./config.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -363,6 +363,56 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
     test("preserves unrelated top-level config keys (telemetry)", () => {
         writeConfigWithModels(undefined);
         expect(writeAgentModel("conversation", "claude-opus-4-8").isOk()).toBe(true);
+        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };
+        expect(parsed.telemetry).toBe(false);
+    });
+});
+
+// The effort half of the per-agent selection: an absent role takes its default, and the palette pick
+// persists spread-preserving beside `models.agents`.
+describe("resolveAgentEfforts — defaults and overrides", () => {
+    test("no models block gives the defaults: the conversation agent deeper than sandbox and utility", () => {
+        writeConfigWithModels(undefined);
+        expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "medium", utility: "medium" });
+        expect(resolveAgentEfforts()).toEqual({ ...DEFAULT_AGENT_EFFORTS });
+    });
+
+    test("a configured effort overrides its role only", () => {
+        writeConfigWithModels({ efforts: { sandbox: "xhigh" } });
+        expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "xhigh", utility: "medium" });
+    });
+
+    test("a malformed models block gives the defaults", () => {
+        writeConfigWithModels({ efforts: { sandbox: "max" } });
+        expect(resolveAgentEfforts()).toEqual({ ...DEFAULT_AGENT_EFFORTS });
+    });
+});
+
+describe("writeAgentEffort — persists models.efforts spread-preserving", () => {
+    function readModelsBlock(): Record<string, unknown> {
+        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { models?: Record<string, unknown> };
+        return parsed.models ?? {};
+    }
+
+    test("writes the agent's effort into models.efforts and round-trips through resolveAgentEfforts", () => {
+        writeConfigWithModels(undefined);
+        expect(writeAgentEffort("utility", "low").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({ efforts: { utility: "low" } });
+        expect(resolveAgentEfforts()).toEqual({ conversation: "high", sandbox: "medium", utility: "low" });
+    });
+
+    test("keeps the connection, the agent models, the OTHER efforts, and unrelated top-level keys", () => {
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic" },
+            agents: { conversation: "claude-opus-4-8" },
+            efforts: { conversation: "xhigh", sandbox: "low" },
+        });
+        expect(writeAgentEffort("sandbox", "high").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({
+            connection: { mode: "cliproxy", provider: "anthropic" },
+            agents: { conversation: "claude-opus-4-8" },
+            efforts: { conversation: "xhigh", sandbox: "high" },
+        });
         const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };
         expect(parsed.telemetry).toBe(false);
     });

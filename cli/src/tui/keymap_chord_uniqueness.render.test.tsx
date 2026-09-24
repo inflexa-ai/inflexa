@@ -39,7 +39,7 @@ beforeEach(async () => {
     analysis = (await createAnalysis({ cwd: dir, name: str256("chord-test")._unsafeUnwrap(), inputPaths: [] }))._unsafeUnwrap();
     // `ready` opens every gated layer, thus the sweep sees the full table.
     __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
-    __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, pending: new Map() });
+    __setAgentModelsForTest({ current: { conversation: "m", sandbox: "m", utility: "m" }, efforts: null, pending: new Map() });
 });
 
 afterEach(() => {

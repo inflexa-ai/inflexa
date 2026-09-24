@@ -32,11 +32,11 @@ import { gatedForceReprofile, profileWorkInFlight } from "./hooks/profile_parity
 import { absTime, absTimeShort, idTail, shortRunName, shortSessionId } from "./hooks/sidebar_live.ts";
 import { restoreActivityPanel } from "./hooks/activity_panel.ts";
 import { chatStatus } from "./hooks/status.ts";
-import { chordLabel, keybindLabel, type Chord } from "./keymap.ts";
+import { KEYS, chordLabel, keybindLabel, type Chord } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import type { HarnessRuntime } from "../modules/harness/runtime.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
+import { AGENT_EFFORTS, readConfig, writeConfig } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
 import { mkdirResult, rmResult, statResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
@@ -48,11 +48,11 @@ import {
     removeInput,
     matchAnalysis,
 } from "../modules/analysis/analysis.ts";
-import { writeAgentModel, type AgentName } from "../modules/harness/config.ts";
+import { DEFAULT_AGENT_EFFORTS, writeAgentEffort, writeAgentModel, type AgentEffort, type AgentName } from "../modules/harness/config.ts";
 import { analysisPurgeFor } from "../modules/harness/purge.ts";
-import { listConnectionModels, validateModelSelection } from "../modules/harness/model_listing.ts";
+import { listConnectionModels, validateModelSelection, type ListedModel } from "../modules/harness/model_listing.ts";
 import type { ModelAccess } from "../modules/proxy/models.ts";
-import { currentAgentModels, requestAgentModelChange } from "../modules/harness/agent_switch.ts";
+import { currentAgentEfforts, currentAgentModels, requestAgentModelChange, type AgentSelection } from "../modules/harness/agent_switch.ts";
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
@@ -418,23 +418,26 @@ function agentLabel(agent: AgentName): string {
 }
 
 /**
- * Persist an agent's model pick to `models.agents.<agent>` (durable the instant it is
- * made), then hand it to the live runtime — which applies it immediately when idle or schedules it behind
+ * Persist an agent's pick to `models.agents.<agent>` and `models.efforts.<agent>` (durable the instant it
+ * is made), then hand it to the live runtime — which applies it immediately when idle or schedules it behind
  * in-flight agent work — and surface the outcome. Config is the source of truth, so a write failure stops
  * BEFORE any runtime change it would disagree with (next boot would only revert it).
  */
-function applyAgentSelection(agent: AgentName, model: string): void {
-    writeAgentModel(agent, model).match(
-        () => {
-            const outcome = requestAgentModelChange(agent, model);
-            notify(
-                outcome.status === "applied"
-                    ? { kind: "info", text: `${agentLabel(agent)} model: ${model}` }
-                    : { kind: "info", text: `${agentLabel(agent)} model set to ${model} — applies when agent work settles` },
-            );
-        },
-        (e) => notify({ kind: "error", text: `Failed to save model: ${e.type}` }),
-    );
+function applyAgentSelection(agent: AgentName, selection: AgentSelection): void {
+    const label = `${selection.model} ${GLYPHS.middot} ${selection.effort}`;
+    writeAgentModel(agent, selection.model)
+        .andThen(() => writeAgentEffort(agent, selection.effort))
+        .match(
+            () => {
+                const outcome = requestAgentModelChange(agent, selection);
+                notify(
+                    outcome.status === "applied"
+                        ? { kind: "info", text: `${agentLabel(agent)} model: ${label}` }
+                        : { kind: "info", text: `${agentLabel(agent)} model set to ${label} — applies when agent work settles` },
+                );
+            },
+            (e) => notify({ kind: "error", text: `Failed to save model: ${e.type}` }),
+        );
 }
 
 /**
@@ -483,11 +486,38 @@ const MANUAL_MODEL_SENTINEL = "__manual__";
  * only thing that could make a described row safe here; until then the explanation lives on the prompt this
  * row opens, which has room for it and no cursor to lose.
  */
-export function modelPickerItems(models: readonly string[], current: string): SelectItem<string>[] {
+export function modelPickerItems(
+    models: readonly ListedModel[],
+    current: string,
+    effortHint: (model: ListedModel) => string | undefined = () => undefined,
+): SelectItem<string>[] {
     return [
-        ...models.map((id) => ({ value: id, title: id, hint: id === current ? "current" : undefined })),
+        ...models.map((m) => ({
+            value: m.id,
+            title: m.id,
+            // A getter, not a value: the list keeps the item reference and reads `hint` inside its render,
+            // thus the effort a left or right key selects repaints the row with no new item array.
+            get hint(): string | undefined {
+                const parts = [m.id === current ? "current" : undefined, effortHint(m)].filter((p) => p !== undefined);
+                return parts.length === 0 ? undefined : parts.join(` ${GLYPHS.middot} `);
+            },
+        })),
         { value: MANUAL_MODEL_SENTINEL, title: `Enter a model id manually${GLYPHS.ellipsis}`, pinned: true },
     ];
+}
+
+/**
+ * The effort a model runs at when the picker holds `wanted`: `wanted` itself when the model lists it, else
+ * the deepest listed rung below it, else the shallowest listed rung. `null` when the model lists none. Thus
+ * a cursor move to a model with a shorter ladder never shows an effort that the model cannot take, and the
+ * held effort comes back on a model that has it.
+ */
+export function effortFor(model: ListedModel, wanted: AgentEffort): AgentEffort | null {
+    if (model.efforts.length === 0) return null;
+    if (model.efforts.includes(wanted)) return wanted;
+    const rank = AGENT_EFFORTS.indexOf(wanted);
+    const below = model.efforts.filter((e) => AGENT_EFFORTS.indexOf(e) < rank);
+    return below.at(-1) ?? model.efforts[0] ?? null;
 }
 
 /**
@@ -506,17 +536,23 @@ export function modelPickerItems(models: readonly string[], current: string): Se
  * pick therefore CONVERGES onto that same prompt (id pre-filled) rather than growing a bespoke list busy/
  * error state, which the design-gallery rule forbids inventing. The picking-phase surfaces are unchanged,
  * so the inert design-gallery/test exhibits render exactly as before (`validate` is never reached at rest).
+ *
+ * Left and right step the effort of the cursor row through the efforts that its model lists, and the row
+ * hint shows the result. A commit carries that effort. A model with no efforts, and a free-text id, keep
+ * the current effort of the agent.
  */
 export function ModelPickerDialog(props: {
     agent: AgentName;
-    /** The connection's model ids, or `null` when listing failed (degrade to free-text entry). */
-    models: readonly string[] | null;
+    /** The connection's models with their efforts, or `null` when listing failed (degrade to free-text entry). */
+    models: readonly ListedModel[] | null;
     /** The agent's currently-running model, marked `current` in the list and pre-filled in the listing-failure free-text field. */
     current: string;
+    /** The agent's currently-running effort: the seed of the left and right keys, and the effort of a model that lists none. */
+    currentEffort: AgentEffort;
     /** Accessibility-validate a committed id before persisting (design D6); the picker renders the busy/error phases around it. */
     validate: (model: string) => Promise<ModelAccess>;
-    /** Persist + apply an accepted model, then close. */
-    onCommit: (model: string) => void;
+    /** Persist + apply an accepted model and effort, then close. */
+    onCommit: (selection: AgentSelection) => void;
     /** Close without changing anything (esc, click-outside, ctrl+c). */
     onCancel: () => void;
 }): JSX.Element {
@@ -539,12 +575,40 @@ export function ModelPickerDialog(props: {
     // "listing failed" branch).
     const [manual, setManual] = createSignal(false);
 
+    // The effort the left and right keys hold across cursor moves. Each row shows it through `effortFor`,
+    // thus it stays one value while the rows have different ladders.
+    // eslint-disable-next-line solid/reactivity -- seed-once: the picker mounts once for each open with a fixed current effort, and the keys own the value after that
+    const [effort, setEffort] = createSignal<AgentEffort>(props.currentEffort);
+    const [cursorId, setCursorId] = createSignal<string | undefined>(undefined);
+    const listed = (id: string | undefined): ListedModel | undefined => (id === undefined ? undefined : props.models?.find((m) => m.id === id));
+
+    function stepEffort(delta: -1 | 1): void {
+        const model = listed(cursorId());
+        if (!model) return;
+        const shown = effortFor(model, effort());
+        if (shown === null) return;
+        const next = model.efforts[model.efforts.indexOf(shown) + delta];
+        if (next !== undefined) setEffort(next);
+    }
+
+    // Left and right take the keys from the filter input while the list shows, thus the caret of the
+    // filter does not move. A model id filter is short, and the keys are worth more on the effort.
+    useDialogBindings(() => ({
+        enabled: phase() === "picking" && !manual() && props.models !== null,
+        bindings: [
+            { chord: KEYS.left, run: () => stepEffort(-1), desc: "Lower effort", group: "Model" },
+            { chord: KEYS.right, run: () => stepEffort(1), desc: "Raise effort", group: "Model" },
+        ],
+    }));
+
     function commit(raw: string): void {
         const id = raw.trim();
         if (!id) {
             notify({ kind: "warn", text: "A model id is required." });
             return;
         }
+        const model = listed(id);
+        const chosen = (model ? effortFor(model, effort()) : null) ?? props.currentEffort;
         setPending(id);
         setErrorText("");
         setPhase("checking");
@@ -555,7 +619,7 @@ export function ModelPickerDialog(props: {
                 // programmatic commit close (dialog_host `dialogClose`), and PromptDialog's guard reads
                 // `busy` (= phase === "checking") LIVE — so clearing the phase first lets the close through.
                 setPhase("picking");
-                props.onCommit(accepted);
+                props.onCommit({ model: accepted, effort: chosen });
             },
             reportError: (message) => {
                 setErrorText(message);
@@ -609,11 +673,17 @@ export function ModelPickerDialog(props: {
                     />
                 }
             >
-                {(models: readonly string[]) => (
+                {(models: readonly ListedModel[]) => (
                     <SelectDialog
                         title={title()}
                         placeholder={`Search models${GLYPHS.ellipsis}`}
-                        items={modelPickerItems(models, props.current)}
+                        items={modelPickerItems(models, props.current, (m) => {
+                            if (m.id !== cursorId()) return undefined;
+                            const shown = effortFor(m, effort());
+                            return shown === null ? undefined : `${GLYPHS.arrowLeft} ${shown} ${GLYPHS.arrowRight}`;
+                        })}
+                        onCursorChange={setCursorId}
+                        footerHint={`${chordLabel(KEYS.left)}${chordLabel(KEYS.right)} effort`}
                         // Unreachable while the manual row is pinned (it always survives the filter), but the
                         // list primitive owns that guarantee, not this caller — so the text still has to be right.
                         emptyText="No models match"
@@ -638,8 +708,9 @@ async function openModelPicker(ctx: Workspace, agent: AgentName): Promise<void> 
         return;
     }
     const current = currentAgentModels()[agent];
+    const currentEffort = currentAgentEfforts()?.[agent] ?? DEFAULT_AGENT_EFFORTS[agent];
     const models = (await listConnectionModels()).match(
-        (ids): readonly string[] | null => ids,
+        (listed): readonly ListedModel[] | null => listed,
         () => null,
     );
     ctx.openDialog(() => (
@@ -647,10 +718,11 @@ async function openModelPicker(ctx: Workspace, agent: AgentName): Promise<void> 
             agent={agent}
             models={models}
             current={current}
+            currentEffort={currentEffort}
             validate={(model) => validateModelSelection(model)}
-            onCommit={(model) => {
+            onCommit={(selection) => {
                 ctx.closeDialog();
-                applyAgentSelection(agent, model);
+                applyAgentSelection(agent, selection);
             }}
             onCancel={() => ctx.closeDialog()}
         />
@@ -1352,9 +1424,10 @@ export function modelStatusLines(): string[] {
     const models = agentModels();
     const agentLine = (label: string, agent: AgentName): string => {
         // Em dash until the runtime installs the live switch — the same placeholder the sidebar renders.
-        const current = models.current[agent] || GLYPHS.emDash;
+        const effort = models.efforts?.[agent];
+        const current = (models.current[agent] || GLYPHS.emDash) + (effort ? ` ${GLYPHS.middot} ${effort}` : "");
         const pending = models.pending.get(agent);
-        return pending ? `${label}: ${current} ${GLYPHS.arrowRight} ${pending} (pending)` : `${label}: ${current}`;
+        return pending ? `${label}: ${current} ${GLYPHS.arrowRight} ${pending.model} ${GLYPHS.middot} ${pending.effort} (pending)` : `${label}: ${current}`;
     };
     return [
         `connection: ${boot.connection.provider} ${GLYPHS.middot} ${boot.connection.mode} (${gloss})`,

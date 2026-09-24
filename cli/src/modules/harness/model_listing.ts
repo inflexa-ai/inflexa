@@ -3,9 +3,9 @@ import { z } from "zod";
 
 import { env, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, type Credential, type CredentialError } from "../../lib/credential.ts";
-import { type ModelAuthConfig } from "../../lib/config.ts";
 import { readApiKey, checkModelAccess, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
-import { resolveModelConnection, type ResolvedModelConnection } from "./config.ts";
+import { AGENT_EFFORTS, type ModelAuthConfig } from "../../lib/config.ts";
+import { resolveModelConnection, type AgentEffort, type ResolvedModelConnection } from "./config.ts";
 
 // Live model listing for the agent-model picker. Deliberately DISTINCT from
 // `resolveModelId` (proxy/models.ts): that resolves ONE default id for boot and CACHES it per process
@@ -24,7 +24,44 @@ import { resolveModelConnection, type ResolvedModelConnection } from "./config.t
 // Every supported endpoint answers the OpenAI-style `{ data: [{ id }] }` shape: the cliproxy /models
 // route, an OpenAI-compatible /models, AND Anthropic's GET /v1/models (whose `data[].id` carries the
 // model id). One schema covers all three; unmodeled fields are ignored.
-const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
+//
+// Only Anthropic's own route adds `capabilities.effort`. A capability block of an unknown shape falls to
+// `null` through `.catch`, thus it costs the effort list of that model only, never the listing.
+const capabilitySupportSchema = z.object({ supported: z.boolean() });
+const effortCapabilitySchema = z.object({
+    supported: z.boolean(),
+    low: capabilitySupportSchema.nullish(),
+    medium: capabilitySupportSchema.nullish(),
+    high: capabilitySupportSchema.nullish(),
+    xhigh: capabilitySupportSchema.nullish(),
+    max: capabilitySupportSchema.nullish(),
+});
+const modelsSchema = z.object({
+    data: z.array(
+        z.object({
+            id: z.string(),
+            capabilities: z.object({ effort: effortCapabilitySchema.nullish() }).nullish().catch(null),
+        }),
+    ),
+});
+
+/** One listed model: its id, and the efforts the picker can select for it (empty when there is none to select). */
+export type ListedModel = { readonly id: string; readonly efforts: readonly AgentEffort[] };
+
+/**
+ * The efforts of one listed model. A reported capability decides: each neutral rung the model supports,
+ * and `xhigh` when the model has `xhigh` or `max`, because the Anthropic provider sends `xhigh` as `max`
+ * to a model with no `xhigh`. With no report, an Anthropic wire gets the full ladder, because that
+ * provider lowers a rung the model does not accept. The cliproxy route reports nothing, and it serves
+ * Claude only. An OpenAI-compatible wire sends the name as it is, thus an unreported model gets no list.
+ */
+function effortsOf(effort: z.infer<typeof effortCapabilitySchema> | null | undefined, anthropicWire: boolean): readonly AgentEffort[] {
+    if (!effort) return anthropicWire ? AGENT_EFFORTS : [];
+    if (!effort.supported) return [];
+    return AGENT_EFFORTS.filter((rung) =>
+        rung === "xhigh" ? effort.xhigh?.supported === true || effort.max?.supported === true : effort[rung]?.supported === true,
+    );
+}
 
 // Anthropic requires a version header on every request, GET /v1/models included. Pinned to the stable
 // published date the Messages API uses; the list-models route is version-stable, so this constant does
@@ -123,10 +160,10 @@ async function requestFor(
  * List the connection's available model ids for the agent-model picker, UNCACHED. Resolves
  * the configured connection, shapes the mode-specific request (cliproxy `/models`, direct
  * OpenAI-compatible `/models`, direct Anthropic `/models` off the `/v1`-terminated root), and parses the shared `{ data: [{ id }] }`
- * response. Returns the id list, or a {@link ListModelsError} the picker maps to free-text entry — every
+ * response. Returns each model with its efforts, or a {@link ListModelsError} the picker maps to free-text entry — every
  * failure is on the Result channel because listing failure is an ordinary, designed outcome, not a fault.
  */
-export async function listConnectionModels(seams: ListModelsSeams = realSeams): Promise<Result<string[], ListModelsError>> {
+export async function listConnectionModels(seams: ListModelsSeams = realSeams): Promise<Result<ListedModel[], ListModelsError>> {
     const connection = seams.resolveConnection();
     // A malformed `models` block: surface it (same fields boot reports) rather than listing against the
     // silently-substituted default connection.
@@ -150,7 +187,8 @@ export async function listConnectionModels(seams: ListModelsSeams = realSeams): 
     if (!res.ok) return err({ type: "unreachable", detail: `HTTP ${res.status}` });
     const models = await res.jsonWith(modelsSchema);
     if (!models || models.data.length === 0) return err({ type: "no_models" });
-    return ok(models.data.map((m) => m.id));
+    const anthropicWire = connection.mode === "cliproxy" || connection.protocol === "anthropic";
+    return ok(models.data.map((m) => ({ id: m.id, efforts: effortsOf(m.capabilities?.effort, anthropicWire) })));
 }
 
 // Commit-time accessibility validation for the agent-model picker (design D6). Distinct from listing:

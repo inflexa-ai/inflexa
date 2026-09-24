@@ -47,7 +47,7 @@ import type { Analysis } from "../types/analysis.ts";
 // test hooks and the reset below keeps one test's seed from bleeding into the next (the same pairing
 // sidebar.render.test.tsx uses for the rail's MODELS section).
 afterEach(() => {
-    __setAgentModelsForTest({ current: { conversation: "", sandbox: "", utility: "" }, pending: new Map() });
+    __setAgentModelsForTest({ current: { conversation: "", sandbox: "", utility: "" }, efforts: null, pending: new Map() });
     __setBootStateForTest({ phase: "idle" });
 });
 
@@ -63,22 +63,27 @@ describe("modelStatusLines", () => {
         expect(line).toContain("proxy unreachable — run inflexa up");
     });
 
-    test("ready: spells out the cliproxy connection and each agent's live model", () => {
+    test("ready: spells out the cliproxy connection and each agent's live model and effort", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         __setAgentModelsForTest({
             current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
+            efforts: { conversation: "high", sandbox: "medium", utility: "medium" },
             pending: new Map(),
         });
         const lines = modelStatusLines();
         expect(lines[0]).toContain("anthropic");
         expect(lines[0]).toContain("cliproxy (managed local proxy)");
-        expect(lines[1]).toBe("chat model: claude-opus-4-8");
-        expect(lines[2]).toBe("sandbox model: claude-sonnet-4-5");
+        expect(lines[1]).toBe(`chat model: claude-opus-4-8 ${GLYPHS.middot} high`);
+        expect(lines[2]).toBe(`sandbox model: claude-sonnet-4-5 ${GLYPHS.middot} medium`);
     });
 
     test("ready: a direct connection glosses the user-configured endpoint", () => {
         __setBootStateForTest({ phase: "ready", model: "deepseek-chat", connection: { provider: "deepseek", mode: "direct" } });
-        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-reasoner" }, pending: new Map() });
+        __setAgentModelsForTest({
+            current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner", utility: "deepseek-reasoner" },
+            efforts: null,
+            pending: new Map(),
+        });
         expect(modelStatusLines()[0]).toContain("direct (user-configured endpoint)");
     });
 
@@ -86,9 +91,10 @@ describe("modelStatusLines", () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         __setAgentModelsForTest({
             current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5", utility: "claude-sonnet-4-5" },
-            pending: new Map([["sandbox", "claude-haiku-4-5"]]),
+            efforts: null,
+            pending: new Map([["sandbox", { model: "claude-haiku-4-5", effort: "low" }]]),
         });
-        expect(modelStatusLines()[2]).toContain(`claude-sonnet-4-5 ${GLYPHS.arrowRight} claude-haiku-4-5 (pending)`);
+        expect(modelStatusLines()[2]).toContain(`claude-sonnet-4-5 ${GLYPHS.arrowRight} claude-haiku-4-5 ${GLYPHS.middot} low (pending)`);
     });
 
     test("an agent whose model the switch has not installed yet renders the em-dash placeholder", () => {

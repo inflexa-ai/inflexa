@@ -6,10 +6,13 @@ import { testRender } from "@opentui/solid";
 import "../extensions/index.ts"; // installs Response.prototype.jsonWith, which validateModelSelection uses
 import { renderFrame } from "../test_support/tui.ts";
 import { GLYPHS } from "../lib/design_system.ts";
+import { AGENT_EFFORTS } from "../lib/config.ts";
 import { useKeymapRoot } from "./keymap.ts";
 import { DialogOverlay, DialogShowcase, dialogClear, dialogIsOpen, dialogPush } from "./components/dialog/dialog_host.tsx";
-import { commands, ModelPickerDialog, modelCommitDecision, modelPickerItems, runModelCommit } from "./commands.tsx";
-import { validateModelSelection, type ValidateSelectionSeams } from "../modules/harness/model_listing.ts";
+import { commands, effortFor, ModelPickerDialog, modelCommitDecision, modelPickerItems, runModelCommit } from "./commands.tsx";
+import { validateModelSelection, type ListedModel, type ValidateSelectionSeams } from "../modules/harness/model_listing.ts";
+import type { AgentSelection } from "../modules/harness/agent_switch.ts";
+import type { AgentEffort } from "../modules/harness/config.ts";
 import type { ModelAccess } from "../modules/proxy/models.ts";
 
 // The picker's whole job is to present the RIGHT surface for the listing outcome: a SelectDialog over the
@@ -22,17 +25,30 @@ const noop = (): void => {};
 // The picking-phase exhibits never commit, so validate is unreachable at rest — a stub keeps the surface inert.
 const validateNoop = async (): Promise<ModelAccess> => "inconclusive";
 
-function pickerNode(models: readonly string[] | null, current: string) {
+/** Listed models that each offer the same effort ladder — the full one unless the case names another. */
+function listed(ids: readonly string[], efforts: readonly AgentEffort[] = AGENT_EFFORTS): ListedModel[] {
+    return ids.map((id) => ({ id, efforts }));
+}
+
+function pickerNode(models: readonly ListedModel[] | null, current: string) {
     return () => (
         <DialogShowcase>
-            <ModelPickerDialog agent="sandbox" models={models} current={current} validate={validateNoop} onCommit={noop} onCancel={noop} />
+            <ModelPickerDialog
+                agent="sandbox"
+                models={models}
+                current={current}
+                currentEffort="medium"
+                validate={validateNoop}
+                onCommit={noop}
+                onCancel={noop}
+            />
         </DialogShowcase>
     );
 }
 
 describe("ModelPickerDialog", () => {
     test("lists the connection's models and marks the agent's current one", async () => {
-        const frame = await renderFrame(pickerNode(["claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5"], "claude-sonnet-4-5"), {
+        const frame = await renderFrame(pickerNode(listed(["claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5"]), "claude-sonnet-4-5"), {
             width: 80,
             height: 24,
         });
@@ -44,7 +60,7 @@ describe("ModelPickerDialog", () => {
     });
 
     test("offers a manual-entry row so an unlisted id is reachable even when listing succeeds", async () => {
-        const frame = await renderFrame(pickerNode(["claude-opus-4-8", "claude-sonnet-4-5"], "claude-sonnet-4-5"), { width: 80, height: 24 });
+        const frame = await renderFrame(pickerNode(listed(["claude-opus-4-8", "claude-sonnet-4-5"]), "claude-sonnet-4-5"), { width: 80, height: 24 });
         // With a present list the manual-entry row is still offered — the escape hatch to type an id the
         // connection does not enumerate, mirroring direct-setup's always-free-text affordance.
         expect(frame).toContain("Enter a model id manually");
@@ -62,7 +78,15 @@ describe("ModelPickerDialog", () => {
         const frame = await renderFrame(
             () => (
                 <DialogShowcase>
-                    <ModelPickerDialog agent="conversation" models={["claude-opus-4-8"]} current="" validate={validateNoop} onCommit={noop} onCancel={noop} />
+                    <ModelPickerDialog
+                        agent="conversation"
+                        models={listed(["claude-opus-4-8"])}
+                        current=""
+                        currentEffort="high"
+                        validate={validateNoop}
+                        onCommit={noop}
+                        onCancel={noop}
+                    />
                 </DialogShowcase>
             ),
             { width: 80, height: 24 },
@@ -74,7 +98,15 @@ describe("ModelPickerDialog", () => {
         const frame = await renderFrame(
             () => (
                 <DialogShowcase>
-                    <ModelPickerDialog agent="utility" models={["claude-haiku-4-5"]} current="" validate={validateNoop} onCommit={noop} onCancel={noop} />
+                    <ModelPickerDialog
+                        agent="utility"
+                        models={listed(["claude-haiku-4-5"])}
+                        current=""
+                        currentEffort="medium"
+                        validate={validateNoop}
+                        onCommit={noop}
+                        onCancel={noop}
+                    />
                 </DialogShowcase>
             ),
             { width: 80, height: 24 },
@@ -88,7 +120,7 @@ describe("ModelPickerDialog", () => {
 // contract of the picker rather than an accident of how a particular list renders.
 describe("model picker rows", () => {
     test("the manual-entry row is last, pinned, and the only row that is not a model id", () => {
-        const items = modelPickerItems(["claude-opus-4-8", "claude-sonnet-4-5"], "claude-sonnet-4-5");
+        const items = modelPickerItems(listed(["claude-opus-4-8", "claude-sonnet-4-5"]), "claude-sonnet-4-5");
         expect(items.map((i) => i.value)).toEqual(["claude-opus-4-8", "claude-sonnet-4-5", "__manual__"]);
         expect(items.filter((i) => i.pinned).map((i) => i.value)).toEqual(["__manual__"]);
         expect(items.find((i) => i.hint === "current")?.value).toBe("claude-sonnet-4-5");
@@ -97,11 +129,42 @@ describe("model picker rows", () => {
     // A described row costs the cursor its visibility here — see modelPickerItems. Pinned as data because the
     // symptom (a row scrolled off-screen under its own description) only appears at one dialog height.
     test("no row carries a description", () => {
-        expect(modelPickerItems(["claude-opus-4-8"], "claude-opus-4-8").some((i) => i.description !== undefined)).toBe(false);
+        expect(modelPickerItems(listed(["claude-opus-4-8"]), "claude-opus-4-8").some((i) => i.description !== undefined)).toBe(false);
     });
 
     test("an empty listing still offers the escape hatch", () => {
         expect(modelPickerItems([], "claude-opus-4-8").map((i) => i.value)).toEqual(["__manual__"]);
+    });
+
+    test("the effort hint joins the current mark on the row it names", () => {
+        const items = modelPickerItems(listed(["claude-opus-4-8", "claude-sonnet-4-5"]), "claude-sonnet-4-5", (m) =>
+            m.id === "claude-sonnet-4-5" ? "high" : undefined,
+        );
+        expect(items.map((i) => i.hint)).toEqual([undefined, `current ${GLYPHS.middot} high`, undefined]);
+    });
+});
+
+// The effort a row shows when the picker holds an effort the model may not list. The held effort must
+// never show on a model that cannot take it, and must come back on a model that can.
+describe("effortFor", () => {
+    const model = (efforts: readonly AgentEffort[]): ListedModel => ({ id: "m", efforts });
+
+    test("a listed effort is kept", () => {
+        expect(effortFor(model(AGENT_EFFORTS), "xhigh")).toBe("xhigh");
+        expect(effortFor(model(["low", "high"]), "high")).toBe("high");
+    });
+
+    test("an unlisted effort clamps to the deepest listed rung below it", () => {
+        expect(effortFor(model(["low", "medium", "high"]), "xhigh")).toBe("high");
+        expect(effortFor(model(["low", "high"]), "medium")).toBe("low");
+    });
+
+    test("with no listed rung below, the shallowest listed rung wins", () => {
+        expect(effortFor(model(["high", "xhigh"]), "low")).toBe("high");
+    });
+
+    test("a model that lists no effort gives null", () => {
+        expect(effortFor(model([]), "medium")).toBeNull();
     });
 });
 
@@ -133,7 +196,7 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
     }
 
     test("typing an id the connection does not list keeps the escape hatch; esc returns to the list", async () => {
-        const committed: string[] = [];
+        const committed: AgentSelection[] = [];
         let cancelled = false;
         const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
         const settle = makeSettle(setup);
@@ -142,8 +205,9 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
             dialogPush(() => (
                 <ModelPickerDialog
                     agent="sandbox"
-                    models={["claude-opus-4-8", "claude-sonnet-4-5"]}
+                    models={listed(["claude-opus-4-8", "claude-sonnet-4-5"])}
                     current="claude-sonnet-4-5"
+                    currentEffort="medium"
                     validate={validateNoop}
                     onCommit={(m) => committed.push(m)}
                     onCancel={() => {
@@ -188,20 +252,99 @@ describe("ModelPickerDialog — filtering to an unlisted id (rendered)", () => {
     // be on screen: a cursor the list scrolled to and then lost is worse than one that never moved, since
     // enter now commits a row the user cannot see.
     test("up from the first row wraps to the escape hatch and scrolls it into view", async () => {
-        const many = Array.from({ length: 13 }, (_, i) => `claude-model-${String(i).padStart(2, "0")}`);
+        const many = listed(Array.from({ length: 13 }, (_, i) => `claude-model-${String(i).padStart(2, "0")}`));
         const setup = await testRender(() => <Harness />, { width: 100, height: 32 });
         const settle = makeSettle(setup);
         try {
             await settle();
             dialogPush(() => (
-                <ModelPickerDialog agent="conversation" models={many} current={many[0]!} validate={validateNoop} onCommit={() => {}} onCancel={() => {}} />
+                <ModelPickerDialog
+                    agent="conversation"
+                    models={many}
+                    current={many[0]!.id}
+                    currentEffort="high"
+                    validate={validateNoop}
+                    onCommit={() => {}}
+                    onCancel={() => {}}
+                />
             ));
             await settle();
-            expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} ${many[0]}`);
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} ${many[0]!.id}`);
 
             setup.mockInput.pressArrow("up");
             await settle();
             expect(setup.captureCharFrame()).toContain(`${GLYPHS.chevronRight} Enter a model id manually`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    // The effort is held across cursor moves and clamped to the ladder of the cursor row, thus a model with
+    // a shorter ladder commits the rung it can take, not the held one.
+    test("right raises the effort of the cursor row, and enter commits the effort the row shows", async () => {
+        const committed: AgentSelection[] = [];
+        const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            dialogPush(() => (
+                <ModelPickerDialog
+                    agent="sandbox"
+                    models={[...listed(["claude-opus-4-8"]), ...listed(["claude-haiku-4-5"], ["low", "medium"])]}
+                    current="claude-haiku-4-5"
+                    currentEffort="medium"
+                    validate={validateNoop}
+                    onCommit={(selection) => committed.push(selection)}
+                    onCancel={() => {}}
+                />
+            ));
+            await settle();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.arrowLeft} medium ${GLYPHS.arrowRight}`);
+
+            setup.mockInput.pressArrow("right");
+            await settle();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.arrowLeft} high ${GLYPHS.arrowRight}`);
+
+            // The haiku ladder stops at medium, thus the held `high` shows as medium on that row.
+            setup.mockInput.pressArrow("down");
+            await settle();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.arrowLeft} medium ${GLYPHS.arrowRight}`);
+            setup.mockInput.pressEnter();
+            await settle();
+            expect(committed).toEqual([{ model: "claude-haiku-4-5", effort: "medium" }]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("left lowers the effort, and enter commits it on the cursor row", async () => {
+        const committed: AgentSelection[] = [];
+        const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            dialogPush(() => (
+                <ModelPickerDialog
+                    agent="conversation"
+                    models={listed(["claude-opus-4-8"])}
+                    current="claude-opus-4-8"
+                    currentEffort="high"
+                    validate={validateNoop}
+                    onCommit={(selection) => committed.push(selection)}
+                    onCancel={() => {}}
+                />
+            ));
+            await settle();
+            setup.mockInput.pressArrow("left");
+            await settle();
+            setup.mockInput.pressArrow("left");
+            await settle();
+            setup.mockInput.pressArrow("left"); // already at the shallowest rung: no change
+            await settle();
+            expect(setup.captureCharFrame()).toContain(`${GLYPHS.arrowLeft} low ${GLYPHS.arrowRight}`);
+            setup.mockInput.pressEnter();
+            await settle();
+            expect(committed).toEqual([{ model: "claude-opus-4-8", effort: "low" }]);
         } finally {
             setup.renderer.destroy();
         }

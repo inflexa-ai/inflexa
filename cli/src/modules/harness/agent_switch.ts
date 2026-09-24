@@ -4,7 +4,7 @@ import type { ChatProvider } from "@inflexa-ai/harness";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
-import { AGENT_NAMES, type AgentName } from "./config.ts";
+import { AGENT_NAMES, type AgentEffort, type AgentName } from "./config.ts";
 
 // The live role-model switch. Two cooperating pieces live here because they
 // are one decision: an agent-work GAUGE that reads whether any agent work is in flight, and the
@@ -181,6 +181,17 @@ export function __resetGaugeForTest(): void {
 // ---- Pending-selection controller + public seam ------------------------------------------------
 
 /**
+ * What one agent runs: its model and its reasoning effort. The provider bakes both in at construction,
+ * and Anthropic discards its message cache when the effort changes between calls. Thus an effort change
+ * is a switch like a model change, and it waits for idle the same way.
+ */
+export type AgentSelection = { readonly model: string; readonly effort: AgentEffort };
+
+function sameSelection(a: AgentSelection, b: AgentSelection): boolean {
+    return a.model === b.model && a.effort === b.effort;
+}
+
+/**
  * The boot-supplied wiring the switch reconstructs through. The boot owns provider construction and the
  * emitter re-point (both need construction details — connection, key, deps references — that stay in
  * `runtime.ts`); the switch owns the WHEN. Passed once to {@link installAgentSwitch}.
@@ -188,8 +199,8 @@ export function __resetGaugeForTest(): void {
 export type AgentSwitchWiring = {
     /** Each agent's stable delegating provider handle — the object every consumer captured; swapping its inner is the agent swap. */
     readonly swappable: Readonly<Record<AgentName, SwappableChatProvider>>;
-    /** Construct a fresh inner {@link ChatProvider} bound to `model` over the shared connection (the boot's own construction path). */
-    readonly rebuildProvider: (model: string) => ChatProvider;
+    /** Construct a fresh inner {@link ChatProvider} bound to the selection over the shared connection (the boot's own construction path). */
+    readonly rebuildProvider: (selection: AgentSelection) => ChatProvider;
     /**
      * Re-point the sandbox agent's provenance emitters (artifact registry + run-lifecycle emitter) at
      * new inners constructed WITH `name`. Supplied by the boot because it owns the emitter holder the
@@ -200,16 +211,16 @@ export type AgentSwitchWiring = {
     readonly swapSandboxEmitters: (name: ProvModelId) => void;
     /** The connection's provider slug — constant across an agent swap (one shared connection), so only the model half of the provenance name changes. */
     readonly modelProvider: string;
-    /** The models each agent booted on — the switch's starting `current` state. */
-    readonly initialModels: Readonly<Record<AgentName, string>>;
+    /** The selection each agent booted on — the switch's starting `current` state. */
+    readonly initialSelections: Readonly<Record<AgentName, AgentSelection>>;
 };
 
 type ActiveSwitch = {
     readonly wiring: AgentSwitchWiring;
-    /** The model each agent is CURRENTLY running (updated the instant a swap applies). */
-    readonly current: Record<AgentName, string>;
+    /** The selection each agent is CURRENTLY running (updated the instant a swap applies). */
+    readonly current: Record<AgentName, AgentSelection>;
     /** Agents with a persisted selection not yet applied to the live runtime (busy at request time). */
-    readonly pending: Map<AgentName, string>;
+    readonly pending: Map<AgentName, AgentSelection>;
     /** Detach the run-bus tracking + idle-drain subscriptions installed for this runtime. */
     readonly detach: () => void;
 };
@@ -231,19 +242,20 @@ function notifyStateChange(): void {
  * conversation agent has no provenance emitter (chat turns write the Solid store, not the bus), so only
  * its provider swaps. Mutates `current` and clears any `pending` for the agent.
  */
-function applyAgent(state: ActiveSwitch, agent: AgentName, model: string): void {
-    state.wiring.swappable[agent].swap(state.wiring.rebuildProvider(model));
-    if (agent === "sandbox") {
-        state.wiring.swapSandboxEmitters(`${state.wiring.modelProvider}/${model}`);
+function applyAgent(state: ActiveSwitch, agent: AgentName, selection: AgentSelection): void {
+    state.wiring.swappable[agent].swap(state.wiring.rebuildProvider(selection));
+    // The provenance name carries the model only, thus an effort-only change keeps the emitters.
+    if (agent === "sandbox" && state.current.sandbox.model !== selection.model) {
+        state.wiring.swapSandboxEmitters(`${state.wiring.modelProvider}/${selection.model}`);
     }
-    state.current[agent] = model;
+    state.current[agent] = selection;
     state.pending.delete(agent);
 }
 
 /** Drain every pending selection at the idle transition. No-op when nothing is pending. */
 function applyPending(state: ActiveSwitch): void {
     if (state.pending.size === 0) return;
-    for (const [agent, model] of [...state.pending]) applyAgent(state, agent, model);
+    for (const [agent, selection] of [...state.pending]) applyAgent(state, agent, selection);
     notifyStateChange();
 }
 
@@ -267,7 +279,7 @@ export function installAgentSwitch(wiring: AgentSwitchWiring): void {
 
     const state: ActiveSwitch = {
         wiring,
-        current: { ...wiring.initialModels },
+        current: { ...wiring.initialSelections },
         pending: new Map(),
         detach: () => {
             Bus.off("inflexa", runBusHandler);
@@ -291,33 +303,33 @@ export function clearAgentSwitch(): void {
 }
 
 /**
- * Apply — or schedule — an agent model change on the LIVE runtime. Assumes the
- * caller already persisted the pick to `models.agents.<agent>` (config is the durable truth; this handles
+ * Apply — or schedule — an agent model or effort change on the LIVE runtime. Assumes the
+ * caller already persisted the pick to `models.agents.<agent>` and `models.efforts.<agent>` (config is the durable truth; this handles
  * only the runtime application). Returns `applied` when the change took effect immediately (the gauge
  * was idle, or the model already matched), or `scheduled` when it was recorded pending because agent
  * work is in flight — it will apply the moment the last in-flight work settles. A change requested with
  * no live runtime is reported `scheduled`: nothing runs to apply it to, and the next boot reads the
  * persisted config.
  */
-export function requestAgentModelChange(agent: AgentName, model: string): { status: "applied" } | { status: "scheduled" } {
+export function requestAgentModelChange(agent: AgentName, selection: AgentSelection): { status: "applied" } | { status: "scheduled" } {
     const state = active;
     if (!state) return { status: "scheduled" };
 
-    // Already on this model: clear any stale pending for the agent and report applied — the runtime
+    // Already on this selection: clear any stale pending for the agent and report applied — the runtime
     // needs no work, and a lingering pending would misreport the agent as mid-switch.
-    if (state.current[agent] === model && !state.pending.has(agent)) return { status: "applied" };
-    if (state.current[agent] === model) {
+    if (sameSelection(state.current[agent], selection) && !state.pending.has(agent)) return { status: "applied" };
+    if (sameSelection(state.current[agent], selection)) {
         state.pending.delete(agent);
         notifyStateChange();
         return { status: "applied" };
     }
 
     if (isAgentWorkIdle()) {
-        applyAgent(state, agent, model);
+        applyAgent(state, agent, selection);
         notifyStateChange();
         return { status: "applied" };
     }
-    state.pending.set(agent, model);
+    state.pending.set(agent, selection);
     notifyStateChange();
     return { status: "scheduled" };
 }
@@ -329,14 +341,22 @@ export function requestAgentModelChange(agent: AgentName, model: string): { stat
  */
 export function currentAgentModels(): Record<AgentName, string> {
     if (!active) return { conversation: "", sandbox: "", utility: "" };
-    return { ...active.current };
+    const { conversation, sandbox, utility } = active.current;
+    return { conversation: conversation.model, sandbox: sandbox.model, utility: utility.model };
+}
+
+/** The effort each agent is CURRENTLY running, or `null` before a runtime installs. */
+export function currentAgentEfforts(): Record<AgentName, AgentEffort> | null {
+    if (!active) return null;
+    const { conversation, sandbox, utility } = active.current;
+    return { conversation: conversation.effort, sandbox: sandbox.effort, utility: utility.effort };
 }
 
 /**
  * The agents with a selection persisted but not yet applied to the live runtime (a switch scheduled
  * behind in-flight work), as a readonly snapshot. Empty when nothing is pending.
  */
-export function pendingAgentSelections(): ReadonlyMap<AgentName, string> {
+export function pendingAgentSelections(): ReadonlyMap<AgentName, AgentSelection> {
     if (!active) return new Map();
     return new Map(active.pending);
 }

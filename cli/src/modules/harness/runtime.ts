@@ -60,10 +60,12 @@ import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError }
 import {
     resolveHarnessConfig,
     resolveModelConnection,
+    resolveAgentEfforts,
     pickRequestBounds,
     AGENT_NAMES,
     type ResolvedHarnessConfig,
     type ResolvedModelConnection,
+    type AgentEffort,
     type AgentName,
     type ModelConnectionIdentity,
 } from "./config.ts";
@@ -79,7 +81,7 @@ import { createManageInputsTool } from "./inputs_tool.ts";
 import { createProvenanceSeam, createSwappableSandboxEmitters, installProvenanceSeam } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition, type AgentBackend } from "./run_deps.ts";
 import { createUsageRecorder } from "./usage_recorder.ts";
-import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch } from "./agent_switch.ts";
+import { clearAgentSwitch, createSwappableProvider, currentAgentModels, installAgentSwitch, type AgentSelection } from "./agent_switch.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -483,7 +485,13 @@ export function __resetHarnessRuntimeForTest(): void {
  * {@link bootHarnessRuntimeOnce}.
  */
 export function bootHarnessRuntime(
-    options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig; connection?: ResolvedModelConnection; analysisId?: string } = {},
+    options: {
+        seams?: Partial<BootSeams>;
+        config?: ResolvedHarnessConfig;
+        connection?: ResolvedModelConnection;
+        efforts?: Readonly<Record<AgentName, AgentEffort>>;
+        analysisId?: string;
+    } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
     if (booting) return booting;
@@ -491,6 +499,7 @@ export function bootHarnessRuntime(
         { ...realSeams, ...options.seams },
         options.config ?? resolveHarnessConfig(),
         options.connection ?? resolveModelConnection(),
+        options.efforts ?? resolveAgentEfforts(),
         options.analysisId,
     );
     booting = attempt;
@@ -620,6 +629,7 @@ async function bootHarnessRuntimeOnce(
     seams: BootSeams,
     cfg: ResolvedHarnessConfig,
     connection: ResolvedModelConnection,
+    efforts: Readonly<Record<AgentName, AgentEffort>>,
     analysisId?: string,
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = harnessLogger("harness");
@@ -873,13 +883,14 @@ async function bootHarnessRuntimeOnce(
         // a model of a different vendor, and such a wire carries no picture inside a tool result. A direct
         // endpoint with the Anthropic protocol speaks the Messages wire, which renders an image block
         // inside a `tool_result`. The chat-completions wire carries a tool result as text only.
-        const providerConfigFor = (agentModel: string): AiSdkProviderConfig =>
+        const providerConfigFor = ({ model: agentModel, effort }: AgentSelection): AiSdkProviderConfig =>
             connection.mode === "cliproxy"
                 ? {
                       kind: "anthropic",
                       baseURL: env.cliproxyApiUrl,
                       apiKey: providerApiKey,
                       model: agentModel,
+                      reasoning: effort,
                       capabilities: { toolCalling: true, imageToolResults: false },
                       ...requestBounds,
                   }
@@ -889,6 +900,7 @@ async function bootHarnessRuntimeOnce(
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
                         model: agentModel,
+                        reasoning: effort,
                         fetch: authFetch,
                         capabilities: { toolCalling: true, imageToolResults: true },
                         ...requestBounds,
@@ -899,6 +911,7 @@ async function bootHarnessRuntimeOnce(
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
                         model: agentModel,
+                        reasoning: effort,
                         fetch: authFetch,
                         capabilities: { toolCalling: true, imageToolResults: false },
                         ...requestBounds,
@@ -907,20 +920,25 @@ async function bootHarnessRuntimeOnce(
         // at up to 30s a wait, so a provider outage shows up as minutes of apparent silence
         // inside one tool call — indistinguishable, without these records, from a model
         // thinking hard about a hard question.
-        const buildProvider = (agentModel: string): ChatProvider => createConfiguredAiSdkProvider({ config: providerConfigFor(agentModel), logger });
-        // Coincident role models share one INNER instance. Each role still gets
+        const buildProvider = (selection: AgentSelection): ChatProvider => createConfiguredAiSdkProvider({ config: providerConfigFor(selection), logger });
+        // Coincident role selections share one INNER instance. The effort is part of the key, because
+        // the provider bakes it in at construction. Each role still gets
         // its own swappable handle below, so switching one never repoints another.
-        const providerByModel = new Map<string, ChatProvider>();
-        const innerFor = (model: string): ChatProvider => {
-            const existing = providerByModel.get(model);
+        const providerBySelection = new Map<string, ChatProvider>();
+        const innerFor = (selection: AgentSelection): ChatProvider => {
+            const key = `${selection.model} ${selection.effort}`;
+            const existing = providerBySelection.get(key);
             if (existing) return existing;
-            const created = buildProvider(model);
-            providerByModel.set(model, created);
+            const created = buildProvider(selection);
+            providerBySelection.set(key, created);
             return created;
         };
-        const conversationInner = innerFor(conversationModel);
-        const sandboxInner = innerFor(sandboxModel);
-        const utilityInner = innerFor(utilityModel);
+        const conversationSelection: AgentSelection = { model: conversationModel, effort: efforts.conversation };
+        const sandboxSelection: AgentSelection = { model: sandboxModel, effort: efforts.sandbox };
+        const utilitySelection: AgentSelection = { model: utilityModel, effort: efforts.utility };
+        const conversationInner = innerFor(conversationSelection);
+        const sandboxInner = innerFor(sandboxSelection);
+        const utilityInner = innerFor(utilitySelection);
         // Each agent gets its OWN swappable handle even when the inners coincide, so a later switch of one
         // agent re-points only that agent. The handle is the stable reference every
         // consumer captures — the run-engine deps bundles, the conversation agent's sub-agents, and the
@@ -1213,7 +1231,7 @@ async function bootHarnessRuntimeOnce(
                 rebuildProvider: buildProvider,
                 swapSandboxEmitters,
                 modelProvider: connection.provider,
-                initialModels: { conversation: conversationModel, sandbox: sandboxModel, utility: utilityModel },
+                initialSelections: { conversation: conversationSelection, sandbox: sandboxSelection, utility: utilitySelection },
             });
             seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
             seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
