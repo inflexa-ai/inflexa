@@ -102,22 +102,25 @@ Each path is relative to `harness/`. A path that starts with `cli/` is relative 
 
 ## 7. Removals, streamed usage, and stale text
 
-- [ ] 7.1 In `src/providers/types.ts`, remove `providerOptions` from `ChatRequest`. Keep the type export of `ProviderOptions`, because `src/providers/prompt-cache.ts` uses it.
-- [ ] 7.2 In `src/providers/ai-sdk.ts`, give `streamText` only the result of `providerOptionsFor`. Remove the merge with `req.providerOptions`.
-- [ ] 7.3 In `src/providers/ai-sdk.test.ts`, remove the test "forwards the request's providerOptions verbatim to the model". In `src/providers/ai-sdk.openai-arm.test.ts`, write the merge test near line 231 again without `ChatRequest.providerOptions`.
-- [ ] 7.4 Delete `src/providers/anthropic.ts` and `src/providers/anthropic.test.ts`. In `src/index.ts`, remove the two exports of `./providers/anthropic.js`. Write the comment above the export of `createConfiguredAiSdkProvider` again, with the three kinds and no wrapper.
-- [ ] 7.5 In `README.md`, remove the line of `createAnthropicProvider` from the list of the public surface.
-- [ ] 7.6 In `cli/src/modules/harness/run_deps.test.ts`, replace `createAnthropicProvider` with `createConfiguredAiSdkProvider`. Use `{ config: { kind: "anthropic", baseURL: "http://proxy.test", apiKey: "t", model } }`. The `cli` jobs of CI link the working-copy harness, thus this test breaks without the change.
-- [ ] 7.7 In `cli/src/modules/harness/runtime.ts`, change the comment near line 857. It names the `anthropic` arm of `AiSdkProviderConfig`, not the removed wrapper.
-- [ ] 7.8 In `createConfiguredAiSdkProvider`, give `includeUsage: true` to `createOpenAICompatible`. In `src/providers/configured-provider.barrel.test.ts`, add a test that the `openai-compatible` body carries `stream_options.include_usage: true`.
-- [ ] 7.9 In `src/providers/ai-sdk.ts`, write the doc comment of `DEFAULT_MAX_OUTPUT_TOKENS` again for the installed `@ai-sdk/anthropic`. For a known model id, the package clamps a larger value to the row of that model in `getModelCapabilities`. An unknown `claude-*` id defaults to 128000, and a non-Claude id defaults to 4096. Keep the paragraph on the `openai` arm.
-- [ ] 7.10 In `src/tools/research/generate-analogy-report.ts`, make sure that no comment names `temperature`. Commit `4c29d52f` removed that note already, thus change nothing when it is absent.
-- [ ] 7.11 In the header of `src/providers/prompt-cache.ts`, write the section "Cache defeaters" again for the current state. The forced wrap-up keeps the tool set and sends `toolChoice: "none"`, thus it keeps the prefix. Remove each sentence that describes a past state.
-- [ ] 7.12 In the same section, state that `loadRecent` moves the window start in whole `EVICTION_BLOCK_TURNS` blocks. Thus the message prefix shifts one time for each block. Keep the paragraph on the system prompt of a sandbox agent.
-- [ ] 7.13 In `src/tools/workspace/result-bounds.ts`, write the header paragraph and the doc comment of `EXEC_STREAM_BYTE_CAP` again. Name no loop result budget, because the harness has none. The cap of each stream alone bounds a result.
-- [ ] 7.14 In `src/tools/workspace/execute-command.ts`, write the real cap in the `description` of `execute_command`. Make the text from `EXEC_STREAM_BYTE_CAP` (32 KiB), thus the two values cannot differ. In `src/tools/workspace/execute-command.test.ts`, assert that the description names `32 KiB`.
-- [ ] 7.15 Run `tsc -p tsconfig.json`. Run `bun test src/providers src/tools/workspace src/tools/research/generate-analogy-report.test.ts`. Then run `bun run format:file` on each changed file under `src/`.
-- [ ] 7.16 In `cli/`, run `bun run harness:local`, `bun run typecheck`, and `bun test src/modules/harness/run_deps.test.ts`. Then run `bun run format:file src/modules/harness/run_deps.test.ts src/modules/harness/runtime.ts`.
+- [x] 7.1 In `src/providers/types.ts`, remove `providerOptions` from `ChatRequest`. Keep the type export of `ProviderOptions`, because `src/providers/prompt-cache.ts` uses it.
+- [x] 7.2 In `src/providers/ai-sdk.ts`, give `streamText` only the result of `providerOptionsFor`. Remove the merge with `req.providerOptions`.
+- [x] 7.3 In `src/providers/ai-sdk.test.ts`, remove the test "forwards the request's providerOptions verbatim to the model". In `src/providers/ai-sdk.openai-arm.test.ts`, write the merge test near line 231 again without `ChatRequest.providerOptions`.
+- [x] 7.4 Delete `src/providers/anthropic.ts` and `src/providers/anthropic.test.ts`. In `src/index.ts`, remove the two exports of `./providers/anthropic.js`. Write the comment above the export of `createConfiguredAiSdkProvider` again, with the three kinds and no wrapper.
+- [x] 7.5 In `README.md`, remove the line of `createAnthropicProvider` from the list of the public surface.
+- [x] 7.6 In `cli/src/modules/harness/run_deps.test.ts`, replace `createAnthropicProvider` with `createConfiguredAiSdkProvider`. Use `{ config: { kind: "anthropic", baseURL: "http://proxy.test", apiKey: "t", model } }`. The `cli` jobs of CI link the working-copy harness, thus this test breaks without the change.
+- [x] 7.7 In `cli/src/modules/harness/runtime.ts`, change the comment near line 857. It names the `anthropic` arm of `AiSdkProviderConfig`, not the removed wrapper.
+- [x] 7.8 In `createConfiguredAiSdkProvider`, give `includeUsage: true` to `createOpenAICompatible`. In `src/providers/configured-provider.barrel.test.ts`, add a test that the `openai-compatible` body carries `stream_options.include_usage: true`.
+- [x] 7.9 In `src/providers/ai-sdk.ts`, write the doc comment of `DEFAULT_MAX_OUTPUT_TOKENS` again for the installed `@ai-sdk/anthropic`. For a known model id, the package clamps a larger value to the row of that model in `getModelCapabilities`. An unknown `claude-*` id defaults to 128000, and a non-Claude id defaults to 4096. Keep the paragraph on the `openai` arm.
+- [x] 7.10 In `src/tools/research/generate-analogy-report.ts`, make sure that no comment names `temperature`. Commit `4c29d52f` removed that note already, thus change nothing when it is absent.
+- [x] 7.11 In the header of `src/providers/prompt-cache.ts`, write the section "Cache defeaters" again for the current state. Remove each sentence that describes a past state. Name each defeater that remains:
+  - The forced wrap-up on the Anthropic arm. The loop sends the same tool set with `toolChoice: "none"`, but `@ai-sdk/anthropic` removes the tools for `none`. Thus that request changes the prefix. The openai arm keeps the tools.
+  - The salvage run swaps the tool set (`src/loop/run-to-terminal.ts`).
+  - The step summary and the file metadata replay the transcript under their own system prompt and their own tools.
+- [x] 7.12 In the same section, state that `loadRecent` moves the window start in whole `EVICTION_BLOCK_TURNS` blocks. Thus the message prefix shifts one time for each block. Keep the paragraph on the system prompt of a sandbox agent.
+- [x] 7.13 In `src/tools/workspace/result-bounds.ts`, write the header paragraph and the doc comment of `EXEC_STREAM_BYTE_CAP` again. Name no loop result budget, because the harness has none. The cap of each stream alone bounds a result.
+- [x] 7.14 In `src/tools/workspace/execute-command.ts`, write the real cap in the `description` of `execute_command`. Make the text from `EXEC_STREAM_BYTE_CAP` (32 KiB), thus the two values cannot differ. In `src/tools/workspace/execute-command.test.ts`, assert that the description names `32 KiB`.
+- [x] 7.15 Run `tsc -p tsconfig.json`. Run `bun test src/providers src/tools/workspace src/tools/research/generate-analogy-report.test.ts`. Then run `bun run format:file` on each changed file under `src/`.
+- [x] 7.16 In `cli/`, run `bun run harness:local`, `bun run typecheck`, and `bun test src/modules/harness/run_deps.test.ts`. Then run `bun run format:file src/modules/harness/run_deps.test.ts src/modules/harness/runtime.ts`.
 
 ## 8. Final checks
 

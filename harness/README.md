@@ -31,8 +31,7 @@ Import the curated, embedder-facing surface from the package root. Every deep su
 import {
     assembleCoreRuntime,            // host-neutral composition point
     createConversationAgent,
-    createAnthropicProvider,        // ChatProvider — Anthropic
-    createConfiguredAiSdkProvider,  // ChatProvider — any OpenAI-compatible endpoint
+    createConfiguredAiSdkProvider,  // ChatProvider — Anthropic, OpenAI, or an OpenAI-compatible endpoint
     createEmbeddingProvider,
     createLocalRunAuthorizer,       // RunAuthorizer    seam (local default)
     createNoopRunCharge,            // RunCharge        seam

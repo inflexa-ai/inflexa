@@ -57,11 +57,16 @@ export const RETRY_MAX_DELAY_MS = 30_000;
 
 /**
  * Output-token ceiling requested when a config names none — a floor against a
- * provider default, not a target. `@ai-sdk/anthropic` resolves an unset value
- * from a capability table that lags Anthropic's releases and falls back to 4096
- * for ids it does not know, so the newest models silently truncate mid
- * tool-call. The SDK clamps this down per known model (opus-4-x to 32k,
- * claude-3-haiku to 4096), so it cannot over-request one it recognizes.
+ * provider default, not a target.
+ *
+ * For a model id that the capability table of `@ai-sdk/anthropic`
+ * (`getModelCapabilities`) knows, the package clamps a larger value to the row
+ * of that model, so this value cannot over-request a model that the table
+ * knows. For an unset value the package takes a default from the same table:
+ * 128000 for a `claude-*` id that the table does not know, and 4096 for a
+ * non-Claude id, for example a model behind an Anthropic-compatible endpoint.
+ * The anthropic arm always sends a value, thus such a model does not truncate
+ * at 4096 in the middle of a tool call.
  *
  * Lower it per-config for servers that validate `prompt + max_tokens <= context`
  * (vLLM and similar) against a small-context model.
@@ -410,21 +415,6 @@ function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTr
         };
         return { type: text("type"), path: text("path"), reason: text("reason") };
     });
-}
-
-/**
- * Merge the provider options of a call over the provider options of a request,
- * one namespace at a time. A key of the call wins over the same key of the
- * request, and each other key of a namespace stays.
- */
-function mergeProviderOptions(request: ProviderOptions | undefined, call: ProviderOptions | undefined): ProviderOptions | undefined {
-    if (call === undefined) return request;
-    if (request === undefined) return call;
-    const merged: ProviderOptions = { ...request };
-    for (const [namespace, options] of Object.entries(call)) {
-        merged[namespace] = { ...request[namespace], ...options };
-    }
-    return merged;
 }
 
 function isAbortError(value: unknown): boolean {
@@ -889,7 +879,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const reasoning = effortOf(req);
-        const providerOptions = mergeProviderOptions(req.providerOptions, deps.providerOptionsFor?.({ session, reasoning }));
+        const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
             const hookCall: HookCall = { unsettled: false };
             const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
@@ -985,7 +975,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
         const reasoning = effortOf(req);
-        const providerOptions = mergeProviderOptions(req.providerOptions, deps.providerOptionsFor?.({ session, reasoning }));
+        const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
         const hookCall: HookCall = { unsettled: false };
         const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
         const capture = captureServedModelId(deps.model);
@@ -1294,6 +1284,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         baseURL: config.baseURL,
         apiKey: config.apiKey,
         fetch: effectiveFetch as typeof fetch | undefined,
+        // Each call of the provider streams, `chat` included. Without this flag
+        // the package asks for no usage on a stream, and the call reports none.
+        includeUsage: true,
     });
     // The compatible wire has no standard field for a session key, thus this arm
     // gives no provider options of its own.

@@ -271,7 +271,7 @@ describe("runAgent prompt-cache directive", () => {
         // `cache_control`, which is a breakpoint no intermediary can count —
         // CLIProxyAPI then trims its own markers to four and sends five.
         for (const call of chat.calls) {
-            expect(call.providerOptions).toBeUndefined();
+            expect("providerOptions" in call).toBe(false);
         }
     });
 
@@ -320,7 +320,7 @@ describe("runAgent prompt-cache directive", () => {
         for (const call of chat.calls) {
             expect(call.system).toBe("You are a test agent.");
             expect(breakpointsOf(call.messages)).toEqual([]);
-            expect(call.providerOptions).toBeUndefined();
+            expect("providerOptions" in call).toBe(false);
             expect("reasoning" in call).toBe(false);
         }
     });
@@ -338,10 +338,9 @@ describe("runAgent reasoning directive", () => {
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
             expect("reasoning" in call).toBe(false);
-            // The vendor key is what turned the per-model table of the provider
-            // package off, thus nothing may write it again.
-            expect(call.providerOptions?.["anthropic"]?.["effort"]).toBeUndefined();
-            expect(call.providerOptions?.["openai"]).toBeUndefined();
+            // A vendor key is what turns the per-model table of the provider
+            // package off, and a request carries no provider options to hold one.
+            expect("providerOptions" in call).toBe(false);
         }
     });
 

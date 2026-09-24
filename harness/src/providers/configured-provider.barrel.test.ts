@@ -321,6 +321,27 @@ describe("the thinking binding on the wire", () => {
     });
 });
 
+describe("the streamed usage of the openai-compatible arm", () => {
+    it("asks for usage on the stream, and the usage chunk reaches the response", async () => {
+        const cap = capturingFetch(openaiSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: cap.fetch,
+            },
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(cap.requests[0]?.body["stream_options"]).toEqual({ include_usage: true });
+        expect(reply.usage).toMatchObject({ inputTokens: 5, outputTokens: 2 });
+    });
+});
+
 describe("the provider id on the response", () => {
     it("names the provider of each arm, as the AI SDK names it", async () => {
         const anthropic = createConfiguredAiSdkProvider({
