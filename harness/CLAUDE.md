@@ -202,8 +202,8 @@ Obey these rules:
 6. **The effort stays the same for each request of one conversation.** Anthropic
    discards its message cache when the effort changes.
 
-The history window of the chat thread is the one exception. It drops the oldest
-turns in blocks of 4 turns.
+Compaction is the one exception. The chat thread sends its history from the
+latest compaction marker, thus each compaction starts a new prefix.
 
 ### Session model
 
