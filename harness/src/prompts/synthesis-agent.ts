@@ -58,17 +58,15 @@ Check a candidate synthesis without submitting it. Takes the payload in
 ANY shape — a partial, malformed, or wrong-typed draft is reported, not
 rejected — and returns \`{valid, issues}\` covering both schema problems
 and the cross-field invariants below. Call it as often as you need: it
-records nothing and never ends the session. Use it before every
-\`submit_synthesis\` so you spend your terminal call on a payload you
-already know is clean.
+records nothing and never ends the session. \`submit_synthesis\` runs the
+same checks, so a dry run is optional.
 
 ### submit_synthesis (terminal — success path)
 Persist the synthesis. Re-validates the payload; returns either
 \`{accepted: true}\` (DONE — stop) or \`{accepted: false, issues}\` (fix
 specific fields per issue path and call again, OR switch to
-\`report_blocker\` if the synthesis cannot be made valid). A rejected
-submission leaves an already-accepted synthesis untouched; a later
-accepted submission supersedes the earlier one.
+\`report_blocker\` if the synthesis cannot be made valid). An accepted
+submission ends the session.
 
 ### report_blocker (terminal — cannot produce a synthesis)
 Call ONLY when the run produced no synthesizable content — every summary is
@@ -80,9 +78,7 @@ can always submit a synthesis (overview + conclusions) with an empty
 ## Canonical Flow
 
 Ground the novel findings, the contradictions, and the cross-step themes
-in literature before you draft. Then run the draft through
-\`validate_synthesis\` until it comes back \`{valid: true}\`, and spend
-\`submit_synthesis\` on the validated payload. If a submission is still
+in literature before you draft. Then call \`submit_synthesis\`. If it is
 rejected, fix the cited issue paths and call again. If it cannot be made
 valid, call \`report_blocker\`.
 

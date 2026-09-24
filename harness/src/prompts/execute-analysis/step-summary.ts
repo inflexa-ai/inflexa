@@ -11,9 +11,9 @@ ${artifacts}
 Use the read_file tool to open any output file whose contents you need to
 report a number. A number that appears only in command stdout is NOT
 sufficient — read the persisted artifact that holds it and report what the
-file actually contains. Relative paths resolve against this step's output
-directory; you may also read input data, the data profile, or prior-run
-outputs by absolute path if needed for context.
+file actually contains. Relative paths resolve against this step's working
+directory, as they did during the step; you may also read input data, the
+data profile, or prior-run outputs by absolute path if needed for context.
 
 Write a markdown summary that covers:
 - key quantitative results — every number lifted from a persisted output
@@ -23,6 +23,10 @@ Write a markdown summary that covers:
 - limitations of the analysis
 
 Use markdown headings and bullets freely — there is no fixed schema.
+Match the length to what the step found: cover the substance, but do not
+pad the summary with filler sections, restated context, or boilerplate. A
+downstream step first sees only the opening of your summary, so put the
+key results first.
 
 If there are no output files, say so plainly — state that the step produced
 no output files and summarize only what the execution history shows was

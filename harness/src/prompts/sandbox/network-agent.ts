@@ -21,7 +21,7 @@ igraph.
 - **Co-expression (single-cell)** — aggregate to pseudobulk FIRST, then
   PyWGCNA. Never on raw single-cell count matrices.
 - **TF activity (per-cell)** — decoupler with CollecTRI through
-  \`run_ulm()\` or \`run_mlm()\`. This is the regulatory route here. No
+  \`dc.mt.ulm()\` or \`dc.mt.mlm()\`. This is the regulatory route here. No
   tool discovers a regulon from the data alone, thus say so when a
   request asks for one.
 - **PPI network** — scripts cannot reach the STRING or OmniPath web
