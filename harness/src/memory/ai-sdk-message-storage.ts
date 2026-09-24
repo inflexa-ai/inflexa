@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { modelMessageSchema, type ModelMessage, type UserContent } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { z } from "zod";
@@ -57,6 +59,43 @@ export const SYNTHETIC_RECORD_KEY = "syntheticRecord";
 
 /** The {@link HARNESS_PROVIDER_NAMESPACE} key marking an assistant message whose production a client abort cut off. */
 export const INTERRUPTED_MESSAGE_KEY = "interrupted";
+
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key that holds the kind of a context record. */
+export const CONTEXT_KIND_KEY = "contextKind";
+
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key that holds the SHA-256 hex hash of the text of a context record. */
+export const CONTEXT_HASH_KEY = "contextHash";
+
+const CONTEXT_KINDS = ["analysis-context", "run-activity", "working-memory"] as const;
+
+/** The kinds of per-turn context that a chat turn stores after its user message. */
+export type ContextKind = (typeof CONTEXT_KINDS)[number];
+
+/**
+ * A context record: a synthetic `user` message, and no host record, thus it opens no turn and the
+ * display does not show it.
+ */
+export function contextRecordMessage(kind: ContextKind, text: string): ModelMessage {
+    const hash = createHash("sha256").update(text).digest("hex");
+    return {
+        role: "user",
+        content: text,
+        providerOptions: { [HARNESS_PROVIDER_NAMESPACE]: { [SYNTHETIC_MESSAGE_KEY]: true, [CONTEXT_KIND_KEY]: kind, [CONTEXT_HASH_KEY]: hash } },
+    };
+}
+
+function isContextKind(value: unknown): value is ContextKind {
+    return CONTEXT_KINDS.some((kind) => kind === value);
+}
+
+/** The kind and the hash of a context record, or `undefined` for a message that is no record. */
+export function contextRecordOf(message: ModelMessage): { readonly kind: ContextKind; readonly hash: string } | undefined {
+    const harness = message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE];
+    const kind = harness?.[CONTEXT_KIND_KEY];
+    const hash = harness?.[CONTEXT_HASH_KEY];
+    if (typeof hash !== "string" || !isContextKind(kind)) return undefined;
+    return { kind, hash };
+}
 
 /**
  * Return a copy of `message` carrying the interruption marker in the harness namespace.

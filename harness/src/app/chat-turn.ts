@@ -119,7 +119,7 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     );
 
     const history = createThreadHistory(pool);
-    const { messages, userMessage } = await assembleMessages({
+    const { messages, userMessage, contextRecords } = await assembleMessages({
         threadId,
         threadType,
         analysisId,
@@ -131,5 +131,5 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         ...(deps.logger ? { logger: deps.logger } : {}),
     });
 
-    return { kind: "ok", threadType, messages, userMessage };
+    return { kind: "ok", threadType, messages, userMessage, contextRecords };
 }

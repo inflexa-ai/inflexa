@@ -342,14 +342,11 @@ function renderSection(heading: string, lines: readonly string[], omitted: numbe
 }
 
 /**
- * Serialize working memory to the Markdown document injected each turn.
+ * Serialize working memory to the Markdown document of the working-memory context record.
  *
  * Renders only what exists: an empty section is omitted entirely — no heading,
  * no placeholder — and an entirely empty memory renders to the **empty
- * string**, costing nothing. The chat route injects the render
- * unconditionally, and the provider's outbound sanitizer drops a message whose
- * content is `""` before the wire call (`providers/ai-sdk.ts`), so an empty
- * memory reaches the model as no message at all.
+ * string**. The context record then states that the memory is empty.
  *
  * Findings render as ONE flat list, each line citing the run it came from —
  * never a per-run heading block. Memory holds the reference; `inspect_run`
