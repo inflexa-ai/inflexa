@@ -8,29 +8,29 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 1. The cut and the store interface in the loop
 
-- [ ] 1.1 Add `src/loop/tool-output.ts`. Export `TOOL_RESULT_CAP = 32 * 1024`, `EXCERPT_HEAD_CHARS = 4 * 1024`, and `EXCERPT_TAIL_CHARS = 8 * 1024`.
-- [ ] 1.2 In the same file, export `TOOL_OUTPUT_KEEP_MAX = 1024 * 1024` and `READ_TOOL_OUTPUT_TOOL_ID = "read_tool_output"`. The module header gives the reason for each value.
-- [ ] 1.3 Export the interfaces `KeptToolOutput` and `ToolOutputStore` of the design. The error type of `put` and `get` is `DomainError` of `src/lib/result.ts`.
-- [ ] 1.4 Export `toolOutputRef(key: string): string`. It gives `to_` and the first 20 hexadecimal characters of the SHA-256 hash of the key.
-- [ ] 1.5 Export `resultTextOf(output: ToolResultPart["output"]): string | undefined`. It gives the text of the design for each output type, and `undefined` for `execution-denied`.
-- [ ] 1.6 Export `keptTextOf(text: string): string`. A text of at most `TOOL_OUTPUT_KEEP_MAX` characters comes back whole.
-- [ ] 1.7 For a longer text, `keptTextOf` gives the first half and the last half of the maximum. A marker line between them gives the count of the dropped characters.
-- [ ] 1.8 Export `excerptOf(text: string, kept: { ref: string; keptLength: number } | undefined): string`. It gives the lines, the start, the marker line, and the end of the design.
-- [ ] 1.9 In `excerptOf` and `keptTextOf`, move a cut point by one unit when it splits a surrogate pair.
-- [ ] 1.10 Export `withExcerpt(part: ToolResultPart, excerpt: string): ToolResultPart`. It gives the output types of the design, and it keeps the file parts of a `content` result.
-- [ ] 1.11 In `src/loop/run-agent.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `RunAgentOptions`. The doc comment says that a run with no store cuts and keeps nothing.
-- [ ] 1.12 In `openLoop`, make one cut context for the run: the store, the session, `opts.invocationId`, the logger, and `toolsById.has(READ_TOOL_OUTPUT_TOOL_ID)`.
-- [ ] 1.13 Give the cut context and the tool step name of each call to `dispatchTool`, through `dispatchTools`.
-- [ ] 1.14 In `dispatchTool`, give each result to a new function `cutLongResult` before the return. Expected result: each branch of `dispatchTool` returns through that one function.
-- [ ] 1.15 In `cutLongResult`, give back the result with no change when its text is `undefined` or at most `TOOL_RESULT_CAP` characters.
-- [ ] 1.16 For a longer text, keep the text only when the run has a store and the agent declares `read_tool_output`.
-- [ ] 1.17 To keep the text, make the key with `recordKeyFor(session, invocationId, stepName)`, and the reference with `toolOutputRef(key)`.
-- [ ] 1.18 Await `store.put` with the analysis id of the session, the reference, the tool name, and the tool call id. The text is `keptTextOf(text)`, and the length is `text.length`.
-- [ ] 1.19 Give `threadId: session.scope.threadId` only when `session.runFrame` is absent. Expected result: a text of a run names no thread.
-- [ ] 1.20 Read the `put` result with no `try`. On `err`, log the warn `"tool output not kept"` with `toolName`, `toolCallId`, `ref`, and the error type.
-- [ ] 1.21 Give back `withExcerpt(part, excerptOf(text, kept))`. Expected result: the excerpt is the same when the `put` gives `err`.
-- [ ] 1.22 Write the doc comment of `recordKeyFor` again. It keys a usage record and a kept tool output, and its scheme does not change.
-- [ ] 1.23 In `src/loop/run-agent.test.ts`, add `describe("runAgent — long tool results")` with a fake store. Add these tests:
+- [x] 1.1 Add `src/loop/tool-output.ts`. Export `TOOL_RESULT_CAP = 32 * 1024`, `EXCERPT_HEAD_CHARS = 4 * 1024`, and `EXCERPT_TAIL_CHARS = 8 * 1024`.
+- [x] 1.2 In the same file, export `TOOL_OUTPUT_KEEP_MAX = 1024 * 1024` and `READ_TOOL_OUTPUT_TOOL_ID = "read_tool_output"`. The doc comment of each value gives its reason.
+- [x] 1.3 Export the interfaces `KeptToolOutput` and `ToolOutputStore` of the design. The error type of `put` and `get` is `DomainError` of `src/lib/result.ts`.
+- [x] 1.4 Export `toolOutputRef(key: string): string`. It gives `to_` and the first 20 hexadecimal characters of the SHA-256 hash of the key.
+- [x] 1.5 Export `resultTextOf(output: ToolResultPart["output"]): string | undefined`. It gives the text of the design for each output type, and `undefined` for `execution-denied`.
+- [x] 1.6 Export `keptTextOf(text: string): string`. A text of at most `TOOL_OUTPUT_KEEP_MAX` characters comes back whole.
+- [x] 1.7 For a longer text, `keptTextOf` gives the first half and the last half of the maximum. A marker line between them gives the count of the dropped characters.
+- [x] 1.8 Export `excerptOf(text: string, kept: { ref: string; keptLength: number } | undefined): string`. It gives the lines, the start, the marker line, and the end of the design.
+- [x] 1.9 In `excerptOf` and `keptTextOf`, move a cut point by one unit when it splits a surrogate pair.
+- [x] 1.10 Export `withExcerpt(part: ToolResultPart, excerpt: string): ToolResultPart`. It gives the output types of the design, and it keeps the file parts of a `content` result.
+- [x] 1.11 In `src/loop/run-agent.ts`, add `readonly toolOutputStore?: ToolOutputStore` to `RunAgentOptions`. The doc comment says that a run with no store cuts and keeps nothing.
+- [x] 1.12 In `openLoop`, make one cut context for the run: the store, the session, `opts.invocationId`, the logger, and `toolsById.has(READ_TOOL_OUTPUT_TOOL_ID)`.
+- [x] 1.13 Give the cut context and the tool step name of each call to `dispatchTool`, through `dispatchTools`.
+- [x] 1.14 In `dispatchTool`, give each result to a new function `cutLongResult` before the return. Expected result: each branch of `dispatchTool` returns through that one function.
+- [x] 1.15 In `cutLongResult`, give back the result with no change when its text is `undefined` or at most `TOOL_RESULT_CAP` characters.
+- [x] 1.16 For a longer text, keep the text only when the run has a store and the agent declares `read_tool_output`.
+- [x] 1.17 To keep the text, make the key with `recordKeyFor(session, invocationId, stepName)`, and the reference with `toolOutputRef(key)`.
+- [x] 1.18 Await `store.put` with the analysis id of the session, the reference, the tool name, and the tool call id. The text is `keptTextOf(text)`, and the length is `text.length`.
+- [x] 1.19 Give `threadId: session.scope.threadId` only when `session.runFrame` is absent. Expected result: a text of a run names no thread.
+- [x] 1.20 Read the `put` result with no `try`. On `err`, log the warn `"tool output not kept"` with `toolName`, `toolCallId`, `ref`, and the error type.
+- [x] 1.21 Give back `withExcerpt(part, excerptOf(text, kept))`. Expected result: the excerpt is the same when the `put` gives `err`.
+- [x] 1.22 Write the doc comment of `recordKeyFor` again. It keys a usage record and a kept tool output, and its scheme does not change.
+- [x] 1.23 In the new file `src/loop/tool-output.test.ts`, add `describe("runAgent — long tool results")` with a fake store. Add these tests:
   - A result of exactly 32,768 characters stays a `json` result with no change.
   - A result of 32,769 characters becomes a `text` excerpt with the first line, the start, the marker line, and the end.
   - A thrown error of 50,000 characters becomes an `error-text` excerpt, and `tool-finished` reports `error`.
@@ -47,7 +47,7 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
   - A continuation cuts a long result with the store of its options.
   - A text of 3,000,000 characters gives a kept text with both halves and the marker line.
   - A surrogate pair at a cut point stays whole.
-- [ ] 1.24 Run `tsc -p tsconfig.json`. Run `bun test src/loop/run-agent.test.ts`. Run `bun run lint`. Run `bun run format:file src/loop/tool-output.ts src/loop/run-agent.ts src/loop/run-agent.test.ts`.
+- [x] 1.24 Run `tsc -p tsconfig.json`. Run `bun test src/loop`. Run `bun run lint`. Run `bun run format:file src/loop/tool-output.ts src/loop/run-agent.ts src/loop/tool-output.test.ts`.
 
 ## 2. The table and the Postgres store
 

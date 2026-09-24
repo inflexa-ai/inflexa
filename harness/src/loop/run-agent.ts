@@ -37,6 +37,16 @@ import { addChatUsage, countChatTokens, hasReportedUsage, recordAgentRun, type A
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { refusalsFor, type ToolBudget, type ToolMask } from "./tool-mask.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
+import {
+    excerptOf,
+    keptTextOf,
+    READ_TOOL_OUTPUT_TOOL_ID,
+    resultTextOf,
+    TOOL_RESULT_CAP,
+    toolOutputRef,
+    withExcerpt,
+    type ToolOutputStore,
+} from "./tool-output.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
 export interface AgentFinish {
@@ -161,6 +171,8 @@ export interface RunAgentOptions {
      * and it logs the reason of an `err` when the result arrives.
      */
     readonly usageRecorder?: UsageRecorder;
+    /** Keeps the text of each cut tool result. A run with no store cuts, and it keeps nothing. */
+    readonly toolOutputStore?: ToolOutputStore;
     /**
      * The turn's usage accumulator, supplied by whatever ran this loop as part
      * of a larger turn (a sub-agent-running tool passes `ctx.turnUsage`). A run
@@ -292,6 +304,13 @@ export function openLoop(
     // The collector belongs to this run, thus two loops never share one.
     const encoding: ResultEncoding = { placement: imagePlacementFor(provider.capabilities), deferredImages: [], log };
     const toolsById = new Map<string, Tool>(agent.tools.map((t) => [t.id, t]));
+    // Only the read tool of the agent can read a kept text, thus an agent without it keeps nothing.
+    const cut: ResultCut = {
+        store: toolsById.has(READ_TOOL_OUTPUT_TOOL_ID) ? opts.toolOutputStore : undefined,
+        session,
+        invocationId: opts.invocationId,
+        log,
+    };
     const toolDefs: ToolSet = Object.fromEntries(
         agent.tools.map((t) => [
             t.id,
@@ -501,7 +520,7 @@ export function openLoop(
         names: StepNameFormatter,
     ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> => {
         const refusals = refusalsFor(calls, mask, opts.toolBudget, used);
-        return dispatchTools(calls, refusals, toolsById, (tu) => toolCtx(tu, names), isFatalLoopError, callStep, names.tool, encoding);
+        return dispatchTools(calls, refusals, toolsById, (tu) => toolCtx(tu, names), isFatalLoopError, callStep, names.tool, encoding, cut);
     };
 
     const stopOnResolved = async (index: number): Promise<RunAgentResult> => {
@@ -723,7 +742,8 @@ export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting
 const CALL_PATH_DELIMITER = ">";
 
 /**
- * Idempotency key for one call's usage record:
+ * Idempotency key for one call's usage record, and for the kept text of one cut
+ * tool result under the tool step name of its call:
  * `{runId}[:{stepId}]:{callPath}[:{invocationId}]:{stepName}`.
  *
  * Every component is a fact the same call carries again on every replay, so a
@@ -900,6 +920,7 @@ async function dispatchTools(
     runStep: RunStep,
     toolStepName: (toolName: string, toolUseId: string) => string,
     encoding: ResultEncoding,
+    cut: ResultCut,
 ): Promise<{ results: ToolResultPart[]; durations: (number | undefined)[]; resultDetails: (ToolCallDetail | undefined)[] }> {
     // A refusal writes no tool span, because the tool does not run.
     const dispatch = (tu: ToolCallPart, refusal: string | undefined): Promise<DispatchedCall> =>
@@ -907,7 +928,7 @@ async function dispatchTools(
             ? Promise.resolve({ result: errorResult(tu, refusal) })
             : traceToolCall(
                   tu,
-                  () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding),
+                  () => dispatchTool(tu, toolsById, toolCtx(tu), isFatalLoopError, encoding, cut, toolStepName(tu.toolName, tu.toolCallId)),
                   (dispatched) => outcomeOf(dispatched.result),
               );
     const results = new Array<ToolResultPart>(toolUses.length);
@@ -990,7 +1011,54 @@ function readDispatchedStep(settled: DispatchedCall | ToolResultPart): Dispatche
     return "result" in settled ? settled : { result: settled };
 }
 
+interface ResultCut {
+    /** Absent when the run keeps nothing. */
+    readonly store: ToolOutputStore | undefined;
+    readonly session: AgentSession;
+    readonly invocationId: string | undefined;
+    readonly log: Logger;
+}
+
+/** For a step-mode tool this runs inside the durable step of the call, thus a replay gives the stored excerpt. */
 async function dispatchTool(
+    tu: ToolCallPart,
+    toolsById: Map<string, Tool>,
+    ctx: ToolContext,
+    isFatalLoopError: (err: unknown) => boolean,
+    encoding: ResultEncoding,
+    cut: ResultCut,
+    stepName: string,
+): Promise<DispatchedCall> {
+    const dispatched = await callTool(tu, toolsById, ctx, isFatalLoopError, encoding);
+    return { ...dispatched, result: await cutLongResult(dispatched.result, cut, stepName) };
+}
+
+/** The excerpt does not depend on the outcome of the put, thus a replay gives the same bytes. */
+async function cutLongResult(result: ToolResultPart, cut: ResultCut, stepName: string): Promise<ToolResultPart> {
+    const text = resultTextOf(result.output);
+    if (text === undefined || text.length <= TOOL_RESULT_CAP) return result;
+    if (cut.store === undefined) return withExcerpt(result, excerptOf(text, undefined));
+
+    const { session } = cut;
+    const ref = toolOutputRef(recordKeyFor(session, cut.invocationId, stepName));
+    const content = keptTextOf(text);
+    const put = await cut.store.put({
+        analysisId: session.scope.analysisId,
+        ref,
+        toolName: result.toolName,
+        toolCallId: result.toolCallId,
+        // A run session carries the thread of the chat that started the run, but a run belongs to its analysis.
+        ...(session.runFrame === undefined && session.scope.threadId !== undefined ? { threadId: session.scope.threadId } : {}),
+        content,
+        totalLength: text.length,
+    });
+    if (put.isErr()) {
+        cut.log.warn("tool output not kept", { toolName: result.toolName, toolCallId: result.toolCallId, ref, errorType: put.error.type });
+    }
+    return withExcerpt(result, excerptOf(text, { ref, keptLength: content.length }));
+}
+
+async function callTool(
     tu: ToolCallPart,
     toolsById: Map<string, Tool>,
     ctx: ToolContext,
