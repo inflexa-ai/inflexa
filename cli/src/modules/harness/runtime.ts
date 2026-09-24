@@ -854,8 +854,8 @@ async function bootHarnessRuntimeOnce(
         // construction path for both connection modes: the
         // resolved connection + a bound model becomes an `AiSdkProviderConfig`. cliproxy
         // resolves to the Anthropic kind at the owned proxy URL with the proxy client key
-        // — the same kind/baseURL/apiKey/model shape the harness's `createAnthropicProvider`
-        // convenience wrapper emits, so the proxy path takes the bare-Anthropic connection
+        // — the kind/baseURL/apiKey/model shape of the `anthropic` arm of the harness's
+        // `AiSdkProviderConfig`, so the proxy path takes the bare-Anthropic connection
         // route through the harness. The capabilities are per-arm (below). direct resolves
         // to the configured protocol kind at the configured endpoint with the env secret.
         // The auth-injecting fetch, present only when the connection gives a credential source. One

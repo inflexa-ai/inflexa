@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
     streamText,
     wrapLanguageModel,
@@ -5,10 +7,14 @@ import {
     type LanguageModel,
     type LanguageModelUsage,
     type ModelMessage,
+    type ProviderMetadata,
     type TextStreamPart,
     type ToolSet,
 } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
+// Any `providerOptions.anthropic.thinking` bypasses this table's thinking
+// selection (see `thinkingWithBinding`).
+import { getModelCapabilities } from "@ai-sdk/anthropic/internal";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { OpenTelemetry } from "@ai-sdk/otel";
@@ -23,8 +29,19 @@ import type { GateRefusal } from "../lib/hooks.js";
 import type { Logger } from "../lib/logger.js";
 import { passThroughTracer } from "../lib/otel-spans.js";
 import { DEFAULT_SUSPEND_ON, classifyProviderError, type ProviderError, RequestTimeoutError, type SuspendOn, toProviderError } from "./errors.js";
+import { DEFAULT_REASONING } from "./reasoning.js";
 import { headersRefusalError, requestHeadersFor, type RequestHeaders, type ResolveRequestHeaders } from "./request-headers.js";
-import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
+import type {
+    ChatProvider,
+    ChatRequest,
+    ChatResponse,
+    ChatStreamEvent,
+    ChatUsage,
+    FetchLike,
+    ProviderCapabilities,
+    ProviderOptions,
+    ReasoningPolicy,
+} from "./types.js";
 
 /**
  * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
@@ -40,11 +57,10 @@ export const RETRY_MAX_DELAY_MS = 30_000;
 
 /**
  * Output-token ceiling requested when a config names none — a floor against a
- * provider default, not a target. `@ai-sdk/anthropic` resolves an unset value
- * from a capability table that lags Anthropic's releases and falls back to 4096
- * for ids it does not know, so the newest models silently truncate mid
- * tool-call. The SDK clamps this down per known model (opus-4-x to 32k,
- * claude-3-haiku to 4096), so it cannot over-request one it recognizes.
+ * provider default, not a target. For an unset value, `@ai-sdk/anthropic`
+ * defaults to 128000 for an unknown `claude-*` id and 4096 for a non-Claude
+ * id. The anthropic arm always sends a value, so it never truncates mid
+ * tool-call.
  *
  * Lower it per-config for servers that validate `prompt + max_tokens <= context`
  * (vLLM and similar) against a small-context model.
@@ -82,6 +98,12 @@ export interface ProviderHostPolicy {
     readonly suspendOn?: SuspendOn;
 }
 
+/** The call facts that `providerOptionsFor` uses to build provider options. */
+export interface ProviderCall {
+    readonly session: AgentSession;
+    readonly reasoning: ReasoningPolicy;
+}
+
 export interface AiSdkProviderDeps extends ProviderHostPolicy {
     readonly model: LanguageModel;
     readonly capabilities?: Partial<ProviderCapabilities>;
@@ -104,6 +126,13 @@ export interface AiSdkProviderDeps extends ProviderHostPolicy {
      * hands the SDK no bound.
      */
     readonly requestTimeoutMs?: number;
+    /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+    readonly reasoning?: ReasoningPolicy;
+    /**
+     * Builds provider options once per call, before the retry envelope, so
+     * every attempt reuses the same options.
+     */
+    readonly providerOptionsFor?: (call: ProviderCall) => ProviderOptions | undefined;
 }
 
 /**
@@ -147,6 +176,13 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+          readonly reasoning?: ReasoningPolicy;
+          /**
+           * How the API handles a signed thinking block whose prefix changed
+           * (Opus 5.5, Fable 5.1). Needs the `thinking-binding-controls-2026-08-01` beta header.
+           */
+          readonly thinkingBinding?: "drop_block" | "error" | "off";
       }
     | {
           readonly kind: "openai";
@@ -183,6 +219,8 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+          readonly reasoning?: ReasoningPolicy;
           /**
            * NOTICE: this value is the retention directive of the Responses wire.
            *
@@ -247,6 +285,8 @@ export type AiSdkProviderConfig =
            * keeps the default of 10.
            */
           readonly maxRetries?: number;
+          /** Fallback effort when a request sets none. Defaults to {@link DEFAULT_REASONING}. */
+          readonly reasoning?: ReasoningPolicy;
       };
 
 export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
@@ -256,6 +296,59 @@ export interface ConfiguredAiSdkProviderDeps extends ProviderHostPolicy {
 
 function workloadOf(session: AgentSession): string {
     return `${session.scope.kind}:${scopeWorkloadId(session.scope)}`;
+}
+
+/**
+ * Identifiers only, never a name or address. The run frame wins over the
+ * thread so parallel steps of one run keep separate gateway cache accounts.
+ */
+export function sessionKeyOf(session: Pick<AgentSession, "scope" | "runFrame">): string {
+    const { scope, runFrame } = session;
+    if (runFrame !== undefined) {
+        return runFrame.stepId === undefined ? `${scope.analysisId}:${runFrame.runId}` : `${scope.analysisId}:${runFrame.runId}:${runFrame.stepId}`;
+    }
+    return scope.threadId === undefined ? scope.analysisId : `${scope.analysisId}:${scope.threadId}`;
+}
+
+/**
+ * Base64url SHA-256 digest of {@link sessionKeyOf}, always 43 characters.
+ * OpenAI and Azure reject a `prompt_cache_key` over 64 characters with a
+ * non-retryable 400.
+ */
+export function sessionKeyDigestOf(session: Pick<AgentSession, "scope" | "runFrame">): string {
+    return createHash("sha256").update(sessionKeyOf(session)).digest("base64url");
+}
+
+/**
+ * CAUTION: setting `providerOptions.anthropic.thinking` without a `type`
+ * turns thinking off. Call only for a model whose capability row says
+ * `rejectsThinkingDisabled`.
+ */
+function thinkingWithBinding(reasoning: ReasoningPolicy, mode: "drop_block" | "error"): NonNullable<AnthropicLanguageModelOptions["thinking"]> {
+    const blockBinding = { prefixMismatchBehavior: mode };
+    if (reasoning === "none" || reasoning === "provider-default") return { blockBinding };
+    return { type: "adaptive", display: "summarized", blockBinding };
+}
+
+/** One input transformation that the Anthropic API reports. */
+interface InputTransformation {
+    readonly type?: string;
+    readonly path?: string;
+    readonly reason?: string;
+}
+
+/** Reads `providerMetadata.anthropic.inputTransformations`; empty for another vendor. */
+function inputTransformationsOf(metadata: ProviderMetadata | undefined): InputTransformation[] {
+    const entries = metadata?.["anthropic"]?.["inputTransformations"];
+    if (!Array.isArray(entries)) return [];
+    return entries.map((entry: unknown) => {
+        const fields = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+        const text = (key: string): string | undefined => {
+            const value = fields[key];
+            return typeof value === "string" ? value : undefined;
+        };
+        return { type: text("type"), path: text("path"), reason: text("reason") };
+    });
 }
 
 function isAbortError(value: unknown): boolean {
@@ -453,6 +546,11 @@ function requestedModelIdOf(model: LanguageModel): string | undefined {
     return typeof model === "string" ? model : model.modelId;
 }
 
+/** The provider id of the model bound into this provider, as the AI SDK names it — a bare id string names no provider. */
+function providerIdOf(model: LanguageModel): string | undefined {
+    return typeof model === "string" ? undefined : model.provider;
+}
+
 /**
  * A per-call view of the model that also records the model id the endpoint
  * itself reported, if any.
@@ -515,14 +613,15 @@ function responseFromMessages(input: {
     readonly usage?: LanguageModelUsage;
     readonly requestedModelId?: string;
     readonly servedModelId?: string;
+    readonly provider?: string;
 }): ChatResponse {
-    const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId } = input;
+    const { messages, fallbackText, finishReason, rawFinishReason, requestedModelId, servedModelId, provider } = input;
     const usage = toChatUsage(input.usage);
     const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
-        return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
+        return { message: { role: "assistant", content: fallbackText }, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
     }
-    return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId };
+    return { message, finishReason, rawFinishReason, usage, requestedModelId, servedModelId, provider };
 }
 
 /**
@@ -669,6 +768,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const suspendOn = deps.suspendOn ?? DEFAULT_SUSPEND_ON;
     const requestTimeoutMs = deps.requestTimeoutMs;
     const requestedModelId = requestedModelIdOf(deps.model);
+    const providerId = providerIdOf(deps.model);
+    const effortOf = (req: ChatRequest): ReasoningPolicy => req.reasoning ?? deps.reasoning ?? DEFAULT_REASONING;
     // Each model call emits OpenTelemetry GenAI spans through the AI SDK, with no
     // prompt or completion text on them. The integration rides on each call
     // instead of the global registry, so the harness never traces the embedder's
@@ -697,7 +798,19 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
         });
     }
 
+    /**
+     * Logs each dropped thinking block; the drop does not fail the call.
+     * `reason` is `prefix_binding_mismatch` or `model_binding_mismatch`.
+     */
+    function logDroppedThinkingBlocks(session: AgentSession, metadata: ProviderMetadata | undefined): void {
+        for (const drop of inputTransformationsOf(metadata)) {
+            logger.warn("thinking block dropped", { workload: workloadOf(session), type: drop.type, path: drop.path, reason: drop.reason });
+        }
+    }
+
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
+        const reasoning = effortOf(req);
+        const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
             const hookCall: HookCall = { unsettled: false };
             const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
@@ -740,8 +853,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         // carries the one configured bound, and a turn that writes
                         // steadily runs as long as it needs.
                         ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
-                        providerOptions: req.providerOptions,
-                        reasoning: req.reasoning,
+                        providerOptions,
+                        reasoning,
                     });
                     // The drain sits inside the retried closure, thus a failure at any
                     // point of the stream re-runs the whole attempt and the envelope
@@ -764,15 +877,21 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         finishReason: await result.finishReason,
                         rawFinishReason: await result.rawFinishReason,
                         usage: await result.usage,
+                        providerMetadata: (await result.finalStep).providerMetadata,
                     };
                 });
+                // Logged past the envelope, thus only the attempt that succeeded
+                // reports its drops.
+                const { providerMetadata: metadata, ...reply } = collected;
+                logDroppedThinkingBlocks(session, metadata);
                 return ok(
                     responseFromMessages({
-                        ...collected,
+                        ...reply,
                         requestedModelId,
                         // Read after the drain: the metadata chunk that carries the
                         // served id reaches the capture only as the stream is consumed.
                         servedModelId: capture.servedModelId(),
+                        provider: providerId,
                     }),
                 );
             } catch (e) {
@@ -786,6 +905,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
+        const reasoning = effortOf(req);
+        const providerOptions = deps.providerOptionsFor?.({ session, reasoning });
         const hookCall: HookCall = { unsettled: false };
         const retry = createRetry(signal, logger, maxRetries, suspendOn, hookCall);
         const capture = captureServedModelId(deps.model);
@@ -818,8 +939,8 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     // no content, for example a keep-alive comment, produces no part,
                     // thus it feeds neither bound.
                     ...(requestTimeoutMs !== undefined ? { timeout: { firstChunkMs: requestTimeoutMs, chunkMs: requestTimeoutMs } } : {}),
-                    providerOptions: req.providerOptions,
-                    reasoning: req.reasoning,
+                    providerOptions,
+                    reasoning,
                 });
                 const iterator = result.fullStream[Symbol.asyncIterator]();
                 const first = await pullNextDelta(iterator);
@@ -845,12 +966,14 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                         finishReason: await result.finishReason,
                         rawFinishReason: await result.rawFinishReason,
                         usage: await result.usage,
+                        providerMetadata: (await result.finalStep).providerMetadata,
                     };
                 }
                 return { kind: "streaming" as const, result, iterator, firstDelta: first.text };
             });
 
             if (opened.kind === "completed") {
+                logDroppedThinkingBlocks(session, opened.providerMetadata);
                 const response = responseFromMessages({
                     messages: opened.messages,
                     fallbackText: "",
@@ -859,6 +982,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     usage: opened.usage,
                     requestedModelId,
                     servedModelId: capture.servedModelId(),
+                    provider: providerId,
                 });
                 yield { type: "done", response };
                 return;
@@ -888,7 +1012,9 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 // Read after the drain: the metadata chunk carrying the served id
                 // reaches the capture only as the stream is consumed.
                 servedModelId: capture.servedModelId(),
+                provider: providerId,
             });
+            logDroppedThinkingBlocks(session, (await result.finalStep).providerMetadata);
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted || hookCall.unsettled) throw e;
@@ -964,11 +1090,10 @@ export function wrapFetchWithRequestTimeout(fetchImpl: FetchLike, requestTimeout
  *
  * The middleware merges the value into the `openai` namespace of
  * `providerOptions`. It keeps each other namespace, and it keeps each other key
- * of the `openai` namespace, thus a cache directive of a different vendor rides
- * through untouched. The arm value wins over a request-level `store`, because
- * the retention mode belongs to the connection and not to one turn. A thread
- * that mixes the two modes replays a reference onto an item that the server
- * never stored.
+ * of the `openai` namespace, thus the session key of the call
+ * (`promptCacheKey`) rides through untouched. The retention mode belongs to the
+ * connection and not to one turn: a thread that mixes the two modes replays a
+ * reference onto an item that the server never stored.
  */
 function withStoreDirective(model: LanguageModelV4, store: boolean): LanguageModelV4 {
     return wrapLanguageModel({
@@ -1022,6 +1147,9 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         // must declare the capability. A config value overrides this default in
         // both directions.
         const pictureDefault: Partial<ProviderCapabilities> = config.baseURL === undefined ? { imageToolResults: true } : {};
+        // A model that can run without thinking gets no binding (see `thinkingWithBinding`).
+        const bindingMode = config.thinkingBinding ?? "drop_block";
+        const binding = bindingMode !== "off" && getModelCapabilities(config.model).rejectsThinkingDisabled ? bindingMode : undefined;
         return createAiSdkProvider({
             model: provider.chat(config.model),
             ...hostPolicyOf(deps),
@@ -1030,6 +1158,15 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            // The package sends the key as `metadata.user_id`, and the binding as
+            // `thinking.block_binding`.
+            providerOptionsFor: ({ session, reasoning }) => ({
+                anthropic: {
+                    metadata: { userId: sessionKeyDigestOf(session) },
+                    ...(binding !== undefined ? { thinking: thinkingWithBinding(reasoning, binding) } : {}),
+                } satisfies AnthropicLanguageModelOptions,
+            }),
         });
     }
 
@@ -1063,6 +1200,10 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             maxOutputTokens: config.maxOutputTokens ?? "provider-maximum",
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
             ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+            ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
+            // The package sends the key as `prompt_cache_key`. The store
+            // directive merges into the same namespace, and it keeps this key.
+            providerOptionsFor: ({ session }) => ({ openai: { promptCacheKey: sessionKeyDigestOf(session) } }),
         });
     }
 
@@ -1071,7 +1212,12 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         baseURL: config.baseURL,
         apiKey: config.apiKey,
         fetch: effectiveFetch as typeof fetch | undefined,
+        // Each call of the provider streams, `chat` included. Without this flag
+        // the package asks for no usage on a stream, and the call reports none.
+        includeUsage: true,
     });
+    // The compatible wire has no standard field for a session key, thus this arm
+    // gives no provider options of its own.
     return createAiSdkProvider({
         // The compatible package reads the neutral `reasoning` of the call, thus
         // the seam needs no middleware to carry the depth into its namespace.
@@ -1082,5 +1228,6 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         ...(config.maxOutputTokens !== undefined ? { maxOutputTokens: config.maxOutputTokens } : {}),
         ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
         ...(requestTimeoutMs !== undefined ? { requestTimeoutMs } : {}),
+        ...(config.reasoning !== undefined ? { reasoning: config.reasoning } : {}),
     });
 }

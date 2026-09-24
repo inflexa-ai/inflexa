@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
-import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps } from "@inflexa-ai/harness";
+import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
 
 import { makeSession } from "./__fixtures__/session.js";
+import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "./prompt-cache.js";
 import type { FetchLike } from "./types.js";
 
 /** One `text/event-stream` body: each arm of the provider reads the wire as SSE. */
@@ -55,19 +57,24 @@ function responsesSse(text: string, model: string): Response {
     ]);
 }
 
-/**
- * Records each outbound request body so a test can assert on the wire model the
- * provider bound at construction (the request itself carries no model field),
- * and replies with a response echoing that body's `model`.
- */
-function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; bodies: Array<{ model?: string; max_tokens?: number }> } {
-    const bodies: Array<{ model?: string; max_tokens?: number }> = [];
+/** Header names are folded to lowercase. */
+interface CapturedRequest {
+    readonly body: Record<string, unknown>;
+    readonly headers: Record<string, string>;
+}
+
+/** Captures each request so a test can assert on the wire model, since the request itself carries no model field. */
+function capturingFetch(respond: (text: string, model: string) => Response): { fetch: FetchLike; requests: CapturedRequest[] } {
+    const requests: CapturedRequest[] = [];
     const fetch: FetchLike = async (_input, init) => {
-        const body = init?.body ? (JSON.parse(String(init.body)) as { model?: string; max_tokens?: number }) : {};
-        bodies.push(body);
-        return respond("Hello, world", body.model ?? "");
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        // `Headers` folds each name to lowercase, thus an assertion does not
+        // depend on the spelling that the SDK forwards.
+        const headers = Object.fromEntries(new Headers(init?.headers));
+        requests.push({ body, headers });
+        return respond("Hello, world", typeof body["model"] === "string" ? body["model"] : "");
     };
-    return { fetch, bodies };
+    return { fetch, requests };
 }
 
 const request: ChatRequest = {
@@ -161,7 +168,217 @@ describe("provider configuration front door", () => {
         expect(second.isOk()).toBe(true);
         // Same shared connection config; each provider instance's request carries the
         // model it was constructed with — no per-request model.
-        expect(cap.bodies.map((body) => body.model)).toEqual(["model-a", "model-b"]);
+        expect(cap.requests.map((captured) => captured.body["model"])).toEqual(["model-a", "model-b"]);
+    });
+});
+
+describe("the reasoning effort of the configuration", () => {
+    it("sends the configured effort of an anthropic arm on the wire", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-5-5",
+                fetch: cap.fetch,
+                reasoning: "high",
+            },
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        // The request sets no reasoning, thus the configured value applies, and
+        // the package maps it onto the effort of the model.
+        expect(cap.requests[0]?.body["output_config"]).toMatchObject({ effort: "high" });
+    });
+});
+
+describe("the session key on the wire", () => {
+    const stepSession = { ...makeSession({ scope: { kind: "analysis", analysisId: "a1" } }), runFrame: { runId: "r1", stepId: "s1" } };
+    const chatSession = makeSession({ scope: { kind: "analysis", analysisId: "a1", threadId: "t1" } });
+    const digestOf = (identifier: string): string => createHash("sha256").update(identifier).digest("base64url");
+
+    it("sends the key as metadata.user_id on the anthropic arm", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
+        });
+
+        const result = await provider.chat(request, stepSession);
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.requests[0]?.body["metadata"]).toEqual({ user_id: digestOf("a1:r1:s1") });
+    });
+
+    it("sends the key as prompt_cache_key on the openai arm", async () => {
+        const cap = capturingFetch(responsesSse);
+        const provider = createConfiguredAiSdkProvider({ config: { kind: "openai", apiKey: "test-key", model: "gpt-5.1", fetch: cap.fetch } });
+
+        const result = await provider.chat(request, chatSession);
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.requests[0]?.body["prompt_cache_key"]).toBe(digestOf("a1:t1"));
+    });
+
+    it("sends no key on the openai-compatible arm", async () => {
+        const cap = capturingFetch(openaiSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: cap.fetch,
+            },
+        });
+
+        const result = await provider.chat(request, stepSession);
+
+        expect(result.isOk()).toBe(true);
+        const body = cap.requests[0]?.body;
+        expect(body).not.toHaveProperty("prompt_cache_key");
+        expect(body).not.toHaveProperty("metadata");
+        expect(JSON.stringify(body)).not.toContain("a1:r1");
+        expect(JSON.stringify(body)).not.toContain(digestOf("a1:r1:s1"));
+    });
+});
+
+describe("the thinking binding on the wire", () => {
+    const BINDING_BETA = "thinking-binding-controls-2026-08-01";
+
+    async function anthropicWire(
+        model: string,
+        reasoning: ReasoningPolicy,
+        thinkingBinding?: "drop_block" | "error" | "off",
+    ): Promise<{ body: Record<string, unknown>; headers: Record<string, string> }> {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model,
+                fetch: cap.fetch,
+                ...(thinkingBinding !== undefined ? { thinkingBinding } : {}),
+            },
+        });
+
+        const result = await provider.chat({ ...request, reasoning }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        return cap.requests[0]!;
+    }
+
+    it("binds the blocks of claude-opus-5-5 in the drop_block mode by default, and keeps the thinking selection of the package", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "xhigh");
+
+        expect(wire.body["thinking"]).toEqual({ type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+        expect(wire.body["output_config"]).toMatchObject({ effort: "xhigh" });
+        expect(wire.headers["anthropic-beta"]).toContain(BINDING_BETA);
+    });
+
+    it("binds a call at none, which the package sends to claude-opus-5-5 at the effort low", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "none");
+
+        // The package selects no thinking type for this effort, thus the binding
+        // rides alone and the model keeps its default thinking mode.
+        expect(wire.body["thinking"]).toEqual({ block_binding: { prefix_mismatch_behavior: "drop_block" } });
+        expect(wire.body["output_config"]).toMatchObject({ effort: "low" });
+    });
+
+    it("sends the error mode", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "xhigh", "error");
+
+        expect(wire.body["thinking"]).toMatchObject({ block_binding: { prefix_mismatch_behavior: "error" } });
+    });
+
+    it("sends no binding and no binding beta header in the off mode", async () => {
+        const wire = await anthropicWire("claude-opus-5-5", "xhigh", "off");
+
+        expect(wire.body["thinking"]).not.toHaveProperty("block_binding");
+        expect(wire.headers["anthropic-beta"] ?? "").not.toContain(BINDING_BETA);
+    });
+
+    it("sends no binding to claude-opus-4-7, which can run without thinking", async () => {
+        const wire = await anthropicWire("claude-opus-4-7", "xhigh");
+
+        expect(wire.body["thinking"]).toMatchObject({ type: "adaptive" });
+        expect(wire.body["thinking"]).not.toHaveProperty("block_binding");
+    });
+
+    it("sends no binding to claude-sonnet-4-5 at none, and the package turns thinking off", async () => {
+        const wire = await anthropicWire("claude-sonnet-4-5", "none");
+
+        expect(wire.body["thinking"]).toEqual({ type: "disabled" });
+    });
+});
+
+describe("the streamed usage of the openai-compatible arm", () => {
+    it("asks for usage on the stream, and the usage chunk reaches the response", async () => {
+        const cap = capturingFetch(openaiSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: cap.fetch,
+            },
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(cap.requests[0]?.body["stream_options"]).toEqual({ include_usage: true });
+        expect(reply.usage).toMatchObject({ inputTokens: 5, outputTokens: 2 });
+    });
+});
+
+describe("the provider id on the response", () => {
+    it("names the provider of each arm, as the AI SDK names it", async () => {
+        const anthropic = createConfiguredAiSdkProvider({
+            config: {
+                kind: "anthropic",
+                baseURL: "http://models.local/anthropic",
+                apiKey: "test-key",
+                model: "claude-opus-4-7",
+                fetch: capturingFetch(anthropicSse).fetch,
+            },
+        });
+        const openai = createConfiguredAiSdkProvider({
+            config: { kind: "openai", apiKey: "test-key", model: "gpt-5.1", fetch: capturingFetch(responsesSse).fetch },
+        });
+        const compatible = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                fetch: capturingFetch(openaiSse).fetch,
+            },
+        });
+
+        expect((await anthropic.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("anthropic.messages");
+        expect((await openai.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("openai.responses");
+        expect((await compatible.chat(request, makeSession()))._unsafeUnwrap().provider).toBe("self-hosted.chat");
+    });
+});
+
+describe("the system prompt breakpoint on the wire", () => {
+    it("renders cache_control on the text block of the system prompt", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
+        });
+
+        const result = await provider.chat({ ...request, system: withSystemPromptBreakpoint("You are a test model.", DEFAULT_PROMPT_CACHE) }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(cap.requests[0]?.body["system"]).toEqual([{ type: "text", text: "You are a test model.", cache_control: { type: "ephemeral", ttl: "5m" } }]);
     });
 });
 
@@ -177,7 +394,7 @@ describe("output-token ceiling", () => {
         const result = await provider.chat(request, makeSession());
 
         expect(result.isOk()).toBe(true);
-        return cap.bodies[0]?.max_tokens;
+        return cap.requests[0]?.body["max_tokens"] as number | undefined;
     }
 
     const anthropicModel =

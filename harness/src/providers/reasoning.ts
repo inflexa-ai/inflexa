@@ -1,37 +1,26 @@
 /**
- * The reasoning depth of a run.
+ * The reasoning depth of a call.
  *
- * The harness states the depth one time, on `ChatRequest.reasoning`, with the
- * neutral names of the AI SDK. It names no vendor key. Each provider package
- * holds the table of what its own models accept, and it maps the neutral name
- * onto the wire. The Anthropic package also selects adaptive thinking there.
+ * The effort resolves in order: `ChatRequest.reasoning` (set only through
+ * `RunAgentOptions.reasoning`), the provider configuration's `reasoning`, then
+ * {@link DEFAULT_REASONING}. Anthropic discards its message cache when the
+ * top-level effort changes between calls.
  *
- * ## Why the harness names no vendor key
- *
- * The harness wrote `providerOptions.anthropic.effort` before. A value on that
- * key turns the per-model table of the Anthropic package off, thus the raw name
- * reached the wire. A model that accepts `high` but not `xhigh` answered 400.
- * The neutral field has no such hazard, because the package resolves the name
- * for the model that it is bound to.
- *
- * ## Where the policy belongs
- *
- * The policy rides on the run, not on the provider, for the same reason that the
- * cache policy does. A one-shot LLM call elsewhere in the harness has its own
- * depth needs, and it must not inherit the depth of an agent loop.
+ * Do not set `providerOptions.anthropic.effort` directly. It bypasses the
+ * per-model table, and a model that rejects the raw name answers 400.
  */
 
 import type { ReasoningPolicy } from "./types.js";
 
 /**
- * The default policy: the deepest name of the neutral ladder.
+ * The last source of the effort: the deepest rung of the neutral ladder.
  *
  * Each agent of the harness drives tools over many iterations. A shallow turn
  * there wastes more calls than a deeper turn costs in tokens. The Anthropic
  * package sends `xhigh` to a model that accepts it, and `max` to a model that
  * does not. The OpenAI-compatible package sends the name as it is.
  *
- * A host that wants a cheaper loop passes a lower name. A host on a model with
- * no reasoning support passes `"provider-default"`.
+ * A host that wants a cheaper role sets a lower name on that role's provider
+ * configuration. With no reasoning support, a host sets `"provider-default"`.
  */
 export const DEFAULT_REASONING: ReasoningPolicy = "xhigh";

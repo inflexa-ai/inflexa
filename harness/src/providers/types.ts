@@ -6,7 +6,7 @@
  * attribution is resolved lazily at the provider wire boundary.
  */
 
-import type { FinishReason, LanguageModel, ModelMessage, ToolSet } from "ai";
+import type { FinishReason, LanguageModel, ModelMessage, SystemModelMessage, ToolSet } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { ResultAsync } from "neverthrow";
@@ -38,8 +38,16 @@ export interface ProviderCapabilities {
     readonly imageUserMessages?: boolean;
 }
 
+/**
+ * The request carries no free-form provider options. That would let a caller
+ * set a vendor key that bypasses the provider's per-model table.
+ */
 export interface ChatRequest {
-    readonly system: string;
+    /**
+     * The system prompt: a plain string, or a system message that carries the
+     * cache marker at its end (`withSystemPromptBreakpoint`).
+     */
+    readonly system: string | SystemModelMessage;
     readonly messages: readonly ModelMessage[];
     readonly tools: ToolSet;
     /**
@@ -47,10 +55,9 @@ export interface ChatRequest {
      * Claude models reject it with a 400, and the model is chosen at run time.
      */
     readonly toolChoice?: "auto" | "none";
-    readonly providerOptions?: ProviderOptions;
     /**
-     * How deep the model reasons on this call. Absent sends no directive, thus
-     * the model applies its own default. Refer to `ReasoningPolicy`.
+     * How deep the model reasons. Absent, the effort falls back to the provider
+     * configuration's `reasoning`, then `DEFAULT_REASONING`.
      */
     readonly reasoning?: ReasoningPolicy;
 }
@@ -154,6 +161,11 @@ export interface ChatResponse {
      * diagnostics, never as an invariant.
      */
     readonly servedModelId?: string;
+    /**
+     * The AI SDK's `LanguageModel.provider` id, for example `anthropic.messages`.
+     * Absent for a bare model-id string, which names no provider.
+     */
+    readonly provider?: string;
 }
 
 export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };

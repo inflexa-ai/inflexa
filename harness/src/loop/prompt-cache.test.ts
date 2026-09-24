@@ -16,7 +16,7 @@ import { z } from "zod";
 
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../providers/ai-sdk.js";
-import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
+import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
 import type { ModelMessage, PromptCachePolicy } from "../providers/types.js";
 import { defineTool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
@@ -203,6 +203,27 @@ describe("withPromptCacheBreakpoint", () => {
     });
 });
 
+describe("withSystemPromptBreakpoint", () => {
+    it("marks the system prompt in both vendor namespaces, with the ttl of the policy", () => {
+        expect(withSystemPromptBreakpoint("You are a test agent.", { ttl: "1h" })).toEqual({
+            role: "system",
+            content: "You are a test agent.",
+            providerOptions: {
+                anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+                bedrock: { cachePoint: { type: "default", ttl: "1h" } },
+            },
+        });
+    });
+
+    it("leaves the system prompt a plain string when caching is off", () => {
+        expect(withSystemPromptBreakpoint("You are a test agent.", "off" as PromptCachePolicy)).toBe("You are a test agent.");
+    });
+
+    it("leaves an empty system prompt a plain string, thus no marker lands on an empty text block", () => {
+        expect(withSystemPromptBreakpoint("", DEFAULT_PROMPT_CACHE)).toBe("");
+    });
+});
+
 describe("runAgent prompt-cache directive", () => {
     it("marks the last message on every iteration, the wrap-up included", async () => {
         const chat = neverTerminating();
@@ -216,12 +237,29 @@ describe("runAgent prompt-cache directive", () => {
             expect(call.messages.at(-1)?.providerOptions?.["anthropic"]?.["cacheControl"]).toEqual(ANTHROPIC_5M.anthropic.cacheControl);
         }
 
-        // The wrap-up keeps the tool set of the loop, thus the cached prefix of
-        // the loop holds, and it forbids a call.
+        // The wrap-up carries the loop's tool set and forbids a call. The Anthropic
+        // package removes tools for `toolChoice: "none"`, so the prefix may not hold.
         const wrapUp = chat.calls.at(-1)!;
         expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
         expect(wrapUp.toolChoice).toBe("none");
         expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
+    });
+
+    it("sends the same marked system message on every call, the wrap-up included", async () => {
+        const chat = neverTerminating();
+
+        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+
+        // The system prompt depends only on the agent's type, so one marked message
+        // serves the whole run.
+        expect(chat.calls).toHaveLength(4);
+        for (const call of chat.calls) {
+            expect(call.system).toEqual({
+                role: "system",
+                content: "You are a test agent.",
+                providerOptions: { ...ANTHROPIC_5M, bedrock: { cachePoint: { type: "default", ttl: "5m" } } },
+            });
+        }
     });
 
     it("writes no request-level directive on any call", async () => {
@@ -233,7 +271,7 @@ describe("runAgent prompt-cache directive", () => {
         // `cache_control`, which is a breakpoint no intermediary can count —
         // CLIProxyAPI then trims its own markers to four and sends five.
         for (const call of chat.calls) {
-            expect(call.providerOptions).toBeUndefined();
+            expect("providerOptions" in call).toBe(false);
         }
     });
 
@@ -276,37 +314,40 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
-        // Caching off leaves no marker anywhere and no bag at all. The reasoning
-        // depth rides on its own neutral field, thus it writes no vendor key here.
+        // Caching off leaves no marker, no bag, and a plain-string system prompt.
+        // The loop sends no reasoning, so it writes no vendor key either.
         for (const call of chat.calls) {
+            expect(call.system).toBe("You are a test agent.");
             expect(breakpointsOf(call.messages)).toEqual([]);
-            expect(call.providerOptions).toBeUndefined();
-            expect(call.reasoning).toBe("xhigh");
+            expect("providerOptions" in call).toBe(false);
+            expect("reasoning" in call).toBe(false);
         }
     });
 });
 
 describe("runAgent reasoning directive", () => {
-    it("carries the neutral depth on every call, and writes no vendor key for it", async () => {
+    it("sends no reasoning on any call when the caller gives none, and writes no vendor key", async () => {
         const chat = neverTerminating();
 
         await runAgent(agentDef(3), GO, makeSession(), opts(chat));
 
+        // The provider applies its configured effort when a request sets none,
+        // so the loop omits the field.
         expect(chat.calls).toHaveLength(4);
         for (const call of chat.calls) {
-            expect(call.reasoning).toBe("xhigh");
-            // The vendor key is what turned the per-model table of the provider
-            // package off, thus nothing may write it again.
-            expect(call.providerOptions?.["anthropic"]?.["effort"]).toBeUndefined();
-            expect(call.providerOptions?.["openai"]).toBeUndefined();
+            expect("reasoning" in call).toBe(false);
+            // A provider option would bypass the per-model table, so the request carries none.
+            expect("providerOptions" in call).toBe(false);
         }
     });
 
-    it("honours an explicit depth from the composition root", async () => {
+    it("sends an explicit depth from the composition root on each call, the wrap-up included", async () => {
         const chat = neverTerminating();
 
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { reasoning: "low" }));
 
+        expect(chat.calls).toHaveLength(3);
+        expect(chat.calls.at(-1)?.toolChoice).toBe("none");
         for (const call of chat.calls) {
             expect(call.reasoning).toBe("low");
         }
@@ -319,6 +360,9 @@ const INPUT_TOKENS_METRIC = "cortex.harness.agent.input_tokens";
 const OUTPUT_TOKENS_METRIC = "cortex.harness.agent.output_tokens";
 const CACHE_READ_METRIC = "cortex.harness.agent.cache_read_tokens";
 const CACHE_WRITE_METRIC = "cortex.harness.agent.cache_write_tokens";
+const REASONING_TOKENS_METRIC = "cortex.harness.agent.reasoning_tokens";
+
+const SERVED = { servedModelId: "claude-opus-5-5", provider: "anthropic.messages" } as const;
 
 describe("runAgent cache-token metrics", () => {
     let exporter: InMemoryMetricExporter;
@@ -346,42 +390,52 @@ describe("runAgent cache-token metrics", () => {
             .flatMap((sm) => sm.metrics);
     }
 
-    /** Sum a counter's data points, optionally for one `agent_id`. */
-    async function counterTotal(name: string, agentId?: string): Promise<number | undefined> {
+    async function counterTotal(name: string, labels: Record<string, string> = {}): Promise<number | undefined> {
         const metric = (await collectMetrics()).find((m) => m.descriptor.name === name);
         if (metric === undefined) return undefined;
-        return metric.dataPoints.filter((dp) => agentId === undefined || dp.attributes.agent_id === agentId).reduce((acc, dp) => acc + (dp.value as number), 0);
+        return metric.dataPoints
+            .filter((dp) => Object.entries(labels).every(([key, value]) => dp.attributes[key] === value))
+            .reduce((acc, dp) => acc + (dp.value as number), 0);
     }
 
-    it("sums usage across every iteration of a run and reports it per agent", async () => {
+    it("sums usage across every iteration of a run and reports it per agent, model, and provider", async () => {
         const chat = scriptedProvider([
-            makeMessage([toolUseBlock("t0", "echo", {})], "tool_use", {
-                inputTokens: 1000,
-                outputTokens: 20,
-                cacheCreationInputTokens: 900,
-                cacheReadInputTokens: 0,
-            }),
-            makeMessage([toolUseBlock("t1", "echo", {})], "tool_use", {
-                inputTokens: 1100,
-                outputTokens: 30,
-                cacheCreationInputTokens: 100,
-                cacheReadInputTokens: 900,
-            }),
-            makeMessage([textBlock("done")], "end_turn", {
-                inputTokens: 1200,
-                outputTokens: 40,
-                cacheCreationInputTokens: 0,
-                cacheReadInputTokens: 1000,
-            }),
+            {
+                ...makeMessage([toolUseBlock("t0", "echo", {})], "tool_use", {
+                    inputTokens: 1000,
+                    outputTokens: 20,
+                    cacheCreationInputTokens: 900,
+                    cacheReadInputTokens: 0,
+                }),
+                ...SERVED,
+            },
+            {
+                ...makeMessage([toolUseBlock("t1", "echo", {})], "tool_use", {
+                    inputTokens: 1100,
+                    outputTokens: 30,
+                    cacheCreationInputTokens: 100,
+                    cacheReadInputTokens: 900,
+                }),
+                ...SERVED,
+            },
+            {
+                ...makeMessage([textBlock("done")], "end_turn", {
+                    inputTokens: 1200,
+                    outputTokens: 40,
+                    cacheCreationInputTokens: 0,
+                    cacheReadInputTokens: 1000,
+                }),
+                ...SERVED,
+            },
         ]);
 
         await runAgent(agentDef(8), GO, makeSession(), opts(chat));
 
-        // Round-trip: provider usage → ChatResponse.usage → metrics, keyed by agent.
-        expect(await counterTotal(INPUT_TOKENS_METRIC, "cache-agent")).toBe(3300);
-        expect(await counterTotal(OUTPUT_TOKENS_METRIC, "cache-agent")).toBe(90);
-        expect(await counterTotal(CACHE_READ_METRIC, "cache-agent")).toBe(1900);
-        expect(await counterTotal(CACHE_WRITE_METRIC, "cache-agent")).toBe(1000);
+        const labels = { agent_id: "cache-agent", model: "claude-opus-5-5", provider: "anthropic.messages" };
+        expect(await counterTotal(INPUT_TOKENS_METRIC, labels)).toBe(3300);
+        expect(await counterTotal(OUTPUT_TOKENS_METRIC, labels)).toBe(90);
+        expect(await counterTotal(CACHE_READ_METRIC, labels)).toBe(1900);
+        expect(await counterTotal(CACHE_WRITE_METRIC, labels)).toBe(1000);
     });
 
     it("counts the wrap-up call's tokens too", async () => {
@@ -392,8 +446,8 @@ describe("runAgent cache-token metrics", () => {
 
         // 2 iterations + wrap-up = 3 calls, all reporting the same usage.
         expect(chat.calls).toHaveLength(3);
-        expect(await counterTotal(INPUT_TOKENS_METRIC, "cache-agent")).toBe(1500);
-        expect(await counterTotal(CACHE_WRITE_METRIC, "cache-agent")).toBe(1500);
+        expect(await counterTotal(INPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(1500);
+        expect(await counterTotal(CACHE_WRITE_METRIC, { agent_id: "cache-agent" })).toBe(1500);
     });
 
     it("records nothing rather than a false zero when the provider reports no usage", async () => {
@@ -404,6 +458,7 @@ describe("runAgent cache-token metrics", () => {
         // Absent means "not reported" — the counters must not have been touched.
         expect(await counterTotal(INPUT_TOKENS_METRIC)).toBeUndefined();
         expect(await counterTotal(CACHE_READ_METRIC)).toBeUndefined();
+        expect(await counterTotal(REASONING_TOKENS_METRIC)).toBeUndefined();
     });
 
     it("keeps each agent's cache accounting separate", async () => {
@@ -414,8 +469,21 @@ describe("runAgent cache-token metrics", () => {
         await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
         await runAgent({ ...agentDef(4), id: "agent-b" }, GO, makeSession(), opts(chat));
 
-        expect(await counterTotal(CACHE_READ_METRIC, "agent-a")).toBe(80);
-        expect(await counterTotal(CACHE_READ_METRIC, "agent-b")).toBe(160);
+        expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-a" })).toBe(80);
+        expect(await counterTotal(CACHE_READ_METRIC, { agent_id: "agent-b" })).toBe(160);
+    });
+
+    it("counts the reported reasoning tokens under the provider that reported them", async () => {
+        const chat = scriptedProvider([
+            { ...makeMessage([textBlock("done")], "end_turn", { inputTokens: 100, outputTokens: 90, reasoningTokens: 40 }), ...SERVED },
+        ]);
+
+        await runAgent(agentDef(4), GO, makeSession(), opts(chat));
+
+        // Providers do not agree on whether the output total includes the
+        // reasoning tokens, thus the series of one provider sums one meaning.
+        expect(await counterTotal(REASONING_TOKENS_METRIC, { agent_id: "cache-agent", provider: "anthropic.messages" })).toBe(40);
+        expect(await counterTotal(OUTPUT_TOKENS_METRIC, { agent_id: "cache-agent" })).toBe(90);
     });
 });
 
@@ -552,5 +620,20 @@ describe("the bedrock marker on the wire", () => {
         const blocks = await lastMessageBlocks("off" as PromptCachePolicy);
 
         expect(blocks.some((b) => "cachePoint" in b)).toBe(false);
+    });
+
+    it("appends a cachePoint block after the content of the system prompt", async () => {
+        const bodies: Record<string, unknown>[] = [];
+        const bedrock = createAmazonBedrock({ region: "us-east-1", apiKey: "test-key", fetch: cannedBedrockFetch(bodies) });
+
+        await generateText({
+            model: bedrock("anthropic.claude-sonnet-5"),
+            system: withSystemPromptBreakpoint("You are a test agent.", DEFAULT_PROMPT_CACHE),
+            messages: [userText("first")],
+        });
+
+        const system = (bodies[0]?.["system"] ?? []) as Record<string, unknown>[];
+        expect(system.at(-1)).toEqual({ cachePoint: { type: "default", ttl: "5m" } });
+        expect(system.at(-2)).toEqual({ text: "You are a test agent." });
     });
 });

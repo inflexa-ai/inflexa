@@ -265,13 +265,8 @@ export type {
 export { makeLocalAuth } from "./auth/local-auth-context.js";
 
 // Providers.
-export { createAnthropicProvider } from "./providers/anthropic.js";
-export type { AnthropicProviderDeps } from "./providers/anthropic.js";
-// The general provider-configuration path: `createConfiguredAiSdkProvider`
-// builds a `ChatProvider` from an `AiSdkProviderConfig` — the connection+model
-// union discriminated over the `anthropic` and `openai-compatible` kinds — with
-// `ConfiguredAiSdkProviderDeps` as its argument shape. `createAnthropicProvider`
-// above is a convenience over this union's `anthropic` arm.
+// `AiSdkProviderConfig` discriminates by `kind`: `anthropic`, `openai`, or
+// `openai-compatible`.
 export { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "./providers/ai-sdk.js";
 export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps, ProviderHostPolicy } from "./providers/ai-sdk.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
@@ -288,28 +283,13 @@ export type {
     PromptCachePolicy,
     ReasoningPolicy,
 } from "./providers/types.js";
-// Prompt caching. `PromptCachePolicy` is the harness's vendor-neutral cache
-// directive; a composition root sets it per run via `RunAgentOptions.promptCache`
-// (defaulting to `DEFAULT_PROMPT_CACHE` — 5m — when omitted, since an agent loop
-// re-sends its prefix every iteration and breaks even immediately). Hosts whose
-// endpoint ignores cache directives — notably the Claude Max OAuth path — pass
-// `"off"`; the `cortex.harness.agent.cache_*_tokens` metrics show which case a
-// deployment is actually in. `withPromptCacheBreakpoint` is the placement: it
-// puts the ONE marker of a request on its last message, where every hop upstream
-// can count it, in the namespace of each vendor that needs an explicit
-// breakpoint (Anthropic and Bedrock; the OpenAI family and Gemini cache without
-// one). Never attach `promptCacheProviderOptions` to a request itself — that
-// emits a top-level field an intermediary cannot see, and a proxy that trims to
-// Anthropic's cap of four breakpoints then sends five.
+// Two cache markers (loop + `withPromptCacheBreakpoint`) count against a vendor's
+// breakpoint cap (four for Anthropic). Never attach `promptCacheProviderOptions`
+// to the request itself, or a proxy miscounts.
 export { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "./providers/prompt-cache.js";
-// Reasoning depth. `ReasoningPolicy` is the vendor-neutral name for how deep a
-// model reasons; a composition root sets it per run through
-// `RunAgentOptions.reasoning`. It defaults to `DEFAULT_REASONING` — `xhigh` —
-// because an agent loop drives tools over many iterations, and a shallow turn
-// there wastes more calls than the deeper turn costs in tokens. The provider
-// package resolves the name for the model that it is bound to, thus a model
-// that accepts no `xhigh` gets the nearest name that it accepts. A host on a
-// model with no reasoning support passes `"provider-default"`.
+// Effort resolves in order: `ChatRequest.reasoning`, the provider config's
+// `reasoning`, then `DEFAULT_REASONING`, downgraded to what the model accepts.
+// A model with no reasoning support takes `"provider-default"`.
 export { DEFAULT_REASONING } from "./providers/reasoning.js";
 // Provider error channel. `ProviderError` is the value `chat`/`embed` fail
 // with; `toProviderError` is its sole constructor. Exposed so an embedder

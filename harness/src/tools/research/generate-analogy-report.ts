@@ -21,8 +21,12 @@ import { AnalogicalReasonerOutputSchema, type AnalogicalReasonerOutput } from "@
 import { analogicalReasonerPrompt } from "../../prompts/analogical-reasoner.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
+import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { finalText, runAgent } from "../../loop/run-agent.js";
+import { countChatTokens } from "../../loop/metrics.js";
+import { accountForChatCall, finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider } from "../../providers/types.js";
@@ -39,6 +43,9 @@ import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "analogical-reasoner";
+
+/** Must not collide with a loop step name in the usage record key, such as `llm-0`. */
+const CONVERSION_CALL_NAME = "analogy-conversion";
 
 /** Tool-call budget for the inner research agent. */
 const RESEARCH_MAX_ITERATIONS = 40;
@@ -186,10 +193,13 @@ export interface GenerateAnalogyReportDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
+    /** Logging seam; omitted falls back to no-op. Logs an accounting error from the conversion call. */
+    readonly logger?: Logger;
 }
 
 /** Build the `generate_analogy_report` delegation tool bound to its provider. */
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {
+    const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
     const ncbi = createNcbiTools(deps.bioKeys);
     const reasonerTools: readonly Tool[] = [
         createSearchSemanticScholarTool({ ...(deps.bioKeys.semanticScholar === undefined ? {} : { apiKey: deps.bioKeys.semanticScholar }) }),
@@ -272,22 +282,34 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             // cascade below is the safety net.
             try {
                 const reply = unwrapOrThrow(
-                    await deps.provider.chat(
-                        {
-                            tools: {},
-                            toolChoice: "none",
-                            system:
-                                "You convert an analogical-reasoner's free-text output " +
-                                "into a strict AnalogyReportSchema JSON envelope. You " +
-                                "preserve information faithfully and never invent content. " +
-                                "You return ONLY raw JSON — no prose, no markdown fences, " +
-                                "no commentary.",
-                            messages: [{ role: "user", content: buildConversionPrompt(rawText) }],
-                        },
-                        childSession,
-                        ctx.signal,
-                    ),
+                    await deps.provider
+                        .chat(
+                            {
+                                tools: {},
+                                toolChoice: "none",
+                                system:
+                                    "You convert an analogical-reasoner's free-text output " +
+                                    "into a strict AnalogyReportSchema JSON envelope. You " +
+                                    "preserve information faithfully and never invent content. " +
+                                    "You return ONLY raw JSON — no prose, no markdown fences, " +
+                                    "no commentary.",
+                                messages: [{ role: "user", content: buildConversionPrompt(rawText) }],
+                            },
+                            childSession,
+                            ctx.signal,
+                        )
+                        .map(countChatTokens(AGENT_ID)),
                 );
+                accountForChatCall(reply, {
+                    session: childSession,
+                    agentId: AGENT_ID,
+                    callPath: childSession.provenance.callPath,
+                    stepName: CONVERSION_CALL_NAME,
+                    invocationId: ctx.invocationId,
+                    usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
+                    logger,
+                    rollups: ctx.turnUsage === undefined ? [] : [ctx.turnUsage],
+                });
 
                 const content = reply.message.content;
                 const convertedText =

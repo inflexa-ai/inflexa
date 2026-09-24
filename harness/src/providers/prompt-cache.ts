@@ -15,29 +15,17 @@
  * error — on an OpenAI-compatible model, which is exactly what we want: that
  * family does automatic server-side prefix caching and needs no directive.
  *
- * ## What the Anthropic namespace does, and where the marker must go
+ * ## What the Anthropic namespace does, and where the markers must go
  *
- * The options go on the LAST MESSAGE of the request, never on the request
- * itself. Both placements cache the same bytes — one breakpoint at the end of
- * the messages covers the whole prefix (tools → system → history), because the
- * cache keys on a prefix — but only the message placement survives an
- * intermediary.
+ * A request carries two markers, each on a block, never on the request itself:
+ * {@link withSystemPromptBreakpoint} at the end of the system prompt, and
+ * {@link withPromptCacheBreakpoint} at the last eligible message.
  *
- * A REQUEST-level `cacheControl` makes the provider emit a top-level
- * `cache_control` field instead of a per-block marker, and the server then
- * places the breakpoint itself. That is one fewer thing for the harness to get
- * right, and it is why this module used to do it. It is also invisible: an
- * intermediary that counts breakpoints to stay under Anthropic's cap of four
- * counts BLOCKS, so a top-level field is a breakpoint nothing on the way
- * upstream can see. CLIProxyAPI — what the OSS CLI routes through on the Claude
- * OAuth path — injects up to four block markers of its own and trims to four by
- * that blind count, so the harness's invisible fifth breakpoint made every
- * request past a thread's first turn fail with `A maximum of 4 blocks with
- * cache_control may be provided. Found 5.` (HTTP 400, non-retryable — the thread
- * is wedged, because the next turn rebuilds the same shape).
- *
- * A marker on a message block is counted, trimmed, and reasoned about by every
- * hop. Keep it there. {@link withPromptCacheBreakpoint} is the only writer.
+ * A REQUEST-level `cacheControl` emits an invisible top-level field instead.
+ * CLIProxyAPI (the Claude OAuth path) counts BLOCKS toward Anthropic's cap of
+ * four, not this field, so the uncounted marker overflows it and fails with
+ * `A maximum of 4 blocks with cache_control may be provided. Found 5.`
+ * (HTTP 400, non-retryable — the thread stays wedged).
  *
  * ## Which vendors need a marker at all
  *
@@ -54,9 +42,9 @@
  * cache RESOURCE created out of band and referenced by name, which is not a
  * marker and does not fit a ttl policy.
  *
- * So both markers ride together on the one chosen message. A provider reads only
- * its own namespace, thus the pair is free to whichever vendor is not serving
- * the call, and the placement never learns which one that is.
+ * So both vendor markers ride together on each chosen message. A provider reads
+ * only its own namespace, thus the pair is free to whichever vendor is not
+ * serving the call, and the placement never learns which one that is.
  *
  * The asymmetry worth remembering: under-marking silently costs money, while
  * over-marking hard-fails. Anthropic answers 400 past four breakpoints, and the
@@ -65,18 +53,18 @@
  *
  * ## Cache defeaters — what silently kills the hit rate
  *
- * The cache keys on an *exact prefix*. Anything that perturbs the head of the
- * request invalidates everything after it. One known defeater remains in this
- * codebase, flagged at its own site as a separate change:
+ * The cache keys on an *exact prefix*, so anything that perturbs the head of the
+ * request invalidates everything after it. Known defeaters:
  *
- *  1. `runAgent`'s forced wrap-up swaps the tool set to `{}` — tools sit at the
- *     very front of the prefix, so that one call reads nothing back and rewrites
- *     the cache from scratch (`loop/run-agent.ts`).
+ *  1. `runAgent`'s Anthropic-arm wrap-up drops tools via `toolChoice: "none"`
+ *     (`loop/run-agent.ts`); the openai arm keeps them on the wire.
+ *  2. `runToTerminal`'s salvage run swaps in terminal-only tools
+ *     (`loop/run-to-terminal.ts`).
+ *  3. Step summary and file metadata replay a step's transcript under their own
+ *     prompt and tools (`execution/step-summary.ts`, `execution/artifact-metadata.ts`).
  *
- * `loadRecent`'s history eviction used to be a second defeater — it advanced the
- * window one turn per turn, shifting the message prefix every request. It now
- * evicts in whole blocks so the prefix holds still between block boundaries
- * (`memory/thread-history.ts`).
+ * `loadRecent` shifts the prefix once per `EVICTION_BLOCK_TURNS` block, not every
+ * turn (`memory/thread-history.ts`).
  *
  * A sandbox agent's system prompt is NOT one of them: it is a pure function of
  * its agent type, byte-identical across every step of every run, and the per-step
@@ -108,6 +96,7 @@
  */
 
 import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
+import type { SystemModelMessage } from "ai";
 
 import type { ModelMessage, PromptCachePolicy, ProviderOptions } from "./types.js";
 
@@ -161,13 +150,26 @@ interface BedrockCacheOptions {
  *
  * CAUTION: this is the marker's VALUE, not its placement. Attaching it to a
  * `ChatRequest` emits the invisible top-level field the module header warns
- * about. Place it with {@link withPromptCacheBreakpoint}.
+ * about. Place it with {@link withSystemPromptBreakpoint} and
+ * {@link withPromptCacheBreakpoint}.
  */
 export function promptCacheProviderOptions(policy: PromptCachePolicy): ProviderOptions | undefined {
     if (policy === "off") return undefined;
     const anthropic = { cacheControl: { type: "ephemeral", ttl: policy.ttl } } satisfies AnthropicProviderOptions;
     const bedrock = { cachePoint: { type: "default", ttl: policy.ttl } } satisfies BedrockCacheOptions;
     return { anthropic, bedrock };
+}
+
+/**
+ * Marks the end of the system prompt, the sibling marker of {@link withPromptCacheBreakpoint}.
+ *
+ * Skips an empty prompt — the Anthropic package renders it as an empty text
+ * block, which cannot carry a marker.
+ */
+export function withSystemPromptBreakpoint(system: string, policy: PromptCachePolicy): string | SystemModelMessage {
+    const providerOptions = promptCacheProviderOptions(policy);
+    if (providerOptions === undefined || system === "") return system;
+    return { role: "system", content: system, providerOptions };
 }
 
 /**
@@ -247,7 +249,8 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
 }
 
 /**
- * Place the request's ONE cache breakpoint, on the last message that can host it.
+ * Places the message-level breakpoint on the last eligible message — the sibling
+ * marker sits at the end of the system prompt ({@link withSystemPromptBreakpoint}).
  *
  * Returns a copy — the caller's array is the transcript the loop keeps pushing
  * onto and the host later persists, and a marker written into it would ride into
@@ -262,7 +265,7 @@ function withoutBreakpoint<M extends ModelMessage>(message: M): M {
  * what an agent loop needs.
  *
  * A marker already on any other message is REMOVED — the invariant is exactly one
- * breakpoint per request, and a stored message that carries one from an older
+ * breakpoint among the messages, and a stored message that carries one from an older
  * build (`memory/ai-sdk-message-storage.ts` reads `cache_control` back off a
  * stored block) would otherwise spend a slot that the harness never budgeted.
  * `"off"` strips and places nothing, so turning caching off really does send no

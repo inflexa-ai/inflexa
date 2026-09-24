@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { err, errAsync, okAsync, ResultAsync } from "neverthrow";
 import type { Pool } from "pg";
 
+import type { AgentSession } from "../auth/types.js";
+import type { LlmUsageRecord, UsageRecorder } from "../billing/usage-recorder.js";
+import type { AgentRunUsage } from "../loop/metrics.js";
+import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../providers/types.js";
 import { makeToolContext } from "./__fixtures__/tool-context.js";
 import { AD_HOC_FALLBACK_AGENT_ID, defaultAdHocResources, routeAdHocRequest, validAdHocResources } from "./ad-hoc-router.js";
@@ -334,5 +338,98 @@ describe("ad hoc resource validation", () => {
         expect(validAdHocResources({ cpu: 9, memoryGb: 8 }, policy)).toBeNull();
         expect(validAdHocResources({ cpu: 4, memoryGb: 17 }, policy)).toBeNull();
         expect(validAdHocResources({ cpu: 4, memoryGb: 8, gpu: { count: 2 } }, policy)).toBeNull();
+    });
+});
+
+describe("ad hoc routing — the usage of the router call", () => {
+    function recordingRecorder(): { usageRecorder: UsageRecorder; records: LlmUsageRecord[] } {
+        const records: LlmUsageRecord[] = [];
+        return {
+            usageRecorder: {
+                record: (record) => {
+                    records.push(record);
+                    return okAsync(undefined);
+                },
+            },
+            records,
+        };
+    }
+
+    function providerReportingUsage(): ChatProvider {
+        return {
+            capabilities: { toolCalling: true },
+            chat: () =>
+                okAsync({
+                    message: {
+                        role: "assistant",
+                        content: [{ type: "tool-call", toolCallId: "route-1", toolName: "submit_route", input: { agentId: "network-agent" } }],
+                    },
+                    finishReason: "tool-calls",
+                    usage: { inputTokens: 120, outputTokens: 30 },
+                }),
+            chatStream: async function* () {},
+        } as ChatProvider;
+    }
+
+    /** A session inside a run step, thus the record key is replay-stable. */
+    const stepSession = (): AgentSession => ({ ...makeSession(), runFrame: { runId: "run-1", stepId: "step-1" } });
+
+    it("delivers one record whose key ends with the call name, and folds the usage into the turn total", async () => {
+        const { usageRecorder, records } = recordingRecorder();
+        const turnUsage: AgentRunUsage = { inputTokens: 1_000 };
+
+        await routeAdHocRequest(
+            { provider: providerReportingUsage(), model: "utility-model", pool: emptyPool, usageRecorder },
+            {
+                analysisId: "analysis-1",
+                request: "Score this network",
+                session: stepSession(),
+                signal: new AbortController().signal,
+                turnUsage,
+                invocationId: "tool-call-1",
+            },
+        );
+
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+            agentId: "adhoc-router",
+            callPath: ["conversation-agent", "adhoc-router"],
+            runId: "run-1",
+            stepId: "step-1",
+            usage: { inputTokens: 120, outputTokens: 30 },
+        });
+        expect(records[0]!.recordKey).toBe("run-1:step-1:conversation-agent>adhoc-router:tool-call-1:adhoc-route");
+        // The root finish of the turn reads this accumulator.
+        expect(turnUsage).toEqual({ inputTokens: 1_120, outputTokens: 30 });
+    });
+
+    it("records nothing for a router call that fails", async () => {
+        const { usageRecorder, records } = recordingRecorder();
+        const turnUsage: AgentRunUsage = {};
+
+        const route = await routeAdHocRequest(
+            {
+                provider: {
+                    capabilities: { toolCalling: true },
+                    chat: () => errAsync({ type: "provider_failed" } as never),
+                    chatStream: async function* () {},
+                } as ChatProvider,
+                model: "utility-model",
+                pool: emptyPool,
+                usageRecorder,
+            },
+            {
+                analysisId: "analysis-1",
+                request: "Score this network",
+                session: stepSession(),
+                signal: new AbortController().signal,
+                turnUsage,
+                invocationId: "tool-call-1",
+            },
+        );
+
+        expect(route.fallbackClass).toBe("provider_error");
+        expect(records).toEqual([]);
+        expect(turnUsage).toEqual({});
     });
 });

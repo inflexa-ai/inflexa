@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { APICallError } from "@ai-sdk/provider";
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
 import type {
@@ -19,12 +20,15 @@ import {
     RETRY_INITIAL_DELAY_MS,
     RETRY_MAX_DELAY_MS,
     RETRY_MAX_RETRIES,
+    sessionKeyDigestOf,
+    sessionKeyOf,
 } from "./ai-sdk.js";
+import { forSubAgent, type AgentSession, type RunFrame, type Scope } from "../auth/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { LogFields, Logger } from "../lib/logger.js";
 import type { GateFailure } from "../lib/hooks.js";
 import { isProviderError } from "./errors.js";
-import type { ChatRequest } from "./types.js";
+import type { ChatProvider, ChatRequest, ReasoningPolicy } from "./types.js";
 
 const usage: LanguageModelV4Usage = {
     inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
@@ -323,6 +327,7 @@ describe("createAiSdkProvider", () => {
                     rawFinishReason: "stop",
                     usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
                     requestedModelId: "fake-model",
+                    provider: "fake-provider",
                 },
             },
         ]);
@@ -567,21 +572,116 @@ describe("usage reporting", () => {
         if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
         expect(done.response.usage?.reasoningTokens).toBe(40);
     });
+});
 
-    it("forwards the request's providerOptions verbatim to the model", async () => {
-        const calls: LanguageModelV4CallOptions[] = [];
+describe("the order of the reasoning effort", () => {
+    /** Records `reasoning` from `doStream`, reached by both `chat` and `chatStream`. */
+    function recordingProvider(configured?: ReasoningPolicy): { provider: ChatProvider; sent: (ReasoningPolicy | undefined)[] } {
+        const sent: (ReasoningPolicy | undefined)[] = [];
         const provider = createAiSdkProvider({
             model: fakeModel(async (options) => {
-                calls.push(options);
+                sent.push(options.reasoning);
                 return okResult();
             }),
+            ...(configured !== undefined ? { reasoning: configured } : {}),
         });
+        return { provider, sent };
+    }
 
-        (
-            await provider.chat({ ...request, providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } }, makeSession())
-        )._unsafeUnwrap();
+    async function callBothPaths(provider: ChatProvider, req: ChatRequest): Promise<void> {
+        (await provider.chat(req, makeSession()))._unsafeUnwrap();
+        for await (const _event of provider.chatStream(req, makeSession())) {
+            // Drain the stream, thus the model call completes.
+        }
+    }
 
-        expect(calls[0]!.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } });
+    it("sends the value of the request over the configured value", async () => {
+        const { provider, sent } = recordingProvider("high");
+
+        await callBothPaths(provider, { ...request, reasoning: "low" });
+
+        expect(sent).toEqual(["low", "low"]);
+    });
+
+    it("applies the configured value to a request that sets none", async () => {
+        const { provider, sent } = recordingProvider("high");
+
+        await callBothPaths(provider, request);
+
+        expect(sent).toEqual(["high", "high"]);
+    });
+
+    it("applies xhigh when neither the request nor the configuration sets a value", async () => {
+        const { provider, sent } = recordingProvider();
+
+        await callBothPaths(provider, request);
+
+        expect(sent).toEqual(["xhigh", "xhigh"]);
+    });
+});
+
+describe("sessionKeyOf", () => {
+    function sessionWith(threadId?: string, runFrame?: RunFrame): AgentSession {
+        const scope: Scope = { kind: "analysis", analysisId: "a1", ...(threadId !== undefined ? { threadId } : {}) };
+        return { ...makeSession({ scope }), ...(runFrame !== undefined ? { runFrame } : {}) };
+    }
+
+    it.each<[string, AgentSession, string]>([
+        ["a run frame with a step gives the step key", sessionWith(undefined, { runId: "r1", stepId: "s1" }), "a1:r1:s1"],
+        ["a run frame without a step gives the run key", sessionWith(undefined, { runId: "r1" }), "a1:r1"],
+        ["a scope with a thread gives the thread key", sessionWith("t1"), "a1:t1"],
+        ["a scope with no thread and no run frame gives the analysis id", sessionWith(), "a1"],
+    ])("%s", (_label, session, key) => {
+        expect(sessionKeyOf(session)).toBe(key);
+    });
+
+    it("gives a run that a chat started the run key, not the key of the chat", () => {
+        // The scope of the run carries the thread of the chat that started it.
+        expect(sessionKeyOf(sessionWith("t1", { runId: "r1" }))).toBe("a1:r1");
+    });
+
+    it("gives a sub-agent the key of its parent", () => {
+        const parent = sessionWith("t1", { runId: "r1", stepId: "s1" });
+
+        const child = forSubAgent(parent, "literature-reviewer");
+
+        expect(child.provenance).not.toEqual(parent.provenance);
+        expect(sessionKeyOf(child)).toBe(sessionKeyOf(parent));
+    });
+});
+
+describe("sessionKeyDigestOf", () => {
+    /** A step session with identifiers of production length: two UUIDs and a plan step id. */
+    function stepSession(stepId: string): AgentSession {
+        return {
+            ...makeSession({ scope: { kind: "analysis", analysisId: "0b7f3c52-6f0e-4d8a-9a51-2f6c1e9d4b3a", threadId: "t1" } }),
+            runFrame: { runId: "5c2e9a10-8d4b-4f7e-b1a3-6e0d2c9f7a84", stepId },
+        };
+    }
+
+    it("gives a key within the limit of 64 characters of the vendor", () => {
+        const session = stepSession("T1S1");
+
+        // The identifier string alone passes the limit.
+        expect(sessionKeyOf(session).length).toBeGreaterThan(64);
+        expect(sessionKeyDigestOf(session)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    });
+
+    it("gives the base64url SHA-256 digest of the identifier string, the same each time", () => {
+        const session = stepSession("T1S1");
+
+        expect(sessionKeyDigestOf(session)).toBe(createHash("sha256").update(sessionKeyOf(session)).digest("base64url"));
+        expect(sessionKeyDigestOf(session)).toBe(sessionKeyDigestOf(stepSession("T1S1")));
+    });
+
+    it("gives a sub-agent the key of its parent", () => {
+        const parent = stepSession("T1S1");
+
+        expect(sessionKeyDigestOf(forSubAgent(parent, "literature-reviewer"))).toBe(sessionKeyDigestOf(parent));
+    });
+
+    it("gives two steps of one run different keys", () => {
+        expect(sessionKeyDigestOf(stepSession("T1S1"))).not.toBe(sessionKeyDigestOf(stepSession("T1S2")));
     });
 });
 
@@ -930,6 +1030,7 @@ describe("createAiSdkProvider chatStream retry", () => {
                     rawFinishReason: "stop",
                     usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
                     requestedModelId: "fake-model",
+                    provider: "fake-provider",
                 },
             },
         ]);
@@ -1024,6 +1125,7 @@ describe("createAiSdkProvider chatStream retry", () => {
                     rawFinishReason: "stop",
                     usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, reasoningTokens: 0 },
                     requestedModelId: "fake-model",
+                    provider: "fake-provider",
                 },
             },
         ]);
@@ -1452,5 +1554,80 @@ describe("failure logging", () => {
 
         expect(outcome).toBe("threw");
         expect(errors).toHaveLength(0);
+    });
+});
+
+describe("dropped thinking blocks", () => {
+    function recordingLogger(): { logger: Logger; warnings: { msg: string; fields?: LogFields }[] } {
+        const warnings: { msg: string; fields?: LogFields }[] = [];
+        const base = createNoopLogger();
+        const logger: Logger = {
+            ...base,
+            warn: (msg, fields) => {
+                warnings.push(fields === undefined ? { msg } : { msg, fields });
+            },
+            with: () => logger,
+            named: () => logger,
+        };
+        return { logger, warnings };
+    }
+
+    const dropRecords = (warnings: readonly { msg: string; fields?: LogFields }[]) => warnings.filter((w) => w.msg === "thinking block dropped");
+
+    // The harness passes each field of an entry through as it is, thus the
+    // values here are only data to read back.
+    const DROPS = [
+        { type: "thinking", path: "messages.3.content.0", reason: "prefix_binding_mismatch" },
+        { type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
+    ];
+
+    function droppingModel(text?: string): LanguageModelV4 {
+        return fakeModel(async () => ({
+            ...okResult(),
+            content: text === undefined ? [] : [{ type: "text", text }],
+            providerMetadata: { anthropic: { inputTransformations: DROPS } },
+        }));
+    }
+
+    it("writes one warn record for each drop on chat, and chat returns ok", async () => {
+        const { logger, warnings } = recordingLogger();
+        const provider = createAiSdkProvider({ model: droppingModel("done"), logger });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(dropRecords(warnings).map((w) => w.fields)).toEqual([
+            { workload: "analysis:analysis-001", type: "thinking", path: "messages.3.content.0", reason: "prefix_binding_mismatch" },
+            { workload: "analysis:analysis-001", type: "thinking", path: "messages.5.content.0", reason: "model_binding_mismatch" },
+        ]);
+    });
+
+    it("writes the same records on each terminal path of chatStream, before the done event", async () => {
+        // A reply with text drains the live stream. A reply with no text ends
+        // inside the envelope. The two paths build the done event apart.
+        for (const text of ["done", undefined]) {
+            const { logger, warnings } = recordingLogger();
+            const provider = createAiSdkProvider({ model: droppingModel(text), logger });
+
+            let recordsAtDone: number | undefined;
+            for await (const event of provider.chatStream(request, makeSession())) {
+                if (event.type === "done") recordsAtDone = dropRecords(warnings).length;
+            }
+
+            expect(recordsAtDone).toBe(2);
+            expect(dropRecords(warnings).map((w) => w.fields?.["path"])).toEqual(["messages.3.content.0", "messages.5.content.0"]);
+        }
+    });
+
+    it("writes no drop record for a response without drops", async () => {
+        const { logger, warnings } = recordingLogger();
+        const provider = createAiSdkProvider({ model: fakeModel(async () => okResult()), logger });
+
+        (await provider.chat(request, makeSession()))._unsafeUnwrap();
+        for await (const _event of provider.chatStream(request, makeSession())) {
+            // Drain the stream, thus the call completes.
+        }
+
+        expect(dropRecords(warnings)).toEqual([]);
     });
 });

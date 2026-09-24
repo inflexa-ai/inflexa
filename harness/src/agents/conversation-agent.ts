@@ -322,6 +322,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             ...(readPoolInventory ? { readPoolInventory } : {}),
             ...(deps.extendAnalysisFarm ? { extendAnalysisFarm: deps.extendAnalysisFarm } : {}),
             ...(deps.logger ? { logger: deps.logger } : {}),
+            ...(usageRecorder ? { usageRecorder } : {}),
         }),
         // The one report path. The tool starts a report thread as a child of the
         // conversation, and the user composes the report there with the Report
@@ -339,7 +340,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createShowPlanTool(pool),
         showFileTool,
         // Cross-domain analogy generation (sub-agent as a loop-driving tool).
-        createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder }),
+        createGenerateAnalogyReportTool({ provider, model, bioKeys, usageRecorder, ...(deps.logger ? { logger: deps.logger } : {}) }),
         // Workspace semantic search + raw read/grep over the read seam.
         createWorkspaceSearchTool(pool, embedding),
         createReadFileTool(workspaceFs),

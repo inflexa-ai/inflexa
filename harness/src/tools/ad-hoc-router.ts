@@ -5,10 +5,14 @@ import { z } from "zod";
 import { PLANNABLE_AGENT_CATALOG } from "../agents/sandbox-catalog.js";
 import { forSubAgent, type AgentSession } from "../auth/types.js";
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../app/data-profile-orientation.js";
+import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
+import type { UsageRecorder } from "../billing/usage-recorder.js";
 import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { countChatTokens, type AgentRunUsage } from "../loop/metrics.js";
+import { accountForChatCall } from "../loop/run-agent.js";
 import { packagesSection, resourceEstimationSection } from "../prompts/planner.js";
 import { effectiveDeadlineMs, type ChatProvider } from "../providers/types.js";
 import { formatQuery, parseQuery, type PackageQuery } from "../sandbox/package-identity.js";
@@ -18,6 +22,8 @@ import type { CheckedPackage } from "./sandbox/list-available-packages.js";
 export const AD_HOC_ROUTER_AGENT_ID = "adhoc-router";
 export const AD_HOC_ROUTER_TIMEOUT_MS = 10_000;
 export const AD_HOC_FALLBACK_AGENT_ID = "scientific-executor";
+/** Must differ from a loop step name such as `llm-0`, since both share the usage-record key space. */
+const AD_HOC_ROUTE_CALL_NAME = "adhoc-route";
 
 const resourcesSchema = z.object({
     cpu: z.number().positive(),
@@ -74,6 +80,8 @@ export interface AdHocRouterDeps {
      * the entries reach the link pass as the model wrote them.
      */
     readonly resolvePackages?: (names: readonly string[]) => Promise<readonly CheckedPackage[] | null>;
+    /** Falls back to the no-op recorder when omitted. */
+    readonly usageRecorder?: UsageRecorder;
 }
 
 export function defaultAdHocResources(policy?: ResourcePolicy): ResourceSpec {
@@ -208,9 +216,19 @@ function routeTool() {
 
 export async function routeAdHocRequest(
     deps: AdHocRouterDeps,
-    input: { analysisId: string; request: string; session: AgentSession; signal: AbortSignal },
+    input: {
+        analysisId: string;
+        request: string;
+        session: AgentSession;
+        signal: AbortSignal;
+        /** The router call folds its usage into this, so the turn total includes it. */
+        readonly turnUsage?: AgentRunUsage;
+        /** Carried into the record key of the router usage entry. */
+        readonly invocationId?: string;
+    },
 ): Promise<AdHocRoute> {
     const logger = (deps.logger ?? createNoopLogger()).named("adhoc-router").with({ analysisId: input.analysisId, model: deps.model });
+    const routerSession = forSubAgent(input.session, AD_HOC_ROUTER_AGENT_ID);
     const catalog = PLANNABLE_AGENT_CATALOG.map(
         (agent) => `- ${agent.id}: capabilities [${agent.capabilities.join(", ")}]; suitable for [${agent.suitableFor.join(", ")}]`,
     ).join("\n");
@@ -225,31 +243,44 @@ export async function routeAdHocRequest(
     let failure: AdHocRoute["fallbackClass"];
     try {
         const response = unwrapOrThrow(
-            await deps.provider.chat(
-                {
-                    system: [
-                        "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
-                        "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
-                        resourceEstimationSection(deps.resourcePolicy),
-                        resourceBounds(deps.resourcePolicy),
-                        packagesSection(),
-                        "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
-                        "Respond only by calling submit_route.",
-                    ].join("\n\n"),
-                    messages: [
-                        {
-                            role: "user",
-                            content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
-                        },
-                    ],
-                    // No forced tool choice: some Claude models reject it with a
-                    // 400. A reply without the call falls back below as `malformed`.
-                    tools: routeTool(),
-                },
-                forSubAgent(input.session, AD_HOC_ROUTER_AGENT_ID),
-                signal,
-            ),
+            await deps.provider
+                .chat(
+                    {
+                        system: [
+                            "Select exactly one specialist for a targeted one-step analysis, estimate its sandbox resources, and name the packages that the step imports.",
+                            "Choose only from the supplied catalog. Do not create a plan, reject the request, or select scientific-executor.",
+                            resourceEstimationSection(deps.resourcePolicy),
+                            resourceBounds(deps.resourcePolicy),
+                            packagesSection(),
+                            "You hold no package census. For a name that both ecosystems hold, the language of the specialist you select and the wording of the request decide the track.",
+                            "Respond only by calling submit_route.",
+                        ].join("\n\n"),
+                        messages: [
+                            {
+                                role: "user",
+                                content: `Request:\n${input.request}\n\nPersisted data-profile orientation:\n${orientation}\n\nEligible specialists:\n${catalog}`,
+                            },
+                        ],
+                        // No forced tool choice: some Claude models reject it with a
+                        // 400. A reply without the call falls back below as `malformed`.
+                        tools: routeTool(),
+                    },
+                    routerSession,
+                    signal,
+                )
+                .map(countChatTokens(AD_HOC_ROUTER_AGENT_ID)),
         );
+        // A failed call throws at unwrapOrThrow above, so no usage is recorded.
+        accountForChatCall(response, {
+            session: routerSession,
+            agentId: AD_HOC_ROUTER_AGENT_ID,
+            callPath: routerSession.provenance.callPath,
+            stepName: AD_HOC_ROUTE_CALL_NAME,
+            ...(input.invocationId === undefined ? {} : { invocationId: input.invocationId }),
+            usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
+            logger,
+            rollups: input.turnUsage === undefined ? [] : [input.turnUsage],
+        });
         const call = Array.isArray(response.message.content)
             ? response.message.content.find((part): part is ToolCallPart => part.type === "tool-call" && part.toolName === "submit_route")
             : undefined;

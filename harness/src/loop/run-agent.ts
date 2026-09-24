@@ -27,14 +27,13 @@ import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { stripUnansweredToolCalls } from "../memory/tool-call-integrity.js";
 import { classifyProviderError } from "../providers/errors.js";
-import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
-import { DEFAULT_REASONING } from "../providers/reasoning.js";
+import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, ChatResponse, PromptCachePolicy, ProviderCapabilities, ReasoningPolicy } from "../providers/types.js";
 import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, readToolResultImages, type Tool, type ToolContext, type ToolError, type ToolResultImage } from "../tools/define-tool.js";
 import { labelToolFailure, labelToolValidationFailure, recordToolException, traceAgentRun, traceToolCall } from "./genai-spans.js";
-import { addChatUsage, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
+import { addChatUsage, countChatTokens, hasReportedUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import { computeDetail, computeResultDetail, type ToolCallDetail } from "./tool-detail.js";
 import { toolOutcomeForOutputType, type ToolOutcome } from "./tool-outcome.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
@@ -120,16 +119,9 @@ export interface RunAgentOptions {
      */
     readonly promptCache?: PromptCachePolicy;
     /**
-     * Reasoning policy for every LLM call this run makes. Defaults to
-     * `DEFAULT_REASONING` (`xhigh`) — an agent loop drives tools over many
-     * iterations, and a shallow turn there costs more in wasted calls than the
-     * deeper turn costs in tokens. The provider package resolves the name for
-     * the model that it is bound to.
-     *
-     * The policy lives here, on the run, rather than on the provider, for the
-     * same reason that the cache policy does: a one-shot LLM call elsewhere has
-     * its own depth needs and must not inherit the depth of a loop. A host on a
-     * model with no reasoning support passes `"provider-default"`.
+     * The reasoning effort for each LLM call of this run, the forced wrap-up
+     * included. Anthropic discards its message cache when the top-level
+     * effort changes, so the run must send the same value, or none, throughout.
      */
     readonly reasoning?: ReasoningPolicy;
     /**
@@ -256,12 +248,12 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 
     // Resolved once, not per iteration: an identical policy across every call is
     // itself part of the cache contract — the request prefix has to be
-    // byte-identical to be read back. The breakpoint it places is re-derived per
-    // call, because it rides the last message and the transcript grows.
+    // byte-identical to be read back. The message breakpoint is re-derived per
+    // call because it rides the transcript. The system prompt depends only on
+    // the agent type, so it is computed once.
     const promptCache = opts.promptCache ?? DEFAULT_PROMPT_CACHE;
-    // The depth is a neutral name, and the provider package resolves it for the
-    // model. A vendor key here would turn that resolution off.
-    const reasoning = opts.reasoning ?? DEFAULT_REASONING;
+    const system = withSystemPromptBreakpoint(agent.systemPrompt, promptCache);
+    const reasoningField: Pick<ChatRequest, "reasoning"> = opts.reasoning === undefined ? {} : { reasoning: opts.reasoning };
     const usage: AgentRunUsage = {};
 
     // Exactly one record per completed run — never one per iteration. That bound is
@@ -295,41 +287,14 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
 
     const usageRecorder = opts.usageRecorder ?? createNoopUsageRecorder();
 
-    /**
-     * Fold one completed call into both rollups and hand it to the recorder.
-     * Called at the fold point, with the reply in hand — before any branch that
-     * can end the run — so a call that completed is accounted for even when the
-     * run later aborts or dies.
-     *
-     * A call that reported nothing produces no record. Model ids are identity,
-     * not usage: a reply carrying only `requestedModelId`/`servedModelId` still
-     * reported nothing to account for, so it is folded (to no effect) and left
-     * out of the ledger rather than entered as an all-absent record.
-     *
-     * `record` is a notice. The loop does not wait for its result, thus a
-     * recorder that blocks does not make the run slower.
-     */
-    const accountForCall = (reply: ChatResponse, stepName: string): void => {
-        addChatUsage(usage, reply.usage);
-        addChatUsage(turnUsage, reply.usage);
-
-        const reported = reply.usage;
-        if (reported === undefined || !hasReportedUsage(reported)) return;
-        void deliverNotice(
-            log,
-            "UsageRecorder.record",
-            usageRecorder.record({
-                recordKey: recordKeyFor(session, opts.invocationId, stepName),
-                agentId: source.agentId,
-                callPath: source.callPath,
-                scope: session.scope,
-                ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
-                ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
-                ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
-                ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
-                usage: reported,
-            }),
-        );
+    const accounting: Omit<ChatCallAccounting, "stepName"> = {
+        session,
+        agentId: source.agentId,
+        callPath: source.callPath,
+        ...(opts.invocationId === undefined ? {} : { invocationId: opts.invocationId }),
+        usageRecorder,
+        logger: log,
+        rollups: [usage, turnUsage],
     };
 
     /** The rollups this loop stamps on its finish — each absent when nothing reported. */
@@ -346,7 +311,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const stopOnDenial = async (i: number): Promise<RunAgentResult> => {
         settleTranscript();
         await emit({ type: "iteration", source, index: i, final: true });
-        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
         logFinish("warn", "denied", false);
         return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries, ...finishUsage() } };
     };
@@ -416,22 +381,24 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     const stopOnResolved = async (i: number): Promise<RunAgentResult> => {
         settleTranscript();
         await emit({ type: "iteration", source, index: i, final: true });
-        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
         return { messages, finish: { reason: "stop", cappedOut: false, truncationRecoveries } };
     };
 
     for (let i = 0; i < agent.maxIterations; i++) {
         iterations = i + 1;
         const request: ChatRequest = {
-            system: agent.systemPrompt,
+            system,
             messages: withPromptCacheBreakpoint(messages, promptCache),
             tools: toolDefs,
             ...(opts.toolChoice !== undefined ? { toolChoice: opts.toolChoice } : {}),
-            reasoning,
+            ...reasoningField,
         };
         const llmStepName = formatStepName.llm(i);
-        const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal));
-        accountForCall(reply, llmStepName);
+        // Counters grow inside the step body, so a replayed step (which returns
+        // the stored reply) does not double-count the call.
+        const reply = await resultStep(callStep)(llmStepName, () => provider.chat(request, session, signal).map(countChatTokens(agent.id)));
+        accountForChatCall(reply, { ...accounting, stepName: llmStepName });
 
         if (reply.finishReason === "aborted") {
             // An interrupted turn keeps whatever the model produced before the cut, but
@@ -507,7 +474,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
             // matching the no-output abort contract above.
             if (reply.finishReason === "aborted") markLastLoopAssistant(messages, initial.length);
             await emit({ type: "iteration", source, index: i, final: true });
-            recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+            recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
             logFinish("info", reply.finishReason, false);
             return {
                 messages,
@@ -544,19 +511,20 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         if (opts.resolved?.()) return stopOnResolved(i);
     }
 
-    // The wrap-up keeps the tool set of the loop and forbids a call through
-    // `toolChoice`. A changed tool set rewrites the cached prefix, and a model
-    // that binds its signed thinking blocks to the prefix can reject the
-    // transcript.
+    // `toolChoice: "none"` keeps tools on the wire for the OpenAI arm (prefix
+    // stable), but `@ai-sdk/anthropic` drops them, breaking the cache and
+    // risking a rejected or dropped signed-thinking block.
     const wrapUpStepName = formatStepName.llm(agent.maxIterations);
     const wrapUp = await resultStep(callStep)(wrapUpStepName, () =>
-        provider.chat(
-            { system: agent.systemPrompt, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", reasoning },
-            session,
-            signal,
-        ),
+        provider
+            .chat(
+                { system, messages: withPromptCacheBreakpoint(messages, promptCache), tools: toolDefs, toolChoice: "none", ...reasoningField },
+                session,
+                signal,
+            )
+            .map(countChatTokens(agent.id)),
     );
-    accountForCall(wrapUp, wrapUpStepName);
+    accountForChatCall(wrapUp, { ...accounting, stepName: wrapUpStepName });
 
     if (wrapUp.finishReason === "aborted") {
         // An abort during the wrap-up is still the user cutting the turn — the
@@ -569,7 +537,7 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
         settleTranscript();
         markLastLoopAssistant(messages, initial.length);
         await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-        recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
+        recordAgentRun({ agentId: agent.id, iterations, cappedOut: true });
         logFinish("warn", "aborted", true);
         return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries, ...finishUsage() } };
     }
@@ -577,9 +545,58 @@ async function runAgentLoop(agent: AgentDefinition, initial: readonly LoopMessag
     messages.push(wrapUp.message);
     settleTranscript();
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-    recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
+    recordAgentRun({ agentId: agent.id, iterations, cappedOut: true });
     logFinish("warn", "max_iterations", true);
     return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries, ...finishUsage() } };
+}
+
+/** What one completed LLM call is accounted under. */
+export interface ChatCallAccounting {
+    readonly session: AgentSession;
+    readonly agentId: string;
+    readonly callPath: readonly string[];
+    /**
+     * The deterministic name inside the record key, for example `llm-{n}` for
+     * a loop call or `adhoc-route` for a direct call.
+     */
+    readonly stepName: string;
+    /** The id of the tool call that makes the call, when the call runs inside a tool dispatch. */
+    readonly invocationId?: string;
+    readonly usageRecorder: UsageRecorder;
+    /** The sink that the notice helper logs the reason of a recorder `err` to. */
+    readonly logger: Logger;
+    /** The accumulators that the usage of the call folds into, for example the run total and the turn total. */
+    readonly rollups: readonly AgentRunUsage[];
+}
+
+/**
+ * Called at the fold point, before any run-ending branch, so an aborted or
+ * dead run is still accounted. Token counters grow inside the call's step
+ * body, not here, because a replay re-delivers the stored reply to this
+ * function too; the record re-sends under the same idempotency key, which an
+ * upserting sink counts once.
+ */
+export function accountForChatCall(reply: ChatResponse, call: ChatCallAccounting): void {
+    for (const rollup of call.rollups) addChatUsage(rollup, reply.usage);
+
+    const reported = reply.usage;
+    if (reported === undefined || !hasReportedUsage(reported)) return;
+    const { session } = call;
+    void deliverNotice(
+        call.logger,
+        "UsageRecorder.record",
+        call.usageRecorder.record({
+            recordKey: recordKeyFor(session, call.invocationId, call.stepName),
+            agentId: call.agentId,
+            callPath: call.callPath,
+            scope: session.scope,
+            ...(session.runFrame?.runId === undefined ? {} : { runId: session.runFrame.runId }),
+            ...(session.runFrame?.stepId === undefined ? {} : { stepId: session.runFrame.stepId }),
+            ...(reply.requestedModelId === undefined ? {} : { requestedModelId: reply.requestedModelId }),
+            ...(reply.servedModelId === undefined ? {} : { servedModelId: reply.servedModelId }),
+            usage: reported,
+        }),
+    );
 }
 
 /**
