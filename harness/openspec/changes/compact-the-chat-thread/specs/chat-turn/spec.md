@@ -72,15 +72,17 @@ The policy of the turn MUST hold these values:
 - The turn selects the variant of the exchange from the declared tools of the agent.
 - On a `conversation` thread, the agent declares `update_working_memory`. The mask lets only that tool run, and the request asks for the memory edits first.
 - A `report` thread reads a frozen copy of working memory, and its agent declares no `update_working_memory`. Its mask is `"none"`, and its request has only the summary step.
-- The request asks for a summary in plain text that leaves out what working memory holds.
+- The request of a `conversation` thread asks for a summary in plain text that leaves out each fact that a memory edit accepted, and that carries each fact that the memory refused. It gives the number of replies that the memory edits can use.
+- The request of a `report` thread asks for a summary in plain text that leaves out what working memory holds.
 - A `report` thread keeps its first turn, the seed, in front of each view.
 
 The summary gives these facts:
 
-- the goals, and the current request of the person in its exact words
+- the current request of the person in its exact words, and on a `report` thread also the goals and each change that the person made to the brief
 - the decisions, with their reasons
+- the approaches that failed or that the person ruled out, with the reasons
 - the open questions
-- the file paths and the run ids that the work uses
+- the file paths, the run ids, and the other exact values that the work uses
 - the state of the work in progress
 
 A compaction inside a turn puts the user message of that turn before the marker. Thus the summary carries that request.

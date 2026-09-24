@@ -2,7 +2,7 @@
 
 ### Requirement: Working memory holds the lasting facts across a compaction
 
-A compaction of a `conversation` thread MUST let the agent move each lasting fact into working memory before the summary. The mask of the exchange lets only `update_working_memory` run. The request asks for the memory edits first, and then for a summary that leaves out what working memory holds.
+A compaction of a `conversation` thread MUST let the agent move each lasting fact into working memory before the summary. The mask of the exchange lets only `update_working_memory` run. The request asks for the memory edits first, in fewer replies than the cap of the exchange. Then it asks for a summary that leaves out each fact that a memory edit accepted, and that carries each fact that the memory refused. The request tells the agent to keep each constraint that the user gave as it is.
 
 After the marker, the turn adds a working-memory record, because the new view holds no copy (see the chat-turn capability). The record renders the memory after the edits of the exchange. Thus the view after the marker holds the lasting facts in the record, and the summary holds the rest.
 
