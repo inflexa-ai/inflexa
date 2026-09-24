@@ -4,7 +4,7 @@ Each path is relative to `harness/`. A path that starts with `cli/` is relative 
 
 ## 1. Bump the AI SDK packages
 
-- [ ] 1.1 In `package.json`, set the eight AI SDK packages to their latest npm releases in one edit. Keep the caret ranges, and keep the exact pin of `@ai-sdk/provider-utils`. On 2026-09-24 the latest releases are these:
+- [x] 1.1 In `package.json`, set the eight AI SDK packages to their latest npm releases in one edit. Keep the caret ranges, and keep the exact pin of `@ai-sdk/provider-utils`. On 2026-09-24 the latest releases are these:
   - `ai`: `^7.0.113`
   - `@ai-sdk/anthropic`: `^4.0.62`
   - `@ai-sdk/openai`: `^4.0.74`
@@ -13,11 +13,11 @@ Each path is relative to `harness/`. A path that starts with `cli/` is relative 
   - `@ai-sdk/provider`: `^4.0.18`
   - `@ai-sdk/provider-utils`: `5.0.47`
   - `@ai-sdk/amazon-bedrock` (dev): `^5.0.93`
-- [ ] 1.2 Run `npm view <package> version dependencies` for each package. If a newer release exists, use it. Make sure that each package depends on the same exact `@ai-sdk/provider` and `@ai-sdk/provider-utils`. `@ai-sdk/otel` pins `ai` exactly, thus the two move together.
-- [ ] 1.3 Run `bun install`. Make sure that `bun.lock` holds one copy of each of `@ai-sdk/provider` and `@ai-sdk/provider-utils`. Expected result: `grep -n '"[^"]*/@ai-sdk/provider' bun.lock` prints nothing.
-- [ ] 1.4 Run `tsc -p tsconfig.json`. Fix each error at its site in `src/`, with no change of behavior. If a fix changes behavior, stop and report it to the user.
-- [ ] 1.5 Run `bun test src/providers src/loop`. Expected result: the same tests pass as before the bump.
-- [ ] 1.6 Run `bun run format:file` on each file under `src/` that 1.4 or 1.5 changed.
+- [x] 1.2 Run `npm view <package> version dependencies` for each package. If a newer release exists, use it. Make sure that each package depends on the same exact `@ai-sdk/provider` and `@ai-sdk/provider-utils`. `@ai-sdk/otel` pins `ai` exactly, thus the two move together.
+- [x] 1.3 Run `bun install`. Make sure that `bun.lock` holds one copy of each of `@ai-sdk/provider` and `@ai-sdk/provider-utils`. Expected result: `grep -n '"[^"]*/@ai-sdk/provider' bun.lock` prints nothing.
+- [x] 1.4 Run `tsc -p tsconfig.json`. Fix each error at its site in `src/`, with no change of behavior. If a fix changes behavior, stop and report it to the user.
+- [x] 1.5 Run `bun test src/providers src/loop`. Expected result: the same tests pass as before the bump.
+- [x] 1.6 Run `bun run format:file` on each file under `src/` that 1.4 or 1.5 changed.
 
 ## 2. The effort on the provider configuration
 
