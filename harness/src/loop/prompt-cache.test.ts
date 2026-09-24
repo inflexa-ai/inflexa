@@ -16,7 +16,7 @@ import { z } from "zod";
 
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../providers/ai-sdk.js";
-import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint } from "../providers/prompt-cache.js";
+import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../providers/prompt-cache.js";
 import type { ModelMessage, PromptCachePolicy } from "../providers/types.js";
 import { defineTool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
@@ -203,6 +203,27 @@ describe("withPromptCacheBreakpoint", () => {
     });
 });
 
+describe("withSystemPromptBreakpoint", () => {
+    it("marks the system prompt in both vendor namespaces, with the ttl of the policy", () => {
+        expect(withSystemPromptBreakpoint("You are a test agent.", { ttl: "1h" })).toEqual({
+            role: "system",
+            content: "You are a test agent.",
+            providerOptions: {
+                anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+                bedrock: { cachePoint: { type: "default", ttl: "1h" } },
+            },
+        });
+    });
+
+    it("leaves the system prompt a plain string when caching is off", () => {
+        expect(withSystemPromptBreakpoint("You are a test agent.", "off" as PromptCachePolicy)).toBe("You are a test agent.");
+    });
+
+    it("leaves an empty system prompt a plain string, because the API refuses an empty text block", () => {
+        expect(withSystemPromptBreakpoint("", DEFAULT_PROMPT_CACHE)).toBe("");
+    });
+});
+
 describe("runAgent prompt-cache directive", () => {
     it("marks the last message on every iteration, the wrap-up included", async () => {
         const chat = neverTerminating();
@@ -222,6 +243,23 @@ describe("runAgent prompt-cache directive", () => {
         expect(Object.keys(wrapUp.tools)).toEqual(Object.keys(chat.calls[0]!.tools));
         expect(wrapUp.toolChoice).toBe("none");
         expect(breakpointsOf(wrapUp.messages)).toHaveLength(1);
+    });
+
+    it("sends the same marked system message on every call, the wrap-up included", async () => {
+        const chat = neverTerminating();
+
+        await runAgent(agentDef(3), GO, makeSession(), opts(chat));
+
+        // 3 iterations + the forced wrap-up. The system prompt of an agent depends
+        // only on its type, thus one marked system message serves the whole run.
+        expect(chat.calls).toHaveLength(4);
+        for (const call of chat.calls) {
+            expect(call.system).toEqual({
+                role: "system",
+                content: "You are a test agent.",
+                providerOptions: { ...ANTHROPIC_5M, bedrock: { cachePoint: { type: "default", ttl: "5m" } } },
+            });
+        }
     });
 
     it("writes no request-level directive on any call", async () => {
@@ -276,9 +314,11 @@ describe("runAgent prompt-cache directive", () => {
         await runAgent(agentDef(2), GO, makeSession(), opts(chat, { promptCache: "off" as PromptCachePolicy }));
 
         expect(chat.calls).toHaveLength(3);
-        // Caching off leaves no marker anywhere and no bag at all. The loop sends
-        // no reasoning of its own, thus it writes no vendor key here either.
+        // Caching off leaves no marker anywhere and no bag at all: the system
+        // prompt stays a plain string. The loop sends no reasoning of its own,
+        // thus it writes no vendor key here either.
         for (const call of chat.calls) {
+            expect(call.system).toBe("You are a test agent.");
             expect(breakpointsOf(call.messages)).toEqual([]);
             expect(call.providerOptions).toBeUndefined();
             expect("reasoning" in call).toBe(false);
@@ -558,5 +598,20 @@ describe("the bedrock marker on the wire", () => {
         const blocks = await lastMessageBlocks("off" as PromptCachePolicy);
 
         expect(blocks.some((b) => "cachePoint" in b)).toBe(false);
+    });
+
+    it("appends a cachePoint block after the content of the system prompt", async () => {
+        const bodies: Record<string, unknown>[] = [];
+        const bedrock = createAmazonBedrock({ region: "us-east-1", apiKey: "test-key", fetch: cannedBedrockFetch(bodies) });
+
+        await generateText({
+            model: bedrock("anthropic.claude-sonnet-5"),
+            system: withSystemPromptBreakpoint("You are a test agent.", DEFAULT_PROMPT_CACHE),
+            messages: [userText("first")],
+        });
+
+        const system = (bodies[0]?.["system"] ?? []) as Record<string, unknown>[];
+        expect(system.at(-1)).toEqual({ cachePoint: { type: "default", ttl: "5m" } });
+        expect(system.at(-2)).toEqual({ text: "You are a test agent." });
     });
 });

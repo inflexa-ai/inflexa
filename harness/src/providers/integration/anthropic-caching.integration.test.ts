@@ -32,7 +32,7 @@ import { jsonSchema, tool as aiTool } from "ai";
 
 import { makeSession } from "../__fixtures__/session.js";
 import { createConfiguredAiSdkProvider } from "../ai-sdk.js";
-import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint } from "../prompt-cache.js";
+import { DEFAULT_PROMPT_CACHE, withPromptCacheBreakpoint, withSystemPromptBreakpoint } from "../prompt-cache.js";
 import type { ChatRequest } from "../types.js";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -50,12 +50,13 @@ const LARGE_SYSTEM = Array.from(
 ).join(" ");
 
 /**
- * The request the loop builds: a `system` string, an AI SDK `ToolSet`, and the
- * cache breakpoint placed on the LAST MESSAGE, exactly as `runAgent` places it.
- * One breakpoint at the end of the messages caches the whole prefix, because the
- * cache keys on a prefix and the render order is tools → system → messages.
+ * The request the loop builds: the system prompt marked at its end, an AI SDK
+ * `ToolSet`, and the cache breakpoint placed on the LAST MESSAGE, exactly as
+ * `runAgent` places the two markers. The cache keys on a prefix and the render
+ * order is tools → system → messages, thus each marker caches everything before
+ * it.
  *
- * The placement is the part under test as much as the caching is: the marker has
+ * The placement is the part under test as much as the caching is: each marker has
  * to be a per-block one that an intermediary can count, never the request-level
  * directive that reaches the wire as a top-level `cache_control` field.
  *
@@ -63,7 +64,7 @@ const LARGE_SYSTEM = Array.from(
  * not shift or nothing is read back.
  */
 const CACHED_REQUEST: ChatRequest = {
-    system: LARGE_SYSTEM,
+    system: withSystemPromptBreakpoint(LARGE_SYSTEM, DEFAULT_PROMPT_CACHE),
     // Built exactly as `runAgent` builds its `toolDefs`.
     tools: {
         noop: aiTool({
