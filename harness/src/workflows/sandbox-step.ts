@@ -247,18 +247,13 @@ export interface SandboxAgentBuildContext {
      */
     readonly lineageCollector: ProvenanceCollector;
     /**
-     * Per-run blocker cell (see the harness-sandbox-agents spec). The agent
-     * factory adds `report_blocker` bound to this holder. After `runAgent`, the
-     * body reads the blocker from the transcript, and the cell is its fallback.
+     * Per-run blocker cell that `report_blocker` writes. The body prefers the
+     * blocker read from the transcript and falls back to this cell.
      */
     readonly blockerHolder: BlockerHolder;
     /**
-     * The per-step cell of the file-metadata continuation (see the
-     * harness-sandbox-agents spec). The agent factory gives it to
-     * `SandboxAgentDeps.fileMetadata`, thus the agent declares
-     * `submit_file_metadata` from its first request. The task masks the tool.
-     * The post-step pipeline arms the cell, and the continuation lets the tool
-     * run.
+     * Cell for the file-metadata continuation. `submit_file_metadata` is
+     * declared up front for prefix stability but masked until then.
      */
     readonly fileMetadata: FileMetadataCell;
     /** Shared host-side citation resolver for allowlisted sandbox agents. */
@@ -300,20 +295,13 @@ export interface SandboxStepDeps {
      */
     readonly artifactRegistry: ArtifactRegistry;
     /**
-     * Workspace read seam. No stage of the step body reads it: the metadata
-     * and summary continuations run the `read_file` and `grep` of the step
-     * agent, which the agent factory wires. The field stays, because
-     * `src/index.ts` exports this type and an embedder builds it as an object
-     * literal, thus a removal breaks the build of the embedder.
+     * No longer read by the step body; kept because `src/index.ts` exports
+     * this type and an embedder builds it as an object literal.
      */
     readonly workspaceFs: WorkspaceFilesystem;
     /** Workspace-root resolution seam (see workspace/paths.ts). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    /**
-     * Sandbox model id. No stage of the step body reads it: the step agent
-     * carries its own model id, and the continuations run that agent. The
-     * field stays for the same reason as `workspaceFs`.
-     */
+    /** No longer read by the step body, kept for the same reason as `workspaceFs`. */
     readonly model: string;
     /**
      * Build the agent definition for this step. The parent resolves the
@@ -335,8 +323,6 @@ export interface SandboxStepDeps {
  * absolute path each post-step dep walks to discover artifacts;
  * `lineageCollector` carries the runtime-observed input/script edges the
  * step loop accumulated, which registration translates into managed-root parents.
- * `agent` and `fileMetadata` are what the metadata and summary continuations
- * extend the conversation of the task with.
  */
 export interface PostStepContext {
     readonly input: SandboxStepInput;
@@ -361,15 +347,9 @@ function nextFunctionIdFactory(): () => string {
     return () => `fn-${(n++).toString(36)}`;
 }
 
-/** The file-metadata product of a stage that degraded: no entries, and no exchange. */
 const NO_STEP_FILE_METADATA: StepFileMetadata = { entries: [], messages: [] };
 
-/**
- * Read the checkpoint of the file-metadata stage. A workflow that started on
- * an earlier version checkpointed a bare array of entries, with no messages.
- * A replay of it gets those entries, and the summary then continues the
- * transcript of the task directly.
- */
+/** Normalizes a pre-`messages` checkpoint (a bare entries array) for replay. */
 export function readStepFileMetadata(checkpoint: StepFileMetadata | readonly FileMetadataEntry[]): StepFileMetadata {
     return isBareEntries(checkpoint) ? { entries: checkpoint, messages: [] } : checkpoint;
 }
@@ -786,10 +766,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // reason. A capped-out step WITH artifacts stays on the completed path,
     // because partial output is real output.
     //
-    // The transcript, not the cell, is the account of a blocker. A durable
-    // replay returns the cached result of the `report_blocker` step and runs no
-    // `execute`, thus the cell of a replayed body stays empty. The cell stays
-    // the fallback for an agent whose blocker tool is not the one of the harness.
+    // A replay does not rerun `execute`, so the cell is empty then; the
+    // transcript is the durable record and takes precedence over the cell.
     const blockerOutcome = recordedBlocker(transcript) ?? blockerHolder.outcome;
     const cappedOutEmpty = hitMaxSteps && manifest.length === 0;
     if (blockerOutcome || cappedOutEmpty) {
@@ -854,8 +832,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // gate (`data-step-summary`, file-tree) stay replay-stable and the billed
     // LLM calls are not re-issued on recovery. The remaining stages (walk /
     // reconcile / sync / index) stay inline — a separate follow-up. The
-    // metadata checkpoint carries the messages of its exchange, thus a replay
-    // gives the summary continuation the same prefix.
+    // checkpoint keeps the exchange's messages so a replay's prefix matches.
     const { entries: metadataEntries, messages: metadataMessages } = readStepFileMetadata(
         await safeRunValue(
             logger,

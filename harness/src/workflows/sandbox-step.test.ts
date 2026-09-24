@@ -250,11 +250,6 @@ function usageStepInput(): SandboxStepInput {
     };
 }
 
-/**
- * The step agent of the rigs: the given tools, then the output tool of the
- * file-metadata continuation, bound to the cell of the step, as the substrate
- * of a real step agent declares it.
- */
 function stepAgent(fileMetadata: FileMetadataCell, tools: readonly Tool[] = [], maxIterations = 4): AgentDefinition {
     return {
         id: USAGE_AGENT_ID,
@@ -266,9 +261,8 @@ function stepAgent(fileMetadata: FileMetadataCell, tools: readonly Tool[] = [], 
 }
 
 /**
- * Deps for a step whose agent declares only the output tool: the loop makes
- * exactly one LLM call and stops, and the post-step pipeline finds an empty
- * artifact tree.
+ * Deps for a step whose agent declares only the output tool: one LLM call,
+ * then an empty artifact tree.
  */
 function usageStepDeps(usage: ChatUsage | undefined): SandboxStepDeps {
     return {
@@ -407,7 +401,6 @@ describe("sandbox-step data-step-usage part", () => {
 
 // ── the output tool of the file-metadata continuation ───────────────
 
-/** The tool result of one call in the messages of a request. */
 function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
     return request.messages
         .flatMap((message) => (message.role === "tool" ? message.content : []))
@@ -473,7 +466,6 @@ describe("sandbox-step post-step continuations", () => {
             "tool_use",
         );
         const described = makeMessage([textBlock("described")], "end_turn");
-        // The task, the two requests of the metadata exchange, then the summary.
         const replies = [makeMessage([textBlock("done")], "end_turn"), submit, described, makeMessage([textBlock("## Summary")], "end_turn")];
         const provider = scriptedProvider((i) => replies[i]!);
 
@@ -483,7 +475,6 @@ describe("sandbox-step post-step continuations", () => {
         expect(provider.calls).toHaveLength(4);
         const metadataRequest = provider.calls[1]!;
         const summaryRequest = provider.calls[3]!;
-        // [briefing, assistant(done), metadata request, assistant(submit), tool(result), assistant(described), summary request]
         expect(summaryRequest.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "tool", "assistant", "user"]);
         expect(JSON.stringify(summaryRequest.messages.slice(0, 2))).toBe(JSON.stringify(metadataRequest.messages.slice(0, 2)));
         expect(summaryRequest.messages[2]!.content).toBe(metadataRequest.messages[2]!.content);
@@ -497,7 +488,6 @@ describe("sandbox-step post-step continuations", () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         const runInline = dbos.DBOS.runStep as unknown as (fn: () => Promise<unknown>, config?: { name?: string }) => Promise<unknown>;
         const cached = [{ dbPath: `runs/${USAGE_RUN_ID}/${USAGE_STEP_ID}/output/result.csv`, description: "cached description", metadata: { format: "csv" } }];
-        // The checkpoint of the earlier version: a bare array of entries, which the replay returns with no call.
         (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
             config?.name === "post-step.generate-file-metadata" ? cached : runInline(fn, config),
         );
@@ -507,7 +497,6 @@ describe("sandbox-step post-step continuations", () => {
         const result = await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider });
 
         expect(result.status).toBe("complete");
-        // The task and the summary only. The summary request follows the transcript directly.
         expect(provider.calls).toHaveLength(2);
         expect(provider.calls[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
         expect(outputFiles()).toEqual([expect.objectContaining({ path: "output/result.csv", description: "cached description" })]);
@@ -520,7 +509,6 @@ describe("sandbox-step blocker replay", () => {
     it("keeps the blocked status on a replay, which returns the cached report_blocker step and runs no execute", async () => {
         const dbos = await import("@dbos-inc/dbos-sdk");
         const cache = new Map<string, unknown>();
-        // The first run: each step runs its body, and the store keeps its value by name.
         (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) => {
             const value = await fn();
             cache.set(config!.name!, value);
@@ -540,7 +528,6 @@ describe("sandbox-step blocker replay", () => {
 
         const first = await runSandboxStepBody(usageStepInput(), blockerDeps(scriptedProvider((i) => replies[i]!)));
 
-        // The replay: a step that the first run recorded returns its value and runs no body.
         (dbos.DBOS.runStep as unknown) = mock(async (fn: () => Promise<unknown>, config?: { name?: string }) =>
             cache.has(config!.name!) ? cache.get(config!.name!) : fn(),
         );

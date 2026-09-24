@@ -81,13 +81,9 @@ function installSeamFor(comp: RunEngineComposition): void {
     installProvenanceSeam(createProvenanceSeam({ emitters: comp.sandboxEmitters, sessionModel: () => "anthropic/claude-test" }));
 }
 
-// A minimal build context. `buildAgent` reads only the analysis/run/step ids,
-// the agent id, the write prefix, and the per-call accessors; the sandbox /
-// lineage-collector / blocker-holder / file-metadata cell are captured by tool
-// closures at composition and never dereferenced there — so empty placeholders
-// are safe, and the `RunSession` fields the ctx type carries are never read. The
-// `as unknown as` cast bridges those unread placeholder-typed fields, which
-// the cli cannot construct without deep-importing harness internals.
+// buildAgent never dereferences the sandbox / lineage-collector / blocker-holder /
+// file-metadata fields, so empty placeholders are safe; the cast avoids deep-importing
+// harness internals to build the real placeholder types.
 function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgentBuildContext {
     return {
         input: { analysisId: "an-1", runId: "run-1", stepId: "step-1", agentId },
@@ -308,7 +304,6 @@ describe("buildSandboxStepDeps", () => {
         // The returned definition is the catalog's own entry for that id.
         expect(agent.id).toBe("bulk-transcriptomics-agent");
         expect(Array.isArray(agent.tools)).toBe(true);
-        // The cell of the step reaches the agent, thus it declares the output tool of the file-metadata continuation.
         expect(agent.tools.at(-1)?.id).toBe("submit_file_metadata");
     });
 

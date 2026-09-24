@@ -2,20 +2,13 @@
  * `submit_file_metadata` — the output tool of the file-metadata continuation of
  * a sandbox step (see the harness-sandbox-agents spec).
  *
- * Each step agent declares the tool from its first request, as the last tool of
- * its substrate. The tool set is part of the prefix that the prompt cache and a
- * signed thinking block bind to, thus the task and each continuation after it
- * must declare the same tools. The task runs under a mask that refuses the
- * tool, and the file-metadata continuation after the task lets it run. The
- * description and the input schema do not depend on the step, thus the prefix
- * stays byte-identical across steps.
+ * Each step agent declares this tool from its first request; a mask refuses it
+ * until the file-metadata continuation, because the tool set sits in the
+ * prefix that the prompt cache and a signed thinking block bind to.
  *
- * The cell holds the known paths of the step and the accepted descriptions. The
- * tool matches each description to its file BY PATH — there is no positional
- * array-index alignment, so a dropped, reordered, or extra entry can never
- * attach a description to the wrong file. An unknown path (a hallucinated file)
- * is rejected with feedback, and each file with no description yet comes back
- * as `remaining`, so the model submits again.
+ * The tool matches each description to its file BY PATH, never by array
+ * index, so a dropped, reordered, or extra entry can never attach a
+ * description to the wrong file.
  */
 
 import { err, ok, type Result } from "neverthrow";

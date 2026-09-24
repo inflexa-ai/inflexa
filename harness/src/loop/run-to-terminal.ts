@@ -12,11 +12,9 @@
  * `runToTerminal` runs the agent, then — if the outcome cell is still empty
  * and the run was not aborted — runs ONE salvage continuation of the same
  * conversation (`continueAgent`), opened by a corrective nudge. The salvage
- * requests declare every tool of the agent, because the tool set is part of the
- * prefix that the prompt cache and a signed thinking block bind to. The ids of
- * the terminal tools make the mask of the salvage: only a terminal tool runs,
- * and a call of any other tool gets an error result. A small cap lets the model
- * fix a single validation rejection and resubmit.
+ * still declares every tool of the agent, masked to the terminal tools only,
+ * because the tool set is part of the prefix a signed thinking block and the
+ * prompt cache bind to.
  *
  * Salvage steps are namespaced (`salvage:…`) so a durable (DBOS) caller does
  * not collide the continuation's `llm-*` / `tool-*` cache keys with the first
@@ -60,27 +58,19 @@ export interface RunToTerminalResult extends RunAgentResult {
 
 /** Describes how to salvage a run that never reached its terminal tool. */
 export interface TerminalSalvage {
-    /**
-     * The terminal tools (submit / blocker / …). Their ids make the mask of the
-     * salvage continuation, whose requests still declare every tool of the
-     * agent. Each one must be a declared tool of the agent, because a mask
-     * cannot let an undeclared tool run.
-     */
+    /** Their ids become the mask of the salvage continuation, so each must already be a declared tool of the agent. */
     readonly tools: readonly Tool[];
-    /** The corrective request that opens the salvage continuation, appended as a synthetic user message. */
+    /** Opens the salvage continuation as a synthetic user message. */
     readonly nudge: string;
     /** The cap of salvage requests. Defaults to {@link DEFAULT_SALVAGE_ITERATIONS}. */
     readonly maxIterations?: number;
 }
 
 /**
- * Drive `agent` to its terminal tool, salvaging once if it doesn't get there.
- * When a salvage ran, the result holds the messages of the first run and then
- * the messages of the salvage, the finish of the salvage, and the token rollups
- * of both attempts. Otherwise it is the result of the first run.
- *
- * Throws before the first run when a terminal tool is not a declared tool of
- * the agent.
+ * Drive `agent` to its terminal tool, salvaging once if it does not get there.
+ * A salvage result carries both runs' messages and summed rollups, with the
+ * salvage's own finish. Throws first if a terminal tool is not declared on the
+ * agent.
  */
 export async function runToTerminal(
     agent: AgentDefinition,
@@ -120,9 +110,8 @@ export async function runToTerminal(
         opts,
     );
 
-    // The continuation is the same logical run as the first attempt — the result
-    // carries the messages of both — so its rollups must cover both too, or the
-    // caller reads the salvage turn's tokens as the whole cost.
+    // The continuation is the same logical run as the first attempt, so its
+    // rollups must cover both, or the caller reads the salvage's tokens as the whole cost.
     //
     // `salvage` deliberately keeps each attempt's OWN finish, unsummed: it is the
     // per-attempt diagnosis, not a second accounting of the same tokens. The two

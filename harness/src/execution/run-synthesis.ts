@@ -77,11 +77,8 @@ export const SYNTHESIS_AGENT_ID = "run-synthesizer";
 const SYNTHESIZER_MAX_ITERATIONS = 25;
 
 /**
- * The maximum count of `literature_reviewer` calls in one synthesis run: the
- * 1–3 delegations of each run that the iteration budget above plans for. The
- * prompt names no count, because a model takes a number in a prompt as a
- * target. A fourth call gets an error result that gives the limit, and no
- * reviewer loop runs for it.
+ * Cap on `literature_reviewer` calls per run. Not named in the prompt: a
+ * model treats a stated call-count limit as a target to hit, not a maximum.
  */
 const LITERATURE_REVIEWER_BUDGET = 3;
 

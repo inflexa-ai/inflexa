@@ -26,9 +26,8 @@ interface RecordedCall {
 }
 
 /**
- * Scripted `ChatProvider`. The describer runs as a continuation, which calls
- * `provider.chat` once per request. The script returns one Message per call in
- * order; `chatStream` is never exercised.
+ * Scripted `ChatProvider` that returns one Message per call, in order.
+ * `chatStream` is never exercised.
  */
 function makeProvider(responses: readonly ChatResponse[]): {
     provider: ChatProvider;
@@ -77,7 +76,6 @@ const ARTIFACTS_3: ArtifactForMetadata[] = [
     { dbPath: "p/c.csv", displayPath: "c.csv" },
 ];
 
-/** The transcript of the task that the continuation extends. */
 const TRANSCRIPT: ModelMessage[] = [
     { role: "user", content: "Produce a count matrix under output/." },
     { role: "assistant", content: [{ type: "text", text: "Wrote the count matrix." }] },
@@ -144,7 +142,6 @@ describe("generateFileMetadata", () => {
         expect(first.system).toMatchObject({ content: "You are a test step agent." });
         expect(Object.keys(first.tools)).toEqual(step.agent.tools.map((t) => t.id));
         expect(JSON.stringify(first.messages.slice(0, TRANSCRIPT.length))).toBe(JSON.stringify(TRANSCRIPT));
-        // [request, assistant(submit), tool(result), assistant(done)]
         expect(out.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
         expect(isSyntheticUserMessage(out.messages[0]!)).toBe(true);
         expect(String(out.messages[0]!.content)).toContain("- b.csv");
@@ -232,7 +229,6 @@ describe("generateFileMetadata", () => {
             { dbPath: "p/c.csv", displayPath: "output/c.csv" },
         ];
 
-        // The declared read tools of the step agent, with the step directory as their working directory.
         const out = await generateFileMetadata(
             options(provider, artifacts, { resourceId: "analysis-001", ...stepAgent([createReadFileTool(fs, stepDir), createGrepTool(fs, stepDir)]) }),
         );

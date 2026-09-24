@@ -2,23 +2,10 @@
  * generateAnalogyReport — cross-domain analogy report as a sub-agent tool.
  *
  * An inline harness `AgentDefinition` (mirroring `createLiteratureReviewerTool`)
- * driven by `runToTerminal`. The inner research agent runs Phase 1 extraction +
- * Phase 2 cross-domain search, then submits its result through one of two
- * terminal tools, the same pattern as the planner with `submit_plan` and
- * `report_blocker`:
- *
- *   - `submit_analogy_report` takes the report, validated by `AnalogyReportSchema`.
- *   - `report_blocker` takes the reason of an extraction failure.
- *
- * Each tool records its outcome in the outcome cell of the call, and a report
- * wins over a blocker. A run that ends without an outcome gets one salvage
- * continuation whose mask lets only the two terminal tools run. With no outcome
- * after it, or on a loop throw, the wrapper returns an `extraction-failed`
- * envelope — the frontend never has to render raw prose.
- *
- * The envelope is a union (`AnalogicalReasonerOutputSchema`), and `defineTool`
- * accepts only a top-level object, thus the report and the failure are two
- * tools and not one tool for the whole envelope.
+ * driven by `runToTerminal`. The result reaches the wrapper through one of two
+ * terminal tools because the output envelope is a union and `defineTool` takes
+ * only a top-level object. A run with no outcome gets one salvage continuation,
+ * then an `extraction-failed` envelope, so the frontend never renders raw prose.
  */
 
 import { ok } from "neverthrow";
@@ -53,21 +40,17 @@ const AGENT_ID = "analogical-reasoner";
 /** Tool-call budget for the inner research agent. */
 const RESEARCH_MAX_ITERATIONS = 40;
 
-/** The corrective request of the salvage continuation. */
 const ANALOGY_SALVAGE_NUDGE =
     "You ended without a terminal outcome. Call submit_analogy_report with " +
     "your report now, or report_blocker if phase 1 cannot run. Do not reply " +
     "with prose.";
 
-/** The terminal outcome of one call of the tool: the submitted report, or a blocker. */
 type AnalogyOutcome = { readonly kind: "report"; readonly report: AnalogyReport } | BlockerOutcome;
 
-/** The outcome cell of one call of the tool, which the two terminal tools write. */
 interface AnalogyOutcomeCell {
     outcome: AnalogyOutcome | null;
 }
 
-/** Build `submit_analogy_report`, bound to the outcome cell of one call. */
 function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
     return defineTool({
         id: "submit_analogy_report",
@@ -90,7 +73,6 @@ function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
     });
 }
 
-/** Build the `report_blocker` of the reasoner, bound to the outcome cell of one call. */
 function createAnalogyBlockerTool(cell: AnalogyOutcomeCell): Tool {
     return createReportBlockerToolFor({
         // A blocker never replaces a recorded outcome, thus it never replaces a report.
@@ -226,9 +208,8 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
         execute: async (input, ctx) => {
             const childSession = forSubAgent(ctx.session, AGENT_ID);
 
-            // The terminal tools close over the cell of this call, thus each call
-            // builds its own. Their definitions and their order do not change
-            // across calls, thus the request prefix that the cache keys on holds.
+            // Each call builds fresh tool closures over its own cell. Their order and
+            // definitions stay fixed across calls so the cache-keyed prefix holds.
             const cell: AnalogyOutcomeCell = { outcome: null };
             const submitReportTool = createSubmitAnalogyReportTool(cell);
             const blockerTool = createAnalogyBlockerTool(cell);
@@ -236,12 +217,10 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                 id: AGENT_ID,
                 systemPrompt,
                 model: deps.model,
-                // The search tools come first, and the terminal tools come last.
                 tools: [...searchTools, submitReportTool, blockerTool],
                 maxIterations: RESEARCH_MAX_ITERATIONS,
             };
 
-            // Phase 1+2: drive the research agent over the cross-domain toolset to its terminal tool.
             try {
                 await runToTerminal(
                     agent,

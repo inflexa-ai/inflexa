@@ -61,19 +61,13 @@ export interface StepFileMetadata {
     /** One entry per manifest file, described or fallback. */
     readonly entries: readonly FileMetadataEntry[];
     /**
-     * The messages of the file-metadata exchange: the request, then each message
-     * after it. Empty when no continuation ran. The summary continues the
-     * conversation after them, thus a replay gives the summary the same prefix.
+     * The file-metadata exchange's messages, empty if none ran. Checkpointed by
+     * `DBOS.runStep`, so a replay must give the summary the same prefix.
      */
     readonly messages: readonly LoopMessage[];
 }
 
-/**
- * Describe each manifest file through a continuation of the conversation of the
- * step agent. Returns one entry per file — a file the model fails to describe
- * gets a deterministic fallback, never a dropped entry — and the messages of
- * the exchange.
- */
+/** Describes each manifest file; a file the model cannot describe gets a deterministic fallback, never a dropped entry. */
 export async function generateStepFileMetadata(
     deps: PostStepPipelineDeps,
     postCtx: PostStepContext,
@@ -109,11 +103,8 @@ export async function generateStepFileMetadata(
 }
 
 /**
- * Generate the interpretive step summary and persist it to
- * `output/summary.md`. The summary continues the conversation of the step
- * agent after `metadataMessages`, the messages of the file-metadata exchange.
- * A write failure is non-fatal (logged) — the summary is still returned for
- * vector indexing.
+ * Generates the interpretive step summary, continuing after `metadataMessages`,
+ * and writes it to `output/summary.md`. A write failure is non-fatal.
  */
 export async function generateStepSummaryAndWrite(
     deps: PostStepPipelineDeps,

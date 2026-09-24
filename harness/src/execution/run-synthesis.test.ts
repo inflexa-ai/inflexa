@@ -618,8 +618,7 @@ describe("generateRunSynthesis — happy path", () => {
     });
 
     it("runs 3 reviewer loops and refuses a fourth literature_reviewer call with the error of the budget", async () => {
-        // The synthesizer and its reviewer share the provider. A synthesizer
-        // request declares `submit_synthesis`, and a reviewer request does not.
+        // The synthesizer and its reviewers share this scripted provider.
         const isSynthesizer = (request: ChatRequest): boolean => "submit_synthesis" in request.tools;
         let synthesizerTurn = 0;
         const provider = scriptedProvider((_i, request) => {

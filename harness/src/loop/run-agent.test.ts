@@ -265,8 +265,6 @@ describe("runAgent — max-iteration wrap-up", () => {
     const toolCall = (callIndex: number): ChatResponse => makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use");
 
     it("wraps up at the cap with the tools and the tool choice of the loop, and returns without throwing", async () => {
-        // The provider asks for a tool on each loop request, and answers in text
-        // once the wrap-up request is in the transcript.
         const provider = scriptedProvider((callIndex, request) =>
             isWrapUpRequest(request) ? makeMessage([textBlock("here is where I reached")], "end_turn") : toolCall(callIndex),
         );
@@ -983,10 +981,8 @@ describe("runAgent — tool mask and budget", () => {
     });
 
     /**
-     * A durable step store that checks a replay the way DBOS does: each step
-     * takes its position when the loop starts it, and a replayed step at a
-     * position must carry the recorded name. A replayed step returns the stored
-     * value and runs no body.
+     * A step store that replays the way DBOS does: a replayed step must land at
+     * the same position with the same name, and returns the recorded value.
      */
     function stepStore(): { record: RunStep; replay: RunStep; names: () => string[] } {
         const steps: { name: string; value: unknown }[] = [];
@@ -1089,10 +1085,8 @@ describe("runAgent — tool mask and budget", () => {
     });
 
     it("replays the step that an earlier build recorded for a call of a tool that its agent did not declare", async () => {
-        // An earlier build ran a salvage with only the terminal tools, thus a call
-        // of another tool dispatched as an unknown tool, in a step. This build
-        // declares the tool, and the mask refuses the call. The refusal must take
-        // the same step, or the replay of an in-flight workflow fails.
+        // An earlier build had no `echo` tool, so it dispatched the call as
+        // unknown, in a step; this build's mask must refuse it at that same step.
         const store = stepStore();
         const counts = new Map<string, number>();
         const recording = scriptedProvider([

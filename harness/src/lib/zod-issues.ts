@@ -210,10 +210,8 @@ function parseAs(raw: string, expected: "object" | "array"): { readonly value: u
  * collects what came off, for the hint to quote back; it is empty when the
  * string carried no recognized wrapper.
  *
- * Deliberately narrow: these two shapes and nothing else. Beyond that, no
- * salvaging — a fragment with a *leading* `<parameter name=…>` opener is not a
- * whole value with decoration on it, and pretending otherwise would invent
- * content.
+ * Deliberately narrow: only these two shapes. A fragment with a *leading*
+ * `<parameter name=…>` opener is not salvageable without inventing content.
  */
 function stripWrappers(raw: string): { readonly text: string; readonly removed: string } {
     const removed: string[] = [];

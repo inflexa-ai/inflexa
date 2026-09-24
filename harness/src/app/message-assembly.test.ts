@@ -226,7 +226,7 @@ describe("assembleMessages", () => {
         };
     }
 
-    /** A stored window whose middle turn left a call unanswered, fresh on each read like a real store. */
+    /** Returns a fresh array each call, like a real store read. */
     function danglingWindow(): ModelMessage[] {
         return [
             { role: "user", content: "earlier question" },
@@ -260,8 +260,6 @@ describe("assembleMessages", () => {
 
         const { messages } = await assembleDangling(logger);
 
-        // The stored assistant message is unchanged, and the not-run result sits
-        // between it and the next user message.
         expect(messages[1]).toEqual(danglingWindow()[1]!);
         expect(messages[2]).toEqual({
             role: "tool",

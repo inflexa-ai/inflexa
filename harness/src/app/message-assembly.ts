@@ -101,11 +101,10 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
     // result. The loop upholds it at every exit, but the store outlives any one
     // writer — a row an older build wrote, or a hand-edited database, can carry
     // an unanswered call, and the provider boundary then refuses the WHOLE
-    // transcript on every turn: the thread is wedged forever. The answer here is
-    // the same not-run result that the loop gives, inserted after the call, and
-    // no stored message changes. It is deterministic, thus each turn that loads
-    // this window sends the same prefix. The warning is the only account a
-    // reader gets that the stored thread and the assembled one differ.
+    // transcript on every turn: the thread is wedged forever. The fix inserts the
+    // same not-run result the loop gives, in place, so no stored message changes
+    // and the prefix stays identical across turns. The warning is the only
+    // account a reader gets that the stored thread and the assembled one differ.
     const repaired = answerUnansweredToolCalls(history);
     if (repaired.length > 0) {
         (args.logger ?? createNoopLogger()).named("assembly").warn("unanswered tool calls answered in thread history", {

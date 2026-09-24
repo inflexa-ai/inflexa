@@ -1,33 +1,21 @@
 /**
- * The tool mask and the tool budget of the agent loop.
- *
- * A request always declares the full tool set of its agent, with the same tool
- * choice. Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to
- * the exact prefix of its request, and the tool set is part of that prefix. A
- * change of the tool set makes each later block invalid, and the prompt cache
- * misses. Thus the loop never changes the tools inside a conversation.
- *
- * A mask limits which calls run, and a budget limits how many calls of one tool
- * run in one run. Both act at dispatch: a refused call gets an error result that
- * gives the reason, and its tool does not run. Provider-native masking is out of
- * scope, because the vendors do it differently and an OpenAI-compatible
- * endpoint has neither form.
+ * Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the
+ * exact prefix of its request, so a request always declares the full tool set
+ * of its agent; the mask and the budget act at dispatch instead. Provider-native
+ * masking is out of scope, because the vendors do it differently and an
+ * OpenAI-compatible endpoint has neither form.
  */
 
 import type { ToolCallPart } from "ai";
 
 import type { Tool } from "../tools/define-tool.js";
 
-/**
- * The tools that can run for a request: `"none"`, or the ids of the tools that
- * can run. An absent mask lets each declared tool run.
- */
+/** An absent mask lets each declared tool run. */
 export type ToolMask = "none" | { readonly allow: readonly string[] };
 
-/** The maximum count of calls of each tool id in one run. A tool with no entry has no limit. */
+/** A tool with no entry has no limit. */
 export type ToolBudget = Readonly<Record<string, number>>;
 
-/** A mask of each tool of `tools` except the ids in `ids`. */
 export function maskExcept(tools: readonly Tool[], ids: readonly string[]): ToolMask {
     return { allow: tools.map((t) => t.id).filter((id) => !ids.includes(id)) };
 }
@@ -38,7 +26,7 @@ function maskLets(mask: ToolMask | undefined, toolName: string): boolean {
     return mask.allow.includes(toolName);
 }
 
-/** The error text of a refused call, in the `{ error, retryable }` shape of every other tool error. */
+/** Matches the `{ error, retryable }` shape of every other tool error. */
 function refusal(error: string): string {
     return JSON.stringify({ error, retryable: false });
 }
@@ -50,14 +38,10 @@ function maskRefusal(mask: ToolMask, toolName: string): string {
 }
 
 /**
- * The refusal of each call of one round, in call order: `undefined` for a call
- * that passes, or the model-visible text of the refusal.
- *
- * A call passes when the mask names its tool and the budget of its tool has a
- * unit left. A call that passes takes one unit from `used`, whatever its later
- * result, thus the count includes the earlier calls of the same round. The check
- * reads only the mask, the budget, and the calls of the run, thus a durable
- * replay refuses the same calls again.
+ * `undefined` for a call that passes, otherwise the model-visible refusal
+ * text. A passing call takes one unit from `used` regardless of its later
+ * result, because the check reads only the mask, the budget, and the run's
+ * calls — so a durable replay refuses the same calls again.
  */
 export function refusalsFor(
     calls: readonly ToolCallPart[],
