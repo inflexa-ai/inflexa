@@ -35,20 +35,20 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 2. The context records
 
-- [ ] 2.1 In `src/memory/ai-sdk-message-storage.ts`, add `CONTEXT_KIND_KEY = "contextKind"` and `CONTEXT_HASH_KEY = "contextHash"`. Export `type ContextKind = "analysis-context" | "run-activity" | "working-memory"`.
-- [ ] 2.2 Export `contextRecordMessage(kind: ContextKind, text: string): ModelMessage`. It gives a `user` message with the text. Its `providerOptions.cortex` holds `synthetic: true`, the kind, and the SHA-256 hex hash of the text, and no `syntheticRecord`.
-- [ ] 2.3 Export `contextRecordOf(message: ModelMessage): { kind: ContextKind; hash: string } | undefined`. It gives `undefined` for a message without the two keys.
-- [ ] 2.4 In `src/app/run-activity.ts`, remove `compactAge`, the `started` field of each row, and the `nowMs` parameter of `renderRunActivity`. Write the module header again: the render holds no time of the call.
-- [ ] 2.5 In `src/app/message-assembly.ts`, add `contextRecordsFor(args, history)`. It builds the text of each kind, in the order analysis context, run activity, and working memory.
-- [ ] 2.6 The texts are `[Analysis Context]` and the context, the Run Activity render, and `[Working Memory]` and the render. An empty render gives `[Working Memory]` and the line `The working memory is empty.`
-- [ ] 2.7 A null or empty analysis context gives no record. A `report` thread gives no working-memory record.
-- [ ] 2.8 For each kind, find the latest message of that kind in `history` with `contextRecordOf`. Keep the new record only when no message of that kind exists, or when the hash differs.
-- [ ] 2.9 In `assembleMessages`, give `messages` as `[...history, userMessage, ...contextRecords]`. Add `readonly contextRecords: readonly ModelMessage[]` to `AssembledMessages`.
-- [ ] 2.10 Write the module header of `src/app/message-assembly.ts` again. Remove the text on the tail and on the store of the user message alone. Name the records and the hash rule.
-- [ ] 2.11 In `src/app/chat-turn.ts`, carry `contextRecords` on the `ok` result of `prepareChatTurn`.
-- [ ] 2.12 In `src/memory/ai-sdk-message-storage.test.ts`, add tests. Expected result: a record round-trips through `envelopeMessage`, `isSyntheticUserMessage` is true, `isSyntheticRecordMessage` is false, and a plain message gives `undefined`.
-- [ ] 2.13 In `src/app/run-activity.test.ts`, change the tests of the age. Expected result: no row names an age, and two renders of one activity at different times are byte-identical.
-- [ ] 2.14 In `src/app/message-assembly.test.ts`, change the tests that expect the old tail order. Then add these tests:
+- [x] 2.1 In `src/memory/ai-sdk-message-storage.ts`, add `CONTEXT_KIND_KEY = "contextKind"` and `CONTEXT_HASH_KEY = "contextHash"`. Export `type ContextKind = "analysis-context" | "run-activity" | "working-memory"`.
+- [x] 2.2 Export `contextRecordMessage(kind: ContextKind, text: string): ModelMessage`. It gives a `user` message with the text. Its `providerOptions.cortex` holds `synthetic: true`, the kind, and the SHA-256 hex hash of the text, and no `syntheticRecord`.
+- [x] 2.3 Export `contextRecordOf(message: ModelMessage): { kind: ContextKind; hash: string } | undefined`. It gives `undefined` for a message without the two keys.
+- [x] 2.4 In `src/app/run-activity.ts`, remove `compactAge`, the `started` field of each row, and the `nowMs` parameter of `renderRunActivity`. Write the module header again: the render holds no time of the call.
+- [x] 2.5 In `src/app/message-assembly.ts`, add `contextRecordsFor(args, history)`. It builds the text of each kind, in the order analysis context, run activity, and working memory.
+- [x] 2.6 The texts are `[Analysis Context]` and the context, the Run Activity render, and `[Working Memory]` and the render. An empty render gives `[Working Memory]` and the line `The working memory is empty.`
+- [x] 2.7 A null or empty analysis context gives no record. A `report` thread gives no working-memory record.
+- [x] 2.8 For each kind, find the latest message of that kind in `history` with `contextRecordOf`. Keep the new record only when no message of that kind exists, or when the hash differs.
+- [x] 2.9 In `assembleMessages`, give `messages` as `[...history, userMessage, ...contextRecords]`. Add `readonly contextRecords: readonly ModelMessage[]` to `AssembledMessages`.
+- [x] 2.10 Write the module header of `src/app/message-assembly.ts` again. Remove the text on the tail and on the store of the user message alone. Name the records and the hash rule.
+- [x] 2.11 In `src/app/chat-turn.ts`, carry `contextRecords` on the `ok` result of `prepareChatTurn`.
+- [x] 2.12 In `src/memory/ai-sdk-message-storage.test.ts`, add tests. Expected result: a record round-trips through `envelopeMessage`, `isSyntheticUserMessage` is true, `isSyntheticRecordMessage` is false, and a plain message gives `undefined`.
+- [x] 2.13 In `src/app/run-activity.test.ts`, change the tests of the age. Expected result: no row names an age, and two renders of one activity at different times are byte-identical.
+- [x] 2.14 In `src/app/message-assembly.test.ts`, change the tests that expect the old tail order. Then add these tests:
   - A history with no record gives each kind after the user message, in order.
   - A history that holds the same records gives no record.
   - A changed working memory gives one working-memory record.
@@ -56,9 +56,9 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
   - A `report` thread gives no working-memory record.
   - An empty working memory gives the empty-state text.
   - A null analysis context gives no record.
-- [ ] 2.15 In `src/app/chat-turn.test.ts`, change the tests that read the tail order. Expected result: the messages end with the user message and then the records.
-- [ ] 2.16 In `src/providers/configured-provider.barrel.test.ts`, add a wire test. Expected result: an `anthropic` body with a context record carries its text and no key of the `cortex` namespace.
-- [ ] 2.17 Run `tsc -p tsconfig.json`. Run `bun test src/memory/ai-sdk-message-storage.test.ts src/app/run-activity.test.ts src/app/message-assembly.test.ts src/providers/configured-provider.barrel.test.ts`. Run `bun test src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 2.15 In `src/app/chat-turn.test.ts`, change the tests that read the tail order. Expected result: the messages end with the user message and then the records.
+- [x] 2.16 In `src/providers/configured-provider.barrel.test.ts`, add a wire test. Expected result: an `anthropic` body with a context record carries its text and no key of the `cortex` namespace.
+- [x] 2.17 Run `tsc -p tsconfig.json`. Run `bun test src/memory/ai-sdk-message-storage.test.ts src/app/run-activity.test.ts src/app/message-assembly.test.ts src/providers/configured-provider.barrel.test.ts`. Run `bun test src/app/chat-turn.test.ts` with Postgres. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 3. The turn record and the store writes
 

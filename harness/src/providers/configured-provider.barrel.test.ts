@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { createConfiguredAiSdkProvider, DEFAULT_MAX_OUTPUT_TOKENS } from "@inflexa-ai/harness";
 import type { AiSdkProviderConfig, ChatRequest, ConfiguredAiSdkProviderDeps, ReasoningPolicy } from "@inflexa-ai/harness";
 
+import { CONTEXT_HASH_KEY, CONTEXT_KIND_KEY, contextRecordMessage, HARNESS_PROVIDER_NAMESPACE } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "./__fixtures__/session.js";
 import { DEFAULT_PROMPT_CACHE, withSystemPromptBreakpoint } from "./prompt-cache.js";
 import type { FetchLike } from "./types.js";
@@ -379,6 +380,25 @@ describe("the system prompt breakpoint on the wire", () => {
 
         expect(result.isOk()).toBe(true);
         expect(cap.requests[0]?.body["system"]).toEqual([{ type: "text", text: "You are a test model.", cache_control: { type: "ephemeral", ttl: "5m" } }]);
+    });
+});
+
+describe("a context record on the wire", () => {
+    it("sends the text of the record on the anthropic arm, and no key of the harness namespace", async () => {
+        const cap = capturingFetch(anthropicSse);
+        const provider = createConfiguredAiSdkProvider({
+            config: { kind: "anthropic", baseURL: "http://models.local/anthropic", apiKey: "test-key", model: "claude-opus-4-7", fetch: cap.fetch },
+        });
+        const record = contextRecordMessage("working-memory", "[Working Memory]\nThe working memory is empty.");
+
+        const result = await provider.chat({ ...request, messages: [...request.messages, record] }, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        const body = JSON.stringify(cap.requests[0]?.body);
+        expect(body).toContain("The working memory is empty.");
+        expect(body).not.toContain(CONTEXT_KIND_KEY);
+        expect(body).not.toContain(CONTEXT_HASH_KEY);
+        expect(body).not.toContain(`"${HARNESS_PROVIDER_NAMESPACE}"`);
     });
 });
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
+import { contextRecordOf } from "../memory/ai-sdk-message-storage.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createThreadHistory } from "../memory/thread-history.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
@@ -96,6 +97,8 @@ describe("prepareChatTurn", () => {
         expect(joined).toContain("[Run Activity]");
         expect(joined).toContain("No runs are currently running or suspended.");
         expect(contentText(result.userMessage.content)).not.toContain("[Run Activity]");
+        expect(result.messages.slice(-1 - result.contextRecords.length)).toEqual([result.userMessage, ...result.contextRecords]);
+        expect(result.contextRecords.map((record) => contextRecordOf(record)?.kind)).toEqual(["run-activity", "working-memory"]);
     });
 
     it("leaves an existing non-empty title unchanged", async () => {
@@ -236,7 +239,6 @@ describe("prepareChatTurn", () => {
         const joined = result.messages.map((message) => contentText(message.content)).join("\n");
         expect(joined).not.toContain("# Working Memory");
         expect(joined).not.toContain("Find the driver genes.");
-        // The other two tail messages stay.
         expect(joined).toContain("[Run Activity]");
         expect(joined).toContain("draft the summary");
     });

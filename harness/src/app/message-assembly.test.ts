@@ -3,8 +3,9 @@ import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import type { ModelMessage } from "ai";
 import { okAsync } from "neverthrow";
 
-import { assembleMessages } from "./message-assembly.js";
+import { assembleMessages, type AssembleMessagesArgs } from "./message-assembly.js";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import { contextRecordOf, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
 import { NOT_RUN_TOOL_RESULT } from "../memory/tool-call-integrity.js";
 import type { WorkingMemoryStore } from "../memory/working-memory.js";
@@ -56,7 +57,7 @@ function contentText(m: MessageParam): string {
 }
 
 describe("assembleMessages", () => {
-    test("places analysis context, run activity, working memory, and user input in the tail", async () => {
+    test("places the user input and then the analysis context, the run activity, and the working memory", async () => {
         const window: MessageParam[] = [
             { role: "user", content: "earlier question" },
             { role: "assistant", content: "earlier answer" },
@@ -72,16 +73,13 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        // history window stays the cacheable prefix, untouched.
         expect(messages.slice(0, 2)).toEqual(window);
-        // tail order: analysis context, run activity, working memory, user input.
         expect(messages.length).toBe(6);
-        expect(contentText(messages[2]!)).toContain("[Analysis Context]");
-        expect(contentText(messages[2]!)).toContain("RNA-seq of tumor vs normal.");
-        expect(contentText(messages[3]!)).toBe(RUN_ACTIVITY);
-        expect(contentText(messages[4]!)).toBe(WM_RENDER);
-        expect(messages[5]).toEqual(userMessage);
+        expect(messages[2]).toEqual(userMessage);
         expect(userMessage.content).toBe("what is BRCA1?");
+        expect(contentText(messages[3]!)).toBe("[Analysis Context]\nRNA-seq of tumor vs normal.");
+        expect(contentText(messages[4]!)).toBe(RUN_ACTIVITY);
+        expect(contentText(messages[5]!)).toBe(`[Working Memory]\n${WM_RENDER}`);
     });
 
     test("the assembled sequence is a valid Anthropic message sequence", async () => {
@@ -95,9 +93,8 @@ describe("assembleMessages", () => {
             history: stubHistory([]),
             workingMemory: stubWorkingMemory(),
         });
-        // First message is a genuine user message; no tool_use/tool_result split.
         expect(messages[0]!.role).toBe("user");
-        // With no analysis context, the tail is run activity + working memory + user input.
+        expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
         expect(messages.length).toBe(3);
         expect(messages.every((m) => m.role === "user" || m.role === "assistant")).toBe(true);
     });
@@ -133,7 +130,7 @@ describe("assembleMessages", () => {
         expect(userMessage.content).toContain(fortyMer);
     });
 
-    test("a report thread drops the working-memory tail and keeps the other two", async () => {
+    test("a report thread gets no working-memory record and keeps the other two", async () => {
         const { messages, userMessage } = await assembleMessages({
             threadId: "thread-report",
             threadType: "report",
@@ -145,12 +142,10 @@ describe("assembleMessages", () => {
             workingMemory: stubWorkingMemory(),
         });
 
-        // Tail: analysis context, run activity, user input. No live render.
         expect(messages.length).toBe(3);
-        expect(messages.map(contentText)).not.toContain(WM_RENDER);
-        expect(contentText(messages[0]!)).toContain("[Analysis Context]");
-        expect(contentText(messages[1]!)).toBe(RUN_ACTIVITY);
-        expect(messages[2]).toEqual(userMessage);
+        expect(messages[0]).toEqual(userMessage);
+        expect(contentText(messages[1]!)).toContain("[Analysis Context]");
+        expect(contentText(messages[2]!)).toBe(RUN_ACTIVITY);
     });
 
     test("a report thread loads a window that keeps the seed", async () => {
@@ -183,7 +178,7 @@ describe("assembleMessages", () => {
         expect(messages.map(contentText)).not.toContain(SEED);
     });
 
-    test("a conversation thread keeps the working-memory tail", async () => {
+    test("a conversation thread gets a working-memory record", async () => {
         const { messages } = await assembleMessages({
             threadId: "thread-conversation",
             threadType: "conversation",
@@ -196,7 +191,7 @@ describe("assembleMessages", () => {
         });
 
         expect(messages.length).toBe(4);
-        expect(messages.map(contentText)).toContain(WM_RENDER);
+        expect(messages.map(contentText)).toContain(`[Working Memory]\n${WM_RENDER}`);
     });
 
     test("sanitization is not applied to history or analysis context", async () => {
@@ -212,10 +207,8 @@ describe("assembleMessages", () => {
             history: stubHistory(window),
             workingMemory: stubWorkingMemory(),
         });
-        // History message is passed through verbatim.
         expect(contentText(messages[0]!)).toContain(secret);
-        // Analysis context message is passed through verbatim.
-        expect(contentText(messages[1]!)).toContain(secret);
+        expect(contentText(messages[2]!)).toContain(secret);
     });
 
     /** {@link stubHistory} typed over the AI SDK shape, for a window that carries tool parts. */
@@ -307,5 +300,83 @@ describe("assembleMessages", () => {
 
         expect(messages.slice(0, 3)).toEqual(window);
         expect(logger.records).toEqual([]);
+    });
+});
+
+describe("assembleMessages — context records", () => {
+    function argsOver(window: readonly ModelMessage[], overrides: Partial<AssembleMessagesArgs> = {}): AssembleMessagesArgs {
+        return {
+            threadId: "thread-1",
+            threadType: "conversation",
+            analysisId: "analysis-1",
+            userInput: "next question",
+            analysisContext: "RNA-seq of tumor vs normal.",
+            runActivityContext: RUN_ACTIVITY,
+            history: { ...stubHistory([]), loadRecent: () => okAsync([...window]) },
+            workingMemory: stubWorkingMemory(),
+            ...overrides,
+        };
+    }
+
+    /** The stored rows of one earlier turn: its user message and the records of its opening. */
+    async function storedTurn(overrides: Partial<AssembleMessagesArgs> = {}): Promise<ModelMessage[]> {
+        const { userMessage, contextRecords } = await assembleMessages(argsOver([], overrides));
+        return [userMessage, ...contextRecords, { role: "assistant", content: [{ type: "text", text: "an answer" }] }];
+    }
+
+    const kindsOf = (records: readonly ModelMessage[]): (string | undefined)[] => records.map((record) => contextRecordOf(record)?.kind);
+
+    test("gives each kind after the user message, in order, when the window holds no record", async () => {
+        const { messages, userMessage, contextRecords } = await assembleMessages(argsOver([]));
+
+        expect(kindsOf(contextRecords)).toEqual(["analysis-context", "run-activity", "working-memory"]);
+        expect(messages).toEqual([userMessage, ...contextRecords]);
+        expect(contextRecords.every((record) => isSyntheticUserMessage(record))).toBe(true);
+    });
+
+    test("gives no record when the window holds the same records", async () => {
+        const window = await storedTurn();
+
+        const { messages, userMessage, contextRecords } = await assembleMessages(argsOver(window));
+
+        expect(contextRecords).toEqual([]);
+        expect(messages).toEqual([...window, userMessage]);
+    });
+
+    test("gives one working-memory record when the memory changed", async () => {
+        const window = await storedTurn();
+
+        const { contextRecords } = await assembleMessages(argsOver(window, { workingMemory: stubWorkingMemory("# Working Memory\n\n## Goal\n\nmap BRCA1\n") }));
+
+        expect(kindsOf(contextRecords)).toEqual(["working-memory"]);
+        expect(contextRecords[0]!.content).toContain("map BRCA1");
+    });
+
+    test("compares with the latest record of a kind only", async () => {
+        const changed = stubWorkingMemory("# Working Memory\n\n## Goal\n\nmap BRCA1\n");
+        const window = [...(await storedTurn()), ...(await storedTurn({ workingMemory: changed }))];
+
+        const { contextRecords } = await assembleMessages(argsOver(window));
+
+        expect(kindsOf(contextRecords)).toEqual(["working-memory"]);
+        expect(contextRecords[0]!.content).toBe(`[Working Memory]\n${WM_RENDER}`);
+    });
+
+    test("gives no working-memory record on a report thread", async () => {
+        const { contextRecords } = await assembleMessages(argsOver([], { threadType: "report" }));
+
+        expect(kindsOf(contextRecords)).toEqual(["analysis-context", "run-activity"]);
+    });
+
+    test("gives the empty-state text for an empty working memory", async () => {
+        const { contextRecords } = await assembleMessages(argsOver([], { workingMemory: stubWorkingMemory("") }));
+
+        expect(contextRecords.at(-1)!.content).toBe("[Working Memory]\nThe working memory is empty.");
+    });
+
+    test("gives no analysis-context record for a null context", async () => {
+        const { contextRecords } = await assembleMessages(argsOver([], { analysisContext: null }));
+
+        expect(kindsOf(contextRecords)).toEqual(["run-activity", "working-memory"]);
     });
 });

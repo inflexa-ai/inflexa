@@ -1,38 +1,9 @@
 /**
- * Chat-turn message assembly.
+ * Chat-turn message assembly: the history window, the user message, and then the context records. A
+ * kind gets a new record only when the window holds none of that kind, or when the hash of its text differs.
  *
- * Builds the `messages` array `runAgent` receives for one conversation turn:
- *
- *   [ ...loadRecent(threadId, budget)            ← stable, cacheable prefix
- *     {user: cortex_analysis_state.context},     ← tail
- *     {user: runActivityContext},                 ← tail
- *     {user: render(workingMemory)},             ← tail, `conversation` thread only
- *     {user: normalizeUnicode(redactSecrets(input))} ]  ← tail
- *
- * `system + tools + history` is the cacheable prefix — it only extends
- * turn-to-turn. Run activity, working memory, and analysis context go in the
- * **tail** as `user` messages: they change every turn, so a system-message
- * placement would bust the Anthropic cache prefix.
- *
- * A `report` thread does not get the working-memory tail. The spawn copies the
- * working-memory render into the child transcript at the anchor. A live render
- * sees state past that anchor, and that breaks the knowledge cap of a report
- * session. The analysis context and the run activity stay on both thread types.
- *
- * The history window of a `report` thread also keeps the first turn. That turn
- * is the seed, and it is the one record of the brief and of the copied render.
- * The window evicts the oldest turn first, thus a long session would drop its
- * own charter and keep only its tools. A `conversation` thread evicts as before,
- * because its live tail carries the working memory on each turn.
- *
- * Sanitization (`redactSecrets`, `normalizeUnicode`) is applied **once**, to
- * the new user input only — never to history, assistant messages, tool
- * results, the analysis context, or the rendered working memory.
- *
- * The returned `userMessage` is the sanitized user input on its own — the
- * route persists `[userMessage, ...loop output]` via `appendTurn`, so the
- * tail injections (ephemeral, re-derived each turn) are never written to the
- * thread store.
+ * The window of a `report` thread keeps the first turn, because that turn is the seed: the one record of
+ * the brief and of the copied working memory.
  */
 
 import type { ModelMessage } from "ai";
@@ -41,6 +12,7 @@ import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { LoopMessage } from "../loop/types.js";
+import { contextRecordMessage, contextRecordOf, type ContextKind } from "../memory/ai-sdk-message-storage.js";
 import type { ThreadHistory } from "../memory/thread-history.js";
 import type { ThreadType } from "../memory/thread-store.js";
 import { answerUnansweredToolCalls } from "../memory/tool-call-integrity.js";
@@ -57,7 +29,7 @@ export const DEFAULT_HISTORY_TOKEN_BUDGET = 120_000;
 export interface AssembleMessagesArgs {
     /** The conversation thread — a UI-generated UUID, never the analysisId. */
     readonly threadId: string;
-    /** The type of the thread. A `report` thread drops the working-memory tail, and its window keeps the seed. */
+    /** The type of the thread. A `report` thread gets no working-memory record, and its window keeps the seed. */
     readonly threadType: ThreadType;
     /** The analysis scope — keys working memory and (separately) the context. */
     readonly analysisId: string;
@@ -65,11 +37,11 @@ export interface AssembleMessagesArgs {
     readonly userInput: string;
     /** `cortex_analysis_state.context`, already read by the route. `null` when absent. */
     readonly analysisContext: string | null;
-    /** Fresh, non-persisted analysis-wide run activity rendered by chat-turn preparation. */
+    /** The analysis-wide run activity that chat-turn preparation rendered for this turn. */
     readonly runActivityContext: string;
     /** The conversation message store — supplies the history window. */
     readonly history: ThreadHistory;
-    /** The working-memory store — rendered into the tail. */
+    /** The working-memory store — rendered into a context record. */
     readonly workingMemory: WorkingMemoryStore;
     /** History-window token budget. Defaults to {@link DEFAULT_HISTORY_TOKEN_BUDGET}. */
     readonly tokenBudget?: number;
@@ -80,12 +52,10 @@ export interface AssembleMessagesArgs {
 export interface AssembledMessages {
     /** The full message array for `runAgent`. */
     readonly messages: LoopMessage[];
-    /**
-     * The sanitized user input as its own message — the genuine turn start.
-     * The route persists this plus the loop's output; the tail injections are
-     * not persisted.
-     */
+    /** The sanitized user input as its own message — the genuine turn start. */
     readonly userMessage: ModelMessage;
+    /** The context records after the user message. The turn stores them with the user message. */
+    readonly contextRecords: readonly ModelMessage[];
 }
 
 /**
@@ -120,32 +90,33 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
         content: normalizeUnicode(redactSecrets(args.userInput)),
     };
 
-    const tail: LoopMessage[] = [];
+    const contextRecords = await contextRecordsFor(args, history);
+    return { messages: [...history, userMessage, ...contextRecords], userMessage, contextRecords };
+}
 
-    // Analysis context — platform-supplied, trusted. Injected only when present.
+/** The context records of one turn, in the order analysis context, run activity, working memory. */
+async function contextRecordsFor(args: AssembleMessagesArgs, history: readonly ModelMessage[]): Promise<ModelMessage[]> {
+    const texts: [ContextKind, string][] = [];
     if (args.analysisContext && args.analysisContext.trim().length > 0) {
-        tail.push({
-            role: "user",
-            content: `[Analysis Context]\n${args.analysisContext}`,
-        });
+        texts.push(["analysis-context", `[Analysis Context]\n${args.analysisContext}`]);
     }
-
-    tail.push({
-        role: "user",
-        content: args.runActivityContext,
-    });
-
-    // Working memory — agent-authored and trusted. A `conversation` thread
-    // always gets it, because the render names each section even when it is
-    // empty. A `report` thread reads the frozen copy in its seed message.
+    texts.push(["run-activity", args.runActivityContext]);
+    // A `report` thread reads the frozen copy in its seed, because a live render sees state past its anchor.
     if (args.threadType !== "report") {
-        tail.push({
-            role: "user",
-            content: unwrapOrThrow(await args.workingMemory.render(args.analysisId)),
-        });
+        const render = unwrapOrThrow(await args.workingMemory.render(args.analysisId));
+        // An emptied memory needs a record of its own, or the last full copy would read as the current state.
+        texts.push(["working-memory", `[Working Memory]\n${render.length > 0 ? render : "The working memory is empty."}`]);
     }
 
-    tail.push(userMessage);
-
-    return { messages: [...history, ...tail], userMessage };
+    const latestHash = new Map<ContextKind, string>();
+    for (const message of history) {
+        const record = contextRecordOf(message);
+        if (record !== undefined) latestHash.set(record.kind, record.hash);
+    }
+    const records: ModelMessage[] = [];
+    for (const [kind, text] of texts) {
+        const record = contextRecordMessage(kind, text);
+        if (contextRecordOf(record)?.hash !== latestHash.get(kind)) records.push(record);
+    }
+    return records;
 }

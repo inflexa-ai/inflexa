@@ -1,8 +1,6 @@
 /**
- * Ephemeral conversation-tail projection of non-terminal analysis runs.
- *
- * This is derived operational state, not memory: callers render it afresh for
- * each turn and never persist it to the thread.
+ * The Run Activity record of a chat turn. The render holds no time of the call, thus a set of runs
+ * that does not change gives byte-identical text, and the turn stores no new record.
  */
 
 import type { RunPage } from "../state/runs.js";
@@ -10,31 +8,13 @@ import type { RunPage } from "../state/runs.js";
 /** Maximum detailed run rows paid into every conversation turn. */
 export const RUN_ACTIVITY_DETAIL_LIMIT = 20;
 
-function compactAge(startedAt: string, nowMs: number): string {
-    const startedMs = Date.parse(startedAt);
-    if (!Number.isFinite(startedMs)) return "unknown age";
-
-    const elapsedSeconds = Math.max(0, Math.floor((nowMs - startedMs) / 1_000));
-    if (elapsedSeconds < 60) return `${elapsedSeconds}s ago`;
-    const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-    if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
-    const elapsedHours = Math.floor(elapsedMinutes / 60);
-    if (elapsedHours < 24) return `${elapsedHours}h ago`;
-    return `${Math.floor(elapsedHours / 24)}d ago`;
-}
-
-function renderRows(label: string, rows: RunPage["runs"], nowMs: number): string[] {
+function renderRows(label: string, rows: RunPage["runs"]): string[] {
     if (rows.length === 0) return [];
-    return [
-        `${label}:`,
-        ...rows.map(
-            (run) => `- runId: ${run.runId} | planId: ${run.planId ?? "none"} | startedAt: ${run.startedAt} | started: ${compactAge(run.startedAt, nowMs)}`,
-        ),
-    ];
+    return [`${label}:`, ...rows.map((run) => `- runId: ${run.runId} | planId: ${run.planId ?? "none"} | startedAt: ${run.startedAt}`)];
 }
 
-/** Render the bounded run-activity snapshot injected into a conversation tail. */
-export function renderRunActivity(activity: RunPage, nowMs = Date.now()): string {
+/** Render the bounded run-activity snapshot of a conversation turn. */
+export function renderRunActivity(activity: RunPage): string {
     const lines = ["[Run Activity]"];
     if (activity.total === 0) {
         lines.push("No runs are currently running or suspended.");
@@ -43,7 +23,7 @@ export function renderRunActivity(activity: RunPage, nowMs = Date.now()): string
 
     const running = activity.runs.filter((run) => run.status === "running");
     const suspended = activity.runs.filter((run) => run.status === "suspended_insufficient_funds");
-    lines.push(...renderRows("Running", running, nowMs), ...renderRows("Suspended", suspended, nowMs));
+    lines.push(...renderRows("Running", running), ...renderRows("Suspended", suspended));
 
     const omitted = activity.total - activity.runs.length;
     if (omitted > 0) {
