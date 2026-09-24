@@ -248,7 +248,7 @@ Drop untestable hypotheses. Flag those needing additional data.
 ### 5. Curate — Rank and Filter
 Rank by: scientific impact, testability, novelty, evidence strength,
 parsimony. Ensure hypotheses are distinguishable — they should make
-distinct predictions. Limit to top 5-10.
+distinct predictions. Keep only the hypotheses that earn a test.
 
 ### Refinement Iterations
 When the user says "go deeper on H2" or "explore the immune angle":

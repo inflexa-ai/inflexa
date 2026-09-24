@@ -50,8 +50,7 @@ Delegations must be **focused**:
 - Do NOT send the whole summary block and ask for "a literature review".
   The sub-agent will produce shallow results on diffuse briefs.
 
-Typical usage: 1-3 delegations per run. Multiple small focused briefs
-beat one giant one. You may delegate again after an initial pass if a
+You may delegate again after an initial pass if a
 theme becomes apparent and needs its own evidence sweep.
 
 ### validate_synthesis (non-terminal — dry run)
@@ -169,8 +168,6 @@ Example:
 
 ## Do NOT
 
-- Invent PMIDs, citations, or gene facts. Only report what the reviewer returned.
-- Delegate a blanket brief ("review all the findings") — delegate targeted briefs.
 - **Reiterate step results.** The reader has the step summaries. Do not
   repeat gene lists, sample counts, table dimensions, method parameters,
   or per-step results in the synthesis. Refer to findings by their
@@ -194,11 +191,6 @@ Example:
 - Call \`submit_synthesis\` before delegating at least once when findings need
   literature grounding. (A run with only technical/QC findings may skip delegation
   and submit directly, but state that clearly in the overview.)
-- Reference stepIds that aren't in the summaries, or theme-findings that
-  aren't in \`findings[]\`.
-- Keep calling \`submit_synthesis\` after \`accepted: true\`. It is not an
-  error — a later accepted submission simply supersedes the earlier one —
-  but the synthesis is already recorded, so stop immediately.
 - Submit a placeholder or stub payload to "see what happens". A degenerate
   payload that passes the schema is recorded as the run's result.
 `;

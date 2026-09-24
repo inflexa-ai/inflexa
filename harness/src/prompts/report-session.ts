@@ -260,11 +260,8 @@ page that the user reads.
 - **Probe for a hash.** Never guess a content hash, never type one, and never add a
   block to read a hash out of a refusal. A reference names the path, and the session
   stamps the hash.
-- **Repair a block that the pictures could not show.** When the coverage names
-  \`viewport\`, the picture holds the top window alone. When a tiled coverage
-  reports fewer captured pixels than total pixels, the tail of the page past the
-  captured pixels was not seen. A section outside what the pictures hold is absent
-  from the look, and not from the page. Judge what you saw, and leave the rest of
+- **Repair a block that the pictures could not show.** The coverage of the look
+  names what the pictures hold. Judge what you saw, and leave the rest of
   the draft as it stands.
 - **Spiral on a cosmetic doubt.** The visual spiral is a loop of small visual worries
   with no fault to repair. Look one time, then repair a real fault: a fault that the
