@@ -159,25 +159,25 @@ A database test uses Postgres. Give it `CORTEX_TEST_PG_URL`, or run it with `bun
 
 ## 9. The terminal tools of the analogy report
 
-- [ ] 9.1 In `src/tools/research/generate-analogy-report.ts`, add `submit_analogy_report` with the input `AnalogyReportSchema`, a top-level object. The tool records `{ kind: "report", report }` in the outcome cell of the call, and it tells the agent to stop.
-- [ ] 9.2 Add `report_blocker` through `createReportBlockerToolFor`. Its `blockedWhen` says that the problem is empty or incoherent, thus phase 1 cannot extract its objects and relations.
-- [ ] 9.3 The `record` of `report_blocker` writes `{ kind: "blocker", reason }` into the same cell, and it does not replace a report. A report replaces a blocker. Expected result: when one round records both, the report wins.
-- [ ] 9.4 Build the two tools, the cell, and the reasoner `AgentDefinition` in each call of `execute`. Put the two terminal tools after the search tools. Expected result: the tool definitions and their order are identical across calls.
-- [ ] 9.5 Run the reasoner through `runToTerminal`, with `resolved: () => cell.outcome !== null`. Give the salvage `{ tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE }`.
-- [ ] 9.6 Return the recorded report. For a blocker, return the `extraction-failed` envelope with the reason as its message. With no outcome, return `buildExtractionFailedEnvelope()`. Keep the envelope of a loop throw.
-- [ ] 9.7 Remove the conversion call with its `countChatTokens` and its `accountForChatCall`, and remove `CONVERSION_CALL_NAME`. Remove `buildConversionPrompt`, `tryParseEnvelope`, `stripFence`, `ParseSuccess`, and `ParseFailure`. Write the module header again.
-- [ ] 9.8 Keep `deps.logger`, and give it to `runToTerminal`, thus the warn of a salvage reaches the log. Write the doc comment of the field again.
-- [ ] 9.9 In `src/prompts/analogical-reasoner.ts`, write the output section again. The reasoner calls `submit_analogy_report` one time with the report. When phase 1 cannot run, it calls `report_blocker` with a one-line reason.
-- [ ] 9.10 In the same prompt, keep the shape of the report and the coverage rules. Remove the error JSON, and the text on the post-processor and on `JSON.parse()`.
-- [ ] 9.11 In the header of `src/tools/sandbox/report-blocker.ts`, name the analogical reasoner as the fourth loop that offers the tool.
-- [ ] 9.12 In the `description` of `generate_analogy_report`, write the sentence on the internal retry again: the wrapper salvages a run one time. Keep the text on the `extraction-failed` error.
-- [ ] 9.13 In `src/tools/research/generate-analogy-report.test.ts`, remove the tests of the conversion and of `tryParseEnvelope`. Add these tests:
+- [x] 9.1 In `src/tools/research/generate-analogy-report.ts`, add `submit_analogy_report` with the input `AnalogyReportSchema`, a top-level object. The tool records `{ kind: "report", report }` in the outcome cell of the call, and it tells the agent to stop.
+- [x] 9.2 Add `report_blocker` through `createReportBlockerToolFor`. Its `blockedWhen` says that the problem is empty or incoherent, thus phase 1 cannot extract its objects and relations.
+- [x] 9.3 The `record` of `report_blocker` writes `{ kind: "blocker", reason }` into the same cell, and it does not replace a report. A report replaces a blocker. Expected result: when one round records both, the report wins.
+- [x] 9.4 Build the two tools, the cell, and the reasoner `AgentDefinition` in each call of `execute`. Put the two terminal tools after the search tools. Expected result: the tool definitions and their order are identical across calls.
+- [x] 9.5 Run the reasoner through `runToTerminal`, with `resolved: () => cell.outcome !== null`. Give the salvage `{ tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE }`.
+- [x] 9.6 Return the recorded report. For a blocker, return the `extraction-failed` envelope with the reason as its message. With no outcome, return `buildExtractionFailedEnvelope()`. Keep the envelope of a loop throw.
+- [x] 9.7 Remove the conversion call with its `countChatTokens` and its `accountForChatCall`, and remove `CONVERSION_CALL_NAME`. Remove `buildConversionPrompt`, `tryParseEnvelope`, `stripFence`, `ParseSuccess`, and `ParseFailure`. Write the module header again.
+- [x] 9.8 Keep `deps.logger`, and give it to `runToTerminal`, thus the warn of a salvage reaches the log. Write the doc comment of the field again.
+- [x] 9.9 In `src/prompts/analogical-reasoner.ts`, write the output section again. The reasoner calls `submit_analogy_report` one time with the report. When phase 1 cannot run, it calls `report_blocker` with a one-line reason.
+- [x] 9.10 In the same prompt, keep the shape of the report and the coverage rules. Remove the error JSON, and the text on the post-processor and on `JSON.parse()`.
+- [x] 9.11 In the header of `src/tools/sandbox/report-blocker.ts`, name the analogical reasoner as the fourth loop that offers the tool.
+- [x] 9.12 In the `description` of `generate_analogy_report`, write the sentence on the internal retry again: the wrapper salvages a run one time. Keep the text on the `extraction-failed` error.
+- [x] 9.13 In `src/tools/research/generate-analogy-report.test.ts`, remove the tests of the conversion and of `tryParseEnvelope`. Add these tests:
   - A submitted report is the result, and the provider gets no call after the submit.
   - A blocker gives the `extraction-failed` envelope with its reason as the message.
   - A run that ends on prose gets a salvage whose mask lets only the two terminal tools run.
   - No outcome after the salvage gives the `extraction-failed` envelope.
   - An invalid report gets an input validation error, and a second submit is accepted.
-- [ ] 9.14 Run `tsc -p tsconfig.json`. Run `bun test src/tools/research/generate-analogy-report.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
+- [x] 9.14 Run `tsc -p tsconfig.json`. Run `bun test src/tools/research/generate-analogy-report.test.ts`. Run `bun run lint`. Run `bun run format:file` on each changed file under `src/`.
 
 ## 10. Documents
 

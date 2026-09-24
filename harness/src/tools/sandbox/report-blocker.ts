@@ -6,9 +6,10 @@
  * `report_blocker` is the alternative to improvising an inline result the
  * harness would launder into a green run.
  *
- * This module is the canonical home of the tool. Three loops offer it — the
- * sandbox step agent, the planner (`tools/research/generate-plan.ts`) and the
- * run synthesizer (`execution/run-synthesis.ts`) — and all three share one id,
+ * This module is the canonical home of the tool. Four loops offer it — the
+ * sandbox step agent, the planner (`tools/research/generate-plan.ts`), the
+ * run synthesizer (`execution/run-synthesis.ts`) and the analogical reasoner
+ * (`tools/research/generate-analogy-report.ts`) — and all four share one id,
  * one input schema and one terminal contract via `createReportBlockerToolFor`.
  * What differs per loop is only what a blocker *means* there, so each call site
  * injects its own `blockedWhen` prose and its own capture closure. The tool

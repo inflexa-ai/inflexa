@@ -2,36 +2,42 @@
  * generateAnalogyReport — cross-domain analogy report as a sub-agent tool.
  *
  * An inline harness `AgentDefinition` (mirroring `createLiteratureReviewerTool`)
- * driven by `runAgent`. The inner research agent runs Phase 1 extraction +
- * Phase 2 cross-domain search; the wrapper parses + schema-validates the text
- * output; on parse failure a single-shot conversion call (no tools) transforms
- * raw markdown into a valid envelope; on hard failure an `extraction-failed`
- * error envelope surfaces — the frontend never has to render raw prose.
+ * driven by `runToTerminal`. The inner research agent runs Phase 1 extraction +
+ * Phase 2 cross-domain search, then submits its result through one of two
+ * terminal tools, the same pattern as the planner with `submit_plan` and
+ * `report_blocker`:
  *
- * One provider serves both the research agent and the conversion retry; the
- * wrapper's parse + validate + error-envelope cascade is the correctness
- * boundary.
+ *   - `submit_analogy_report` takes the report, validated by `AnalogyReportSchema`.
+ *   - `report_blocker` takes the reason of an extraction failure.
+ *
+ * Each tool records its outcome in the outcome cell of the call, and a report
+ * wins over a blocker. A run that ends without an outcome gets one salvage
+ * continuation whose mask lets only the two terminal tools run. With no outcome
+ * after it, or on a loop throw, the wrapper returns an `extraction-failed`
+ * envelope — the frontend never has to render raw prose.
+ *
+ * The envelope is a union (`AnalogicalReasonerOutputSchema`), and `defineTool`
+ * accepts only a top-level object, thus the report and the failure are two
+ * tools and not one tool for the whole envelope.
  */
 
 import { ok } from "neverthrow";
 import { z } from "zod";
 
-import { AnalogicalReasonerOutputSchema, type AnalogicalReasonerOutput } from "@inflexa-ai/harness/contracts/analogy-report.js";
+import { AnalogyReportSchema, type AnalogicalReasonerOutput, type AnalogyReport } from "@inflexa-ai/harness/contracts/analogy-report.js";
 
 import { analogicalReasonerPrompt } from "../../prompts/analogical-reasoner.js";
 import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
-import { createNoopUsageRecorder } from "../../billing/noop-usage-recorder.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
-import { unwrapOrThrow } from "../../lib/result.js";
-import { countChatTokens } from "../../loop/metrics.js";
-import { accountForChatCall, finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
+import { runToTerminal } from "../../loop/run-to-terminal.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import type { ChatProvider } from "../../providers/types.js";
 import type { UsageRecorder } from "../../billing/usage-recorder.js";
 import { defineTool, type Tool } from "../define-tool.js";
+import { createReportBlockerToolFor, type BlockerOutcome } from "../sandbox/report-blocker.js";
 
 // Cross-domain search tools the analogical-reasoner uses.
 import { createSearchSemanticScholarTool } from "./search-semantic-scholar.js";
@@ -44,11 +50,59 @@ import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "analogical-reasoner";
 
-/** Must not collide with a loop step name in the usage record key, such as `llm-0`. */
-const CONVERSION_CALL_NAME = "analogy-conversion";
-
 /** Tool-call budget for the inner research agent. */
 const RESEARCH_MAX_ITERATIONS = 40;
+
+/** The corrective request of the salvage continuation. */
+const ANALOGY_SALVAGE_NUDGE =
+    "You ended without a terminal outcome. Call submit_analogy_report with " +
+    "your report now, or report_blocker if phase 1 cannot run. Do not reply " +
+    "with prose.";
+
+/** The terminal outcome of one call of the tool: the submitted report, or a blocker. */
+type AnalogyOutcome = { readonly kind: "report"; readonly report: AnalogyReport } | BlockerOutcome;
+
+/** The outcome cell of one call of the tool, which the two terminal tools write. */
+interface AnalogyOutcomeCell {
+    outcome: AnalogyOutcome | null;
+}
+
+/** Build `submit_analogy_report`, bound to the outcome cell of one call. */
+function createSubmitAnalogyReportTool(cell: AnalogyOutcomeCell): Tool {
+    return defineTool({
+        id: "submit_analogy_report",
+        description:
+            "Terminal. Submit the analogy report: the problem summary, objects, " +
+            "relations, and key terms of phase 1, and each analogy with its " +
+            "coverage and its cited solutions from phase 2. Call it one time with " +
+            "the full report. If it rejects the report, correct the fields that it " +
+            "names and call it again. Stop immediately after an accepted call.",
+        inputSchema: AnalogyReportSchema,
+        describeCall: "none",
+        execute: async (report) => {
+            // A report replaces a blocker, thus the report wins when one round records both.
+            cell.outcome = { kind: "report", report };
+            return ok({
+                recorded: true as const,
+                message: "Report recorded. You are done — stop now and do not take further actions.",
+            });
+        },
+    });
+}
+
+/** Build the `report_blocker` of the reasoner, bound to the outcome cell of one call. */
+function createAnalogyBlockerTool(cell: AnalogyOutcomeCell): Tool {
+    return createReportBlockerToolFor({
+        // A blocker never replaces a recorded outcome, thus it never replaces a report.
+        record: (outcome) => {
+            if (cell.outcome === null) cell.outcome = outcome;
+        },
+        blockedWhen:
+            "Ends the analogy research with no report. Call it only when the " +
+            "problem is empty or incoherent, thus phase 1 cannot extract its " +
+            "objects and relations.",
+    });
+}
 
 export const generateAnalogyReportInputSchema = z.object({
     problem: z
@@ -117,73 +171,6 @@ export function buildResearchPrompt(input: GenerateAnalogyReportInput): string {
     return lines.join("\n");
 }
 
-/**
- * Conversion prompt the retry uses when the inner research agent's output
- * is not valid JSON. Quotes the raw output verbatim and asks for a strict
- * AnalogyReportSchema-shaped object back. No tools — single shot.
- */
-function buildConversionPrompt(rawOutput: string): string {
-    return [
-        "Convert the analogical-reasoner output below into a single JSON",
-        "object matching the AnalogyReport schema. Return ONLY raw JSON — no",
-        "prose, no markdown fences, no commentary, no apology. The first",
-        "character of your response must be `{`. The final character must be `}`.",
-        "",
-        "## Required shape (AnalogyReportSchema)",
-        "",
-        "```json",
-        "{",
-        '  "schemaVersion": "1",',
-        '  "problemSummary": "1-2 sentence summary of the source problem.",',
-        '  "problemObjects": [{ "name": "...", "role": "..." }],',
-        '  "problemRelations": ["short bullet phrase", "..."],',
-        '  "keyTerms": ["term1", "term2"],',
-        '  "analogies": [',
-        "    {",
-        '      "targetDomain": "control_theory",',
-        '      "analogyTitle": "Adaptive control of an unseen plant",',
-        '      "objectMappings": [{ "source": "...", "target": "...", "rationale": "..." }],',
-        '      "sharedRelations": "...",',
-        '      "coverage": "available",',
-        '      "solutions": [',
-        "        {",
-        '          "title": "Method or paper title (verbatim from input)",',
-        '          "sourceDomain": "control_theory",',
-        '          "description": "2-3 sentences.",',
-        '          "keyConcepts": ["..."],',
-        '          "relevance": "How this transfers back to the source problem.",',
-        '          "sources": [{ "url": "https://...", "title": "Exact paper title" }],',
-        '          "githubRepos": []',
-        "        }",
-        "      ]",
-        "    }",
-        "  ]",
-        "}",
-        "```",
-        "",
-        "## Field rules",
-        "",
-        "- Preserve every analogy, object mapping, shared relation, solution, and",
-        "  citation that appears in the input. Do not invent content.",
-        "- Each analogy needs `coverage`:",
-        "  - `available` when the input lists concrete solutions for it,",
-        "  - `queried_no_data` when the input says searches returned no usable results,",
-        "  - `search_failed` when the input says the search tool errored out,",
-        "  - `not_loaded` when the input says the analogy was skipped (budget).",
-        "  When `coverage` is not `available`, `solutions` must be `[]`.",
-        "- Each `solutions[].sources[]` entry needs a valid `url` (http/https)",
-        "  AND a `title`. If a paper is mentioned without a URL, omit that source.",
-        "- `githubRepos` must always be an array (use `[]` when not mentioned).",
-        "- If the input has no extractable analogy content at all (pure apology,",
-        "  empty, off-topic), return the envelope with `analogies: []`. The",
-        "  wrapper translates that into an error envelope.",
-        "",
-        "--- INPUT ---",
-        rawOutput,
-        "--- END INPUT ---",
-    ].join("\n");
-}
-
 export interface GenerateAnalogyReportDeps {
     /** The LLM seam the child loop runs on. */
     readonly provider: ChatProvider;
@@ -193,7 +180,7 @@ export interface GenerateAnalogyReportDeps {
     readonly bioKeys: BioToolKeys;
     /** LLM usage-accounting seam for the child loop; omitted falls back to the no-op recorder. */
     readonly usageRecorder?: UsageRecorder;
-    /** Logging seam; omitted falls back to no-op. Logs an accounting error from the conversion call. */
+    /** Logging seam; omitted falls back to no-op. Logs the salvage warning and an accounting error of the reasoner loop. */
     readonly logger?: Logger;
 }
 
@@ -201,20 +188,13 @@ export interface GenerateAnalogyReportDeps {
 export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps): Tool {
     const logger = (deps.logger ?? createNoopLogger()).named("generate-analogy-report");
     const ncbi = createNcbiTools(deps.bioKeys);
-    const reasonerTools: readonly Tool[] = [
+    const searchTools: readonly Tool[] = [
         createSearchSemanticScholarTool({ ...(deps.bioKeys.semanticScholar === undefined ? {} : { apiKey: deps.bioKeys.semanticScholar }) }),
         searchArxivTool,
         createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
         ncbi.pubmed,
     ];
-
-    const agent: AgentDefinition = {
-        id: AGENT_ID,
-        systemPrompt: composeSystemPrompt(analogicalReasonerPrompt),
-        model: deps.model,
-        tools: reasonerTools,
-        maxIterations: RESEARCH_MAX_ITERATIONS,
-    };
+    const systemPrompt = composeSystemPrompt(analogicalReasonerPrompt);
 
     return defineTool({
         id: "generate_analogy_report",
@@ -238,30 +218,51 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             "`solutions` array — informational, NOT an error. A top-level `error` " +
             "field means no report was produced: on `error.kind === " +
             '"extraction-failed"` do NOT retry with the same or a similar problem ' +
-            "statement (the wrapper already retried internally — you would burn " +
-            "latency on the same failure). Surface the message and ask the user to " +
-            "narrow the problem.",
+            "statement (the wrapper already salvaged the run one time — you would " +
+            "burn latency on the same failure). Surface the message and ask the " +
+            "user to narrow the problem.",
         inputSchema: generateAnalogyReportInputSchema,
         describeCall: "none",
         execute: async (input, ctx) => {
             const childSession = forSubAgent(ctx.session, AGENT_ID);
 
-            // Phase 1+2: drive the research agent over the cross-domain toolset.
-            let rawText: string;
+            // The terminal tools close over the cell of this call, thus each call
+            // builds its own. Their definitions and their order do not change
+            // across calls, thus the request prefix that the cache keys on holds.
+            const cell: AnalogyOutcomeCell = { outcome: null };
+            const submitReportTool = createSubmitAnalogyReportTool(cell);
+            const blockerTool = createAnalogyBlockerTool(cell);
+            const agent: AgentDefinition = {
+                id: AGENT_ID,
+                systemPrompt,
+                model: deps.model,
+                // The search tools come first, and the terminal tools come last.
+                tools: [...searchTools, submitReportTool, blockerTool],
+                maxIterations: RESEARCH_MAX_ITERATIONS,
+            };
+
+            // Phase 1+2: drive the research agent over the cross-domain toolset to its terminal tool.
             try {
-                const { messages: transcript } = await runAgent(agent, [{ role: "user", content: buildResearchPrompt(input) }], childSession, {
-                    provider: deps.provider,
-                    signal: ctx.signal,
-                    emit: ctx.emit,
-                    runStep: passthroughStep,
-                    usageRecorder: deps.usageRecorder,
-                    // Fold the child's calls into the turn total the root loop reports.
-                    turnUsage: ctx.turnUsage,
-                    // Keeps the usage record keys of two parallel dispatches disjoint —
-                    // same frame, same call path, same loop-local step names.
-                    invocationId: ctx.invocationId,
-                });
-                rawText = finalText(transcript);
+                await runToTerminal(
+                    agent,
+                    [{ role: "user", content: buildResearchPrompt(input) }],
+                    childSession,
+                    {
+                        provider: deps.provider,
+                        signal: ctx.signal,
+                        emit: ctx.emit,
+                        runStep: passthroughStep,
+                        resolved: () => cell.outcome !== null,
+                        logger,
+                        usageRecorder: deps.usageRecorder,
+                        // Fold the child's calls into the turn total the root loop reports.
+                        turnUsage: ctx.turnUsage,
+                        // Keeps the usage record keys of two parallel dispatches disjoint —
+                        // same frame, same call path, same loop-local step names.
+                        invocationId: ctx.invocationId,
+                    },
+                    { tools: [submitReportTool, blockerTool], nudge: ANALOGY_SALVAGE_NUDGE },
+                );
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
                 return ok({
@@ -273,70 +274,12 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                 } satisfies AnalogicalReasonerOutput);
             }
 
-            // Fast path: the agent emitted valid JSON matching the schema.
-            const directParse = tryParseEnvelope(rawText);
-            if (directParse.ok) return ok(directParse.value);
-
-            // Slow path: a single-shot conversion call (no tools) transforms the
-            // raw output into a valid envelope. The parse+validate+envelope
-            // cascade below is the safety net.
-            try {
-                const reply = unwrapOrThrow(
-                    await deps.provider
-                        .chat(
-                            {
-                                tools: {},
-                                toolChoice: "none",
-                                system:
-                                    "You convert an analogical-reasoner's free-text output " +
-                                    "into a strict AnalogyReportSchema JSON envelope. You " +
-                                    "preserve information faithfully and never invent content. " +
-                                    "You return ONLY raw JSON — no prose, no markdown fences, " +
-                                    "no commentary.",
-                                messages: [{ role: "user", content: buildConversionPrompt(rawText) }],
-                            },
-                            childSession,
-                            ctx.signal,
-                        )
-                        .map(countChatTokens(AGENT_ID)),
-                );
-                accountForChatCall(reply, {
-                    session: childSession,
-                    agentId: AGENT_ID,
-                    callPath: childSession.provenance.callPath,
-                    stepName: CONVERSION_CALL_NAME,
-                    invocationId: ctx.invocationId,
-                    usageRecorder: deps.usageRecorder ?? createNoopUsageRecorder(),
-                    logger,
-                    rollups: ctx.turnUsage === undefined ? [] : [ctx.turnUsage],
-                });
-
-                const content = reply.message.content;
-                const convertedText =
-                    typeof content === "string"
-                        ? content
-                        : content
-                              .filter((b): b is { type: "text"; text: string } & typeof b => b.type === "text")
-                              .map((b) => b.text)
-                              .join("");
-
-                const parse = tryParseEnvelope(convertedText);
-                if (!parse.ok) return ok(buildExtractionFailedEnvelope());
-
-                // If the conversion model produced an error envelope verbatim,
-                // surface it (it knows something we don't about the input).
-                if ("error" in parse.value) return ok(parse.value);
-
-                // Empty `analogies: []` means the input had no extractable content
-                // (apology, off-topic) — surface as extraction-failed.
-                if (parse.value.analogies.length === 0) {
-                    return ok(buildExtractionFailedEnvelope());
-                }
-
-                return ok(parse.value);
-            } catch {
-                return ok(buildExtractionFailedEnvelope());
+            const outcome = cell.outcome;
+            if (outcome?.kind === "report") return ok(outcome.report satisfies AnalogicalReasonerOutput);
+            if (outcome?.kind === "blocker") {
+                return ok({ schemaVersion: "1", error: { kind: "extraction-failed", message: outcome.reason } } satisfies AnalogicalReasonerOutput);
             }
+            return ok(buildExtractionFailedEnvelope());
         },
     });
 }
@@ -350,39 +293,4 @@ function buildExtractionFailedEnvelope(): AnalogicalReasonerOutput {
             message: "The analogical reasoner returned malformed output that could not " + "be recovered. Try narrowing the problem statement.",
         },
     };
-}
-
-interface ParseSuccess {
-    ok: true;
-    value: AnalogicalReasonerOutput;
-}
-
-interface ParseFailure {
-    ok: false;
-    reason: "not-json" | "schema-mismatch";
-}
-
-/**
- * Trim leading whitespace and strip a single wrapping ```json fence before
- * parsing — the inner agent's prompt forbids code fences but a relaxed
- * parse here avoids burning a conversion retry on trivial slips. Beyond
- * that, no salvaging. Exported for unit testing.
- */
-export function tryParseEnvelope(raw: string): ParseSuccess | ParseFailure {
-    const stripped = stripFence(raw);
-    let candidate: unknown;
-    try {
-        candidate = JSON.parse(stripped);
-    } catch {
-        return { ok: false, reason: "not-json" };
-    }
-    const result = AnalogicalReasonerOutputSchema.safeParse(candidate);
-    if (!result.success) return { ok: false, reason: "schema-mismatch" };
-    return { ok: true, value: result.data };
-}
-
-function stripFence(raw: string): string {
-    const trimmed = raw.trim();
-    if (!trimmed.startsWith("```")) return trimmed;
-    return trimmed.replace(/^```(?:json)?\s*\n/i, "").replace(/\n```\s*$/i, "");
 }

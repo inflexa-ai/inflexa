@@ -1,14 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { errAsync, okAsync } from "neverthrow";
+import type { ToolResultPart } from "ai";
 
 import { createCapturingLogger } from "../../__tests__/setup/logger.js";
-import type { LlmUsageRecord } from "../../billing/usage-recorder.js";
-import type { AgentRunUsage } from "../../loop/metrics.js";
 import { makeSession } from "../../providers/__fixtures__/session.js";
-import { makeMessage, scriptedProvider, textBlock } from "../../loop/__fixtures__/scripted-provider.js";
-import { makeToolContext } from "../__fixtures__/tool-context.js";
+import type { ChatRequest } from "../../providers/types.js";
+import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../../loop/__fixtures__/scripted-provider.js";
 import type { ToolContext } from "../define-tool.js";
-import { buildResearchPrompt, createGenerateAnalogyReportTool, tryParseEnvelope } from "./generate-analogy-report.js";
+import { buildResearchPrompt, createGenerateAnalogyReportTool } from "./generate-analogy-report.js";
 
 const VALID_ENVELOPE = {
     schemaVersion: "1",
@@ -38,6 +36,11 @@ const VALID_ENVELOPE = {
     ],
 };
 
+/** The tools of each request of the reasoner: the search tools, then the two terminal tools. */
+const REASONER_TOOLS = ["search_semantic_scholar", "search_arxiv", "search_github_repos", "pubmed", "submit_analogy_report", "report_blocker"];
+
+const BIO_KEYS = { drugbank: "", disgenet: "", epaCcte: "" };
+
 const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
     session: makeSession({
         agentId: sessionAgentId,
@@ -48,20 +51,28 @@ const ctxFor = (sessionAgentId = "conversation-agent"): ToolContext => ({
     runStep: (_name, fn) => fn(),
 });
 
+const submitReport = (id: string, report: unknown) => makeMessage([toolUseBlock(id, "submit_analogy_report", report)], "tool_use");
+
+/** The tool result of one call in the messages of a request. */
+function toolResultIn(request: ChatRequest, toolCallId: string): ToolResultPart | undefined {
+    return request.messages
+        .flatMap((message) => (message.role === "tool" ? message.content : []))
+        .find((part): part is ToolResultPart => part.type === "tool-result" && part.toolCallId === toolCallId);
+}
+
 describe("generateAnalogyReport sub-agent tool", () => {
-    it("returns the parsed envelope on the fast (research-only) path", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn")]);
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        });
+    it("returns the submitted report, and the provider gets no call after the submit", async () => {
+        const provider = scriptedProvider([submitReport("t1", VALID_ENVELOPE)]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
 
         const ctx = ctxFor();
-        const result = (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctx))._unsafeUnwrap() as typeof VALID_ENVELOPE;
+        const result = (await tool.execute({ problem: "Diagnose oscillation in a pathway." }, ctx))._unsafeUnwrap();
 
-        expect(result.analogies).toHaveLength(1);
-        expect(result.analogies[0]!.targetDomain).toBe("control_theory");
+        expect(result).toEqual(VALID_ENVELOPE);
+        // The terminal tool ends the loop itself: no call follows the submit.
+        expect(provider.calls).toHaveLength(1);
+        // The search tools come first, and the two terminal tools come last.
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual(REASONER_TOOLS);
 
         // Child loop ran on a Session derived via forSubAgent — callPath
         // extended, agentId flipped.
@@ -72,151 +83,99 @@ describe("generateAnalogyReport sub-agent tool", () => {
         // Parent session untouched.
         expect(ctx.session.provenance.agentId).toBe("conversation-agent");
         expect(ctx.session.provenance.callPath).toEqual(["conversation-agent"]);
+    });
 
-        // Tool roster: 4 (3 cross-domain + the consolidated `pubmed` tool).
-        expect(Object.keys(provider.calls[0]!.tools)).toHaveLength(4);
+    it("gives the extraction-failed envelope with the reason of a blocker as its message", async () => {
+        const provider = scriptedProvider([makeMessage([toolUseBlock("b1", "report_blocker", { reason: "The problem statement is empty." })], "tool_use")]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
 
-        // Only one provider call — fast path skipped the conversion retry.
+        const result = (await tool.execute({ problem: "?" }, ctxFor()))._unsafeUnwrap();
+
+        expect(result).toEqual({ schemaVersion: "1", error: { kind: "extraction-failed", message: "The problem statement is empty." } });
         expect(provider.calls).toHaveLength(1);
     });
 
-    it("runs the conversion retry when the research output is not valid JSON", async () => {
+    it("keeps the report when one round records a report and a blocker, in either order", async () => {
+        const blocker = toolUseBlock("b1", "report_blocker", { reason: "cannot extract" });
+        const report = toolUseBlock("t1", "submit_analogy_report", VALID_ENVELOPE);
+
+        for (const round of [
+            [blocker, report],
+            [report, blocker],
+        ]) {
+            const provider = scriptedProvider([makeMessage(round, "tool_use")]);
+            const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+
+            const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
+
+            expect(result).toEqual(VALID_ENVELOPE);
+        }
+    });
+
+    it("salvages a run that ends on prose, and the mask of the salvage lets only the two terminal tools run", async () => {
         const provider = scriptedProvider([
-            // Research agent returns markdown prose — not parseable.
+            // The first run ends on prose, with no outcome.
             makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn"),
-            // Conversion call returns a valid envelope.
-            makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn"),
-        ]);
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        });
-
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap() as typeof VALID_ENVELOPE;
-
-        expect(result.analogies).toHaveLength(1);
-        expect(provider.calls).toHaveLength(2);
-
-        // Conversion call: no tools, system prompt is the conversion instruction.
-        const conversionCall = provider.calls[1]!;
-        expect(conversionCall.tools).toEqual({});
-    });
-
-    it("surfaces an extraction-failed envelope when conversion also fails", async () => {
-        const provider = scriptedProvider([makeMessage([textBlock("Garbled prose.")], "end_turn"), makeMessage([textBlock("still not JSON")], "end_turn")]);
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        });
-
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap() as {
-            schemaVersion: "1";
-            error: { kind: string; message: string };
-        };
-
-        expect(result.error.kind).toBe("extraction-failed");
-    });
-
-    it("surfaces extraction-failed when conversion emits empty analogies", async () => {
-        const provider = scriptedProvider([
-            makeMessage([textBlock("Apology — no analogies.")], "end_turn"),
-            makeMessage(
-                [
-                    textBlock(
-                        JSON.stringify({
-                            schemaVersion: "1",
-                            problemSummary: "Source problem.",
-                            problemObjects: [],
-                            problemRelations: [],
-                            keyTerms: [],
-                            analogies: [],
-                        }),
-                    ),
-                ],
-                "end_turn",
-            ),
-        ]);
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        });
-
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap() as {
-            schemaVersion: "1";
-            error: { kind: string; message: string };
-        };
-
-        expect(result.error.kind).toBe("extraction-failed");
-    });
-
-    it("accounts the conversion call under its own key, and folds each call into the turn total", async () => {
-        const provider = scriptedProvider([
-            makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn", { inputTokens: 100, outputTokens: 10 }),
-            makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn", { inputTokens: 20, outputTokens: 5 }),
-        ]);
-        const records: LlmUsageRecord[] = [];
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            usageRecorder: {
-                record: (record) => {
-                    records.push(record);
-                    return okAsync(undefined);
-                },
-            },
-        });
-        const turnUsage: AgentRunUsage = {};
-        const { ctx } = makeToolContext();
-        const stepCtx: ToolContext = { ...ctx, session: { ...ctx.session, runFrame: { runId: "run-1", stepId: "step-1" } }, turnUsage };
-
-        (await tool.execute({ problem: "Diagnose oscillation." }, stepCtx))._unsafeUnwrap();
-
-        const conversion = records.filter((record) => record.recordKey.endsWith(":analogy-conversion"));
-        expect(conversion).toHaveLength(1);
-        expect(conversion[0]).toMatchObject({ agentId: "analogical-reasoner", runId: "run-1", stepId: "step-1", usage: { inputTokens: 20, outputTokens: 5 } });
-        // The research loop names its calls `llm-{n}` under the same frame and
-        // call path, thus only the call name keeps the two keys apart.
-        const researchKeys = records.filter((record) => record !== conversion[0]).map((record) => record.recordKey);
-        expect(researchKeys).toEqual(["run-1:step-1:conversation-agent>analogical-reasoner:test-tool-call:llm-0"]);
-        expect(conversion[0]!.recordKey).toBe("run-1:step-1:conversation-agent>analogical-reasoner:test-tool-call:analogy-conversion");
-        expect(turnUsage).toEqual({ inputTokens: 120, outputTokens: 15 });
-    });
-
-    it("logs a recorder err of the conversion call at the error level, and still returns the envelope", async () => {
-        const provider = scriptedProvider([
-            makeMessage([textBlock("## Analogy report\n\nSome free-text prose...")], "end_turn"),
-            makeMessage([textBlock(JSON.stringify(VALID_ENVELOPE))], "end_turn", { inputTokens: 20, outputTokens: 5 }),
+            // The salvage: a search call, which the mask refuses, then the submit.
+            makeMessage([toolUseBlock("s1", "search_arxiv", { query: "adaptive control" })], "tool_use"),
+            submitReport("t1", VALID_ENVELOPE),
         ]);
         const logger = createCapturingLogger();
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-            usageRecorder: { record: () => errAsync({ reason: "ledger offline" }) },
-            logger,
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS, logger });
+
+        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
+
+        expect(result).toEqual(VALID_ENVELOPE);
+        expect(provider.calls).toHaveLength(3);
+        // Each salvage request declares the tools of the first run.
+        for (const request of provider.calls.slice(1)) {
+            expect(Object.keys(request.tools)).toEqual(REASONER_TOOLS);
+        }
+        const refusal = toolResultIn(provider.calls[2]!, "s1");
+        expect(refusal?.output).toEqual({
+            type: "error-text",
+            value: JSON.stringify({
+                error: "The tool search_arxiv is not available for this request, thus it did not run. The tools that can run now: submit_analogy_report, report_blocker.",
+                retryable: false,
+            }),
         });
-        const { ctx } = makeToolContext();
+        // The warn of the salvage reaches the logger of the tool.
+        const salvage = logger.records.filter((r) => r.level === "warn" && r.msg.includes("salvaging"));
+        expect(salvage).toHaveLength(1);
+        expect(salvage[0]!.fields).toMatchObject({ agentId: "analogical-reasoner" });
+    });
 
-        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctx))._unsafeUnwrap() as typeof VALID_ENVELOPE;
-        // The notice helper logs when the result of the recorder arrives, on a later turn of the event loop.
-        await new Promise((resolve) => setTimeout(resolve, 0));
+    it("gives the extraction-failed envelope when the salvage also records no outcome", async () => {
+        const provider = scriptedProvider(() => makeMessage([textBlock("Still prose, no report.")], "end_turn"));
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
 
-        expect(result.analogies).toHaveLength(1);
-        const failures = logger.records.filter((record) => record.level === "error" && record.fields["notice"] === "UsageRecorder.record");
-        expect(failures.map((record) => record.fields["reason"])).toEqual(["ledger offline"]);
+        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap() as {
+            schemaVersion: "1";
+            error: { kind: string; message: string };
+        };
+
+        expect(result.error.kind).toBe("extraction-failed");
+        // The first run and one salvage request. No conversion call follows.
+        expect(provider.calls).toHaveLength(2);
+    });
+
+    it("gives an invalid report an input validation error, and accepts a second submit", async () => {
+        const { analogies: _dropped, ...withoutAnalogies } = VALID_ENVELOPE;
+        const provider = scriptedProvider([submitReport("t1", withoutAnalogies), submitReport("t2", VALID_ENVELOPE)]);
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
+
+        const result = (await tool.execute({ problem: "Diagnose oscillation." }, ctxFor()))._unsafeUnwrap();
+
+        expect(result).toEqual(VALID_ENVELOPE);
+        expect(provider.calls).toHaveLength(2);
+        const rejected = toolResultIn(provider.calls[1]!, "t1");
+        expect(rejected?.output.type).toBe("error-text");
+        expect(JSON.stringify(rejected?.output)).toContain("input validation failed");
     });
 
     it("rejects empty problem at the input-schema boundary", async () => {
         const provider = scriptedProvider([]);
-        const tool = createGenerateAnalogyReportTool({
-            provider,
-            model: "claude-test",
-            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        });
+        const tool = createGenerateAnalogyReportTool({ provider, model: "claude-test", bioKeys: BIO_KEYS });
         const parse = tool.inputSchema.safeParse({ problem: "" });
         expect(parse.success).toBe(false);
     });
@@ -243,30 +202,5 @@ describe("buildResearchPrompt", () => {
     it("omits the Context section and Knobs section when both are absent", () => {
         const prompt = buildResearchPrompt({ problem: "Just the problem." });
         expect(prompt).toBe("## Problem\nJust the problem.");
-    });
-});
-
-describe("tryParseEnvelope", () => {
-    it("parses a clean JSON envelope", () => {
-        const r = tryParseEnvelope(JSON.stringify(VALID_ENVELOPE));
-        expect(r.ok).toBe(true);
-    });
-
-    it("strips a single wrapping ```json fence", () => {
-        const fenced = "```json\n" + JSON.stringify(VALID_ENVELOPE) + "\n```";
-        const r = tryParseEnvelope(fenced);
-        expect(r.ok).toBe(true);
-    });
-
-    it("rejects non-JSON with not-json reason", () => {
-        const r = tryParseEnvelope("not JSON at all");
-        expect(r.ok).toBe(false);
-        if (!r.ok) expect(r.reason).toBe("not-json");
-    });
-
-    it("rejects JSON that fails schema validation", () => {
-        const r = tryParseEnvelope(JSON.stringify({ schemaVersion: "1" }));
-        expect(r.ok).toBe(false);
-        if (!r.ok) expect(r.reason).toBe("schema-mismatch");
     });
 });
