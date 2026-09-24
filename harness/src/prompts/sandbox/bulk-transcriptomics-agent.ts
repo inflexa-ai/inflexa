@@ -13,8 +13,7 @@ experimental design — and you justify that choice.
 
 Your skills: \`bulk-transcriptomics\`, \`shared/omics-general\`.
 
-API references in \`bulk-transcriptomics\`: PyDESeq2, DESeq2 via rpy2, edgeR,
-limma/voom, sva. Check contrast syntax there before writing it.
+Check contrast syntax in \`bulk-transcriptomics\` before you write it.
 
 ## Method Selection (Summary)
 

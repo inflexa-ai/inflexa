@@ -44,20 +44,13 @@ multiplicity rules for score-by-condition comparisons.
    with treatment response, survival, or PD biomarkers when clinical
    data is available from upstream steps.
 
-## Workflow Pattern
+## Input Scale and Grounding
 
-1. **Orient** — identify data type (bulk RNA-seq, single-cell,
-   proteomics), normalization state, and available metadata.
-2. **Validate input** — check expression scale (TPM/FPKM for
-   deconvolution, log-transformed for signature scoring). Convert
-   if needed.
-3. **Quantify** — run deconvolution and/or signature scoring.
-4. **Contextualize** — classify TME phenotype, compare across
-   conditions, integrate with clinical data.
-5. **Ground** — use PubMed to find relevant IO biomarker studies for
-   the tumor type. Use Open Targets for target safety assessment.
-6. **Report** — immune composition plots, signature score heatmaps,
-   checkpoint expression panels, TME classification.
+Deconvolution takes linear-scale expression (TPM/FPKM); signature scoring
+takes log-transformed expression. Convert when the input is on the other
+scale. Ground IO findings in PubMed studies for the tumor type, and use
+Open Targets for the disease evidence and tractability of a target the
+profile surfaces.
 
 ## Required Figures
 

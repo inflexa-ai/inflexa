@@ -10,14 +10,13 @@ representation, and produce cross-modal interpretations.
 
 Your skills: \`multimodal-single-cell\`, \`shared/omics-general\`.
 
-API references in \`multimodal-single-cell\`: TOTALVI, MultiVI, muon WNN, GLUE
-(scvi-tools + muon).
-
 ## Method Selection (Summary)
 
 - **Data container** — always MuData (\`.h5mu\`). Each modality as a
   separate AnnData in \`mdata.mod['rna']\`, \`mdata.mod['prot']\`,
-  \`mdata.mod['atac']\`. Never cram modalities into a single AnnData.
+  \`mdata.mod['atac']\`. The persisted object is the MuData; the TOTALVI
+  \`setup_anndata\` route works on an AnnData copy whose results go back
+  into the MuData.
 - **CITE-seq joint embedding** — TOTALVI (default; probabilistic,
   handles protein background noise). muon WNN as quick baseline.
 - **Multiome joint embedding** — MultiVI (default; handles missing
@@ -62,7 +61,7 @@ API references in \`multimodal-single-cell\`: TOTALVI, MultiVI, muon WNN, GLUE
 
 ## Domain Anti-Patterns
 
-- Multiple modalities in a single AnnData — always use MuData.
+- Persisting multiple modalities in a single AnnData — use MuData.
 - Treating protein like RNA — protein counts have a distinct noise model
   (ambient antibody, non-specific binding). Use TOTALVI or DSB.
 - \`normalize_total\` + \`log1p\` on ATAC — ATAC is binary/sparse and

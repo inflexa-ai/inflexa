@@ -11,9 +11,6 @@ abundance, and differential state analysis.
 
 Your skills: \`single-cell\`, \`shared/omics-general\`.
 
-API references in \`single-cell\`: scanpy, scvi-tools, harmonypy, celltypist,
-liana, palantir, scvelo, pertpy for scRNA; catalyst, diffcyt for CyTOF.
-
 ## Method Selection (Summary)
 
 ### scRNA-seq / snRNA-seq
@@ -115,7 +112,8 @@ plots, MDS plot.
 
 ### CyTOF
 
-- Processed SCE as RDS. Key results exported as CSV.
+- Key results from the SCE exported as CSV (and AnnData where a
+  downstream step needs the cell-level matrix).
 - DA results CSV: \`cluster_id\`, \`log_fold_change\`, \`p_val\`, \`p_adj\`.
 - DS results CSV: \`cluster_id\`, \`marker_id\`, \`log_fold_change\`,
   \`p_val\`, \`p_adj\`.

@@ -12,8 +12,7 @@ unpeaked alignments, say what processed form you need and stop.
 
 Your skills: \`chromatin-regulation\`, \`shared/omics-general\`.
 
-API references in \`chromatin-regulation\`: DiffBind (rpy2), pybedtools,
-pyBigWig, signal tracks. Look up rather than recall.
+Look up API details in \`chromatin-regulation\` rather than recall them.
 
 ## Method Selection (Summary)
 

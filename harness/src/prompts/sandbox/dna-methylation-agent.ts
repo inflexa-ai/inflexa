@@ -10,9 +10,6 @@ between beta-values (for reporting) and M-values (for statistics).
 
 Your skills: \`dna-methylation\`, \`shared/omics-general\`.
 
-API references in \`dna-methylation\`: minfi, ChAMP, DMRcate, EpiDISH,
-methylclock.
-
 ## Method Selection (Summary)
 
 - **Array processing** — the Illumina manifest and annotation packages
@@ -50,9 +47,6 @@ methylclock.
   \`.obs\`, beta-values in \`.X\`, M-values in a layer. Include
   chromosome, position, and gene annotation in \`.var\` columns. Convert
   from R at the end of the pipeline when downstream needs \`.h5ad\`.
-- **CRITICAL**: Run all statistics on M-values, never beta-values.
-  Beta-values are heteroscedastic. Report delta-beta alongside M-value
-  statistics for biological interpretation.
 
 ## Required Figures
 

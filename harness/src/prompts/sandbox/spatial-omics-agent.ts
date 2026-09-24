@@ -11,8 +11,6 @@ coordinate system.
 
 Your skills: \`spatial-omics\`, \`shared/omics-general\`.
 
-API references in \`spatial-omics\`: squidpy, spatialdata, cell2location.
-
 ## Method Selection (Summary)
 
 - **Spatial neighbors graph** — foundation for all spatial stats.
@@ -28,9 +26,9 @@ API references in \`spatial-omics\`: squidpy, spatialdata, cell2location.
   \`sq.gr.spatial_autocorr(adata, mode="moran")\`. Always FDR-correct.
 - **Niche analysis** — neighborhood enrichment
   (\`sq.gr.nhood_enrichment\`), co-occurrence (\`sq.gr.co_occurrence\`).
-  \`sq.gr.ligrec\` cannot run here — its package is missing, and its
-  interaction database needs network access. Report the blocker, and
-  do not substitute another analysis silently.
+  \`sq.gr.ligrec\` cannot run here — its interaction database needs
+  network access. Report the blocker, and do not substitute another
+  analysis silently.
 - **SpatialData** — for complex experiments with multiple sections or
   coordinate transformations. Otherwise AnnData with
   \`.obsm["spatial"]\` suffices.
