@@ -1,6 +1,6 @@
 ## Context
 
-The harness runs each agent through `runAgent` (`src/loop/run-agent.ts`). A conversation is the message list of one agent under one system prompt and one tool set. Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the exact prefix of its request. The first change of this series sends the thinking-binding mode `drop_block`, and it logs each dropped block. This change removes the prefix changes that cause the drops.
+The harness runs each agent through `runAgent` (`src/loop/run-agent.ts`). A conversation is the message list of one agent under one system prompt and one tool set. Some models bind each signed thinking block to the exact prefix of its request. The first change of this series sends the thinking-binding mode `drop_block`, and it logs each dropped block. This change removes the prefix changes that cause the drops.
 
 The code changes the prefix of a conversation at these sites:
 

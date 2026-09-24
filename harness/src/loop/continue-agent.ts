@@ -1,6 +1,6 @@
 /**
- * Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the
- * exact prefix of its request, and the prompt cache keys on that same prefix.
+ * A signed thinking block is bound to the exact prefix of its request, and the
+ * prompt cache keys on that same prefix.
  * A continuation must extend the conversation, never replay it under a new
  * system prompt or tool set.
  */

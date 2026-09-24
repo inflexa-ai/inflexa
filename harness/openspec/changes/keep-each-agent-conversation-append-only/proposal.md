@@ -1,6 +1,6 @@
 ## Why
 
-Claude Opus 5.5 and Claude Fable 5.1 bind each signed thinking block to the exact prefix: the system prompt, the tool set, and the earlier messages. A change of that prefix makes each later block invalid, and the prompt cache misses.
+Some models bind each signed thinking block to the exact prefix: the system prompt, the tool set, and the earlier messages. A change of that prefix makes each later block invalid, and the prompt cache misses.
 
 A production audit of 16 days found that cache writes are 65% of the spend. Two post-step forks, `step-summary-writer` and `file-metadata-describer`, made 37% of all cache writes of the harness. Their hit rates were 40% and 21%, because each fork replays the transcript of the sandbox step under its own system prompt and tools. The loop also changes the prefix in three places: the wrap-up at the iteration cap, the salvage run of `runToTerminal`, and the strip of an unanswered tool call.
 
