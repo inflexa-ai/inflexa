@@ -22,7 +22,7 @@ import { serializeReference, type ArtifactTableReference } from "../contracts/re
 import { citationRecordOf, type CitationRecords } from "../report-model/reference-resolver.js";
 import { renderChart } from "./views/chart-view.js";
 import { DEFAULT_CHART_OPTS, deriveChartRender, type ChartOpts } from "./chart.js";
-import { chartSvgAssets } from "./chart-export.js";
+import { chartSvgAssets, loadChartRuntime, type ChartRuntime } from "./chart-export.js";
 import { assemblePage, renderBand, renderReferenceSection } from "./views/page-view.js";
 import type { ViewOptions } from "./views/lineage.js";
 import { renderClaim, renderNav, renderSection, renderText } from "./views/prose.js";
@@ -76,15 +76,25 @@ export interface RenderOptions {
  *
  * One artifact gives one payload. A table block and a chart block that bind it read that one asset, and a
  * chart under the inline bound carries its rows in its own option and registers none.
+ *
+ * The render is asynchronous because it loads the chart runtime of the SVG export. Each other step is
+ * synchronous.
  */
-export function renderReportPage(
+export async function renderReportPage(
     document: ReportDocument,
     values: RenderValues,
     { records, derivations, provenance, chart = DEFAULT_CHART_OPTS }: RenderOptions = {},
-): Result<RenderedPage, RenderProblem[]> {
+): Promise<Result<RenderedPage, RenderProblem[]>> {
     const problems: RenderProblem[] = [];
     const ledger = new ReferenceLedger();
-    const data: PageData = { payloads: new Map(), mounts: 0, svgs: [], view: { lineage: provenance !== undefined }, chart };
+    const data: PageData = {
+        payloads: new Map(),
+        mounts: 0,
+        svgs: [],
+        view: { lineage: provenance !== undefined },
+        chart,
+        chartRuntime: await loadChartRuntime(),
+    };
 
     const content: string[] = [];
     for (const [index, section] of document.sections.entries()) {
@@ -131,7 +141,7 @@ interface PayloadRegistration {
  *
  * `view` holds the page-wide truths that each view reads. The bag is constant across the whole walk, thus
  * each block of one page decides it alike. `chart` holds the options of the chart derivation, constant in
- * the same way.
+ * the same way. `chartRuntime` draws the SVG files of each chart.
  */
 interface PageData {
     readonly payloads: Map<string, PayloadRegistration>;
@@ -139,6 +149,7 @@ interface PageData {
     readonly svgs: DataAsset[];
     readonly view: ViewOptions;
     readonly chart: ChartOpts;
+    readonly chartRuntime: ChartRuntime;
 }
 
 /**
@@ -255,7 +266,7 @@ function renderBlock(
                 registerPayload(data, block.binding, block.id, () => payloadOf(block.binding, entry, columns));
             }
             // The export reads the chart with every row inline, thus a dense chart exports each point.
-            const svgs = chartSvgAssets(block.id, derived.value.inline, derived.value.bodyPx);
+            const svgs = chartSvgAssets(data.chartRuntime, block.id, derived.value.inline, derived.value.bodyPx);
             if (svgs.isErr()) {
                 problems.push(svgs.error);
                 return "";

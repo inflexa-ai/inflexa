@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../contracts/report-blocks.js";
 import { deriveChartRender, type ChartRow, type EchartOption } from "./chart.js";
@@ -84,7 +85,7 @@ const GRADIENT_OPTION: EchartOption = {
 
 /** The SVG text of one column export, or the failure of the test. */
 function svgOf(option: EchartOption, size: "single" | "double" = "single"): string {
-    return renderChartSvg(option, CHART_EXPORT_SIZES[size])._unsafeUnwrap();
+    return renderChartSvg(echarts, option, CHART_EXPORT_SIZES[size])._unsafeUnwrap();
 }
 
 describe("the SVG export", () => {
@@ -168,21 +169,21 @@ describe("the seeded sequence of one export", () => {
         const original = Math.random;
         // The registry holds no renderer under this name, thus the chart runtime throws inside the render.
         const broken = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "custom", renderItem: "no-such-renderer", data: [[1, 2]] }] };
-        expect(renderChartSvg(broken, CHART_EXPORT_SIZES.single).isErr()).toBe(true);
+        expect(renderChartSvg(echarts, broken, CHART_EXPORT_SIZES.single).isErr()).toBe(true);
         expect(Math.random).toBe(original);
     });
 
     it("puts the original Math.random back after a render that succeeds", () => {
         const original = Math.random;
-        expect(renderChartSvg(GRADIENT_OPTION, CHART_EXPORT_SIZES.single).isOk()).toBe(true);
+        expect(renderChartSvg(echarts, GRADIENT_OPTION, CHART_EXPORT_SIZES.single).isOk()).toBe(true);
         expect(Math.random).toBe(original);
     });
 });
 
 describe("the SVG assets of one chart", () => {
     it("gives two content-addressed names, one for each column size, and the same names over two renders", () => {
-        const first = chartSvgAssets("c1", GRADIENT_OPTION)._unsafeUnwrap();
-        const second = chartSvgAssets("c1", GRADIENT_OPTION)._unsafeUnwrap();
+        const first = chartSvgAssets(echarts, "c1", GRADIENT_OPTION)._unsafeUnwrap();
+        const second = chartSvgAssets(echarts, "c1", GRADIENT_OPTION)._unsafeUnwrap();
         expect(first).toBeDefined();
         expect(first?.single.name).toMatch(/^c-[0-9a-f]{12}-89mm\.svg$/);
         expect(first?.double.name).toMatch(/^c-[0-9a-f]{12}-183mm\.svg$/);
@@ -193,7 +194,7 @@ describe("the SVG assets of one chart", () => {
         const data: number[][] = [];
         for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) data.push([index, index % 13]);
         const crowded = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "scatter", data }] };
-        expect(chartSvgAssets("c1", crowded)._unsafeUnwrap()).toBeUndefined();
+        expect(chartSvgAssets(echarts, "c1", crowded)._unsafeUnwrap()).toBeUndefined();
     });
 
     it("counts the drawn coordinates for the bound, and never an empty slot", () => {
@@ -204,7 +205,7 @@ describe("the SVG assets of one chart", () => {
             yAxis: { type: "value" },
             series: [{ type: "bar", stack: "total", data: slots }],
         };
-        expect(chartSvgAssets("c1", sparse)._unsafeUnwrap()).toBeDefined();
+        expect(chartSvgAssets(echarts, "c1", sparse)._unsafeUnwrap()).toBeDefined();
     });
 
     it("counts each coordinate of a radar polygon for the bound", () => {
@@ -214,13 +215,13 @@ describe("the SVG assets of one chart", () => {
             radar: { indicator: value.map((_cell, index) => ({ name: `i${index}`, max: 7 })) },
             series: [{ type: "radar", data: [{ name: "one", value }] }],
         };
-        expect(chartSvgAssets("c1", radar)._unsafeUnwrap()).toBeUndefined();
+        expect(chartSvgAssets(echarts, "c1", radar)._unsafeUnwrap()).toBeUndefined();
     });
 
     it("refuses an option that the chart runtime cannot draw, and names the block", () => {
         // The registry holds no renderer under this name, thus the chart runtime calls the string as a function.
         const broken = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "custom", renderItem: "no-such-renderer", data: [[1, 2]] }] };
-        const problem = chartSvgAssets("c9", broken)._unsafeUnwrapErr();
+        const problem = chartSvgAssets(echarts, "c9", broken)._unsafeUnwrapErr();
         expect(problem.blockId).toBe("c9");
         expect(problem.kind).toBe("invalid-chart-input");
     });
@@ -482,7 +483,9 @@ describe("the title of a category axis in an export", () => {
         const svg = svgOf(deriveChartRender(block, rows, undefined, { key: "nes", columns: [] })._unsafeUnwrap().inline, "double");
         // The title turns 90 degrees, thus its transform names its x as the fifth member of the matrix.
         const title = /transform="matrix\(0,-1,1,0,(-?[\d.]+),[^)]*\)"[^>]*>GO biological process</.exec(svg);
-        const label = new RegExp(`text-anchor="end"[^>]*transform="translate\\((-?[\\d.]+) [^)]*\\)"[^>]*>${term.replace(/[()]/g, "\\$&")}<`).exec(svg);
+        const label = new RegExp(
+            `text-anchor="end"[^>]*transform="translate\\((-?[\\d.]+) [^)]*\\)"[^>]*>${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<`,
+        ).exec(svg);
         expect(title).not.toBeNull();
         expect(label).not.toBeNull();
         // The label ends at its anchor and runs left at half the text size for each character at least.
@@ -709,11 +712,11 @@ describe("the export bound of a violin", () => {
     it("counts each vertex of an outline, thus 100 violins pass the point bound and give no SVG", () => {
         // Each outline draws 128 vertices, thus 100 outlines draw 12800, past the crowd count of 10000. The 100
         // slots stay far under the slot bound, thus the derivation keeps the chart.
-        expect(chartSvgAssets("v1", violins(100))._unsafeUnwrap()).toBeUndefined();
+        expect(chartSvgAssets(echarts, "v1", violins(100))._unsafeUnwrap()).toBeUndefined();
     });
 
     it("keeps both SVG files of a violin chart under the point bound", () => {
-        const assets = chartSvgAssets("v1", violins(10))._unsafeUnwrap();
+        const assets = chartSvgAssets(echarts, "v1", violins(10))._unsafeUnwrap();
         expect(assets?.single.name).toMatch(/-89mm\.svg$/);
         expect(assets?.double.name).toMatch(/-183mm\.svg$/);
     });

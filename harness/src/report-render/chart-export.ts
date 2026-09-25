@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 
-import * as echarts from "echarts";
+import type * as Echarts from "echarts";
 import { err, ok, type Result } from "neverthrow";
 
 import type { EchartOption } from "./chart.js";
@@ -43,6 +43,20 @@ const TOKEN_PLACES = /\s(?:id|class)="[^"]*"|url\(#[^)]*\)|<style[^>]*>[\s\S]*?<
 /** The count of hash characters in an asset name. It matches the name of a table asset. */
 const HASH_CHARS = 12;
 
+/** The module of the chart runtime. The SVG export draws with it on the server. */
+export type ChartRuntime = typeof Echarts;
+
+/**
+ * Load the chart runtime.
+ *
+ * The runtime loads on the first export and not with this module. The harness entry reaches this module, thus
+ * a static import makes each process that loads the harness pay for the runtime, also a process that exports
+ * no chart. The module cache keeps the first load, thus a later call costs nothing.
+ */
+export function loadChartRuntime(): Promise<ChartRuntime> {
+    return import("echarts");
+}
+
 /** The two SVG files of one chart: the single journal column and the double journal column. */
 export interface ChartSvgs {
     readonly single: DataAsset;
@@ -57,14 +71,14 @@ export interface ChartSvgs {
  * throw becomes the message of an `err`. The instance is disposed in every case, thus no render leaves a timer
  * behind.
  */
-export function renderChartSvg(option: EchartOption, size: ChartExportSize): Result<string, string> {
+export function renderChartSvg(echarts: ChartRuntime, option: EchartOption, size: ChartExportSize): Result<string, string> {
     echarts.registerTheme(CHART_PRINT_THEME_NAME, chartTheme(CHART_PRINT_TEXT_PX));
     registerChartRenderers({
         // The runtime types each item dimension as a string or a number. Each item that the derivation writes
         // for a named renderer holds numbers alone, thus the renderer reads a number at each dimension.
-        registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as echarts.CustomSeriesRenderItem),
+        registerCustomSeries: (name, render) => echarts.registerCustomSeries(name, render as unknown as Echarts.CustomSeriesRenderItem),
     });
-    let chart: ReturnType<typeof echarts.init> | undefined;
+    let chart: Echarts.ECharts | undefined;
     // The axis jitter of the chart runtime places a point that finds no free place with `Math.random`. The
     // render below runs to its end in one synchronous call, thus the seeded sequence serves this render alone,
     // and the same option gives the same points and the same bytes. The finally block puts the global back.
@@ -192,15 +206,20 @@ function svgAsset(bytes: string, size: ChartExportSize): DataAsset {
  * `bodyPx` is the height of the page chart body. A taller body draws each column at a taller height, thus a
  * row of the figure keeps its share of the height.
  */
-export function chartSvgAssets(blockId: string, option: EchartOption, bodyPx: number = CHART_BODY_PX): Result<ChartSvgs | undefined, RenderProblem> {
+export function chartSvgAssets(
+    echarts: ChartRuntime,
+    blockId: string,
+    option: EchartOption,
+    bodyPx: number = CHART_BODY_PX,
+): Result<ChartSvgs | undefined, RenderProblem> {
     if (plottedPoints(option) > SCATTER_CROWD_ROWS) {
         return ok(undefined);
     }
     const singleSize = exportSizeFor(CHART_EXPORT_SIZES.single, bodyPx);
     const doubleSize = exportSizeFor(CHART_EXPORT_SIZES.double, bodyPx);
-    const single = renderChartSvg(option, singleSize);
+    const single = renderChartSvg(echarts, option, singleSize);
     if (single.isErr()) return err(exportProblem(blockId, single.error));
-    const double = renderChartSvg(option, doubleSize);
+    const double = renderChartSvg(echarts, option, doubleSize);
     if (double.isErr()) return err(exportProblem(blockId, double.error));
     return ok({ single: svgAsset(single.value, singleSize), double: svgAsset(double.value, doubleSize) });
 }
