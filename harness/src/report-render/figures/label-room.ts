@@ -12,7 +12,7 @@
  * size. The place is a pure function of the points and the names, thus the same rows give the same places.
  */
 
-import { CHART_PAGE_TEXT_PX, CHART_PRINT_TEXT_PX } from "../design.js";
+import { CHART_EXPORT_SIZES, CHART_PAGE_TEXT_PX } from "../design.js";
 
 /** The square side, in pixels, at which the derivation measures a name. */
 const ESTIMATE_SQUARE_PX = 240;
@@ -144,9 +144,12 @@ export function nameAnchors(names: readonly NamedPoint[], weights: readonly numb
 }
 
 /**
- * The plot of the single journal column, where a dense figure measures its names: the plot size in pixels and
- * the text size of the export. The column export draws the smallest plot beside the largest text of each
- * render, thus a name that clears its neighbors and the points here clears them in each render.
+ * The plot of one render, where a dense figure measures its names: the plot size in pixels and the text size of
+ * the render.
+ *
+ * Each frame is a little smaller than the plot that the chart runtime draws for a figure of one grid at that
+ * size. A smaller frame puts the names nearer to each other than the drawn plot does, thus a name that clears
+ * its neighbors in the frame clears them in the drawn plot.
  */
 export interface NameFrame {
     readonly widthPx: number;
@@ -154,14 +157,29 @@ export interface NameFrame {
     readonly textPx: number;
 }
 
-/** The frame of the single-column export: the plot inside the 336 by 253 pixel chart, and the 7 pt text. */
-export const COLUMN_PLOT_FRAME: NameFrame = { widthPx: 260, heightPx: 160, textPx: CHART_PRINT_TEXT_PX };
+/** The width of one text in pixels at one text size: the estimate of each figure that places its own text. */
+export function textWidthPx(text: string, textPx: number): number {
+    return text.length * CHARACTER_SHARE * textPx;
+}
 
-/**
- * The frame of the double-column export: the plot inside the 692 by 348 pixel chart, and the 7 pt text. A figure
- * that a paper prints across the page measures its names here, and its single-column file can crowd them.
- */
-export const DOUBLE_COLUMN_PLOT_FRAME: NameFrame = { widthPx: 600, heightPx: 250, textPx: CHART_PRINT_TEXT_PX };
+/** The frame of the page: the plot inside the 900 by 400 pixel chart body of a window 1280 pixels wide. */
+export const PAGE_PLOT_FRAME: NameFrame = { widthPx: 760, heightPx: 285, textPx: CHART_PAGE_TEXT_PX };
+
+/** The frame of the single-column export: the plot inside the 336 by 253 pixel chart, and the 7 pt text. */
+export const COLUMN_PLOT_FRAME: NameFrame = { widthPx: 260, heightPx: 160, textPx: CHART_EXPORT_SIZES.single.textPx };
+
+/** The frame of the double-column export: the plot inside the 692 by 348 pixel chart, and the 7 pt text. */
+export const DOUBLE_COLUMN_PLOT_FRAME: NameFrame = { widthPx: 580, heightPx: 245, textPx: CHART_EXPORT_SIZES.double.textPx };
+
+/** The frame of the slide export: the plot inside the 1920 by 1080 pixel chart, and the slide text. */
+export const SLIDE_PLOT_FRAME: NameFrame = { widthPx: 1600, heightPx: 760, textPx: CHART_EXPORT_SIZES.slide.textPx };
+
+/** The frame of each export size. A new export size joins with the frame of its plot. */
+export const EXPORT_PLOT_FRAMES: Readonly<Record<keyof typeof CHART_EXPORT_SIZES, NameFrame>> = {
+    single: COLUMN_PLOT_FRAME,
+    double: DOUBLE_COLUMN_PLOT_FRAME,
+    slide: SLIDE_PLOT_FRAME,
+};
 
 /**
  * The three places of a name beside its anchor: the text starts at the anchor, the text ends at the anchor,
@@ -264,7 +282,7 @@ export function placeLeaderNames(
     const placed: Box[] = [];
     const leaders: Array<readonly [Point, Point]> = [];
     return names.map((name) => {
-        const width = name.text.length * CHARACTER_SHARE * frame.textPx;
+        const width = textWidthPx(name.text, frame.textPx);
         const point = { x: toX(name.x), y: toY(name.y) };
         let best: { anchor: Point; side: LeaderSide; box: Box; covered: number } | undefined;
         search: for (let step = 0; step <= LEADER_STEPS; step += 1) {
@@ -366,6 +384,6 @@ function leaderBox(anchor: { readonly x: number; readonly y: number }, side: Lea
 export function leaderNameBox(name: LeaderName, text: string, plot: PlotRange, frame: NameFrame = COLUMN_PLOT_FRAME): Box {
     const xUnit = (plot.x.max - plot.x.min) / frame.widthPx;
     const yUnit = (plot.y.max - plot.y.min) / frame.heightPx;
-    const box = leaderBox({ x: 0, y: 0 }, name.side, text.length * CHARACTER_SHARE * frame.textPx, LINE_SHARE * frame.textPx);
+    const box = leaderBox({ x: 0, y: 0 }, name.side, textWidthPx(text, frame.textPx), LINE_SHARE * frame.textPx);
     return { left: name.x + box.left * xUnit, right: name.x + box.right * xUnit, bottom: name.y + box.bottom * yUnit, top: name.y + box.top * yUnit };
 }

@@ -193,7 +193,7 @@ describe("createReportSessionAgent", () => {
         expect(doNot).toContain("Use a run figure for a plot that a chart draws");
     });
 
-    test("the prompt teaches the preset of a field plot, its statistics, and its track", () => {
+    test("the prompt teaches the preset of a field plot, its statistics, its track, and its trees", () => {
         const rule = reportSessionPrompt.slice(reportSessionPrompt.indexOf("A plot of a field takes its preset"));
         expect(rule).toStartWith("A plot of a field takes its preset");
         const paragraph = rule.slice(0, rule.indexOf("\n\n")).replace(/\s+/g, " ");
@@ -201,6 +201,8 @@ describe("createReportSessionAgent", () => {
         expect(paragraph).toContain("binds as a statistic of the chart block");
         // A second table of the figure resolves as the binding does.
         expect(paragraph).toContain("binds as the track of the chart block");
+        // A clustered heatmap carries its dendrograms, thus the edge table of each clustered axis binds as a tree.
+        expect(paragraph).toContain("binds as the tree of that axis");
         // The paragraph names the mechanism and no dataset, and it states no count.
         expect(paragraph).not.toMatch(/\d/);
     });

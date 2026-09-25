@@ -8,10 +8,11 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { VOLCANO_EFFECT_THRESHOLD, VOLCANO_P_THRESHOLD } from "../chart-presets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../chart.js";
-import { CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
+import { exportOption } from "../chart-renderers.js";
+import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
-import { BELOW_RESOLUTION_SYMBOL, DENSE_NULL_SYMBOL_PX, DENSE_NULL_Z, DENSE_SIGNAL_SYMBOL_PX, POINT_NAMES } from "./dense.js";
-import { leaderNameBox, overlaps, type LeaderName } from "./label-room.js";
+import { BELOW_RESOLUTION_SYMBOL, DENSE_NULL_SYMBOL_PX, DENSE_NULL_Z, DENSE_SIGNAL_SYMBOL_PX, niceCeiling, POINT_NAMES } from "./dense.js";
+import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, type LeaderName, type NameFrame } from "./label-room.js";
 import { FIGURE_MODULES } from "./index.js";
 import { VOLCANO_FIGURE, VOLCANO_LABEL_COUNT } from "./volcano.js";
 
@@ -107,6 +108,9 @@ describe("the volcano figure", () => {
         const series = seriesOf(derive());
         const names = series.at(-1) as EchartOption;
         expect(names.name).toBe(POINT_NAMES);
+        // The page frame reads a window 1280 pixels wide, thus the runtime hides a name that still overlaps another
+        // on a narrower window.
+        expect(names.labelLayout).toEqual({ hideOverlap: true });
         // `l(1)G0196` is significant under the effect cut, and the gene with no symbol names nothing, thus
         // neither takes a place. `Rgk1` is the eleventh signal gene with a name.
         expect((names.data as EchartOption[]).map((item) => item.name)).toEqual(["Kal1", "Ant2", "Hml", "sesB", "CG3770", "Oadh", "gas", "sv2", "Ama", "LpR2"]);
@@ -125,7 +129,7 @@ describe("the volcano figure", () => {
         const boxes = items.map((item) => {
             const [x, y] = item.value as number[];
             const placed: LeaderName = { x, y, side: (item.label as EchartOption).position as LeaderName["side"] };
-            return leaderNameBox(placed, String(item.name), plot);
+            return leaderNameBox(placed, String(item.name), plot, PAGE_PLOT_FRAME);
         });
         for (const [index, box] of boxes.entries()) {
             for (const other of boxes.slice(index + 1)) expect(overlaps(box, other)).toBe(false);
@@ -247,6 +251,37 @@ describe("the volcano figure", () => {
         expect(pairs.every((pair) => typeof pair[0] === "number" && typeof pair[1] === "number")).toBe(true);
         expect(pairs).toContainEqual([-4.619, -Math.log10(1.7e-159)]);
     });
+});
+
+describe("the volcano names at each size", () => {
+    const option = derive();
+    const x = option.xAxis as EchartOption;
+    const peak = Math.max(...ROWS.flatMap((row) => (row.padj === "" || !(Number(row.padj) > 0) ? [] : [-Math.log10(Number(row.padj))])));
+    const plot = { x: { min: x.min as number, max: x.max as number }, y: { min: 0, max: niceCeiling(peak) } };
+
+    /** The page option, and the export option of each export size, with the frame where its names place. */
+    const renders: Array<readonly [string, EchartOption, NameFrame]> = [
+        ["page", option, PAGE_PLOT_FRAME],
+        ...Object.entries(CHART_EXPORT_SIZES).map(
+            ([kind, size]) =>
+                [kind, exportOption(option, size.textPx, size.widthPx, size.heightPx), EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]] as const,
+        ),
+    ];
+
+    for (const [kind, render, frame] of renders) {
+        it(`prints no name over another name at the ${kind} size`, () => {
+            const items = (seriesOf(render).find((entry) => entry.name === POINT_NAMES)?.data ?? []) as EchartOption[];
+            expect(items.length).toBeGreaterThan(0);
+            const boxes = items.map((item) => {
+                const [nameX, nameY] = item.value as number[];
+                const placed: LeaderName = { x: nameX, y: nameY, side: (item.label as EchartOption).position as LeaderName["side"] };
+                return leaderNameBox(placed, String(item.name), plot, frame);
+            });
+            for (const [index, box] of boxes.entries()) {
+                for (const other of boxes.slice(index + 1)) expect(overlaps(box, other)).toBe(false);
+            }
+        });
+    }
 });
 
 describe("the dense volcano", () => {

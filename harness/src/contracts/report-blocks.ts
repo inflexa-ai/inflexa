@@ -53,6 +53,9 @@ const ChartTypeSchema = z.enum([
     "gsea",
     "oncoprint",
     "lollipop",
+    "upset",
+    "sankey",
+    "locuszoom",
 ]);
 
 /** The per-row transforms of a channel. Each derived value comes from one cell. */
@@ -128,7 +131,7 @@ export const ChartChannelSchema = z.union([
 
 /** The teaching text of the continuous color channel. The quick path and a series both carry it. */
 const COLOR_DESCRIPTION =
-    "A numeric column that colors each point or bar on a continuous scale, for example the expression of a gene over an embedding or the adjusted p of an enriched set. A column that holds values on both sides of zero takes a diverging scale centered on zero, and every other column takes a sequential scale. It is legal on a `scatter`, a `bar`, an `embedding`, and a `dotplot`, and never beside a `group` channel. On an `embedding` a zero draws in a light gray ground, the scale clips at the 99th percentile, and the high values draw on top. On a `dotplot` the scale is sequential. A row whose cell is not numeric draws no point.";
+    "A numeric column that colors each point or bar on a continuous scale, for example the expression of a gene over an embedding or the adjusted p of an enriched set. A column that holds values on both sides of zero takes a diverging scale centered on zero, and every other column takes a sequential scale. It is legal on a `scatter`, a `bar`, an `embedding`, a `dotplot`, and a `locuszoom`, and never beside a `group` channel. On an `embedding` a zero draws in a light gray ground, the scale clips at the 99th percentile, and the high values draw on top. On a `dotplot` the scale is sequential. On a `locuszoom` it names the r² of each variant with the lead variant, and the points take the five LD bins of LocusZoom. A row whose cell is not numeric draws no point, except on a `locuszoom`, where it draws gray.";
 
 /** The teaching text of the size channel. The quick path and a series both carry it. */
 const SIZE_DESCRIPTION =
@@ -168,7 +171,7 @@ const HIT_DESCRIPTION =
 
 /** The teaching text of the metric channel. */
 const METRIC_DESCRIPTION =
-    "The ranking metric at the rank of the row, for example the signed statistic of a differential test. The bottom panel draws it as an area. It is legal on a `gsea`.";
+    "The second numeric column of a figure. On a `gsea` it is the ranking metric at the rank of the row, for example the signed statistic of a differential test, and the bottom panel draws it as an area. On a `locuszoom` it is the recombination rate in cM/Mb at the position of the row, and it draws as a line on a right axis. It is legal on a `gsea` and a `locuszoom`.";
 
 /** The teaching text of the tracks channel. */
 const TRACKS_DESCRIPTION =
@@ -185,19 +188,21 @@ const LONE_BOUND = { message: "An interval has two bounds. Give `low` and `high`
 /** The mapping from a data column to a visual channel. Each channel is optional. */
 const ChartEncodingSchema = z
     .strictObject({
-        x: ChartChannelSchema.optional().describe("The channel on the x axis."),
-        y: ChartChannelSchema.optional().describe("The channel on the y axis."),
+        x: ChartChannelSchema.optional().describe(
+            "The channel on the x axis. On an `upset` it names the element of each membership row, for example a sample. On a `sankey` it names the source node of each flow. On a `locuszoom` it names the position in base pairs on one chromosome, and the axis reads in megabases.",
+        ),
+        y: ChartChannelSchema.optional().describe("The channel on the y axis. On a `sankey` it names the target node of each flow."),
         group: ChartChannelSchema.optional().describe(
-            "The column that splits and colors the series. On a `pie` it names the slices. On a `lollipop` it names the mutation class of each row, and a common class of the MAF standard takes its fixed color.",
+            "The column that splits and colors the series. On a `pie` it names the slices. On a `lollipop` it names the mutation class of each row, and a common class of the MAF standard takes its fixed color. On an `upset` it names the set of each membership row, for example a mutated gene. At most 12 sets. On a `sankey` it is optional, and it names the category of each flow: each flow takes the palette color of its category, and the nodes draw gray. On a `locuszoom` it is optional, and it names the chromosome of each row. The rows must hold one chromosome, and the x title names it.",
         ),
         value: ChartChannelSchema.optional().describe(
-            "The value column of a `pie` and a `heatmap`. On a `pie` it sizes each slice, and `group` names the slices. On a `heatmap` it colors each cell. On an `oncoprint` it names the alteration class of each gene and sample, for example `Missense_Mutation`. A row with an empty class names a sample with no alteration.",
+            "The value column of a `pie`, a `heatmap`, and a `sankey`. On a `pie` it sizes each slice, and `group` names the slices. On a `heatmap` it colors each cell. On a `sankey` it gives the size of each flow. On an `oncoprint` it names the alteration class of each gene and sample, for example `Missense_Mutation`. A row with an empty class names a sample with no alteration.",
         ),
         label: z
             .string()
             .optional()
             .describe(
-                "The column that names each point. The name rides the tooltip of a bar, a line, and a scatter. On a `lollipop` the three largest counts carry it as text, for example the protein change. On a `volcano` the ten most significant signal points show it, and on a `manhattan` the lead variant of each chromosome shows it.",
+                "The column that names each point. The name rides the tooltip of a bar, a line, and a scatter. On a `lollipop` the three largest counts carry it as text, for example the protein change. On a `volcano` the ten most significant signal points show it, on a `manhattan` the lead variant of each chromosome shows it, and on a `locuszoom` the lead variant shows it.",
             ),
         color: ChartChannelSchema.optional().describe(COLOR_DESCRIPTION),
         size: ChartChannelSchema.optional().describe(SIZE_DESCRIPTION),
@@ -242,6 +247,33 @@ export const ChartTrackSchema = z.strictObject({
         .optional()
         .describe("The column of the track table that holds the full length, for example the length of the protein. The x axis then ends at that length."),
 });
+
+/**
+ * The tree of one category axis of a heatmap: an edge list, and the three columns of it that the figure reads.
+ *
+ * The tree binds a whole table exactly as the chart binding does, thus it resolves and it grounds the same way.
+ */
+export const ChartTreeSchema = z.strictObject({
+    binding: ArtifactTableReferenceSchema.describe(
+        "The whole-table artifact of the tree: one row for each edge of the linkage, for example the gene tree of a hierarchical clustering.",
+    ),
+    parent: z.string().min(1).describe("The column of the tree table that names the parent node of each edge."),
+    child: z
+        .string()
+        .min(1)
+        .describe(
+            "The column of the tree table that names the child node of each edge. A leaf is a child that is never a parent, and it equals one category of its axis.",
+        ),
+    height: z.string().min(1).describe("The column of the tree table that holds the height of the parent node of each edge, for example the merge distance."),
+});
+
+/** The trees of the two category axes of a heatmap. A member names one axis, and at least one member is present. */
+const ChartTreesSchema = z
+    .strictObject({
+        x: ChartTreeSchema.optional().describe("The tree of the `x` categories. It draws above the matrix and above the tracks."),
+        y: ChartTreeSchema.optional().describe("The tree of the `y` categories. It draws at the left of the row names."),
+    })
+    .refine((trees) => trees.x !== undefined || trees.y !== undefined, { message: "The trees name at least one axis. Give `x`, `y`, or both." });
 
 /** The channels of one series. A series plots two channels, thus `x` and `y` are both present. */
 const ChartSeriesEncodingSchema = z
@@ -416,7 +448,9 @@ export const ChartBlockSchema = z
                 "`volcano` (x effect, y p), `manhattan` (x cumulative position, y p, group chromosome), `ma` (x mean, y effect, p), `km` (x time, y survival, group arm, low, high, censor, risk), " +
                 "`pca` (x and y components, group, shape, label), `embedding` (x and y of a UMAP or a t-SNE, group or color, facet), `dotplot` (y category, x category or value, size, color), " +
                 "`forest` (y term, x estimate, low, high, p, size), `roc` (x false positive rate, y true positive rate, group), `qq` (x expected, y observed, low, high), " +
-                "`gsea` (x rank, y running score, group set, hit, metric), `oncoprint` (x sample, y gene, value alteration class, tracks), and `lollipop` (x amino-acid position, y count, group class, label, and the track of the protein domains). " +
+                "`gsea` (x rank, y running score, group set, hit, metric), `oncoprint` (x sample, y gene, value alteration class, tracks), `lollipop` (x amino-acid position, y count, group class, label, and the track of the protein domains), " +
+                "`upset` (x element, group set, one row for each member of each set, and the figure counts the intersections), `sankey` (x source node, y target node, value flow, group, one row for each flow with no cycle), " +
+                "and `locuszoom` (x position on one chromosome, y p, color r² with the lead variant, label variant, metric recombination rate, group chromosome, and the track of the genes). " +
                 "A preset applies its own transform and its own guide lines.",
         ),
         encoding: ChartEncodingSchema.optional().describe("The channels of the quick path."),
@@ -443,7 +477,10 @@ export const ChartBlockSchema = z
                 "One to four statistics that the figure prints inside the plot, at the place that its field uses, for example a log-rank p, an AUC, or the genomic inflation λ. Each value binds one cell of a pinned artifact, and the page prints it in the number format of its column. It is legal on a `km`, a `roc`, a `qq`, and a `gsea`.",
             ),
         track: ChartTrackSchema.optional().describe(
-            "A second table that the figure draws beside the bound table, for example the protein domains under the axis of a lollipop. It is legal on a `lollipop`.",
+            "A second table that the figure draws beside the bound table, for example the protein domains under the axis of a lollipop or the genes under a regional association plot. It is legal on a `lollipop` and a `locuszoom`.",
+        ),
+        trees: ChartTreesSchema.optional().describe(
+            "The dendrogram of each category axis of a `heatmap`: one edge table for each axis, for example the gene tree and the sample tree of a hierarchical clustering. The axis takes the depth-first leaf order of its tree, thus an `orderBy` on the same axis refuses. It is legal on a `heatmap`.",
         ),
         caption: z.string().optional(),
     })
@@ -591,6 +628,7 @@ export type ChartThresholds = z.infer<typeof ChartThresholdsSchema>;
 export type ChartComposition = z.infer<typeof ChartCompositionSchema>;
 export type ChartStatistic = z.infer<typeof ChartStatisticSchema>;
 export type ChartTrack = z.infer<typeof ChartTrackSchema>;
+export type ChartTree = z.infer<typeof ChartTreeSchema>;
 export type ChartType = z.infer<typeof ChartTypeSchema>;
 export type TextList = z.infer<typeof TextListSchema>;
 export type TextBlock = z.infer<typeof TextBlockSchema>;

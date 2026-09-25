@@ -9,9 +9,12 @@
  * - The lead variant of each chromosome that passes the genome-wide line is the row with the smallest p of
  *   that chromosome, as the `annotateTop` rule of qqman gives it. The ten most significant lead variants
  *   show their names over their peaks, clear of each other and of the points, with a leader line to each
- *   peak. The label of the genome-wide line sits under the line, clear of them.
+ *   peak. The label of the genome-wide line sits over the line, clear of them.
  * - A chromosome name prints where it keeps a gap from the name before it, thus the small chromosomes never
  *   print two names on top of each other.
+ * - The lead names and the chromosome names place again for the plot and the text size of each export. A render
+ *   tries the most significant lead names whose summed text width fits the plot width, and a name that finds no
+ *   place clear of the earlier names does not print. Thus a narrow export prints fewer names.
  * - The chromosomes read in genome order whatever the order of the rows: the numbered ones, then X, Y, and MT,
  *   then each other name. The colors, the names, and the leads read that order.
  * - A variant whose stored p is 0 draws an upward triangle at the top of the plotted range, and it leads its
@@ -28,7 +31,7 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, type ChartBlock, type ChartComposition } from "../../contracts/report-blocks.js";
 import { MANHATTAN_P_THRESHOLD } from "../chart-presets.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { CHART_INK, CHART_PAGE_TEXT_PX, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
+import { CHART_INK, CHART_PALETTE, MUTED_CHART_COLOR } from "../design.js";
 import { formatNumberCell, typographicExponent } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import { categoryName, transformColumn } from "./common.js";
@@ -47,11 +50,13 @@ import {
     niceCeiling,
     plottedValues,
     pointLayer,
+    POINT_NAMES,
     pointNameSeries,
     seriesOf,
+    sizedSeries,
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
-import { DOUBLE_COLUMN_PLOT_FRAME, placeLeaderNames, type Box, type NameFrame } from "./label-room.js";
+import { placeLeaderNames, textWidthPx, type Box, type NamedPoint, type NameFrame } from "./label-room.js";
 
 /** The two colors that alternate between the chromosomes: the blue of the palette and the muted gray. */
 export const MANHATTAN_COLORS = [CHART_PALETTE[0], MUTED_CHART_COLOR] as const;
@@ -72,13 +77,28 @@ const READS: ReadonlySet<FigureMember> = new Set(["x", "y", "group", "label"]);
 export const MANHATTAN_LABEL_COUNT = 10;
 
 /**
- * The smallest distance between two chromosome names that both print, as a share of the drawn position span.
- *
- * The small chromosomes lie close together. The name of a chromosome whose middle sits nearer than this to
- * the middle of the last printed name does not print. The share holds two digits apart at a single journal
- * column, and a name past it prints at every width of the page.
+ * The lead names that a render tries to place: the most significant ones, in order, while the summed width of
+ * their text fits the width of the plot. A narrow export thus tries fewer names, and each of them keeps room
+ * beside its peak.
  */
-export const MANHATTAN_NAME_GAP = 0.025;
+function leadsThatFit(names: readonly NamedPoint[], frame: NameFrame): NamedPoint[] {
+    let used = 0;
+    let count = 0;
+    for (const name of names) {
+        used += textWidthPx(name.text, frame.textPx);
+        if (used > frame.widthPx) break;
+        count += 1;
+    }
+    return names.slice(0, count);
+}
+
+/**
+ * The smallest gap between two chromosome names that both print, as a share of the text size.
+ *
+ * The small chromosomes lie close together. The name of a chromosome whose text comes nearer than this gap to
+ * the text of the last printed name, in the plot of a render, does not print in that render.
+ */
+export const MANHATTAN_NAME_GAP_SHARE = 0.5;
 
 /**
  * The label place of the genome-wide guide: inside the plot at the right end, over the line.
@@ -91,24 +111,16 @@ const GUIDE_OVER_LINE = "insideEndTop";
 /** The gap between a guide line and its label, in pixels: the default distance of the chart runtime. */
 const GUIDE_LABEL_DISTANCE_PX = 5;
 
-/** The width of one character, and the height of one line, of the label text, as a share of the text size. */
-const GUIDE_CHARACTER_SHARE = 0.6;
+/** The height of one line of the label text, as a share of the text size. */
 const GUIDE_LINE_SHARE = 1.3;
 
-/** The plot of the page chart body, in pixels, and the page text size: the largest label box of the page. */
-const PAGE_PLOT_FRAME: NameFrame = { widthPx: 780, heightPx: 290, textPx: CHART_PAGE_TEXT_PX };
-
 /**
- * The box in data units that the label of the genome-wide line takes at the right end of the line, over it.
- * The box is the larger of the box of the page plot and the box of the double-column plot, as a share of each.
+ * The box in data units that the label of the genome-wide line takes at the right end of the line, over it, in
+ * the plot of one render.
  */
-export function guideLabelBox(line: number, x: { readonly min: number; readonly max: number }, top: number, text: string): Box {
-    let width = 0;
-    let height = 0;
-    for (const frame of [PAGE_PLOT_FRAME, DOUBLE_COLUMN_PLOT_FRAME]) {
-        width = Math.max(width, (text.length * GUIDE_CHARACTER_SHARE * frame.textPx + GUIDE_LABEL_DISTANCE_PX) / frame.widthPx);
-        height = Math.max(height, (GUIDE_LINE_SHARE * frame.textPx + GUIDE_LABEL_DISTANCE_PX) / frame.heightPx);
-    }
+export function guideLabelBox(line: number, x: { readonly min: number; readonly max: number }, top: number, text: string, frame: NameFrame): Box {
+    const width = (textWidthPx(text, frame.textPx) + GUIDE_LABEL_DISTANCE_PX) / frame.widthPx;
+    const height = (GUIDE_LINE_SHARE * frame.textPx + GUIDE_LABEL_DISTANCE_PX) / frame.heightPx;
     return { left: x.max - width * (x.max - x.min), right: x.max, bottom: line, top: line + height * top };
 }
 
@@ -116,17 +128,21 @@ export function guideLabelBox(line: number, x: { readonly min: number; readonly 
 const CHROMOSOME_NAMES = "Chromosome names";
 
 /**
- * The chromosomes whose name prints, in order: each chromosome whose middle sits at least `MANHATTAN_NAME_GAP`
- * of the span past the middle of the last printed name. The first chromosome always prints.
+ * The chromosomes whose name prints in the plot of one render, in order. A name prints where its text starts at
+ * least `MANHATTAN_NAME_GAP_SHARE` of the text size past the end of the text of the last printed name. Each text
+ * centers under the middle of its chromosome. The first chromosome always prints.
  */
-function printedNames(found: readonly Chromosome[], span: number): Chromosome[] {
+function printedNames(found: readonly Chromosome[], x: { readonly min: number; readonly max: number }, frame: NameFrame): Chromosome[] {
+    const toPx = (value: number): number => ((value - x.min) / (x.max - x.min)) * frame.widthPx;
+    const gap = MANHATTAN_NAME_GAP_SHARE * frame.textPx;
     const printed: Chromosome[] = [];
-    let last: number | undefined;
+    let lastEnd: number | undefined;
     for (const chromosome of found) {
-        const middle = (chromosome.low + chromosome.high) / 2;
-        if (last === undefined || middle - last >= MANHATTAN_NAME_GAP * span) {
+        const middle = toPx((chromosome.low + chromosome.high) / 2);
+        const half = textWidthPx(categoryName(chromosome.name), frame.textPx) / 2;
+        if (lastEnd === undefined || middle - half - lastEnd >= gap) {
             printed.push(chromosome);
-            last = middle;
+            lastEnd = middle + half;
         }
     }
     return printed;
@@ -136,8 +152,8 @@ function printedNames(found: readonly Chromosome[], span: number): Chromosome[] 
  * The series of the chromosome names: one point with no symbol under the middle of each printed chromosome,
  * at the x axis, with the name as its label.
  *
- * The gap rule decides which names print, thus two names never print on top of each other at a normal width.
- * On a plot too narrow for the gap, the runtime measures the labels and hides a name that overlaps another.
+ * The gap rule decides which names print in each render, thus two names never print on top of each other. The
+ * runtime also measures the labels and hides a name that overlaps another, for a page narrower than its frame.
  * The series follows the points in the series list, thus the points still read the shared payload.
  */
 function chromosomeNames(found: readonly Chromosome[]): EchartOption {
@@ -311,22 +327,18 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
     const top = niceCeiling(Math.max(peak, line, zeroRows.length > 0 ? zeroY : 0));
     const labelColumn = encoding.label;
     const names = labelColumn === undefined ? [] : leadRows.map((index) => ({ x: xs[index] ?? 0, y: ys[index] ?? 0, text: String(rows[index][labelColumn]) }));
-    const placed =
-        low !== undefined && high !== undefined
-            ? placeLeaderNames(
-                  names,
-                  { xs, ys, pointPx: DENSE_NULL_SYMBOL_PX },
-                  { x: { min: low, max: high }, y: { min: 0, max: top } },
-                  LEAD_NAME_SIDES,
-                  top,
-                  // A paper prints a Manhattan plot across the page, and a genome of 22 chromosomes leaves no room
-                  // for ten names in one column.
-                  DOUBLE_COLUMN_PLOT_FRAME,
-                  [guideLabelBox(line, { min: low, max: high }, top, guideText(MANHATTAN_P_THRESHOLD))],
-              )
-            : [];
+    const span = low !== undefined && high !== undefined ? { min: low, max: high } : undefined;
+    const text = sizedSeries([CHROMOSOME_NAMES, POINT_NAMES], (frame) => {
+        if (span === undefined) return [];
+        const tried = leadsThatFit(names, frame);
+        const placed = placeLeaderNames(tried, { xs, ys, pointPx: DENSE_NULL_SYMBOL_PX }, { x: span, y: { min: 0, max: top } }, LEAD_NAME_SIDES, top, frame, [
+            guideLabelBox(line, span, top, guideText(MANHATTAN_P_THRESHOLD), frame),
+        ]);
+        return [chromosomeNames(printedNames(found, span, frame)), ...pointNameSeries(tried, placed)];
+    });
     return ok({
         ...option,
+        ...text.member,
         legend: { show: false },
         xAxis: {
             ...axisOf(option, "xAxis"),
@@ -358,8 +370,7 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
                       },
                   ]
                 : []),
-            ...(found.length > 0 && low !== undefined && high !== undefined ? [chromosomeNames(printedNames(found, high - low))] : []),
-            ...pointNameSeries(names, placed),
+            ...text.page,
         ],
     });
 }

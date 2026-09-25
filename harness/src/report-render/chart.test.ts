@@ -1627,8 +1627,10 @@ describe("renderChart", () => {
         const block = chartBlock("bar", { x: "day", y: "count" }, { id: "b4", title: "Panel title" });
         const html = renderChart(block, new ReferenceLedger(), derive(block, [{ day: "Mon", count: 1 }]));
         // The title line carries the marker of the whole-table binding, thus the card names its appendix
-        // entry beside its title.
-        expect(html).toContain(`<div class="report-chart-title">Panel title<span class="report-marker"><a href="#ref-1">[1]</a></span></div>`);
+        // entry beside its title, and the keyboard download control closes the line.
+        expect(html).toContain(
+            `<div class="report-chart-title">Panel title<span class="report-marker"><a href="#ref-1">[1]</a></span><button type="button" id="chart-b4-download" class="report-chart-download"`,
+        );
         expect(html).toContain(`class="report-chart-card corner-accents"`);
     });
 

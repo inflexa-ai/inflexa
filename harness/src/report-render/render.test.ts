@@ -5,6 +5,7 @@ import { ok } from "neverthrow";
 import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
 import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, TSPROV_ASSET, tableSidecarName } from "./assets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
+import { chartToolbox, DATA_VIEW_FUNCTION, EXPORT_MENU_FUNCTION, MENU_FAULT_CLASS, MENU_FAULT_SHOWN_CLASS, MENU_OPEN_CLASS } from "./chart-toolbox.js";
 import {
     CHART_BODY_PX,
     CHART_EXPORT_SIZES,
@@ -46,6 +47,7 @@ import { statisticsGraphic } from "./figures/common.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
 import { LINEAGE_BLOCK_ATTRIBUTE, LINEAGE_CONTROL_CLASS, LINEAGE_KEY_ATTRIBUTE, LINEAGE_KEYS_ATTRIBUTE } from "./views/lineage.js";
+import { DOWNLOAD_CONTROL_LABEL, HYBRID_FAULT_NOTE } from "./views/chart-view.js";
 import { GRID_COUNT_CLASS, GRID_MOUNT_ATTRIBUTE, GRID_NOTE_CLASS } from "./views/values.js";
 
 /**
@@ -659,8 +661,8 @@ describe("the lineage stamp and the popover control", () => {
         // Absence of the document is a normal condition. The page then holds the markup that it holds
         // without the lineage, thus nothing on it opens a panel.
         expect(html).not.toContain("data-lineage");
-        // The export controls of a chart card are the one button kind of a page with no document.
-        expect(load(html)("button").not(".report-chart-export-button").length).toBe(0);
+        // The download control of a chart card and the entries of its menu are the one button kind of a page with no document.
+        expect(load(html)("button").not(".report-chart-menu-item, .report-chart-download").length).toBe(0);
         expect(html).not.toContain(LINEAGE_POPOVER);
         expect(load(html)(`.${LINEAGE_CONTROL_CLASS}`).length).toBe(0);
     });
@@ -1816,6 +1818,45 @@ describe("the evidentiary bindings in the appendix", () => {
         expect(graphic.style.text).toBe("Log-rank p = 1.3 × 10⁻³\nHR = 0.53");
     });
 
+    it("marks the tree of each axis of a chart after its binding, and lists each one in the appendix", () => {
+        const SAMPLE_TREE = "runs/run-1/step-c/output/sample_tree.csv";
+        const GENE_TREE = "runs/run-1/step-c/output/gene_tree.csv";
+        const tree = (path: string) => ({
+            binding: { kind: "artifact-table" as const, path, hash: PINNED_HASH },
+            parent: "parent",
+            child: "child",
+            height: "height",
+        });
+        const chart: ChartBlock = {
+            kind: "chart",
+            id: "hm",
+            title: "Top genes",
+            binding: { kind: "artifact-table", path: PINNED, hash: PINNED_HASH },
+            chartType: "heatmap",
+            encoding: { x: "day", y: "count" },
+            trees: { y: tree(GENE_TREE), x: tree(SAMPLE_TREE) },
+        };
+        const figure: FigureModule = {
+            reads: new Set<FigureMember>(["x", "y", "trees"]),
+            derive: (_block, rows) =>
+                ok({
+                    xAxis: { type: "value" },
+                    yAxis: { type: "value" },
+                    series: [{ type: "scatter", name: "count", data: rows.map((row) => [row.day, row.count]) }],
+                }),
+        };
+        const edges = [{ parent: "n1", child: "a", height: 1 }];
+        const values: RenderValues = { hm: { type: "table", rows: [{ day: 1, count: 2 }], trees: { x: { rows: edges }, y: { rows: edges } } } };
+        const document: ReportDocument = { title: "T", sections: [{ kind: "section", id: "s", title: "S", blocks: [chart] }] };
+        const page = load(renderReportPage(document, values, { chart: { figures: { heatmap: figure } } })._unsafeUnwrap().html);
+        const markers = page(".report-chart-title .report-marker a")
+            .toArray()
+            .map((node) => page(node).attr("href"));
+        expect(markers).toEqual(["#ref-1", "#ref-2", "#ref-3"]);
+        expect(page("li#ref-2").text()).toContain(SAMPLE_TREE);
+        expect(page("li#ref-3").text()).toContain(GENE_TREE);
+    });
+
     it("gives one number to a table and a chart over one artifact", () => {
         const html = pageOf([tableBlock(PINNED, PINNED_HASH), chartBlock(PINNED, PINNED_HASH)], oneRow);
         const page = load(html);
@@ -2677,6 +2718,47 @@ describe("the chart bootstrap under a broken chart", () => {
     });
 });
 
+describe("the chart bootstrap binds the toolbox", () => {
+    /** Run the bootstrap over one container whose option carries the toolbox of a scatter. Give the set options and the window listeners. */
+    function bootToolbox(): { applied: Record<string, unknown>[]; listeners: Record<string, () => void> } {
+        const applied: Record<string, unknown>[] = [];
+        const listeners: Record<string, () => void> = {};
+        const win: Record<string, unknown> = {
+            addEventListener: (event: string, listener: () => void) => {
+                listeners[event] = listener;
+            },
+        };
+        const option = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "scatter", data: [[1, 2]] }], toolbox: chartToolbox("scatter") };
+        const container = {
+            getAttribute: () => "chart-points",
+            nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+        };
+        const instance = { on: (_event: string, listener: () => void) => listener(), setOption: (given: Record<string, unknown>) => applied.push(given) };
+        const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
+        const echarts = { init: () => instance, getInstanceByDom: () => instance, registerCustomSeries: () => undefined };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
+        expect(errors).toEqual([]);
+        return { applied, listeners };
+    }
+
+    it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
+        const { applied } = bootToolbox();
+        const feature = (applied[0].toolbox as { feature: Record<string, Record<string, unknown>> }).feature;
+        expect(typeof feature.myExport.onclick).toBe("function");
+        expect((feature.myExport.onclick as { name: string }).name).toBe(EXPORT_MENU_FUNCTION);
+        expect((feature.dataView.optionToContent as { name: string }).name).toBe(DATA_VIEW_FUNCTION);
+    });
+
+    it("hides the toolbox of each chart for the print, and shows it again after the print", () => {
+        const { applied, listeners } = bootToolbox();
+        listeners.beforeprint();
+        expect(applied[1]).toEqual({ toolbox: { show: false } });
+        listeners.afterprint();
+        expect(applied[2]).toEqual({ toolbox: { show: true } });
+    });
+});
+
 describe("the chart bootstrap registers the named renderers", () => {
     /**
      * Run the emitted bootstrap over one container whose option names two renderers. Give the set option, the
@@ -3021,15 +3103,62 @@ describe("the chart exports", () => {
         expect(second.html).toBe(first.html);
     });
 
-    it("carries the three PNG controls under the chart body", () => {
+    it("carries a closed download menu after the option script, with the two SVG links and the three PNG entries", () => {
         const page = chartPage(bars, barRows);
         const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
-        const controls = $(".report-chart-export button[data-export]");
+        // The bootstrap reads the option from the next sibling of the container, thus the menu follows the script.
+        expect($("#chart-bars").next().is("script[type='application/json']")).toBe(true);
+        const menu = $("#chart-bars").next().next();
+        expect(menu.attr("id")).toBe("chart-bars-menu");
+        expect(menu.attr("role")).toBe("menu");
+        expect(menu.attr("aria-label")).toBe("Download the chart");
+        // The design sheet shows a menu that the page marks open, thus the menu of a new page stands closed.
+        expect(menu.attr("class")).toBe("report-chart-menu");
+        const items = menu.find("[role='menuitem']");
+        expect(items.map((_index, element) => $(element).text().trim()).get()).toEqual([
+            "SVG · 89 mm",
+            "SVG · 183 mm",
+            "PNG · 89 mm",
+            "PNG · 183 mm",
+            "PNG · 16:9",
+        ]);
+        // The page moves the focus between the entries, thus no entry takes a place in the tab order.
+        expect(items.map((_index, element) => $(element).attr("tabindex")).get()).toEqual(["-1", "-1", "-1", "-1", "-1"]);
+        expect(menu.find("a[download]").length).toBe(2);
+        const controls = menu.find("button[data-export]");
         expect(controls.map((_index, element) => $(element).attr("data-export")).get()).toEqual(["single", "double", "slide"]);
-        // Each control names the container of its chart, thus the bootstrap finds the kept option.
+        // Each entry names the container of its chart, thus the bootstrap finds the kept option.
         expect(controls.first().attr("data-chart")).toBe("chart-bars");
         expect(controls.first().attr("data-file")).toBe("pathway-scores-89mm.png");
         expect(controls.first().attr("type")).toBe("button");
+        expect($(".report-chart-card > *").length).toBe(3);
+    });
+
+    it("gives the title line a download control that the keyboard reaches and that opens the menu", () => {
+        const page = chartPage(bars, barRows);
+        const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+        // The runtime draws the toolbox icon on the canvas and binds a mouse click alone, thus a keyboard reaches
+        // the menu through this control.
+        const control = $(".report-chart-title > button.report-chart-download");
+        expect(control.length).toBe(1);
+        expect(control.attr("id")).toBe("chart-bars-download");
+        expect(control.attr("type")).toBe("button");
+        expect(control.attr("aria-haspopup")).toBe("menu");
+        expect(control.attr("aria-expanded")).toBe("false");
+        expect(control.attr("aria-controls")).toBe("chart-bars-menu");
+        expect(control.attr("data-chart-menu")).toBe("chart-bars");
+        expect(control.attr("tabindex")).toBeUndefined();
+        expect(control.text()).toBe(DOWNLOAD_CONTROL_LABEL);
+        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-download \{\s*display: none;/);
+    });
+
+    it("puts the toolbox of the chart type into the page option, with each handler as the name of a page function", () => {
+        const page = chartPage(bars, barRows);
+        const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
+        const option = JSON.parse(load(rendered.html)("script[type='application/json']").text()) as Record<string, unknown>;
+        expect(option.toolbox).toEqual(chartToolbox("bar"));
+        // Each export removes the toolbox, thus a file never shows it.
+        for (const asset of rendered.dataAssets.filter((entry) => entry.name.endsWith(".svg"))) expect(asset.bytes).not.toContain("Download");
     });
 
     it("exports every row of a dense chart, whose page option reads the payload", () => {
@@ -3048,17 +3177,46 @@ describe("the chart exports", () => {
         expect(cloud?.[1].match(/M/g)?.length).toBe(6000);
     });
 
-    it("stages no SVG for a chart past the crowd row count, and the card states that the PNG serves it", () => {
+    it("stages no SVG for a scatter past the crowd row count, and the menu names the hybrid SVG that the page builds", () => {
         const rows: Record<string, string | number>[] = [];
         for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) rows.push({ x: index, y: index % 97 });
-        const scatter: ChartBlock = { kind: "chart", id: "crowd", binding, chartType: "scatter", encoding: { x: "x", y: "y" } };
+        const scatter: ChartBlock = { kind: "chart", id: "crowd", title: "Crowd", binding, chartType: "scatter", encoding: { x: "x", y: "y" } };
         const page = chartPage(scatter, rows, ["x", "y"]);
         const rendered = renderReportPage(page.document, page.values)._unsafeUnwrap();
 
         expect(rendered.dataAssets.filter((asset) => asset.name.endsWith(".svg"))).toEqual([]);
         const $ = load(rendered.html);
-        expect($(".report-chart-export-note").text()).toContain("PNG");
-        expect($(".report-chart-export button[data-export]").length).toBe(3);
+        const hybrid = $("#chart-crowd-menu button[data-hybrid]");
+        expect(hybrid.map((_index, element) => $(element).attr("data-hybrid")).get()).toEqual(["single", "double"]);
+        // The file reads like a staged file: the column size in millimeters, and the name of the chart.
+        expect(hybrid.first().attr("data-height")).toBe(String(CHART_EXPORT_SIZES.single.heightPx));
+        expect(hybrid.first().attr("data-height-mm")).toBe(String(CHART_EXPORT_SIZES.single.heightMm));
+        expect(hybrid.first().attr("data-file")).toBe("crowd-89mm.svg");
+        expect(hybrid.first().attr("data-chart")).toBe("chart-crowd");
+        expect($(".report-chart-menu-note").not(`.${MENU_FAULT_CLASS}`).length).toBe(0);
+        expect($("#chart-crowd-menu button[data-export]").length).toBe(3);
+        // The menu holds a hidden note that the page shows when the build of the file fails.
+        const fault = $(`#chart-crowd-menu .${MENU_FAULT_CLASS}`);
+        expect(fault.text()).toBe(HYBRID_FAULT_NOTE);
+        expect(fault.hasClass(MENU_FAULT_SHOWN_CLASS)).toBe(false);
+        expect(DESIGN_CSS).toMatch(/\.report-chart-menu-fault \{\s*display: none;/);
+        expect(fault.attr("role")).toBe("menuitem");
+        expect(fault.attr("aria-disabled")).toBe("true");
+    });
+
+    it("states that the PNG serves a chart past the crowd row count that holds no point layer", () => {
+        const rows: Record<string, string | number>[] = [];
+        for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) rows.push({ x: index, y: index % 97 });
+        const line: ChartBlock = { kind: "chart", id: "trace", binding, chartType: "line", encoding: { x: "x", y: "y" } };
+        const page = chartPage(line, rows, ["x", "y"]);
+        const $ = load(renderReportPage(page.document, page.values)._unsafeUnwrap().html);
+
+        expect($("#chart-trace-menu [data-hybrid]").length).toBe(0);
+        expect($("#chart-trace-menu a[download]").length).toBe(0);
+        const note = $("#chart-trace-menu .report-chart-menu-note");
+        expect(note.text()).toContain("PNG");
+        expect(note.attr("aria-disabled")).toBe("true");
+        expect($("#chart-trace-menu button[data-export]").length).toBe(3);
     });
 
     it("grows the chart body of a facet of two panel rows", () => {
@@ -3113,8 +3271,10 @@ describe("the chart exports", () => {
         }
     });
 
-    it("hides the export row in print", () => {
-        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-export \{\s*display: none;/);
+    it("hides the download menu in print", () => {
+        expect(DESIGN_CSS).toMatch(/@media print \{[\s\S]*\.report-chart-menu-open \{\s*display: none;/);
+        // A menu that the page has not opened stands closed.
+        expect(DESIGN_CSS).toMatch(/\.report-chart-menu \{[^}]*display: none;/);
     });
 });
 
@@ -3179,7 +3339,7 @@ describe("the PNG download of the page", () => {
         const control = {
             getAttribute: (name: string) => ({ "data-export": kind, "data-chart": "chart-bars", "data-file": `bars-${kind}.png` })[name] ?? null,
         };
-        listeners.click({ target: { closest: () => control } });
+        listeners.click({ target: { closest: (selector: string) => (selector === "[data-export], [data-hybrid]" ? control : null) } });
         expect(errors).toEqual([]);
         return { init: init.slice(1), setOption: setOption.slice(1), downloads, dataUrl };
     }
@@ -3205,6 +3365,92 @@ describe("the PNG download of the page", () => {
 
     it("draws nothing for a control that names no kept chart or no size", () => {
         expect(clickExport("constructor").downloads).toEqual([]);
+    });
+});
+
+describe("the hybrid SVG download of the page", () => {
+    it("keeps the menu open and shows the fault note when the page cannot build the file", () => {
+        const listeners: Record<string, (event: unknown) => void> = {};
+        const downloads: unknown[] = [];
+        const classes = new Set<string>();
+        /** One element of the fake page: its attributes, its children, and the focus of the document. */
+        function element(attributes: Record<string, string>, extra: Record<string, unknown> = {}): Record<string, unknown> {
+            const self: Record<string, unknown> = {
+                ...extra,
+                getAttribute: (name: string) => attributes[name] ?? null,
+                setAttribute: (name: string, value: string) => {
+                    attributes[name] = value;
+                },
+                focus: () => {
+                    doc.activeElement = self;
+                },
+            };
+            return self;
+        }
+        // The kept option holds no point layer, thus the build of the file gives no SVG.
+        const option = { xAxis: { type: "value" }, yAxis: { type: "value" }, series: [{ type: "line", data: [[1, 2]] }] };
+        const faultClasses = new Set<string>();
+        const fault = element(
+            { role: "menuitem", "aria-disabled": "true", class: MENU_FAULT_CLASS },
+            { classList: { add: (name: string) => faultClasses.add(name), remove: (name: string) => faultClasses.delete(name) } },
+        );
+        const entry = element({ role: "menuitem", "data-hybrid": "single", "data-chart": "chart-crowd", "data-file": "crowd-89mm.svg" });
+        const menu = element(
+            { role: "menu", id: "chart-crowd-menu" },
+            {
+                id: "chart-crowd-menu",
+                offsetWidth: 140,
+                style: {},
+                classList: { add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name) },
+                querySelector: (selector: string) => (selector === `.${MENU_FAULT_CLASS}` ? fault : null),
+                querySelectorAll: () => [entry],
+            },
+        );
+        entry.closest = (selector: string) =>
+            selector === "[data-export], [data-hybrid]" || selector === '[role="menuitem"]' ? entry : selector === '[role="menu"]' ? menu : null;
+        const container = element(
+            { id: "chart-crowd" },
+            {
+                id: "chart-crowd",
+                offsetLeft: 0,
+                offsetTop: 0,
+                clientWidth: 600,
+                nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
+            },
+        );
+        const control = element({ "data-chart-menu": "chart-crowd", "aria-expanded": "false" });
+        control.closest = (selector: string) => (selector === "[data-chart-menu]" ? control : null);
+        const byId: Record<string, unknown> = { "chart-crowd": container, "chart-crowd-menu": menu, "chart-crowd-download": control };
+        const doc: Record<string, unknown> = {
+            activeElement: null,
+            body: { appendChild: () => undefined, removeChild: () => undefined },
+            querySelectorAll: () => [container],
+            getElementById: (id: string) => byId[id] ?? null,
+            dispatchEvent: () => true,
+            addEventListener: (type: string, listener: (event: unknown) => void) => {
+                listeners[type] = listener;
+            },
+            createElement: () => ({ click: () => downloads.push("download") }),
+        };
+        const echarts = {
+            init: () => ({ on: (_event: string, listener: () => void) => listener(), setOption: () => undefined, dispose: () => undefined }),
+            getInstanceByDom: () => undefined,
+            registerCustomSeries: () => undefined,
+        };
+        const errors: string[] = [];
+        new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)({ addEventListener: () => undefined }, doc, echarts, {
+            error: (line: string) => errors.push(line),
+        });
+
+        listeners.click({ target: control });
+        expect(classes.has(MENU_OPEN_CLASS)).toBe(true);
+        listeners.click({ target: entry });
+        // The reader sees why the entry gave no file, and the menu stays open with the PNG entries.
+        expect(downloads).toEqual([]);
+        expect(classes.has(MENU_OPEN_CLASS)).toBe(true);
+        expect(faultClasses.has(MENU_FAULT_SHOWN_CLASS)).toBe(true);
+        expect(doc.activeElement).toBe(fault);
+        expect(errors).toEqual(["hybrid svg failed for chart-crowd: the chart holds no point layer inside a grid"]);
     });
 });
 

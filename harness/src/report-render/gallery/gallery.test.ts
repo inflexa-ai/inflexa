@@ -24,10 +24,13 @@ import { walkBlocks } from "../../report-model/block-walk.js";
 import { validateReport } from "../../report-model/validate.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
 import { CHART_INLINE_OPTION_BOUND } from "../design.js";
-import { statisticText } from "../figures/common.js";
+import { categoricalPalette, statisticText } from "../figures/common.js";
 import { FIGURE_MODULES, isFigurePresetType } from "../figures/index.js";
+import { GENE_NAMES, LD_BINS, LD_MISSING_COLOR, LD_MISSING_NAME, LEAD_VARIANT_COLOR, LEAD_VARIANT_NAME, RECOMBINATION_NAME } from "../figures/locuszoom.js";
+import { SANKEY_LINK_OPACITY } from "../figures/sankey.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { renderReportPage } from "../render.js";
+import type { RenderTrees } from "../types.js";
 import { GALLERY_DATA_HINT, GALLERY_DIR, GALLERY_DOCUMENT, hasGalleryData, loadGallery, type GalleryLoad } from "./gallery.js";
 
 /** The suffix of the name of each group that reads the tables. It names the command that rebuilds absent tables. */
@@ -76,18 +79,24 @@ beforeAll(async () => {
 });
 
 /** The render value of one gallery chart. */
-function valueOf(id: string): { rows: ChartRow[]; columns?: string[]; statistics?: { label: string; value: string | number }[]; track?: { rows: ChartRow[] } } {
+function valueOf(id: string): {
+    rows: ChartRow[];
+    columns?: string[];
+    statistics?: { label: string; value: string | number }[];
+    track?: { rows: ChartRow[] };
+    trees?: RenderTrees;
+} {
     const value = gallery.values[id];
     if (value?.type !== "table") throw new Error(`The gallery chart ${id} holds no table.`);
     return value;
 }
 
-/** The inline option of one gallery chart, with its statistics and its track. */
+/** The inline option of one gallery chart, with its statistics, its track, and its trees. */
 function optionOf(id: string): EchartOption {
     const block = CHARTS.find((chart) => chart.id === id);
     if (block === undefined) throw new Error(`The gallery holds no chart ${id}.`);
     const value = valueOf(id);
-    return deriveChartOption(block, value.rows, value.columns, { statistics: value.statistics, track: value.track })._unsafeUnwrap();
+    return deriveChartOption(block, value.rows, value.columns, { statistics: value.statistics, track: value.track, trees: value.trees })._unsafeUnwrap();
 }
 
 /** The resolved value of one statistic of a gallery chart, by its label. */
@@ -126,6 +135,82 @@ function numberOf(cell: ChartRow[string] | undefined): number {
 /** The count of rows where a predicate over the numeric cells holds. */
 function countRows(id: string, predicate: (row: ChartRow) => boolean): number {
     return valueOf(id).rows.filter(predicate).length;
+}
+
+/** The distinct values of one column, in the order of another numeric column of the same rows. */
+function orderedBy(id: string, column: string, order: string): string[] {
+    return [...valueOf(id).rows]
+        .sort((a, b) => Number(a[order]) - Number(b[order]))
+        .map((row) => String(row[column]))
+        .filter((name, index, all) => all.indexOf(name) === index);
+}
+
+/** The dendrogram of one axis: the `lines` series whose grid holds the tree of that axis. */
+function treeSeries(option: EchartOption, axis: "x" | "y"): EchartOption {
+    const trees = seriesOf(option).filter((entry) => entry.type === "lines" && entry.polyline === true);
+    // The tree of x runs its leaves along a hidden x axis, and the tree of y runs them along a hidden y axis.
+    const found = trees.find((entry) => axisOf(option, axis === "x" ? "xAxis" : "yAxis", entry.xAxisIndex as number).min === -0.5);
+    if (found === undefined) throw new Error(`The option holds no tree of ${axis}.`);
+    return found;
+}
+
+/**
+ * The leaf places of one dendrogram, in the order of the tree table: the place along the axis of each elbow
+ * that starts at height zero. The tree of y draws the height on x.
+ */
+function leafPlaces(tree: EchartOption, axis: "x" | "y"): number[] {
+    const starts = (tree.data as EchartOption[]).map((edge) => (edge.coords as number[][])[0]);
+    return starts.flatMap(([a, b]) => ((axis === "x" ? b : a) === 0 ? [axis === "x" ? a : b] : []));
+}
+
+/** The leaf names of one tree table, in the depth-first order from its root, with the children in table order. */
+function depthFirstLeaves(rows: readonly ChartRow[]): string[] {
+    const children = new Map<string, string[]>();
+    const childSet = new Set<string>();
+    for (const row of rows) {
+        children.set(String(row.parent), [...(children.get(String(row.parent)) ?? []), String(row.child)]);
+        childSet.add(String(row.child));
+    }
+    const root = [...children.keys()].find((node) => !childSet.has(node));
+    const walk = (node: string): string[] => (children.has(node) ? (children.get(node) ?? []).flatMap(walk) : [node]);
+    return root === undefined ? [] : walk(root);
+}
+
+/**
+ * The license forms that a caption can name, in the words that the caption uses. The manifest states each license
+ * in full, often with a note or a second license of the loader code. The first form in the text of the name is
+ * the license of the data. A name that holds no form fails the gate, thus a new license joins this list.
+ */
+const LICENSE_FORMS: readonly { readonly pattern: RegExp; readonly caption: string }[] = [
+    { pattern: /\bLGPL\b/, caption: "LGPL" },
+    { pattern: /\bGPL\b/, caption: "GPL" },
+    { pattern: /\bCC BY 4\.0\b|Creative Commons Attribution 4\.0/, caption: "CC BY 4.0" },
+    { pattern: /\bMIT\b/, caption: "MIT" },
+    { pattern: /EBI Terms of Use/, caption: "EBI Terms of Use" },
+    { pattern: /public[- ]domain/i, caption: "public domain" },
+];
+
+/** The caption form of the license of one table: the form that the name of the license states first. */
+function licenseForm(name: string): string | undefined {
+    const found = LICENSE_FORMS.flatMap((form) => {
+        const at = name.search(form.pattern);
+        return at < 0 ? [] : [{ at, caption: form.caption }];
+    }).sort((left, right) => left.at - right.at);
+    return found[0]?.caption;
+}
+
+/** The license of each table that one chart binds and that its caption does not name, as `path: license`. */
+function missingLicenses(chart: ChartBlock): string[] {
+    const paths = new Set(
+        walkBlocks([chart]).references.flatMap(({ reference }) =>
+            reference.kind === "artifact-table" || reference.kind === "artifact-value" ? [reference.path] : [],
+        ),
+    );
+    return [...paths].flatMap((path) => {
+        const license = manifest.find((entry) => entry.path === path)?.license.name ?? "(no manifest entry)";
+        const form = licenseForm(license);
+        return form !== undefined && (chart.caption ?? "").includes(form) ? [] : [`${path}: ${license}`];
+    });
 }
 
 describe("the gallery manifest", () => {
@@ -225,7 +310,7 @@ describe("the gallery document", () => {
         expect(covered).toEqual(declared);
     });
 
-    it("holds an interval, a facet, a focus, a continuous color, a statistic, and a track", () => {
+    it("holds an interval, a facet, a focus, a continuous color, a statistic, a track, and a tree", () => {
         const encodings = CHARTS.flatMap((chart) => (chart.encoding !== undefined ? [chart.encoding] : []));
         expect(encodings.some((encoding) => encoding.low !== undefined && encoding.high !== undefined)).toBe(true);
         expect(encodings.some((encoding) => encoding.facet !== undefined)).toBe(true);
@@ -233,10 +318,18 @@ describe("the gallery document", () => {
         expect(encodings.some((encoding) => encoding.color !== undefined)).toBe(true);
         expect(CHARTS.some((chart) => chart.statistics !== undefined)).toBe(true);
         expect(CHARTS.some((chart) => chart.track !== undefined)).toBe(true);
+        expect(CHARTS.some((chart) => chart.trees !== undefined)).toBe(true);
     });
 
     it("names the dataset in the caption of each chart", () => {
         for (const chart of CHARTS) expect({ id: chart.id, caption: chart.caption?.startsWith("Data: ") }).toEqual({ id: chart.id, caption: true });
+    });
+
+    it("names in the caption of each chart the license of each table that the chart binds", () => {
+        for (const chart of CHARTS) expect({ id: chart.id, missing: missingLicenses(chart) }).toEqual({ id: chart.id, missing: [] });
+        // The gate bites: a caption with no license fails it.
+        const [first] = CHARTS;
+        expect(missingLicenses({ ...first, caption: "Data: a table." }).length).toBeGreaterThan(0);
     });
 });
 
@@ -267,7 +360,7 @@ describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () =
         for (const block of CHARTS) {
             const value = valueOf(block.id);
             const columns = value.columns ?? Object.keys(value.rows[0] ?? {});
-            const inputs = { statistics: value.statistics, track: value.track };
+            const inputs = { statistics: value.statistics, track: value.track, trees: value.trees };
             const target = { key: block.id, columns };
             const first = deriveChartRender(block, value.rows, value.columns, target, inputs)._unsafeUnwrap();
             // A small table repeats its rows until the inline option passes the bound, thus each figure meets
@@ -331,14 +424,46 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect([axisOf(option, "xAxis").min, axisOf(option, "xAxis").max]).toEqual([axisOf(option, "yAxis").min, axisOf(option, "yAxis").max]);
     });
 
-    it("heatmap: draws a strip for each track over the matrix, in the clustered sample order", () => {
+    it("heatmap: draws a strip for each track and a dendrogram on each axis, in the leaf order of the clustering", () => {
         const option = optionOf("bulk-top-genes");
-        expect(seriesOf(option).map((series) => series.name)).toEqual([undefined, "Condition", "Library type"]);
-        const order = [...valueOf("bulk-top-genes").rows]
-            .sort((a, b) => Number(a.sample_order) - Number(b.sample_order))
-            .map((row) => row.sample)
-            .filter((sample, index, all) => all.indexOf(sample) === index);
-        expect(axisOf(option, "xAxis").data).toEqual(order);
+        const trees = valueOf("bulk-top-genes").trees;
+        expect(seriesOf(option).map((series) => [series.type, series.name])).toEqual([
+            ["heatmap", undefined],
+            ["heatmap", "Condition"],
+            ["heatmap", "Library type"],
+            ["lines", undefined],
+            ["lines", undefined],
+        ]);
+        // The run wrote the leaf order of its clustering beside the matrix, and the trees give the same order.
+        const samples = orderedBy("bulk-top-genes", "sample", "sample_order");
+        const genes = orderedBy("bulk-top-genes", "gene_symbol", "gene_order");
+        expect(axisOf(option, "xAxis").data).toEqual(samples);
+        expect(axisOf(option, "yAxis").data).toEqual(genes);
+        expect(depthFirstLeaves(trees?.x?.rows ?? [])).toEqual(samples);
+        expect(depthFirstLeaves(trees?.y?.rows ?? [])).toEqual(genes);
+        // Each edge draws one elbow, and each leaf sits at its own place under its column or beside its row.
+        const xTree = treeSeries(option, "x");
+        const yTree = treeSeries(option, "y");
+        expect((xTree.data as unknown[]).length).toBe(trees?.x?.rows.length);
+        expect((yTree.data as unknown[]).length).toBe(trees?.y?.rows.length);
+        expect(leafPlaces(xTree, "x").sort((a, b) => a - b)).toEqual(samples.map((_name, place) => place));
+        expect(leafPlaces(yTree, "y").sort((a, b) => a - b)).toEqual(genes.map((_name, place) => place));
+    });
+
+    it("heatmap: draws one sample tree on both axes of the distance matrix, in the order of the clustering", () => {
+        const option = optionOf("bulk-distances");
+        const trees = valueOf("bulk-distances").trees;
+        const rows = orderedBy("bulk-distances", "sample_a", "row_order");
+        expect(orderedBy("bulk-distances", "sample_b", "col_order")).toEqual(rows);
+        expect(axisOf(option, "xAxis").data).toEqual(rows);
+        expect(axisOf(option, "yAxis").data).toEqual(rows);
+        expect(trees?.x?.rows).toEqual(trees?.y?.rows);
+        expect(depthFirstLeaves(trees?.x?.rows ?? [])).toEqual(rows);
+        for (const axis of ["x", "y"] as const) {
+            const tree = treeSeries(option, axis);
+            expect((tree.data as unknown[]).length).toBe(trees?.[axis]?.rows.length);
+            expect(leafPlaces(tree, axis).sort((a, b) => a - b)).toEqual(rows.map((_name, place) => place));
+        }
     });
 
     it("embedding: hides the axes, names each cluster on the data, and draws no legend", () => {
@@ -461,6 +586,110 @@ describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery d
         expect(axisOf(option, "xAxis").max).toBe(912);
         const labels = series.find((entry) => entry.type === "scatter" && (entry.label as EchartOption | undefined)?.show === true);
         expect(((labels?.data ?? []) as EchartOption[]).map((point) => point.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+    });
+
+    it("upset: counts each exact combination of the mutated genes one time, and sorts the intersections and the sets by size", () => {
+        const option = optionOf("mutations-upset");
+        const rows = valueOf("mutations-upset").rows;
+        const genesOf = new Map<string, string[]>();
+        for (const row of rows) genesOf.set(String(row.sample), [...(genesOf.get(String(row.sample)) ?? []), String(row.gene)]);
+        const setSizes = new Map<string, number>();
+        for (const row of rows) setSizes.set(String(row.gene), (setSizes.get(String(row.gene)) ?? 0) + 1);
+        const sets = [...setSizes.entries()].sort((a, b) => b[1] - a[1]).map(([gene]) => gene);
+        const combinations = new Map<string, number>();
+        for (const genes of genesOf.values()) {
+            const key = [...genes].sort((a, b) => sets.indexOf(a) - sets.indexOf(b)).join(" & ");
+            combinations.set(key, (combinations.get(key) ?? 0) + 1);
+        }
+        const series = seriesOf(option);
+        const bars = series.find((entry) => entry.id === "intersections") as EchartOption;
+        const sizes = bars.data as number[];
+        const names = axisOf(option, "xAxis", bars.xAxisIndex as number).data as string[];
+        // Each tumor counts in one intersection alone, thus the bars sum to the tumors of the table.
+        expect(sizes.length).toBe(combinations.size);
+        expect(sizes.reduce((sum, size) => sum + size, 0)).toBe(genesOf.size);
+        expect(names.map((name) => combinations.get(name))).toEqual(sizes);
+        // The intersections sort by size, then by degree.
+        for (let place = 1; place < sizes.length; place += 1) {
+            const degree = (name: string): number => name.split(" & ").length;
+            expect(sizes[place] < sizes[place - 1] || (sizes[place] === sizes[place - 1] && degree(names[place]) >= degree(names[place - 1]))).toBe(true);
+        }
+        expect(names.slice(0, 5)).toEqual(["FLT3", "IDH2", "DNMT3A", "TET2", "FLT3 & NPM1"]);
+        expect(sizes.slice(0, 5)).toEqual([22, 13, 9, 9, 8]);
+        // The sets sort by size, the largest at the top of the matrix.
+        const setBars = series.find((entry) => entry.id === "sets") as EchartOption;
+        expect(axisOf(option, "yAxis", setBars.yAxisIndex as number).data).toEqual(sets);
+        expect(setBars.data).toEqual(sets.map((gene) => setSizes.get(gene)));
+        // Each intersection draws, thus the matrix states no hidden count.
+        expect(axisOf(option, "xAxis", (series.find((entry) => entry.id === "members") as EchartOption).xAxisIndex as number).name).toBeUndefined();
+    });
+
+    it("sankey: keeps the node order of the table in three stages, and colors each stage from the start of the palette", () => {
+        const option = optionOf("mutations-sankey");
+        const [sankey] = seriesOf(option);
+        const rows = valueOf("mutations-sankey").rows;
+        const nodes = sankey.data as EchartOption[];
+        expect(nodes.map((node) => node.name)).toEqual(
+            rows.flatMap((row) => [String(row.source), String(row.target)]).filter((name, index, all) => all.indexOf(name) === index),
+        );
+        expect(sankey.layoutIterations).toBe(0);
+        const stages = [
+            ["M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "FAB unknown"],
+            ["FLT3 mutated", "FLT3 wild type"],
+            ["Alive", "Deceased"],
+        ];
+        for (const [depth, members] of stages.entries()) {
+            const palette = categoricalPalette(members.length);
+            const drawn = nodes.filter((node) => node.depth === depth);
+            expect(drawn.map((node) => node.name)).toEqual(members);
+            expect(drawn.map((node) => (node.itemStyle as EchartOption).color)).toEqual(members.map((_name, place) => palette[place % palette.length]));
+        }
+        // Each flow takes the color of its source, and the last stage puts its labels at the left of its nodes.
+        expect(sankey.lineStyle).toEqual({ color: "source", opacity: SANKEY_LINK_OPACITY });
+        expect((sankey.links as EchartOption[]).map((link) => [link.source, link.target, link.value])).toEqual(
+            rows.map((row) => [String(row.source), String(row.target), Number(row.value)]),
+        );
+        expect(nodes.filter((node) => (node.label as EchartOption).position === "left").map((node) => node.name)).toEqual(["Alive", "Deceased"]);
+        expect(sankey.name).toBe("Patients");
+    });
+
+    it("locuszoom: bins the r², marks the lead variant, draws the recombination axis, and lays the genes in lanes", () => {
+        const option = optionOf("gwas-locuszoom");
+        const series = seriesOf(option);
+        const rows = valueOf("gwas-locuszoom").rows;
+        // The legend states the five LocusZoom bins, highest first, and the gray of a missing r².
+        const pieces = ((option.visualMap as EchartOption[])[0].pieces as EchartOption[]).map((piece) => [piece.label, piece.color]);
+        expect(pieces).toEqual([...[...LD_BINS].reverse().map((bin) => [`${bin.low}–${bin.high}`, bin.color]), [LD_MISSING_NAME, LD_MISSING_COLOR]]);
+        const missing = series.find((entry) => entry.name === LD_MISSING_NAME);
+        expect((missing?.data as unknown[]).length).toBe(rows.filter((row) => row.r2 === "").length);
+        // The lead variant is the row of the smallest p, a purple diamond with its name.
+        const lead = rows.reduce((best, row) => (Number(row.pvalue) < Number(best.pvalue) ? row : best));
+        const diamond = series.find((entry) => entry.name === LEAD_VARIANT_NAME) as EchartOption;
+        expect([diamond.symbol, (diamond.itemStyle as EchartOption).color]).toEqual(["diamond", LEAD_VARIANT_COLOR]);
+        expect((diamond.data as EchartOption[]).map((point) => point.name)).toEqual([String(lead.variant)]);
+        expect(lead.variant).toBe("rs1421085");
+        // The recombination rate draws on a right axis in cM/Mb, and the position axis reads in megabases.
+        const rate = series.find((entry) => entry.name === RECOMBINATION_NAME) as EchartOption;
+        const rateAxis = axisOf(option, "yAxis", rate.yAxisIndex as number);
+        expect([rateAxis.position, rateAxis.name]).toEqual(["right", "Recombination rate (cM/Mb)"]);
+        expect(axisOf(option, "xAxis").name).toBe("Position on chr16 (Mb)");
+        // The genes draw in the order of their starts, and two genes of one lane never overlap.
+        const genes = series.find((entry) => entry.name === GENE_NAMES) as EchartOption;
+        const placed = (genes.data as EchartOption[]).map((gene) => ({ name: String(gene.name), lane: (gene.value as number[])[1] }));
+        expect(placed.map((gene) => gene.name)).toEqual(["RBL2", "AKTIP", "RPGRIP1L", "FTO"]);
+        const spans = new Map((valueOf("gwas-locuszoom").track?.rows ?? []).map((row) => [String(row.gene), [Number(row.start), Number(row.end)]]));
+        for (const [place, gene] of placed.entries()) {
+            for (const other of placed.slice(place + 1).filter((entry) => entry.lane === gene.lane)) {
+                const [start, end] = spans.get(gene.name) ?? [0, 0];
+                const [otherStart, otherEnd] = spans.get(other.name) ?? [0, 0];
+                expect({ genes: [gene.name, other.name], overlap: start < otherEnd && otherStart < end }).toEqual({
+                    genes: [gene.name, other.name],
+                    overlap: false,
+                });
+            }
+        }
+        // AKTIP starts inside RBL2, and FTO starts at the end of RPGRIP1L, thus each of them takes the second lane.
+        expect(placed.map((gene) => gene.lane)).toEqual([0.25, 1.25, 0.25, 1.25]);
     });
 
     it("violin: draws each outline and each interval through the registered renderers", () => {

@@ -266,6 +266,38 @@ export function registerChartRenderers(runtime: RendererRegistry): void {
 }
 
 /**
+ * The member of an option that holds the series of each export width, for a figure whose text the derivation
+ * places itself.
+ *
+ * A name that the derivation places clears its neighbors at one plot size and one text size alone. Thus the
+ * figure places its names again for the plot of each export, and the export takes the series of its width in
+ * place of the page series of the same names. The member is no field of the chart runtime, and the runtime
+ * keeps an unknown member without a draw.
+ */
+export const SIZED_SERIES_MEMBER = "sizedSeries";
+
+/** The series of each export width: the names of the page series that they replace, and the series of each width. */
+export interface SizedSeries {
+    readonly names: readonly string[];
+    readonly widths: Readonly<Record<string, readonly unknown[]>>;
+}
+
+/**
+ * The series of an option with the page series of the sized names replaced by the series of one export width.
+ * A width that the member does not hold keeps the page series.
+ */
+function sizedSeries(series: unknown, sized: unknown, widthPx: number): unknown {
+    if (!Array.isArray(series) || typeof sized !== "object" || sized === null) return series;
+    const fields = sized as Record<string, unknown>;
+    const widths = fields.widths as Record<string, unknown> | undefined;
+    const chosen = typeof widths === "object" && widths !== null ? widths[String(widthPx)] : undefined;
+    if (!Array.isArray(fields.names) || !Array.isArray(chosen)) return series;
+    const names = fields.names as unknown[];
+    const kept = series.filter((entry: unknown) => typeof entry !== "object" || entry === null || names.indexOf((entry as Record<string, unknown>).name) < 0);
+    return kept.concat(chosen);
+}
+
+/**
  * One axis, or one list of axes, with each gap that clears its text scaled to the text size of an export: the
  * name gap, and the offset of an axis past a column of text.
  */
@@ -374,14 +406,14 @@ function fittedAxes(axes: unknown, grid: unknown, textPx: number, widthPx: numbe
  *
  * The page prints the title and the upper end over the scale, one line each, and the lower end under it. The
  * export keeps the two ends and wraps the title into the band of the scale. The scale starts at the top of the
- * plot and stays short, thus its lower end never meets the labels of the x axis. A map that shows nothing, or
- * that prints no end, passes through.
+ * plot and stays short, thus its lower end never meets the labels of the x axis. A map that shows nothing, that
+ * prints no end, or that draws pieces and no scale passes through.
  */
 function stillScale(map: unknown, textPx: number, widthPx: number): unknown {
     if (typeof map !== "object" || map === null) return map;
     const fields = map as Record<string, unknown>;
     const text = fields.text;
-    if (fields.show === false || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") return map;
+    if (fields.show === false || fields.type === "piecewise" || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") return map;
     const lines = text[0].split("\n");
     const upper = lines[lines.length - 1];
     const title = lines.slice(0, -1).join(" ");
@@ -515,9 +547,10 @@ export function exportOption(option: Record<string, unknown>, textPx: number, wi
     const scale = textPx / CHART_PAGE_TEXT_PX;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(option)) {
-        if (key === "tooltip" || key === "toolbox") continue;
+        if (key === "tooltip" || key === "toolbox" || key === SIZED_SERIES_MEMBER) continue;
         out[key] = option[key];
     }
+    if (out.series !== undefined) out.series = sizedSeries(out.series, option[SIZED_SERIES_MEMBER], widthPx);
     out.animation = false;
     if (out.xAxis !== undefined) out.xAxis = scaledAxes(out.xAxis, scale);
     if (out.yAxis !== undefined) out.yAxis = scaledAxes(out.yAxis, scale);
@@ -837,7 +870,7 @@ function reportStillScale(map, textPx, widthPx) {
     return map;
   }
   var text = map.text;
-  if (map.show === false || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") {
+  if (map.show === false || map.type === "piecewise" || !Array.isArray(text) || typeof text[0] !== "string" || typeof text[1] !== "string") {
     return map;
   }
   var lines = text[0].split("\\n");
@@ -849,15 +882,36 @@ function reportStillScale(map, textPx, widthPx) {
     text: [title === "" ? upper : reportWrappedTitle(title, textPx, widthPx) + "\\n" + upper, text[1]]
   });
 }
+function reportSizedSeries(series, sized, widthPx) {
+  if (!Array.isArray(series) || typeof sized !== "object" || sized === null) {
+    return series;
+  }
+  var widths = sized.widths;
+  var chosen = typeof widths === "object" && widths !== null ? widths[String(widthPx)] : undefined;
+  if (!Array.isArray(sized.names) || !Array.isArray(chosen)) {
+    return series;
+  }
+  var kept = [];
+  for (var s = 0; s < series.length; s++) {
+    var entry = series[s];
+    if (typeof entry !== "object" || entry === null || sized.names.indexOf(entry.name) < 0) {
+      kept.push(entry);
+    }
+  }
+  return kept.concat(chosen);
+}
 function reportExportOption(option, textPx, widthPx, heightPx) {
   var scale = textPx / ${CHART_PAGE_TEXT_PX};
   var out = {};
   var keys = Object.keys(option);
   for (var k = 0; k < keys.length; k++) {
-    if (keys[k] === "tooltip" || keys[k] === "toolbox") {
+    if (keys[k] === "tooltip" || keys[k] === "toolbox" || keys[k] === ${JSON.stringify(SIZED_SERIES_MEMBER)}) {
       continue;
     }
     out[keys[k]] = option[keys[k]];
+  }
+  if (out.series !== undefined) {
+    out.series = reportSizedSeries(out.series, option[${JSON.stringify(SIZED_SERIES_MEMBER)}], widthPx);
   }
   out.animation = false;
   if (out.xAxis !== undefined) {

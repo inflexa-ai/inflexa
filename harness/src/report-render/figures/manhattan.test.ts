@@ -7,11 +7,13 @@ import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartOpts, type ChartRow, type EchartOption } from "../chart.js";
-import { CHART_INLINE_OPTION_BOUND } from "../design.js";
+import { exportOption } from "../chart-renderers.js";
+import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { BELOW_RESOLUTION_SYMBOL, POINT_NAMES } from "./dense.js";
 import { FIGURE_MODULES } from "./index.js";
-import { guideLabelBox, MANHATTAN_COLORS, MANHATTAN_FIGURE, MANHATTAN_LABEL_COUNT, MANHATTAN_NAME_GAP, MANHATTAN_SUGGESTIVE_P } from "./manhattan.js";
+import { EXPORT_PLOT_FRAMES, leaderNameBox, overlaps, PAGE_PLOT_FRAME, textWidthPx, type LeaderName, type NameFrame } from "./label-room.js";
+import { guideLabelBox, MANHATTAN_COLORS, MANHATTAN_FIGURE, MANHATTAN_LABEL_COUNT, MANHATTAN_NAME_GAP_SHARE, MANHATTAN_SUGGESTIVE_P } from "./manhattan.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -114,8 +116,11 @@ describe("the Manhattan figure", () => {
         const names = seriesOf(option).find((entry) => entry.name === POINT_NAMES);
         const lead = ((names?.data ?? []) as EchartOption[]).find((item) => item.name === "rs99");
         expect(lead).toBeDefined();
+        // The page frame reads a window 1280 pixels wide, thus the runtime hides a lead name that still overlaps
+        // another on a narrower window.
+        expect(names?.labelLayout).toEqual({ hideOverlap: true });
         const [x, y] = lead?.value as number[];
-        const box = guideLabelBox(-Math.log10(5e-8), { min: 1082207, max: high }, asTop(option), "p 5 × 10⁻⁸");
+        const box = guideLabelBox(-Math.log10(5e-8), { min: 1082207, max: high }, asTop(option), "p 5 × 10⁻⁸", PAGE_PLOT_FRAME);
         expect(x >= box.left && x <= box.right && y >= box.bottom && y <= box.top).toBe(false);
     });
 
@@ -151,11 +156,12 @@ describe("the Manhattan figure", () => {
         ];
         const names = (option: EchartOption): unknown[] =>
             ((seriesOf(option).find((entry) => entry.name === "Chromosome names") as EchartOption).data as EchartOption[]).map((entry) => entry.name);
-        expect(MANHATTAN_NAME_GAP).toBe(0.025);
-        // The middles sit at 10, 21.5, and 61.5 of a span of 100, thus each gap passes 2.5.
+        expect(MANHATTAN_NAME_GAP_SHARE).toBe(0.5);
+        // On the page plot of 760 px, the middles sit at 76, 163.4, and 467.4 px. The names are 7.2 px wide,
+        // thus each text starts far past the end of the one before it.
         expect(names(derive(block(), rows))).toEqual(["1", "2", "3"]);
-        // Moved 10 to the left, chromosome 2 sits at 11.5, 1.5 from the middle of chromosome 1, thus its name
-        // does not print.
+        // Moved 10 to the left, chromosome 2 sits at 87.4 px. Its text starts 4.2 px after the text of
+        // chromosome 1 ends, under the gap of 6 px, thus its name does not print.
         const crowded = rows.map((row) => (row.chrom === "2" ? { ...row, cum_pos: String(Number(row.cum_pos) - 10) } : row));
         expect(names(derive(block(), crowded))).toEqual(["1", "3"]);
     });
@@ -252,6 +258,104 @@ describe("the Manhattan figure", () => {
 
     it("derives the same bytes two times", () => {
         expect(JSON.stringify(derive())).toBe(JSON.stringify(derive()));
+    });
+});
+
+/** The lengths of the chromosomes of GRCh37 in megabases, from chromosome 1 to chromosome 22. */
+const GRCH37_MB = [249, 243, 198, 191, 181, 171, 159, 146, 141, 136, 135, 134, 115, 107, 103, 90, 81, 78, 59, 63, 48, 51];
+
+/**
+ * The lead variants of the BMI GWAS of the GIANT consortium (Locke 2015) with their p, at their place on their
+ * chromosome in megabases.
+ */
+const BMI_LEADS: ReadonlyArray<readonly [number, string, number, string]> = [
+    [1, "rs543874", 177.9, "2.287e-40"],
+    [2, "rs13021737", 0.6, "5.439e-54"],
+    [3, "rs1516725", 186.1, "1.394e-24"],
+    [4, "rs13130484", 45.2, "8.011e-41"],
+    [6, "rs943005", 50.9, "4.524e-31"],
+    [11, "rs11030104", 27.7, "6.658e-30"],
+    [12, "rs7138803", 49.9, "5.115e-26"],
+    [16, "rs1421085", 53.8, "2.17e-158"],
+    [18, "rs6567160", 60.2, "6.684e-59"],
+    [19, "rs11672660", 45.7, "7.911e-19"],
+];
+
+/**
+ * An excerpt of the BMI GWAS in genome order: each chromosome ends with a null variant at each end, and each
+ * lead stands over a column of weaker variants at its place, as a peak of the whole table does.
+ */
+function bmiExcerpt(): ChartRow[] {
+    const rows: ChartRow[] = [];
+    let start = 0;
+    for (const [index, length] of GRCH37_MB.entries()) {
+        const chrom = String(index + 1);
+        const place = (mb: number): string => String(Math.round((start + mb) * 1e6));
+        rows.push({ chrom, snp: `${chrom}-start`, pvalue: "0.5", cum_pos: place(0.5) });
+        for (const [leadChrom, snp, mb, pvalue] of BMI_LEADS) {
+            if (leadChrom !== index + 1) continue;
+            rows.push({ chrom, snp, pvalue, cum_pos: place(mb) });
+            for (const share of [0.8, 0.6, 0.4, 0.2]) {
+                rows.push({ chrom, snp: `${snp}-${share}`, pvalue: String(Math.pow(Number(pvalue), share)), cum_pos: place(mb + share / 10) });
+            }
+        }
+        rows.push({ chrom, snp: `${chrom}-end`, pvalue: "0.5", cum_pos: place(length - 0.5) });
+        start += length;
+    }
+    return rows;
+}
+
+describe("the Manhattan text at each size", () => {
+    const rows = bmiExcerpt();
+    const option = derive(block(), rows);
+    const x = option.xAxis as EchartOption;
+    const plot = { x: { min: x.min as number, max: x.max as number }, y: { min: 0, max: asTop(option) } };
+
+    /** The page option, and the export option of each export size, with the frame where its text places. */
+    const renders: Array<readonly [string, EchartOption, NameFrame]> = [
+        ["page", option, PAGE_PLOT_FRAME],
+        ...Object.entries(CHART_EXPORT_SIZES).map(
+            ([kind, size]) =>
+                [kind, exportOption(option, size.textPx, size.widthPx, size.heightPx), EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]] as const,
+        ),
+    ];
+
+    function dataOf(render: EchartOption, name: string): EchartOption[] {
+        return (seriesOf(render).find((entry) => entry.name === name)?.data ?? []) as EchartOption[];
+    }
+
+    for (const [kind, render, frame] of renders) {
+        it(`prints no lead name over another lead name at the ${kind} size`, () => {
+            const boxes = dataOf(render, POINT_NAMES).map((item) => {
+                const [nameX, nameY] = item.value as number[];
+                const placed: LeaderName = { x: nameX, y: nameY, side: (item.label as EchartOption).position as LeaderName["side"] };
+                return leaderNameBox(placed, String(item.name), plot, frame);
+            });
+            expect(boxes.length).toBeGreaterThan(0);
+            for (const [index, box] of boxes.entries()) {
+                for (const other of boxes.slice(index + 1)) expect(overlaps(box, other)).toBe(false);
+            }
+        });
+
+        it(`prints no chromosome name over another chromosome name at the ${kind} size`, () => {
+            const toPx = (value: number): number => ((value - plot.x.min) / (plot.x.max - plot.x.min)) * frame.widthPx;
+            const spans = dataOf(render, "Chromosome names").map((item) => {
+                const middle = toPx((item.value as number[])[0]);
+                const half = textWidthPx(String(item.name), frame.textPx) / 2;
+                return [middle - half, middle + half] as const;
+            });
+            expect(spans.length).toBeGreaterThan(0);
+            for (const [index, [start]] of spans.entries()) {
+                if (index > 0) expect(start - spans[index - 1][1]).toBeGreaterThanOrEqual(MANHATTAN_NAME_GAP_SHARE * frame.textPx);
+            }
+        });
+    }
+
+    it("prints fewer names at the single column than at the double column", () => {
+        const [, single] = renders.find(([kind]) => kind === "single") ?? [];
+        const [, double] = renders.find(([kind]) => kind === "double") ?? [];
+        expect(dataOf(single ?? {}, "Chromosome names").length).toBeLessThan(dataOf(double ?? {}, "Chromosome names").length);
+        expect(dataOf(single ?? {}, POINT_NAMES).length).toBeLessThan(dataOf(double ?? {}, POINT_NAMES).length);
     });
 });
 

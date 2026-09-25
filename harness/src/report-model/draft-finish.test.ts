@@ -142,6 +142,41 @@ describe("finishDraft", () => {
         ]);
     });
 
+    it("names the slot of a heatmap tree that the snapshot does not hold", () => {
+        const draft: DraftDocument = {
+            title: "Report",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Expression",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "hm1",
+                            binding: { kind: "artifact-table", path: OUTPUT_PATH, hash: OUTPUT_HASH },
+                            chartType: "heatmap",
+                            encoding: { x: "sample", y: "gene", value: "z" },
+                            trees: {
+                                y: {
+                                    binding: { kind: "artifact-table", path: ABSENT_PATH, hash: ABSENT_HASH },
+                                    parent: "parent",
+                                    child: "child",
+                                    height: "height",
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        };
+        const result = finishDraft(draft, snapshot);
+        const gaps = result.valid ? [] : result.gaps.filter((gap) => gap.kind === "unresolved-reference");
+        expect(gaps.map((gap) => (gap.kind === "unresolved-reference" ? [gap.blockId, gap.slot, gap.failure.reason] : []))).toEqual([
+            ["hm1", "tree:y", "artifact-missing"],
+        ]);
+    });
+
     it("gives the document value for a complete valid draft, and does not change the draft", () => {
         const draft: DraftDocument = {
             title: "Report",

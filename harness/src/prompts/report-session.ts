@@ -104,7 +104,8 @@ that field from one table. A statistic that the figure prints, such as the p-val
 of a test or the area under a curve, binds as a statistic of the chart block, and
 each statistic reads one cell of the pinned evidence. A second table that the
 figure draws beside its table, such as the domains of a protein, binds as the track
-of the chart block.
+of the chart block. When a clustering orders an axis of a heatmap, the edge table of
+that clustering binds as the tree of that axis, and the axis takes its leaf order.
 
 A run writes statistical tables, and not plot-ready ones. When a real reshaping
 stands between the evidence and the block, \`derive_table\` runs your Python script

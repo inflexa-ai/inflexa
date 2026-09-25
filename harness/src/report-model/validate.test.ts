@@ -869,6 +869,49 @@ describe("resolveDocumentReferences — the slots of a chart", () => {
         expect(failures[0].failure.detail).toBe("the track names column invented_end, which the track table does not hold");
     });
 
+    /** A heatmap over table B whose axis trees read table A, with the given tree columns on the y axis. */
+    function treeChart(height = "padj"): Block {
+        const tree = (column: string) => ({
+            binding: { kind: "artifact-table" as const, run: "run-1", path: TABLE_A_PATH, hash: TABLE_A_HASH },
+            parent: "gene",
+            child: "log2FoldChange",
+            height: column,
+        });
+        return {
+            kind: "chart",
+            id: "chart-trees",
+            binding: { kind: "artifact-table", run: "run-1", path: TABLE_B_PATH, hash: TABLE_B_HASH },
+            chartType: "heatmap",
+            encoding: { x: "sample", y: "value" },
+            trees: { x: tree("padj"), y: tree(height) },
+        };
+    }
+
+    it("resolves each tree, and files its table under the slot of its axis", async () => {
+        const { resolvedBySlot, failures } = await resolveDocumentReferences(reportWith(treeChart()).sections, snapshot, resolver);
+        expect(failures).toEqual([]);
+        const slots = resolvedBySlot.get("chart-trees");
+        expect(slots?.get("tree:x")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH].rows ?? [] });
+        expect(slots?.get("tree:y")).toEqual({ type: "table", rows: snapshot.artifacts[TABLE_A_PATH].rows ?? [] });
+    });
+
+    it("names the block and the slot of a tree column that the tree table does not hold", async () => {
+        const { failures } = await resolveDocumentReferences(reportWith(treeChart("invented_height")).sections, snapshot, resolver);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]).toEqual(expect.objectContaining({ blockId: "chart-trees", slot: "tree:y" }));
+        expect(failures[0].failure.detail).toBe("the tree names column invented_height, which the tree table does not hold");
+    });
+
+    it("refuses a stale tree at the record gate, with its slot", async () => {
+        const chart = treeChart();
+        const stale: Block =
+            chart.kind === "chart" && chart.trees?.x !== undefined
+                ? { ...chart, trees: { x: { ...chart.trees.x, binding: { ...chart.trees.x.binding, hash: WRONG_HASH } } } }
+                : chart;
+        const invalid = expectInvalid(await validateReport(reportWith(stale), snapshot, resolver));
+        expect((invalid.resolutionFailures ?? []).map((failure) => [failure.slot, failure.failure.reason])).toEqual([["tree:x", "hash-mismatch"]]);
+    });
+
     it("refuses the same statistic at the record gate, with its slot", async () => {
         const chart = slottedChart({
             statistics: [{ label: "Stale", value: { kind: "artifact-value", path: TABLE_B_PATH, hash: WRONG_HASH, locator: { column: "value", row: 0 } } }],

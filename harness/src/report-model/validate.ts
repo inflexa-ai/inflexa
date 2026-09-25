@@ -55,10 +55,16 @@ export type ReportValidation =
           warnings: ReportWarning[];
       };
 
+/** The role of one chart slot whose columns name a table: the binding, the track, or a tree. */
+function tableRole(slot: ChartSlot | undefined): "binding" | "track" | "tree" {
+    if (slot === "track") return "track";
+    return slot === "tree:x" || slot === "tree:y" ? "tree" : "binding";
+}
+
 /**
- * Match each column that a chart names against the table that its binding or its track resolved to.
+ * Match each column that a chart names against the table that its binding, its track, or a tree resolved to.
  *
- * The binding and the track schema admit a table reference only, thus a resolved value of another type means
+ * The binding, the track, and the tree schema admit a table reference only, thus a resolved value of another type means
  * that the bound resolver broke its own contract. That is reported and never ignored, because a chart with no
  * table behind it renders nothing and a silent skip would pass it as grounded.
  */
@@ -67,7 +73,7 @@ export function checkChartEncoding(entry: CollectedReference, value: ResolvedVal
     if (encodingColumns === undefined || encodingColumns.length === 0) {
         return undefined;
     }
-    const role = entry.slot === "track" ? "track" : "binding";
+    const role = tableRole(entry.slot);
     if (value.type !== "table") {
         return { reference: entry.reference, reason: "locator-out-of-range", detail: `the chart ${role} resolved to a ${value.type} and not to a table` };
     }
@@ -78,7 +84,7 @@ export function checkChartEncoding(entry: CollectedReference, value: ResolvedVal
     return {
         reference: entry.reference,
         reason: "locator-out-of-range",
-        detail: `the ${role === "track" ? "track" : "encoding"} names column ${absent.join(", ")}, which the ${role === "track" ? "track" : "bound"} table does not hold`,
+        detail: `the ${role === "binding" ? "encoding" : role} names column ${absent.join(", ")}, which the ${role === "binding" ? "bound" : role} table does not hold`,
     };
 }
 
@@ -87,8 +93,8 @@ export interface ReferenceResolution {
     /** The resolved value of the binding of each block whose binding resolved, keyed by its block id. */
     resolvedByBlock: Map<string, ResolvedValue>;
     /**
-     * The resolved value of each other slot of a chart, keyed by the block id and then by the slot: the track
-     * and each statistic. A chart that binds neither holds no entry.
+     * The resolved value of each other slot of a chart, keyed by the block id and then by the slot: the track,
+     * each tree, and each statistic. A chart that binds none of them holds no entry.
      */
     resolvedBySlot: Map<string, Map<ChartSlot, ResolvedValue>>;
     /** Each reference that did not resolve, or whose chart encoding named an absent column. */

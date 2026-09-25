@@ -21,7 +21,7 @@ import { validate as validateCssRaw } from "csstree-validator";
 import { HtmlValidate } from "html-validate";
 
 import type { ReportDocument } from "../contracts/report-blocks.js";
-import { DESIGN_CSS } from "./design.js";
+import { DESIGN_CSS, SCATTER_CROWD_ROWS } from "./design.js";
 import { FIXTURE_DOCUMENT, FIXTURE_PROVENANCE, FIXTURE_VALUES } from "./fixture.js";
 import { renderReportPage } from "./render.js";
 import type { RenderValues } from "./types.js";
@@ -65,6 +65,36 @@ describe("the rendered page validates as HTML and CSS", () => {
         // The provenance adds a data attribute to each grounded block and a control beside each marker. Both
         // ride the same gate, thus a misspelled attribute and a control in an illegal place fail here.
         const html = renderReportPage(FIXTURE_DOCUMENT, FIXTURE_VALUES, { provenance: FIXTURE_PROVENANCE })._unsafeUnwrap().html;
+        expect(await htmlFindings(html)).toEqual([]);
+    });
+
+    it("passes the same validation with the menu of a dense chart, whose SVG entries the page builds", async () => {
+        // A scatter past the crowd row count carries the hybrid entries and the hidden fault note, and no fixture
+        // chart is so dense.
+        const rows: Record<string, number>[] = [];
+        for (let index = 0; index <= SCATTER_CROWD_ROWS; index += 1) rows.push({ x: index, y: index % 97 });
+        const document: ReportDocument = {
+            title: "Dense",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s",
+                    title: "S",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "crowd",
+                            title: "Crowd",
+                            binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:aaa" },
+                            chartType: "scatter",
+                            encoding: { x: "x", y: "y" },
+                        },
+                    ],
+                },
+            ],
+        };
+        const html = renderReportPage(document, { crowd: { type: "table", columns: ["x", "y"], rows } })._unsafeUnwrap().html;
+        expect(html).toContain("data-hybrid");
         expect(await htmlFindings(html)).toEqual([]);
     });
 

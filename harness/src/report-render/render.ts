@@ -243,6 +243,7 @@ function renderBlock(
                 {
                     ...(entry.statistics !== undefined ? { statistics: entry.statistics } : {}),
                     ...(entry.track !== undefined ? { track: entry.track } : {}),
+                    ...(entry.trees !== undefined ? { trees: entry.trees } : {}),
                 },
                 data.chart,
             );

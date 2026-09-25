@@ -14,7 +14,7 @@
  * which part it needs.
  */
 
-import { channelColumn, channelOrder, type Block, type ChartBlock, type ChartChannel } from "../contracts/report-blocks.js";
+import { channelColumn, channelOrder, type Block, type ChartBlock, type ChartChannel, type ChartTree } from "../contracts/report-blocks.js";
 import type { Reference } from "../contracts/report-reference.js";
 import { holdsADriftedExponent } from "../report-render/number-format.js";
 import type { DraftBlock } from "./draft.js";
@@ -23,10 +23,18 @@ import type { DraftBlock } from "./draft.js";
 export type AnyBlock = Block | DraftBlock;
 
 /**
- * The place of one reference inside a chart block: the binding, the track, or the statistic at one index of
- * the block, for example `statistic:0`.
+ * The place of one reference inside a chart block: the binding, the track, the tree of one axis, or the
+ * statistic at one index of the block, for example `statistic:0`.
  */
-export type ChartSlot = "binding" | "track" | `statistic:${number}`;
+export type ChartSlot = "binding" | "track" | TreeSlot | `statistic:${number}`;
+
+/** The slot of the tree of one category axis of a chart. */
+export type TreeSlot = "tree:x" | "tree:y";
+
+/** The slot of the tree of one axis. */
+export function treeSlot(axis: "x" | "y"): TreeSlot {
+    return `tree:${axis}`;
+}
 
 /** The slot of the statistic at one index of a chart block. */
 export function statisticSlot(index: number): ChartSlot {
@@ -39,11 +47,11 @@ export function statisticSlot(index: number): ChartSlot {
  * `slot` is present for a `chart` only, because a chart is the one kind that binds more than one reference of
  * different roles. A failure names the block and the slot, and the resolution files each value under its slot.
  *
- * `encodingColumns` is present for the binding and the track of a `chart`. A chart names its columns as free
- * strings, thus the names must be matched against the table that the reference resolves to. Nothing else can
- * catch a chart that plots a column which does not exist. The binding carries every column that the chart
- * grammar names, and the track carries each column that the track names, thus the structural tier and the
- * value tier match the same set.
+ * `encodingColumns` is present for the binding, the track, and each tree of a `chart`. A chart names its columns
+ * as free strings, thus the names must be matched against the table that the reference resolves to. Nothing
+ * else can catch a chart that plots a column which does not exist. The binding carries every column that the
+ * chart grammar names, and the track and each tree carry each column that they name, thus the structural tier
+ * and the value tier match the same set.
  */
 export interface CollectedReference {
     blockId: string;
@@ -219,14 +227,25 @@ function trackColumns(track: NonNullable<ChartBlock["track"]>): string[] {
     return [track.start, track.end, track.label, ...(track.length !== undefined ? [track.length] : [])];
 }
 
+/** Each column of its own table that the tree of one axis names: the parent, the child, and the height. */
+function treeColumns(tree: ChartTree): string[] {
+    return [tree.parent, tree.child, tree.height];
+}
+
 /**
- * The references of one chart block, in the order of the block: the binding, the track, and each statistic.
- * Each one carries its slot.
+ * The references of one chart block, in the order of the block: the binding, the track, the tree of `x`, the
+ * tree of `y`, and each statistic. Each one carries its slot.
  */
 function chartReferences(block: ChartBlock): CollectedReference[] {
     const references: CollectedReference[] = [{ blockId: block.id, reference: block.binding, slot: "binding", encodingColumns: chartColumns(block) }];
     if (block.track !== undefined) {
         references.push({ blockId: block.id, reference: block.track.binding, slot: "track", encodingColumns: trackColumns(block.track) });
+    }
+    for (const axis of ["x", "y"] as const) {
+        const tree = block.trees?.[axis];
+        if (tree !== undefined) {
+            references.push({ blockId: block.id, reference: tree.binding, slot: treeSlot(axis), encodingColumns: treeColumns(tree) });
+        }
     }
     for (const [index, statistic] of (block.statistics ?? []).entries()) {
         references.push({ blockId: block.id, reference: statistic.value, slot: statisticSlot(index) });

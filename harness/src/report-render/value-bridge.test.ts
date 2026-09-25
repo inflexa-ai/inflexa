@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { bridgeValues, type BlockResolution, type FigureSourcePolicy } from "./value-bridge.js";
+import type { Block } from "../contracts/report-blocks.js";
+import type { ChartSlot } from "../report-model/block-walk.js";
+import type { ResolvedValue } from "../report-model/reference-resolver.js";
+import { bridgeValues, collectResolutions, type BlockResolution, type FigureSourcePolicy } from "./value-bridge.js";
 
 /** A figure policy that names the source from the pin, thus a test reads the echo that reached the policy. */
 const stageAsset: FigureSourcePolicy = (file) => `assets/${file.hash}.png`;
@@ -139,6 +142,57 @@ describe("bridgeValues chart slots", () => {
         expect(mismatches).toEqual([
             { blockId: "cht", blockKind: "chart", slot: "track", expected: "table", actual: "scalar" },
             { blockId: "cht", blockKind: "chart", slot: "statistic:1", expected: "scalar", actual: "table" },
+        ]);
+    });
+});
+
+describe("bridgeValues chart trees", () => {
+    const rows = [{ sample: "s1", gene: "g1", z: 0.4 }];
+    const geneTree = [{ parent: "n1", child: "g1", height: 0.8 }];
+    const sampleTree = [{ parent: "m1", child: "s1", height: 1.2 }];
+    const HASH = `sha256:${"a".repeat(64)}`;
+    const tree = (path: string) => ({ binding: { kind: "artifact-table" as const, path, hash: HASH }, parent: "parent", child: "child", height: "height" });
+
+    it("pairs each resolved tree with its axis, and maps the tree tables onto the chart value", () => {
+        const block: Block = {
+            kind: "chart",
+            id: "hm",
+            binding: { kind: "artifact-table", path: "z.csv", hash: HASH },
+            chartType: "heatmap",
+            encoding: { x: "sample", y: "gene", value: "z" },
+            trees: { x: tree("sample_tree.csv"), y: tree("gene_tree.csv") },
+        };
+        const slots = new Map<ChartSlot, ResolvedValue>([
+            ["tree:x", { type: "table", rows: sampleTree }],
+            ["tree:y", { type: "table", rows: geneTree, columns: ["parent", "child", "height"] }],
+        ]);
+        const resolutions = collectResolutions([block], new Map([["hm", { type: "table", rows }]]), new Map([["hm", slots]]));
+        expect(resolutions).toEqual([
+            {
+                blockId: "hm",
+                kind: "chart",
+                resolved: { type: "table", rows },
+                trees: { x: { type: "table", rows: sampleTree }, y: { type: "table", rows: geneTree, columns: ["parent", "child", "height"] } },
+            },
+        ]);
+        expect(bridgeValues(resolutions, stageAsset)._unsafeUnwrap().hm).toEqual({
+            type: "table",
+            rows,
+            trees: { x: { rows: sampleTree }, y: { rows: geneTree, columns: ["parent", "child", "height"] } },
+        });
+    });
+
+    it("refuses a tree that resolved to a scalar, and names the slot of its axis", () => {
+        const resolutions: BlockResolution[] = [
+            {
+                blockId: "hm",
+                kind: "chart",
+                resolved: { type: "table", rows },
+                trees: { x: { type: "table", rows: sampleTree }, y: { type: "scalar", value: 1 } },
+            },
+        ];
+        expect(bridgeValues(resolutions, stageAsset)._unsafeUnwrapErr()).toEqual([
+            { blockId: "hm", blockKind: "chart", slot: "tree:y", expected: "table", actual: "scalar" },
         ]);
     });
 });

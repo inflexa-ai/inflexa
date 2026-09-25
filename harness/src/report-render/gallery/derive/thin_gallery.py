@@ -179,6 +179,9 @@ TABLES = [
     ("bulk_rnaseq", "sample_distances", "bulk_rnaseq_pasilla.py", whole),
     ("bulk_rnaseq", "heatmap_top_genes", "bulk_rnaseq_pasilla.py", whole),
     ("bulk_rnaseq", "top_gene_counts", "bulk_rnaseq_pasilla.py", whole),
+    ("bulk_rnaseq", "tree_top_genes_rows", "trees_bulk_rnaseq.py", whole),
+    ("bulk_rnaseq", "tree_top_genes_cols", "trees_bulk_rnaseq.py", whole),
+    ("bulk_rnaseq", "tree_samples", "trees_bulk_rnaseq.py", whole),
     ("enrichment", "ora_results", "enrichment_pasilla.py", whole),
     ("enrichment", "gsea_results", "enrichment_pasilla.py", whole),
     ("enrichment", "gsea_running_score", "enrichment_pasilla.py", thin_gsea),
@@ -196,12 +199,17 @@ TABLES = [
     ("gwas", "manhattan", "gwas_bmi.py", thin_manhattan),
     ("gwas", "qq", "gwas_bmi.py", thin_qq),
     ("gwas", "qq_summary", "gwas_bmi.py", whole),
+    ("gwas", "locus_fto", "locuszoom_gwas.py", whole),
+    ("gwas", "locus_fto_genes", "locuszoom_gwas.py", whole),
+    ("gwas", "locus_fto_summary", "locuszoom_gwas.py", whole),
     ("cancer_mut", "oncoprint", "tcga_laml.py", whole),
     ("cancer_mut", "mutation_burden", "tcga_laml.py", whole),
     ("cancer_mut", "lollipop_DNMT3A", "tcga_laml.py", whole),
     ("cancer_mut", "domains_DNMT3A", "tcga_laml.py", whole),
     ("cancer_mut", "lollipop_FLT3", "tcga_laml.py", whole),
     ("cancer_mut", "domains_FLT3", "tcga_laml.py", whole),
+    ("cancer_mut", "upset_membership", "upset_cancer_mut.py", whole),
+    ("cancer_mut", "sankey_flows", "sankey_cancer_mut.py", whole),
 ]
 
 

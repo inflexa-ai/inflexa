@@ -6,7 +6,9 @@
  *   palette and the up side takes its vermilion.
  * - The legend names each side with the count of its points.
  * - The ten most significant signal points that carry a name show it. The derivation places each name clear of
- *   the other names and of the points, with a leader line to its point.
+ *   the other names and of the points, with a leader line to its point. The names place again for the plot and
+ *   the text size of each export, and a name that finds no place clear of the earlier names does not print
+ *   there.
  * - The effect axis is symmetric around zero, thus the two sides read at one scale.
  * - A row with no p draws no point and counts on no side.
  * - A row whose stored p is 0 draws an upward triangle at the top of the plotted range, on the side of its
@@ -43,8 +45,10 @@ import {
     niceCeiling,
     plottedValues,
     pointLayer,
+    POINT_NAMES,
     pointNameSeries,
     seriesOf,
+    sizedSeries,
     symmetricRange,
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
@@ -150,10 +154,13 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     // The runtime ends the p axis at its own round number at or past the peak. The round number of the figure
     // is at or past it too, thus the names measure against a span at least as long as the drawn one.
     const plot = { x: { min: -end, max: end }, y: { min: 0, max: niceCeiling(top) } };
-    const placed = placeLeaderNames(names, { xs, ys, pointPx: DENSE_SIGNAL_SYMBOL_PX }, plot, VOLCANO_NAME_SIDES, top);
+    const text = sizedSeries([POINT_NAMES], (frame) =>
+        pointNameSeries(names, placeLeaderNames(names, { xs, ys, pointPx: DENSE_SIGNAL_SYMBOL_PX }, plot, VOLCANO_NAME_SIDES, top, frame)),
+    );
     const legend = typeof option.legend === "object" && option.legend !== null ? (option.legend as EchartOption) : {};
     return ok({
         ...option,
+        ...text.member,
         // The legend names the three sides alone, and never the series of the point names.
         legend: { ...legend, data: seriesOf(option).map((series) => series.name) },
         xAxis: { ...axisOf(option, "xAxis"), ...symmetricRange(end) },
@@ -161,7 +168,7 @@ function deriveVolcano(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         series: [
             ...seriesOf(option).map((series, place) => ({ ...series, ...sideLayer(place, DENSE_SIGNAL_SYMBOL_PX, DENSE_NULL_SYMBOL_PX) })),
             ...zeroSeries(counted, zeroRows, xs, zeroY, labelColumn === undefined ? undefined : (index) => String(rows[index][labelColumn])),
-            ...pointNameSeries(names, placed),
+            ...text.page,
         ],
     });
 }

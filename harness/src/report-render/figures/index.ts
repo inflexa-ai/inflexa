@@ -34,12 +34,28 @@ import { DOTPLOT_FIGURE } from "./dotplot.js";
 import { EMBEDDING_FIGURE } from "./embedding.js";
 import { HEATMAP_FIGURE } from "./heatmap.js";
 import { PCA_FIGURE } from "./pca.js";
+import { UPSET_FIGURE } from "./upset.js";
+import { SANKEY_FIGURE } from "./sankey.js";
+import { LOCUSZOOM_FIGURE } from "./locuszoom.js";
 
 /**
  * The presets that exist as a figure module alone. No composition expands them, thus each one draws only
  * through its module.
  */
-export const FIGURE_PRESET_TYPES = ["pca", "embedding", "dotplot", "forest", "roc", "qq", "gsea", "oncoprint", "lollipop"] as const;
+export const FIGURE_PRESET_TYPES = [
+    "pca",
+    "embedding",
+    "dotplot",
+    "forest",
+    "roc",
+    "qq",
+    "gsea",
+    "oncoprint",
+    "lollipop",
+    "upset",
+    "sankey",
+    "locuszoom",
+] as const;
 
 /** One preset that exists as a figure module alone. */
 export type FigurePresetType = (typeof FIGURE_PRESET_TYPES)[number];
@@ -67,9 +83,9 @@ export function isModuleOnlyType(chartType: ChartType): chartType is ModuleOnlyT
 
 /**
  * One member of a chart block that a figure can read: a channel of the quick-path encoding, the statistics,
- * the track, or the focus.
+ * the track, the trees, or the focus.
  */
-export type FigureMember = keyof ChartEncoding | "statistics" | "track" | "focus";
+export type FigureMember = keyof ChartEncoding | "statistics" | "track" | "trees" | "focus";
 
 /**
  * The resolved track of a figure: the rows of the second table, its declared column order, and the columns
@@ -82,6 +98,21 @@ export interface FigureTrack {
     readonly end: string;
     readonly label: string;
     readonly length?: string;
+    readonly labels: ColumnLabels;
+    readonly meanings: ColumnMeanings;
+}
+
+/**
+ * The resolved tree of one category axis: the edge rows of the tree table, its declared column order, and the
+ * three columns that the block names in it. The labels and the meanings are the declarations of the tree
+ * binding.
+ */
+export interface FigureTree {
+    readonly rows: readonly ChartRow[];
+    readonly columns?: readonly string[];
+    readonly parent: string;
+    readonly child: string;
+    readonly height: string;
     readonly labels: ColumnLabels;
     readonly meanings: ColumnMeanings;
 }
@@ -111,6 +142,7 @@ export interface FigureComposeExtras {
  * - `statistics` holds each statistic of the block in block order, with its resolved value and its shown text.
  *   A block with no statistic gives an empty list.
  * - `track` is the resolved second table, where the block binds one.
+ * - `trees` holds the resolved tree of each axis that the block binds one for.
  * - `textPx` is the text size of the page. The export scales each `graphic` text from it.
  * - `compose` derives one composition over the bound rows through the shared machinery of `chart.ts`. A dense
  *   figure builds its primary series here, thus the series reads the shared payload of its artifact past the
@@ -125,6 +157,7 @@ export interface FigureContext {
     readonly columns?: readonly string[];
     readonly statistics: readonly FigureStatistic[];
     readonly track?: FigureTrack;
+    readonly trees?: { readonly x?: FigureTree; readonly y?: FigureTree };
     readonly textPx: number;
     readonly compose: (composition: ChartComposition, extras?: FigureComposeExtras) => Result<EchartOption, RenderProblem>;
 }
@@ -157,6 +190,9 @@ export const FIGURE_MODULES: FigureRegistry = {
     embedding: EMBEDDING_FIGURE,
     dotplot: DOTPLOT_FIGURE,
     heatmap: HEATMAP_FIGURE,
+    upset: UPSET_FIGURE,
+    sankey: SANKEY_FIGURE,
+    locuszoom: LOCUSZOOM_FIGURE,
 };
 
 /**
@@ -164,15 +200,16 @@ export const FIGURE_MODULES: FigureRegistry = {
  * these types, and the teaching text of the member names the same ones.
  */
 export const FIGURE_MEMBER_READERS: Readonly<
-    Record<"shape" | "p" | "censor" | "risk" | "hit" | "metric" | "tracks" | "statistics" | "track", readonly ChartType[]>
+    Record<"shape" | "p" | "censor" | "risk" | "hit" | "metric" | "tracks" | "statistics" | "track" | "trees", readonly ChartType[]>
 > = {
     shape: ["pca", "scatter"],
     p: ["ma", "forest"],
     censor: ["km"],
     risk: ["km"],
     hit: ["gsea"],
-    metric: ["gsea"],
+    metric: ["gsea", "locuszoom"],
     tracks: ["heatmap", "oncoprint"],
     statistics: ["km", "roc", "qq", "gsea"],
-    track: ["lollipop"],
+    track: ["lollipop", "locuszoom"],
+    trees: ["heatmap"],
 };

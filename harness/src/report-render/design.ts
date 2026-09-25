@@ -844,44 +844,140 @@ a.report-citation-source:hover {
   width: 100%;
   height: ${CHART_BODY_PX}px;
 }
-/* The export row of a chart card: the two SVG files and the three PNG controls, under the chart body. */
-.report-chart-export {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+/* The download control of the title line. The runtime draws the toolbox icon on the canvas and binds a mouse
+   click alone, thus this control opens the same menu for the keyboard. It reads as a quiet label of the line. */
+.report-chart-download {
+  float: right;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
-/* A link and a control of the export row read as one kind of button, as the download of a table does. */
-.report-chart-export-link,
-.report-chart-export-button {
-  display: inline-block;
-  padding: 6px 12px;
+.report-chart-download:hover,
+.report-chart-download[aria-expanded="true"] {
+  color: var(--color-primary-700);
+}
+.report-chart-download:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+/* The download menu of a chart. The download control of the toolbox opens it under the control, and the page
+   script places it against the card. It takes the square corners and the mono labels of the card title. A menu
+   stands closed until the page script marks it open. */
+.report-chart-menu {
+  position: absolute;
+  z-index: 20;
+  display: none;
+  flex-direction: column;
+  min-width: max-content;
+  padding: 4px 0;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 12px 32px -12px rgba(15, 23, 42, 0.18);
+}
+.report-chart-menu-open {
+  display: flex;
+}
+/* A link and a control of the menu read as one kind of entry. */
+.report-chart-menu-item {
+  display: block;
+  padding: 8px 16px;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
+  text-align: left;
   text-transform: uppercase;
-  color: var(--color-primary-500);
+  white-space: nowrap;
+  color: var(--color-text-strong);
   text-decoration: none;
-  background: var(--color-card);
-  border: 1px solid var(--color-primary-200);
+  background: transparent;
+  border: 0;
   cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
 }
-.report-chart-export-link:hover,
-.report-chart-export-button:hover {
+.report-chart-menu-item:hover,
+.report-chart-menu-item:focus {
   color: var(--color-primary-700);
   background: var(--color-primary-50);
-  border-color: var(--color-primary-500);
+  outline: none;
 }
-/* The note of a chart past the export bound. It stands where the two SVG links stand on a smaller chart. */
-.report-chart-export-note {
+.report-chart-menu-item:focus-visible {
+  box-shadow: inset 2px 0 0 var(--color-primary-500);
+}
+/* The rule between the SVG entries and the PNG entries. */
+.report-chart-menu-rule {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border-subtle);
+}
+/* The note of a chart past the export bound that holds no point layer. It stands where the SVG entries stand. */
+.report-chart-menu-note {
+  padding: 8px 16px;
   font-family: var(--font-mono);
   font-size: 11px;
+  white-space: normal;
+  max-width: 16rem;
   color: var(--color-text-secondary);
+}
+/* The note that the menu of a dense chart shows when the page cannot build its SVG file. The page shows it. */
+.report-chart-menu-fault {
+  display: none;
+}
+.report-chart-menu-fault.report-chart-menu-fault-shown {
+  display: block;
+}
+/* The data view of a chart: the plotted rows as a plain table. The runtime frames the view over the chart body,
+   and the frame scrolls a long table. */
+.report-data-view {
+  padding: 0 20px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-strong);
+}
+.report-data-view table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.report-data-view th {
+  position: sticky;
+  top: 0;
+  padding: 6px 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-alt);
+  border-bottom: 1px solid var(--color-border);
+}
+.report-data-view td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.report-data-view-note {
+  margin: 0 0 8px;
+  color: var(--color-text-secondary);
+}
+/* The chart runtime frames the view with a heading and a close control of its own, and it styles the control
+   inline with round corners. The frame takes the mono title and the square corners of the card. */
+.chart-container div:has(> div > .report-data-view) > h4 {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-primary-500) !important;
+}
+.chart-container div:has(> div > .report-data-view) > div:last-child > div {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 0 !important;
 }
 
 /* ── References appendix ──────────────────────────────── */
@@ -1099,8 +1195,12 @@ a.report-citation-source:hover {
   .report-lineage-popover {
     display: none;
   }
-  /* Each export draws a file on the screen, and paper downloads nothing. */
-  .report-chart-export {
+  /* Each export draws a file on the screen, and paper downloads nothing. The page script hides the toolbox of
+     each chart before the print, because the chart runtime draws it inside the chart body. */
+  .report-chart-menu-open {
+    display: none;
+  }
+  .report-chart-download {
     display: none;
   }
   /* The printer gives the page margin. Thus the screen padding of the container drops out. */
@@ -1459,8 +1559,8 @@ export const CHART_INLINE_OPTION_BOUND = 100_000;
  *
  * The page and the export read one theme, thus a chart on the page is the chart that the paper gets. The
  * left and the bottom axis lines are strong and dark, with ticks outside the plot. There is no grid line, no
- * frame around the legend, and no toolbox, because the chart card carries the export row. The text reads in
- * the journal sans stack and in the near-black ink.
+ * frame around the legend, and no toolbox, because the chart card adds the toolbox of the page and a file carries
+ * none. The text reads in the journal sans stack and in the near-black ink.
  *
  * The chart runtime reads the style of an axis by its type, thus each of the four axis types carries the same
  * style. The text size scales the text alone: the page, the print export, and the slide export each register
@@ -1516,6 +1616,14 @@ const CHART_AXIS_LINE_PX = 1.5;
 
 /** The light web of a radar. The web is the coordinate of the radar, thus it stays and recedes. */
 const CHART_RADAR_WEB = "#d4d4d4";
+
+/**
+ * The colors and the font of the toolbox of a page chart: a quiet icon, the primary accent on hover, and the mono
+ * face of the card title for the title of an icon.
+ */
+export const CHART_TOOLBOX_ICON_COLOR = TOKEN.textSecondary;
+export const CHART_TOOLBOX_ACTIVE_COLOR = TOKEN.primary500;
+export const CHART_TOOLBOX_FONT = TOKEN.fontMono;
 
 /** The theme that the page registers under `ECHARTS_THEME_NAME`, at the page text size. */
 export const ECHARTS_THEME = chartTheme(CHART_PAGE_TEXT_PX);

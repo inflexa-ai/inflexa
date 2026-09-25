@@ -905,6 +905,117 @@ describe("the track of a chart", () => {
     });
 });
 
+describe("the trees of a heatmap", () => {
+    const CHART_PATH = "runs/r1/output/heatmap_top_genes.csv";
+    const GENE_TREE = "runs/r1/output/gene_tree.csv";
+    const SAMPLE_TREE = "runs/r1/output/sample_tree.csv";
+    const HASH = "sha256:fff";
+
+    /** Two genes over three samples, the gene tree, and the sample tree. */
+    const treeSnapshot: ReportSnapshot = {
+        artifacts: {
+            [CHART_PATH]: {
+                hash: HASH,
+                fileType: "output",
+                rows: [
+                    { gene: "Kal1", sample: "treated1", z: -1.2 },
+                    { gene: "Kal1", sample: "untreated1", z: 0.8 },
+                    { gene: "Kal1", sample: "untreated2", z: 0.7 },
+                    { gene: "Treh", sample: "treated1", z: 1.1 },
+                    { gene: "Treh", sample: "untreated1", z: -0.6 },
+                    { gene: "Treh", sample: "untreated2", z: -0.7 },
+                ],
+            },
+            [GENE_TREE]: {
+                hash: HASH,
+                fileType: "output",
+                rows: [
+                    { parent: "g_root", child: "Treh", height: 3.4 },
+                    { parent: "g_root", child: "Kal1", height: 3.4 },
+                ],
+            },
+            [SAMPLE_TREE]: {
+                hash: HASH,
+                fileType: "output",
+                rows: [
+                    { parent: "s_root", child: "treated1", height: 2.5 },
+                    { parent: "s_root", child: "s_untreated", height: 2.5 },
+                    { parent: "s_untreated", child: "untreated2", height: 0.3 },
+                    { parent: "s_untreated", child: "untreated1", height: 0.3 },
+                ],
+            },
+        },
+    };
+
+    /** A draft of one heatmap with a tree on each axis, whose gene tree names the given height column. */
+    function treeDoc(geneHeight = "height"): DraftDocument {
+        const tree = (path: string, height: string) => ({
+            binding: { kind: "artifact-table" as const, path, hash: HASH },
+            parent: "parent",
+            child: "child",
+            height,
+        });
+        return {
+            title: "Expression",
+            sections: [
+                {
+                    kind: "section",
+                    id: "s1",
+                    title: "Top genes",
+                    blocks: [
+                        {
+                            kind: "chart",
+                            id: "hm",
+                            binding: { kind: "artifact-table", path: CHART_PATH, hash: HASH },
+                            chartType: "heatmap",
+                            encoding: { x: "sample", y: "gene", value: "z" },
+                            trees: { x: tree(SAMPLE_TREE, "height"), y: tree(GENE_TREE, geneHeight) },
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    it("names the block and the slot of a tree column that the tree table does not hold, and no page lands", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: treeDoc("merge_height"), snapshot: treeSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        // The structural tier reads the rows of the snapshot, thus the finish names the gap before the value tier runs.
+        expect(result.outcome).toBe("gaps");
+        if (result.outcome === "gaps") {
+            expect(result.gaps.map((gap) => (gap.kind === "unresolved-reference" ? [gap.blockId, gap.slot, gap.failure.detail] : [gap.kind]))).toEqual([
+                ["hm", "tree:y", "the chart names column merge_height, which the bound table does not hold"],
+            ]);
+        }
+        expect(existsSync(join(root, "report-sessions"))).toBe(false);
+    });
+
+    it("resolves each tree through the fixture resolver, and the page draws the matrix in the leaf order with a dendrogram on each axis", async () => {
+        const root = await makeRoot();
+        const gateway = makeFakeGateway();
+        gateway.seed("t1", { document: treeDoc(), snapshot: treeSnapshot });
+        const tool = createPreviewReportTool({ gateway, makeResolver: () => createFixtureResolver(), resolveWorkspaceRoot: () => root });
+
+        const result = (await tool.execute({}, ctxForThread("t1")))._unsafeUnwrap();
+
+        expect(result.outcome).toBe("rendered");
+        if (result.outcome === "rendered") {
+            const content = await readFile(result.pagePath, "utf8");
+            // The sample tree puts treated1 first, and the gene tree puts Treh first.
+            expect(content).toContain('"data":["treated1","untreated2","untreated1"]');
+            expect(content).toContain('"data":["Treh","Kal1"]');
+            expect(content.match(/"type":"lines"/g)?.length).toBe(2);
+            // The appendix lists the binding and each tree.
+            for (const path of [CHART_PATH, SAMPLE_TREE, GENE_TREE]) expect(content).toContain(path);
+        }
+    });
+});
+
 describe("the session refusal", () => {
     it("refuses a call whose scope carries no thread id", async () => {
         const root = await makeRoot();

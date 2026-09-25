@@ -106,7 +106,9 @@ A chart block MUST carry either the quick path or the composition, and never bot
 
 The annotations are typed members. A reference line names an axis and a constant. A reference band names an axis and two constants. Point labels name a rank rule over a named column, with a bounded count.
 
-The chart type enum holds the base types and the presets. The base types are `bar`, `line`, `scatter`, `histogram`, `box`, `heatmap`, `pie`, `violin`, `stacked-bar`, `normalized-bar`, and `radar`. The presets are `volcano`, `manhattan`, `ma`, `km`, `pca`, `embedding`, `dotplot`, `forest`, `roc`, `qq`, `gsea`, `oncoprint`, and `lollipop`. Each preset draws through its figure module.
+The chart type enum holds the base types and the presets. The base types are `bar`, `line`, `scatter`, `histogram`, `box`, `heatmap`, `pie`, `violin`, `stacked-bar`, `normalized-bar`, and `radar`. The presets are `volcano`, `manhattan`, `ma`, `km`, `pca`, `embedding`, `dotplot`, `forest`, `roc`, `qq`, `gsea`, `oncoprint`, `lollipop`, `upset`, `sankey`, and `locuszoom`. Each preset draws through its figure module.
+
+The `upset` reads `x` for the element and `group` for the set. The `sankey` reads `x` for the source node, `y` for the target node, `value` for the flow, and an optional `group`. The `locuszoom` reads `x` for the position and `y` for the p-value. It also reads `color` for the r² with the lead variant and `label` for the variant. It reads `metric` for the recombination rate, and the track of the genes.
 
 The annotations ride the composition alone. A preset states its own guide lines, thus the quick path needs none of its own. As a result a quick path draws no point label, and a preset over a quick path draws none either.
 
@@ -123,22 +125,24 @@ The quick-path encoding MUST admit the channels of the canonical figures as cont
 - `censor` names the count of censored subjects at the time of the row. The `km` figure reads it.
 - `risk` names the number at risk at the time of the row. The `km` figure reads it.
 - `hit` names a column that holds 1 where the gene at the rank is a member of the set, else 0. The `gsea` figure reads it.
-- `metric` names the ranking metric at the rank of the row. The `gsea` figure reads it.
+- `metric` names a second numeric column. The `gsea` figure reads it as the ranking metric at the rank of the row. The `locuszoom` figure reads it as the recombination rate at the position of the row.
 - `tracks` names one to four category columns that draw as annotation strips along the x axis. The `heatmap` and the `oncoprint` read it.
 
 A chart type that does not read one of these channels refuses it at render, and the refusal names the chart types that read it.
 
 The chart block MUST admit an optional `statistics` list of one to four entries. Each entry holds a short label and one artifact value reference. The value is a reference and never a literal, thus a printed statistic is grounded as a metric is. The `km`, the `roc`, the `qq`, and the `gsea` figures read the statistics. A list of five entries is a parse failure.
 
-The chart block MUST admit an optional `track` member. The track holds a whole-table binding and the names of columns of that table: `start`, `end`, `label`, and an optional `length`. The `lollipop` figure reads the track.
+The chart block MUST admit an optional `track` member. The track holds a whole-table binding and the names of columns of that table: `start`, `end`, `label`, and an optional `length`. The `lollipop` figure and the `locuszoom` figure read the track.
+
+The chart block MUST admit an optional `trees` member with an `x` entry, a `y` entry, or both. Each entry holds a whole-table binding and the names of three columns of that table: `parent`, `child`, and `height`. One row of the tree table is one edge of a clustering, and the height is the height of the parent node. The `heatmap` figure reads the trees. A `trees` member with no entry is a parse failure.
 
 The object form of a channel MUST admit an optional `orderBy` column and an optional `order` direction (`asc`, the default, and `desc`). The `transform` of the object form is optional, thus an ordered channel carries none. An `order` without an `orderBy` is a parse failure. The pair sorts the categories of the channel by the value of the named column. Thus a clustered heatmap reads the leaf order that a derived table gives. An `orderBy` on a channel that draws no category axis is a render refusal.
 
 The chart block MUST admit an optional `focus` list of one or more category values. The renderer colors the named categories with the one focus color and mutes each other category. A focus value that no category holds is a render refusal.
 
-The description of the chart type MUST name the channels that each base type reads. Thus an author finds each channel of a type in the schema text alone. A `pie` reads no `x` and no `y`: its `group` column names the slices, and its `value` column sizes them. The description of each preset and of each member of the canonical figures MUST name the chart types that read it. The authoring tools carry the schema to the agent, thus the description is what the agent knows about the member. The authoring grammar MUST omit the hash of the track binding and of each statistic value, as it omits the hash of the chart binding.
+The description of the chart type MUST name the channels that each base type reads. Thus an author finds each channel of a type in the schema text alone. A `pie` reads no `x` and no `y`: its `group` column names the slices, and its `value` column sizes them. The description of each preset and of each member of the canonical figures MUST name the chart types that read it. The authoring tools carry the schema to the agent, thus the description is what the agent knows about the member. The authoring grammar MUST omit the hash of the chart binding. It MUST also omit the hash of the track binding, of each tree binding, and of each statistic value.
 
-The grammar MUST keep the fabrication holes unrepresentable. No member carries a data literal, no member carries script text, and no member carries a function. The structural tier MUST refuse a grammar column that the bound table does not hold. The wide channels, the `orderBy` column, the channels of the canonical figures, and each `tracks` column join that match. The structural tier MUST also refuse a track column that the track table does not hold.
+The grammar MUST keep the fabrication holes unrepresentable. No member carries a data literal, no member carries script text, and no member carries a function. The structural tier MUST refuse a grammar column that the bound table does not hold. The wide channels, the `orderBy` column, the channels of the canonical figures, and each `tracks` column join that match. The structural tier MUST also refuse a track column that the track table does not hold. It MUST refuse a tree column that the tree table does not hold.
 
 #### Scenario: The quick path and the composition exclude each other
 - **WHEN** a chart block carries a chart type and a composition together
@@ -243,6 +247,22 @@ The grammar MUST keep the fabrication holes unrepresentable. No member carries a
 #### Scenario: The schema text names the channels of each base type
 - **WHEN** an agent reads the description of the chart type
 - **THEN** the text names the channels of each base type, and it states that a `pie` reads no `x` and names its slices with `group`
+
+#### Scenario: The presets of the figure extensions parse
+- **WHEN** a chart block carries the `upset`, the `sankey`, or the `locuszoom` type with an `x` and a `y` channel
+- **THEN** the block parses on the quick path
+
+#### Scenario: Trees parse
+- **WHEN** the author binds a `heatmap` with a sample tree on `x` and a gene tree on `y`
+- **THEN** the block parses, and each tree rides the stored document
+
+#### Scenario: An empty trees member refuses
+- **WHEN** a chart block carries a `trees` member with no `x` and no `y` entry
+- **THEN** the parse fails
+
+#### Scenario: An absent tree column refuses
+- **WHEN** the `height` of a tree names a column that the tree table does not hold
+- **THEN** the structural tier refuses the block before a landing, and the failure names the slot of the tree
 
 ### Requirement: Each evidentiary kind carries a binding field
 
