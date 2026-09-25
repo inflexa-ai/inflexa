@@ -473,14 +473,16 @@ function stripMembers(
     labels: ColumnLabels,
 ): StripMembers {
     if (tracks.length === 0) return { grid: [], xAxis: [], yAxis: [], series: [] };
+    const cellsOf = new Map<string, number[][]>(values.map((value) => [value, []]));
+    for (const [trackPlace, track] of tracks.entries()) {
+        for (const [samplePlace, name] of samples.entries()) {
+            const value = track.values.get(String(name));
+            if (value !== undefined) cellsOf.get(value)?.push([samplePlace, trackPlace, -1]);
+        }
+    }
     const series: EchartOption[] = [];
     for (const [valuePlace, value] of values.entries()) {
-        const data: number[][] = [];
-        for (const [trackPlace, track] of tracks.entries()) {
-            for (const [samplePlace, name] of samples.entries()) {
-                if (track.values.get(String(name)) === value) data.push([samplePlace, trackPlace, -1]);
-            }
-        }
+        const data = cellsOf.get(value) ?? [];
         series.push({
             type: "custom",
             name: categoryName(value),

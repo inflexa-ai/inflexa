@@ -75,6 +75,13 @@ const ESTIMATE_DECIMALS = 2;
 const ESTIMATE_DECIMAL_FLOOR = 0.1;
 
 /**
+ * The magnitude under which a value of the estimate column prints as a power of ten, the same floor as the
+ * compact-scientific form of a table cell. A separated covariate gives a bound such as `1.2e-150`, and no
+ * fixed count of decimals holds it: `toFixed` refuses more than 100.
+ */
+const ESTIMATE_SCIENTIFIC_FLOOR = 1e-3;
+
+/**
  * The edges of the chart in percent. The grid holds its tick labels, its axis names, and each text column
  * inside these edges, thus a long term and the p column both stay inside the chart.
  */
@@ -121,7 +128,8 @@ function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     const positive = forest.every((entry) => entry.estimate > 0 && (entry.low === null || entry.low > 0) && (entry.high === null || entry.high > 0));
     const reference = positive ? 1 : 0;
     const xTitle = valueAxisTitle(context.labels, columns.value.estimate);
-    const xAxis = positive ? valueAxis("x", xTitle, { log: true, ...logRange(forest) }) : valueAxis("x", xTitle, { scale: true });
+    // A linear axis without `scale` holds zero in its range, thus the line of no effect always shows.
+    const xAxis = positive ? valueAxis("x", xTitle, { log: true, ...logRange(forest) }) : valueAxis("x", xTitle);
 
     const estimates = forest.map((entry) => estimateText(entry));
     const textAxes: EchartOption[] = [textAxis(estimates, xTitle, TEXT_MARGIN_PX)];
@@ -287,17 +295,22 @@ function estimateText(entry: ForestRow): string {
 /**
  * The decimals of one row: two where each value that is not zero sits at 0.1 or more, else the decimals that
  * give two significant digits to the smallest value. Thus the estimate and its bounds read at one precision.
+ * A value under `ESTIMATE_SCIENTIFIC_FLOOR` prints as a power of ten, thus it sets no decimals.
  */
 function rowDecimals(values: readonly number[]): number {
     let least = Number.POSITIVE_INFINITY;
     for (const value of values) {
-        if (value !== 0) least = Math.min(least, Math.abs(value));
+        if (Math.abs(value) >= ESTIMATE_SCIENTIFIC_FLOOR) least = Math.min(least, Math.abs(value));
     }
     return least < ESTIMATE_DECIMAL_FLOOR ? 1 - Math.floor(Math.log10(least)) : ESTIMATE_DECIMALS;
 }
 
-/** One value at a fixed count of decimals, with the typographic minus. A value that rounds to zero prints no sign. */
+/**
+ * One value at a fixed count of decimals, with the typographic minus. A value that rounds to zero prints no
+ * sign, and a value under `ESTIMATE_SCIENTIFIC_FLOOR` that is not zero prints as a power of ten.
+ */
 function fixedText(value: number, decimals: number): string {
+    if (value !== 0 && Math.abs(value) < ESTIMATE_SCIENTIFIC_FLOOR) return typographicExponent(formatNumberCell(value, "scientific").text);
     const text = value.toFixed(decimals);
     return Number(text) === 0 ? text.replace("-", "") : shownMinus(text);
 }

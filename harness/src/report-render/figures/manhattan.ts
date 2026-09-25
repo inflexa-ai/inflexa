@@ -54,6 +54,7 @@ import {
     pointNameSeries,
     seriesOf,
     sizedSeries,
+    smallest,
 } from "./dense.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
 import { placeLeaderNames, textWidthPx, type Box, type NamedPoint, type NameFrame } from "./label-room.js";
@@ -244,8 +245,9 @@ function chromosomes(
 
 /** True when one row leads before another: a larger transformed p, then a smaller position, then the earlier row. */
 function leads(index: number, other: number, xs: readonly (number | null)[], ys: readonly (number | null)[]): boolean {
-    const byP = (ys[index] ?? 0) - (ys[other] ?? 0);
-    if (byP !== 0) return byP > 0;
+    // A stored zero ranks at +Infinity, and the difference of two such ranks is NaN, thus the ranks compare.
+    const [p, otherP] = [ys[index] ?? 0, ys[other] ?? 0];
+    if (p !== otherP) return p > otherP;
     const byPosition = (xs[other] ?? 0) - (xs[index] ?? 0);
     return byPosition !== 0 ? byPosition > 0 : index < other;
 }
@@ -322,8 +324,8 @@ function deriveManhattan(block: ChartBlock, rows: readonly ChartRow[], context: 
     // genome place of its chromosome, and never of its place in the series list.
     const places = new Map(found.map((chromosome, place) => [categoryName(chromosome.name), place]));
     const colorOf = (name: unknown): string => MANHATTAN_COLORS[(places.get(String(name)) ?? 0) % MANHATTAN_COLORS.length];
-    const low = found.length > 0 ? Math.min(...found.map((chromosome) => chromosome.low)) : undefined;
-    const high = found.length > 0 ? Math.max(...found.map((chromosome) => chromosome.high)) : undefined;
+    const low = smallest(found.map((chromosome) => chromosome.low));
+    const high = largest(found.map((chromosome) => chromosome.high));
     const top = niceCeiling(Math.max(peak, line, zeroRows.length > 0 ? zeroY : 0));
     const labelColumn = encoding.label;
     const names = labelColumn === undefined ? [] : leadRows.map((index) => ({ x: xs[index] ?? 0, y: ys[index] ?? 0, text: String(rows[index][labelColumn]) }));

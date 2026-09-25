@@ -25,7 +25,7 @@ import { channelColumn, channelTransform, type ChartBlock, type ChartComposition
 import type { ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, GUIDE_LINE_COLOR, GUIDE_LINE_WIDTH_PX, MUTED_CHART_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
-import { statisticsGraphic, toNumber } from "./common.js";
+import { chartProblem, plainColumn, statisticsGraphic, toNumber } from "./common.js";
 import {
     axisOf,
     BELOW_RESOLUTION_NAME,
@@ -77,31 +77,54 @@ interface BandRow {
 
 /**
  * The rows that the band reads: each row with a number in the three columns, in ascending order of x, thinned
- * to at most `QQ_BAND_POINTS` rows spaced along the x axis. The first and the last row always stay, thus the
- * band spans the whole axis.
+ * to at most `QQ_BAND_POINTS` rows spaced along the x axis, or spaced by place where each row holds one x. The
+ * first and the last row always stay, thus the band spans the whole axis.
+ *
+ * The band stacks its width on its lower bound, and a stack takes no negative width. Thus a row whose `high`
+ * value sits under its `low` value refuses, and the refusal names the row.
  */
-function bandRows(rows: readonly ChartRow[], xs: readonly (number | null)[], lowColumn: string, highColumn: string): BandRow[] {
+function bandRows(
+    blockId: string,
+    rows: readonly ChartRow[],
+    xs: readonly (number | null)[],
+    lowColumn: string,
+    highColumn: string,
+): Result<BandRow[], RenderProblem> {
     const complete: BandRow[] = [];
     for (let index = 0; index < rows.length; index += 1) {
         const x = xs[index];
         const low = toNumber(rows[index][lowColumn]);
         const high = toNumber(rows[index][highColumn]);
-        if (x !== null && low !== null && high !== null) complete.push({ x, low, high, index });
+        if (x === null || low === null || high === null) continue;
+        if (high < low) {
+            return err(
+                chartProblem(
+                    blockId,
+                    `The row ${index + 1} holds the band from ${low} in "${lowColumn}" to ${high} in "${highColumn}". ` +
+                        'The "low" bound sits at or under the "high" bound.',
+                ),
+            );
+        }
+        complete.push({ x, low, high, index });
     }
     complete.sort((a, b) => a.x - b.x || a.index - b.index);
-    if (complete.length <= QQ_BAND_POINTS) return complete;
+    if (complete.length <= QQ_BAND_POINTS) return ok(complete);
     const last = complete[complete.length - 1];
+    const step = (last.x - complete[0].x) / (QQ_BAND_POINTS - 1);
+    // Each row sits zero steps from the next one, thus the rule of the step keeps each row.
+    if (!(step > 0)) {
+        return ok(Array.from({ length: QQ_BAND_POINTS }, (_row, place) => complete[Math.round((place * (complete.length - 1)) / (QQ_BAND_POINTS - 1))]));
+    }
     // The kept rows sit at least one step apart, and a kept row between the ends sits at least one step before
     // the last row. Thus the span holds at most `QQ_BAND_POINTS - 1` steps, and the band at most
     // `QQ_BAND_POINTS` rows.
-    const step = (last.x - complete[0].x) / (QQ_BAND_POINTS - 1);
     const kept: BandRow[] = [complete[0]];
     for (let place = 1; place < complete.length - 1; place += 1) {
         const row = complete[place];
         if (row.x - kept[kept.length - 1].x >= step && last.x - row.x >= step) kept.push(row);
     }
     kept.push(last);
-    return kept;
+    return ok(kept);
 }
 
 /**
@@ -127,13 +150,22 @@ function deriveQq(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     if (x.isErr()) return err(x.error);
     const y = demandedChannel(context.blockId, "qq", encoding, "y");
     if (y.isErr()) return err(y.error);
+    // The band draws each bound as its cell gives it, in the unit of the plotted y, thus a bound takes no transform.
+    const source = { blockId: context.blockId, rows, columns: context.columns };
+    const low = plainColumn("qq", encoding, "low", source);
+    if (low.isErr()) return err(low.error);
+    const high = plainColumn("qq", encoding, "high", source);
+    if (high.isErr()) return err(high.error);
     const composition: ChartComposition = { series: [{ form: "scatter", encoding: { x: x.value, y: y.value } }] };
     const composed = context.compose(composition, { preset: { x: EXPECTED_TITLE, y: OBSERVED_TITLE } });
     if (composed.isErr()) return err(composed.error);
 
     const xs = plottedValues(rows, x.value);
     const ys = plottedValues(rows, y.value);
-    const band = encoding.low !== undefined && encoding.high !== undefined ? bandRows(rows, xs, channelColumn(encoding.low), channelColumn(encoding.high)) : [];
+    const banded =
+        low.value !== undefined && high.value !== undefined ? bandRows(context.blockId, rows, xs, low.value, high.value) : ok<BandRow[], RenderProblem>([]);
+    if (banded.isErr()) return err(banded.error);
+    const band = banded.value;
     const expectedValues: number[] = [];
     const observedValues: number[] = [];
     for (let index = 0; index < rows.length; index += 1) {

@@ -8,7 +8,7 @@ import * as echarts from "echarts";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { chartSvgAssets } from "../chart-export.js";
 import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartRow, type EchartOption } from "../chart.js";
-import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_INK, CHART_PALETTE, DIVERGING_RAMP, SEQUENTIAL_RAMP } from "../design.js";
+import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_INK, CHART_PALETTE, DIVERGING_RAMP, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "../design.js";
 import { HEATMAP_CELL_GAP_PX, HEATMAP_LABEL_LIMIT, HEATMAP_ROW_PX, TRACK_BAND_GAP_PX, TRACK_LEGEND_LINE_PX } from "./heatmap.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -155,6 +155,24 @@ describe("the heatmap with annotation tracks", () => {
         expect(deriveChartOption(block(TRACKED), rows)._unsafeUnwrapErr().detail).toBe(
             'The track column "condition" holds two values, "untreated" and "treated", for the x category "untreated1". A track holds one value for each x category.',
         );
+    });
+
+    it("gives the muted color to each track value past the end of the shared palette", () => {
+        const rows: ChartRow[] = Array.from({ length: 20 }, (_, index) => ({
+            gene_symbol: "Kal1",
+            sample: `s${index}`,
+            zscore: index,
+            tissue: `T${index}`,
+            batch: `B${index % 8}`,
+        }));
+        const tracked = deriveChartOption(block({ x: "sample", y: "gene_symbol", value: "zscore", tracks: ["tissue", "batch"] }), rows)._unsafeUnwrap();
+        const batch = (tracked.visualMap as EchartOption[])[2].pieces as EchartOption[];
+        expect(batch.map((piece) => piece.color).slice(4)).toEqual([MUTED_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR, MUTED_CHART_COLOR]);
+    });
+
+    it("refuses a track column that holds no value for any sample", () => {
+        const rows = TOP_GENES.map((row) => ({ ...row, type: "" }));
+        expect(deriveChartOption(block(TRACKED), rows)._unsafeUnwrapErr().detail).toBe('The track column "type" holds no value for any x category.');
     });
 });
 

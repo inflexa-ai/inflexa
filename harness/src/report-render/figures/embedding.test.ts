@@ -8,7 +8,7 @@ import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
 import { CHART_INLINE_OPTION_BOUND, CHART_WIDE_PALETTE, SEQUENTIAL_RAMP } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
-import { EMBEDDING_GROUND, EMBEDDING_OPACITY, embeddingPointPx } from "./embedding.js";
+import { EMBEDDING_GROUND, EMBEDDING_LARGE_CELLS, EMBEDDING_OPACITY, embeddingPointPx } from "./embedding.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
 
@@ -125,6 +125,20 @@ describe("the continuous color of an embedding", () => {
             .pop();
         const left = ((asObj(chosen?.option).visualMap as EchartOption[])[0].left as number) ?? scaleLeft;
         expect(render.widthPx as number).toBeGreaterThanOrEqual(left + title.length * 12 * 0.6);
+    });
+
+    it("keeps a continuous color off the large path, which reads no per-point color, and a group on it", () => {
+        const rows: ChartRow[] = Array.from({ length: EMBEDDING_LARGE_CELLS }, (_row, index) => ({
+            UMAP_1: (index % 250) / 10,
+            UMAP_2: Math.floor(index / 250) / 10,
+            ISG15: (index % 97) / 10,
+            cluster: `c${index % 4}`,
+        }));
+        const colored = seriesOf(deriveChartOption(block({ x: "UMAP_1", y: "UMAP_2", color: "ISG15" }), rows)._unsafeUnwrap());
+        expect(colored.length).toBeGreaterThan(0);
+        expect(colored.every((entry) => entry.large === false)).toBe(true);
+        const grouped = seriesOf(deriveChartOption(block({ x: "UMAP_1", y: "UMAP_2", group: "cluster" }), rows)._unsafeUnwrap());
+        expect(grouped.filter((entry) => entry.silent !== true).every((entry) => entry.large === true)).toBe(true);
     });
 
     it("draws the high values on top", () => {

@@ -313,6 +313,81 @@ describe("the grid of a facet panel with an empty layer", () => {
         expect(isPointLayer(empty)).toBe(true);
         expect(pageTwin().isPointLayer(empty)).toBe(true);
     });
+
+    it("seeds each panel of a facet whose x axis holds categories inside its own grid", () => {
+        const clusters = ["c0", "c1", "c2"];
+        const lefts = [40, 116, 192, 268];
+        const option = {
+            grid: lefts.map((left) => ({ left, top: 24, width: 60, bottom: 48, outerBoundsMode: "none" })),
+            xAxis: lefts.map((_left, index) => ({ type: "category", gridIndex: index, data: clusters })),
+            yAxis: lefts.map((_left, index) => ({ type: "value", gridIndex: index })),
+            series: lefts.map((_left, index) => ({
+                type: "scatter",
+                symbolSize: 4,
+                xAxisIndex: index,
+                yAxisIndex: index,
+                data: [
+                    ["c1", index + 1],
+                    ["c2", index + 5],
+                    ["c0", index + 3],
+                ],
+            })),
+        };
+        const layer = measured(option);
+        expect(layer).not.toBeNull();
+        const boxes = lefts.map((_left, index) => layer?.boxes[index] as Box);
+        expect(boxes.map((box) => [box.x, box.x + box.width].map((edge) => Math.round(edge)))).toEqual(lefts.map((left) => [left, left + 60]));
+    });
+});
+
+describe("the reach of the point layer past its grid", () => {
+    /** One grid from 60 to 312 across and from 24 to 205 down, with one scatter of symbol size 4. */
+    function sizedOption(visualMap?: Record<string, unknown>): Record<string, unknown> {
+        return {
+            grid: { left: 60, right: 24, top: 24, bottom: 48, outerBoundsMode: "none" },
+            xAxis: { type: "value" },
+            yAxis: { type: "value" },
+            series: [
+                {
+                    type: "scatter",
+                    symbolSize: 4,
+                    data: [
+                        [0, 0, 1],
+                        [10, 10, 9],
+                    ],
+                },
+            ],
+            ...(visualMap !== undefined ? { visualMap } : {}),
+        };
+    }
+
+    /** The crop box of the layer of one option at the single column, as its four edges. */
+    function cropEdges(option: Record<string, unknown>): number[] {
+        const page = pageTwin();
+        const chart = echarts.init(null, undefined, { renderer: "svg", ssr: true, width: 336, height: 253 });
+        try {
+            chart.setOption(page.vector(option));
+            const box = page.box(chart, option, 336, 253)?.box as Box;
+            return [box.x, box.y, box.x + box.width, box.y + box.height].map((edge) => Math.round(edge));
+        } finally {
+            chart.dispose();
+        }
+    }
+
+    it("reaches past the grid by half of the largest symbol of a size map of the layer", () => {
+        const size = { type: "continuous", show: false, seriesIndex: [0], dimension: 2, min: 1, max: 9, inRange: { symbolSize: [6, 24] } };
+        expect(cropEdges(sizedOption(size))).toEqual([48, 12, 324, 217]);
+    });
+
+    it("keeps the reach of the symbol of the layer for a map with no symbol size or a map of another series", () => {
+        expect(cropEdges(sizedOption())).toEqual([58, 22, 314, 207]);
+        expect(cropEdges(sizedOption({ type: "continuous", show: false, dimension: 2, min: 1, max: 9, inRange: { color: ["#000", "#fff"] } }))).toEqual([
+            58, 22, 314, 207,
+        ]);
+        expect(
+            cropEdges(sizedOption({ type: "continuous", show: false, seriesIndex: 1, dimension: 2, min: 1, max: 9, inRange: { symbolSize: [6, 24] } })),
+        ).toEqual([58, 22, 314, 207]);
+    });
 });
 
 describe("the page build of a hybrid SVG", () => {

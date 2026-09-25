@@ -25,7 +25,7 @@ import { CHART_INK, CHART_PAGE_TEXT_PX, DIVERGING_RAMP, SEQUENTIAL_RAMP } from "
 import type { RenderProblem } from "../types.js";
 import { categoricalPalette, categoryName, chartProblem, colorScale, firstAppearance, toNumber, transformColumn, valueAxisTitle } from "./common.js";
 import { equalRanges, squareLayout } from "./equal-units.js";
-import { nameAnchors } from "./label-room.js";
+import { nameAnchors, type PlotRange } from "./label-room.js";
 import type { FigureContext, FigureModule } from "./index.js";
 
 /** The scanpy point area of one cell, in square points, for each cell of the plot: 120000 / n. */
@@ -71,9 +71,11 @@ const NAME_OUTLINE_PX = 2;
 
 /**
  * The cell count from which the points draw on the large path of the runtime. The large path draws a square
- * for each point, thus a smaller embedding draws round points as scanpy does.
+ * for each point, thus a smaller embedding draws round points as scanpy does. The large path fills each point
+ * with the one color of its series and reads no per-point color of a scale, thus a continuous color never
+ * takes it.
  */
-const EMBEDDING_LARGE_CELLS = 50_000;
+export const EMBEDDING_LARGE_CELLS = 50_000;
 
 /** The drawing order of the category names, over each point. */
 const NAME_Z = 10;
@@ -196,7 +198,7 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
     const pointPx = embeddingPointPx(cells.length);
     const series = (Array.isArray(option.series) ? (option.series as EchartOption[]) : []).map((entry) => ({
         ...entry,
-        large: cells.length >= EMBEDDING_LARGE_CELLS,
+        large: color === undefined && cells.length >= EMBEDDING_LARGE_CELLS,
         symbolSize: pointPx,
         itemStyle: {
             ...(typeof entry.itemStyle === "object" && entry.itemStyle !== null ? (entry.itemStyle as EchartOption) : {}),
@@ -282,7 +284,7 @@ function deriveEmbedding(block: ChartBlock, rows: readonly ChartRow[], context: 
         return ok({
             ...out,
             color: [...categoricalPalette(names.length)],
-            series: [...series, ...nameSeries(cells, names, panels, ranges.x.max - ranges.x.min)],
+            series: [...series, ...nameSeries(cells, names, panels, ranges)],
         });
     }
     const colorChannel = color as ChartChannel;
@@ -351,9 +353,10 @@ function quantile(sorted: readonly number[], p: number): number {
  *
  * The median is the computed summary of this figure. It sits inside the cloud of a curved cluster, where a mean
  * can fall between two arms. The names draw in the ink with a white outline, over every point. A name that
- * would cover the name of a larger category moves along y by whole lines.
+ * would cover the name of a larger category moves along y by whole lines inside the square, and a name that
+ * finds no free place in the square draws nothing.
  */
-function nameSeries(cells: readonly EmbeddedCell[], names: readonly string[], panels: number, length: number): EchartOption[] {
+function nameSeries(cells: readonly EmbeddedCell[], names: readonly string[], panels: number, plot: PlotRange): EchartOption[] {
     const out: EchartOption[] = [];
     for (let panel = 0; panel < panels; panel += 1) {
         const byName = new Map<string, { xs: number[]; ys: number[] }>();
@@ -374,9 +377,12 @@ function nameSeries(cells: readonly EmbeddedCell[], names: readonly string[], pa
                 return { x: median(entry.xs), y: median(entry.ys), text: name };
             }),
             present.map((name) => byName.get(name)?.xs.length ?? 0),
-            length,
+            plot,
         );
-        const data = present.map((name, place) => ({ value: [anchors[place].x, anchors[place].y], name }));
+        const data = present.flatMap((name, place) => {
+            const anchor = anchors[place];
+            return anchor === undefined ? [] : [{ value: [anchor.x, anchor.y], name }];
+        });
         out.push({
             type: "scatter",
             name: "Category names",

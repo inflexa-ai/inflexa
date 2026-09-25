@@ -30,10 +30,10 @@ import { channelColumn, channelOrder, channelTransform, type ChartBlock, type Ch
 import { declaredForColumn } from "../../contracts/report-reference.js";
 import { MANHATTAN_P_THRESHOLD } from "../chart-presets.js";
 import type { ChartRow, EchartOption } from "../chart.js";
-import { CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, exportSizeFor } from "../design.js";
+import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_EXPORT_SIZES, CHART_INK, exportSizeFor } from "../design.js";
 import { formatNumberCell, typographicExponent } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
-import { categoryName, chartProblem, columnPresent, toNumber, transformColumn, valueAxis, valueAxisTitle, withFigureBody } from "./common.js";
+import { categoryName, chartProblem, columnPresent, firstFreeLanes, toNumber, transformColumn, valueAxis, valueAxisTitle, withFigureBody } from "./common.js";
 import {
     axisOf,
     BELOW_RESOLUTION_SYMBOL,
@@ -227,7 +227,7 @@ function deriveLocusZoom(block: ChartBlock, rows: readonly ChartRow[], context: 
     const window = positionWindow(xs);
     const genes = context.track === undefined ? ok(undefined) : windowGenes(context.blockId, context.track, window);
     if (genes.isErr()) return err(genes.error);
-    const lanes = genes.value === undefined ? 0 : Math.max(1, ...genes.value.map((gene) => gene.lane + 1));
+    const lanes = genes.value === undefined ? 0 : Math.max(1, (largest(genes.value.map((gene) => gene.lane)) ?? 0) + 1);
 
     const composition: ChartComposition = {
         series: [
@@ -703,21 +703,14 @@ function windowGenes(blockId: string, track: FigureTrack, window: PositionWindow
         spans.push({ start, end, name: String(row[track.label] ?? ""), place });
     }
     spans.sort((a, b) => a.start - b.start || a.place - b.place);
-    const laneEnds: number[] = [];
+    const laneOf = firstFreeLanes(spans.length);
     const genes: Gene[] = [];
     for (const span of spans) {
         const half = (span.name.length * perCharacter) / 2;
         const center = Math.min(Math.max((span.start + span.end) / 2, window.min + half), window.max - half);
         const from = Math.min(span.start, center - half);
         const to = Math.max(span.end, center + half) + GENE_GAP_CHARACTERS * perCharacter;
-        let lane = laneEnds.findIndex((laneEnd) => laneEnd < from);
-        if (lane < 0) {
-            lane = laneEnds.length;
-            laneEnds.push(to);
-        } else {
-            laneEnds[lane] = to;
-        }
-        genes.push({ start: span.start, end: span.end, name: span.name, center, lane });
+        genes.push({ start: span.start, end: span.end, name: span.name, center, lane: laneOf(from, to) });
     }
     return ok(genes);
 }
@@ -763,20 +756,25 @@ interface BandLayout {
 
 /**
  * The bands of one chart. A band past `LANES_IN_BODY` lanes grows the body by one lane of the default body for
- * each further lane, and each band keeps its height in pixels.
+ * each further lane, and each band keeps its height in pixels. The body stops at the largest body, and past it
+ * the plot keeps its height and the lanes share the rest of the gene band.
  */
 function bandLayout(lanes: number, withRate: boolean): BandLayout {
     const grown = Math.max(0, lanes - LANES_IN_BODY) * GENE_LANE;
-    const share = 100 / (100 + grown);
-    const band = lanes * GENE_LANE * share;
+    const bodyPx = Math.min(CHART_BODY_MAX_PX, (CHART_BODY_PX * (100 + grown)) / 100);
+    const share = CHART_BODY_PX / bodyPx;
     const trackBottom = lanes > 0 ? TRACK_BOTTOM * share : 0;
+    const top = PLOT_TOP * share;
+    const axisBand = AXIS_BAND * share;
+    const plot = (100 - PLOT_TOP - AXIS_BAND - (lanes > 0 ? TRACK_BOTTOM : 0) - Math.min(lanes, LANES_IN_BODY) * GENE_LANE) * share;
+    const band = 100 - top - axisBand - trackBottom - plot;
     return {
-        top: PLOT_TOP * share,
-        plotBottom: trackBottom + band + AXIS_BAND * share,
+        top,
+        plotBottom: trackBottom + band + axisBand,
         trackBottom,
         band,
         right: withRate ? PLOT_RIGHT_WITH_RATE : PLOT_RIGHT,
-        bodyPx: (CHART_BODY_PX * (100 + grown)) / 100,
+        bodyPx,
     };
 }
 

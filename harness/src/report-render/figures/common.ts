@@ -77,6 +77,27 @@ export function categoryName(value: Cell): string {
     return String(value).replaceAll("_", " ");
 }
 
+/**
+ * The lane of each span in turn, for at most `count` spans: the lowest lane whose last span ends under the start
+ * of the next span, else a new lane under the others.
+ *
+ * A tree over the lanes holds the least end of each range of lanes, thus the lowest free lane takes one walk down
+ * the tree, and a track of many overlapping spans takes linear-logarithmic time. A lane that holds no span yet
+ * ends at minus infinity, thus the lowest such lane is the next new lane.
+ */
+export function firstFreeLanes(count: number): (start: number, end: number) => number {
+    let leaves = 1;
+    while (leaves < count) leaves *= 2;
+    const least = new Array<number>(2 * leaves).fill(Number.NEGATIVE_INFINITY);
+    return (start, end) => {
+        let node = 1;
+        while (node < leaves) node = least[2 * node] < start ? 2 * node : 2 * node + 1;
+        least[node] = end;
+        for (let parent = node >> 1; parent >= 1; parent >>= 1) least[parent] = Math.min(least[2 * parent], least[2 * parent + 1]);
+        return node - leaves;
+    };
+}
+
 /** The distinct values in first-appearance order. */
 export function firstAppearance<T>(values: readonly T[]): T[] {
     const seen = new Set<T>();

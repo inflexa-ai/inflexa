@@ -8,8 +8,8 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
-import { deriveChartOption, type ChartInputs, type ChartRow, type EchartOption } from "../chart.js";
-import { CHART_PALETTE } from "../design.js";
+import { deriveChartOption, deriveChartRender, type ChartInputs, type ChartRow, type EchartOption } from "../chart.js";
+import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_PALETTE } from "../design.js";
 import { FIGURE_MODULES } from "./index.js";
 import { KM_FIGURE } from "./km.js";
 
@@ -170,6 +170,48 @@ describe("the km figure", () => {
                 [[800, 1], "3"],
             ],
         ]);
+    });
+
+    it("prints a count at each tick of a time axis whose step is a decimal, and a label at an end on a tick", () => {
+        const rows = [
+            { arm: "A", time: 0, surv: 1, n_risk: 10 },
+            { arm: "A", time: 0.3, surv: 0.8, n_risk: 8 },
+            { arm: "A", time: 0.6, surv: 0.6, n_risk: 5 },
+        ];
+        const option = derive(kmBlock({ x: "time", y: "surv", group: "arm", risk: "n_risk" }), rows);
+        const time = (option.xAxis as EchartOption[])[0];
+        expect([time.max, time.interval, (time.axisLabel as EchartOption | undefined)?.showMaxLabel]).toEqual([0.6, 0.2, undefined]);
+        const counts = onGrid(option, 1).map((series) => (series.data as EchartOption[]).map((item) => [item.value, item.name]));
+        expect(counts).toEqual([
+            [
+                [[0, 0], "10"],
+                [[0.2, 0], "8"],
+                [[0.4, 0], "5"],
+                [[0.6, 0], "5"],
+            ],
+        ]);
+    });
+
+    it("grows the body with each group past three, thus the plot keeps its height up to the largest body", () => {
+        const layout = (groups: number): { bodyPx: number; plotPx: number } => {
+            const rows = Array.from({ length: groups }, (_, group) => [
+                { arm: `arm ${group}`, time: 0, surv: 1, n_risk: 20 },
+                { arm: `arm ${group}`, time: 100, surv: 0.4, n_risk: 5 },
+            ]).flat();
+            const block = kmBlock({ x: "time", y: "surv", group: "arm", risk: "n_risk" });
+            const render = deriveChartRender(block, rows, undefined, { key: "km1", columns: [] }, {}, { figures: { km: KM_FIGURE } })._unsafeUnwrap();
+            const plot = (render.option.grid as EchartOption[])[0];
+            const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
+            return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
+        };
+        const three = layout(3);
+        expect(three.bodyPx).toBe(CHART_BODY_PX);
+        const eight = layout(8);
+        expect(eight.bodyPx).toBeGreaterThan(CHART_BODY_PX);
+        expect(eight.plotPx).toBeCloseTo(three.plotPx, 0);
+        const sixty = layout(60);
+        expect(sixty.bodyPx).toBe(CHART_BODY_MAX_PX);
+        expect(sixty.plotPx).toBeCloseTo(three.plotPx, 0);
     });
 
     it("draws no table where the block names no risk channel", () => {

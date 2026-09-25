@@ -8,6 +8,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartInputs, type ChartRow, type EchartOption } from "../chart.js";
 import { STEM_RENDERER } from "../chart-renderers.js";
+import { firstFreeLanes } from "./common.js";
 import { ALTERATION_CLASS_COLORS } from "./oncoprint.js";
 
 type Encoding = NonNullable<ChartBlock["encoding"]>;
@@ -115,6 +116,13 @@ describe("the lollipop figure", () => {
         expect(axisList(bare, "xAxis")[0]).toEqual(expect.objectContaining({ min: 0, max: 882 }));
     });
 
+    it("spans the x axis past the length column to a position that passes it", () => {
+        const isoform = { track: { rows: [{ start: 100, end: 400, name: "PWWP", protein_length: 600 }] } };
+        for (const axis of axisList(derive(lollipop(), isoform), "xAxis")) {
+            expect(axis).toEqual(expect.objectContaining({ min: 0, max: 882 }));
+        }
+    });
+
     it("draws each domain as a labeled box on a band under the axis, overlaps in separate lanes", () => {
         const option = derive();
         const grids = option.grid as EchartOption[];
@@ -138,6 +146,11 @@ describe("the lollipop figure", () => {
         expect(bandAxis).toEqual(expect.objectContaining({ gridIndex: 1, name: "Amino-acid position" }));
     });
 
+    it("puts each span in the lowest lane whose last span ends before it starts, in the order of the spans", () => {
+        const laneOf = firstFreeLanes(4);
+        expect([laneOf(500, 600), laneOf(100, 200), laneOf(150, 700), laneOf(650, 900)]).toEqual([0, 1, 2, 0]);
+    });
+
     it("shortens the label of a box too narrow for the whole name, and drops the label of a box too narrow for any", () => {
         const option = derive();
         const labels = bandAreas(option)
@@ -153,6 +166,14 @@ describe("the lollipop figure", () => {
         const option = derive();
         const labels = seriesOf(option).find((entry) => entry.type === "scatter");
         expect((labels?.data as Array<{ name: string }>).map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+    });
+
+    it("draws no stem and no label for a row with no class", () => {
+        const rows = [...ROWS, { aa_position: 900, protein_change: "p.S900F", variant_classification: "", count: 50 }];
+        const option = derive(lollipop(), INPUTS, rows);
+        const labels = seriesOf(option).find((entry) => entry.type === "scatter");
+        expect((labels?.data as Array<{ name: string }>).map((item) => item.name)).toEqual(["p.R882H", "p.R882C", "p.R736H"]);
+        expect(stemSeries(option).flatMap((entry) => (entry.data as Array<{ name: string }>).map((item) => item.name))).not.toContain("p.S900F");
     });
 
     it("names the legend by the classes", () => {
@@ -173,6 +194,13 @@ describe("the lollipop figure", () => {
     it("refuses a track whose start column the track table does not hold", () => {
         expect(deriveChartOption(lollipop(ENCODING, { track: { ...TRACK, start: "begin" } }), ROWS, undefined, INPUTS)._unsafeUnwrapErr().detail).toBe(
             'The track table holds no "begin" column.',
+        );
+    });
+
+    it("refuses a domain whose end precedes its start", () => {
+        const reversed = { track: { rows: [{ start: 400, end: 300, name: "PWWP", protein_length: 912 }] } };
+        expect(deriveChartOption(lollipop(), ROWS, undefined, reversed)._unsafeUnwrapErr().detail).toBe(
+            "The track row 1 ends at 300, before its start at 400. A domain ends at or after its start.",
         );
     });
 

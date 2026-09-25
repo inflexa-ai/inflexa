@@ -709,10 +709,11 @@ describe("the composition derivation", () => {
             [2, 20],
             [3, 30],
         ]);
+        // The category of a bar is the text of its cell, because the chart runtime reads a number there as a place.
         expect(pairsOf(asObj(asArr(bar.series)[0]).data)).toEqual([
-            [3, 30],
-            [1, 10],
-            [2, 20],
+            ["3", 30],
+            ["1", 10],
+            ["2", 20],
         ]);
     });
 

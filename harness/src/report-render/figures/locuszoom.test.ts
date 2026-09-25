@@ -19,7 +19,7 @@ import {
     type EchartOption,
 } from "../chart.js";
 import { CHART_RENDERERS_SOURCE, exportOption } from "../chart-renderers.js";
-import { CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../design.js";
+import { CHART_BODY_MAX_PX, CHART_EXPORT_SIZES, CHART_INLINE_OPTION_BOUND } from "../design.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import type { ArtifactTableReference } from "../../contracts/report-reference.js";
 import { BELOW_RESOLUTION_SYMBOL } from "./dense.js";
@@ -243,6 +243,21 @@ describe("the regional association plot", () => {
         expect(new Set(lanes).size).toBeGreaterThanOrEqual(2);
         const grids = option.grid as EchartOption[];
         expect(grids.length).toBe(2);
+    });
+
+    it("keeps the height of the plot past the largest body, and the lanes share the rest of the gene band", () => {
+        const layout = (count: number): { bodyPx: number; plotPx: number } => {
+            const genes = Array.from({ length: count }, (_, index) => ({ gene: `G${index}`, start: 53650000, end: 54080000 }));
+            const inputs: ChartInputs = { track: { rows: genes, columns: ["gene", "start", "end"] } };
+            const render = deriveChartRender(locuszoom(), ROWS, undefined, { key: "lz", columns: [] }, inputs, OPTS)._unsafeUnwrap();
+            const plot = (render.option.grid as EchartOption[])[0];
+            const share = 100 - Number.parseFloat(String(plot.top)) - Number.parseFloat(String(plot.bottom));
+            return { bodyPx: render.bodyPx, plotPx: (render.bodyPx * share) / 100 };
+        };
+        const grown = layout(10);
+        const capped = layout(100);
+        expect(capped.bodyPx).toBe(CHART_BODY_MAX_PX);
+        expect(capped.plotPx).toBeCloseTo(grown.plotPx, 0);
     });
 
     it("draws a variant whose stored p is 0 as a triangle at the top, and makes it the lead", () => {

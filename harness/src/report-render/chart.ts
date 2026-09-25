@@ -588,7 +588,7 @@ function deriveRaw(
         return deriveAsComposition(block.id, chartType, encoding, rows, columns, labels, orientation, { collector, focus: block.focus, meanings });
     }
     if (stackedFacet !== undefined && channelTransform(stackedFacet) !== undefined) {
-        return err(problem(block.id, 'The "facet" channel reads categories, thus it takes no transform.'));
+        return err(problem(block.id, FACET_TRANSFORM));
     }
     const quick = resolveQuickPath(block.id, chartType, encoding, rows, columns, labels, orientation);
     if (quick.isErr()) return err(quick.error);
@@ -843,6 +843,9 @@ const COLOR_BESIDE_GROUP = 'A "color" channel beside a "group" channel is a faul
 
 /** The refusal of a focus beside a color. One chart colors by one rule. */
 const FOCUS_BESIDE_COLOR = 'A focus beside a "color" channel is a fault, because one chart colors by one rule.';
+
+/** The refusal of a transform on a facet. A panel names one category of the raw column. */
+const FACET_TRANSFORM = 'The "facet" channel reads categories, thus it takes no transform.';
 
 /**
  * The fault of a quick path whose type cannot draw one of its channels, or `undefined` for a sound one.
@@ -1125,7 +1128,7 @@ function deriveBar(
             barGap: 0,
             barCategoryGap: BAR_CATEGORY_GAP,
             data: groupRows.map((row) => {
-                const pair = horizontal ? [row[y], row[x]] : [row[x], row[y]];
+                const pair = horizontal ? [row[y], categoryCell(row[x])] : [categoryCell(row[x]), row[y]];
                 // A bar with no group reads the focus over its own categories, thus each item carries its color.
                 const color = group === undefined ? focusColor(focus, row[x]) : undefined;
                 return color === undefined ? pair : { value: pair, itemStyle: { color } };
@@ -1140,7 +1143,7 @@ function deriveBar(
         if (stacked.isErr()) return err(stacked.error);
         series = stacked.value;
     }
-    const valueAxis = { type: "value", ...(mode === "normalized" ? { min: 0, max: 1 } : {}), ...labelRoom(series) };
+    const valueAxis = { type: "value", ...(mode === "normalized" ? { min: 0, max: 1 } : {}), ...labelRoom(series, horizontal) };
 
     if (horizontal) {
         return ok({
@@ -1334,25 +1337,22 @@ function derivePointForm(
     const focused = focusSet(block.id, block.focus, rows.length, group === undefined ? [] : firstAppearance(rows.map((row) => row[group])));
     if (focused.isErr()) return err(focused.error);
 
-    const xAxis = orderedAxis(block.id, rows, x, "x", axisTitles(block.labels, x), block.orders.x);
+    const xAxis = orderedAxis(block.id, rows, x, "x", axisTitles(block.labels, x), block.orders.x, namesCategories(block.meanings, x));
     if (xAxis.isErr()) return err(xAxis.error);
-    const yAxis = orderedAxis(block.id, rows, y, "y", axisTitles(block.labels, y), block.orders.y);
+    const yAxis = orderedAxis(block.id, rows, y, "y", axisTitles(block.labels, y), block.orders.y, namesCategories(block.meanings, y));
     if (yAxis.isErr()) return err(yAxis.error);
     // A line runs along its x axis. An ordered category axis sets that order, and every other axis reads the cells.
     const places = block.orders.x !== undefined ? categoryPlaces(xAxis.value) : undefined;
+    const xText = xAxis.value.type === "category";
+    const yText = yAxis.value.type === "category";
+    const pairOf = (row: ChartRow): Cell[] => [xText ? categoryCell(row[x]) : row[x], yText ? categoryCell(row[y]) : row[y]];
 
     const series = groupedSeries(rows, group, (groupRows, name) => ({
         type: form,
         ...(name !== undefined ? { name: categoryName(name) } : {}),
         ...categoryStyle(name, focused.value),
         ...(form === "line" ? { showSymbol: false } : { large: true, largeThreshold: 2000 }),
-        data:
-            form === "line"
-                ? sortByX(
-                      groupRows.map((row) => [row[x], row[y]]),
-                      places,
-                  )
-                : groupRows.map((row) => [row[x], row[y]]),
+        data: form === "line" ? sortByX(groupRows.map(pairOf), places) : groupRows.map(pairOf),
     }));
     return ok({ xAxis: xAxis.value, yAxis: yAxis.value, series });
 }
@@ -1425,7 +1425,11 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     const ordered = orderQuickCategories(block.id, rows, x, block.orders.x);
     if (ordered.isErr()) return err(ordered.error);
     const categories = ordered.value;
-    const groups = splitGroups(rows, block.encoding.group);
+    const groupColumn = block.encoding.group;
+    const groups: Array<{ name: Cell | undefined }> =
+        groupColumn === undefined ? [{ name: undefined }] : firstAppearance(rows.map((row) => row[groupColumn])).map((name) => ({ name }));
+    const bound = slotFault(block.id, categories.length, groups.length);
+    if (bound !== undefined) return err(bound);
     const focused = focusSet(
         block.id,
         block.focus,
@@ -1435,14 +1439,8 @@ function deriveBox(block: ResolvedChartBlock, rows: readonly ChartRow[], columns
     if (focused.isErr()) return err(focused.error);
 
     const series: EchartOption[] = [];
-    const valuesOf = groups.map((group) =>
-        categories.map((category) =>
-            numericColumn(
-                group.rows.filter((row) => row[x] === category),
-                y,
-            ),
-        ),
-    );
+    const buckets = slotBuckets(rows, x, y, groupColumn);
+    const valuesOf = groups.map((group) => categories.map((category) => buckets.get(slotKey(group.name, category)) ?? []));
     const pointed = drawsDistributionPoints(valuesOf.flat());
     // The axis jitter centers each point on its category and not on its slot, thus a grouped box places its
     // points on the slot axis.
@@ -1729,16 +1727,7 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
     const focused = focusSet(block.id, block.focus, rows.length, named);
     if (focused.isErr()) return err(focused.error);
 
-    // One pass over the rows puts each numeric value into the bucket of its group and its category.
-    const buckets = new Map<string, number[]>();
-    for (const row of rows) {
-        const value = toNumber(row[y]);
-        if (value === null) continue;
-        const key = slotKey(groupColumn === undefined ? undefined : row[groupColumn], row[x]);
-        const bucket = buckets.get(key);
-        if (bucket === undefined) buckets.set(key, [value]);
-        else bucket.push(value);
-    }
+    const buckets = slotBuckets(rows, x, y, groupColumn);
     const shapes: Array<Array<ViolinShape & { category: number }>> = groups.map((group) =>
         categories.flatMap((category, index) => {
             const shape = violinShape(buckets.get(slotKey(group.name, category)) ?? []);
@@ -1823,7 +1812,9 @@ function deriveViolin(block: ResolvedChartBlock, rows: readonly ChartRow[], colu
  *
  * The indicator bound is the largest `y` value of the table, thus each polygon reads against one scale. A
  * repeated pair is a refusal, because a radar plots one cell for each pair and never a sum. An absent pair
- * holds `null`, and the chart runtime leaves a gap there.
+ * holds `null`, and the chart runtime leaves a gap there. Each indicator runs from zero at the center, and the
+ * chart runtime draws a negative value past the center on the far side, thus a negative value refuses and
+ * names its row.
  */
 function deriveRadar(block: ResolvedChartBlock, rows: readonly ChartRow[], columns: readonly string[] | undefined): Result<EchartOption, RenderProblem> {
     const xResult = requireColumn(block, rows, columns, "x");
@@ -1845,12 +1836,15 @@ function deriveRadar(block: ResolvedChartBlock, rows: readonly ChartRow[], colum
 
     const cells = new Map<string, number | null>();
     let largest: number | undefined;
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
         const key = pairKey(row[x], row[group]);
         if (cells.has(key)) {
             return err(problem(block.id, `The radar holds the pair (${String(row[x])}, ${String(row[group])}) more than one time.`));
         }
         const value = toNumber(row[y]);
+        if (value !== null && value < 0) {
+            return err(problem(block.id, `The row ${index + 1} holds the negative value ${value}. A radar measures each indicator from zero at its center.`));
+        }
         cells.set(key, value);
         if (value !== null) largest = largest === undefined ? value : Math.max(largest, value);
     }
@@ -1879,6 +1873,20 @@ function deriveRadar(block: ResolvedChartBlock, rows: readonly ChartRow[], colum
     });
 }
 
+/** The numeric `y` values of each slot in row order, keyed by `slotKey`, in one pass over the rows. */
+function slotBuckets(rows: readonly ChartRow[], x: string, y: string, groupColumn: string | undefined): Map<string, number[]> {
+    const buckets = new Map<string, number[]>();
+    for (const row of rows) {
+        const value = toNumber(row[y]);
+        if (value === null) continue;
+        const key = slotKey(groupColumn === undefined ? undefined : row[groupColumn], row[x]);
+        const bucket = buckets.get(key);
+        if (bucket === undefined) buckets.set(key, [value]);
+        else bucket.push(value);
+    }
+    return buckets;
+}
+
 /** The key of one slot: a group value and a category value. Each cell keeps its type, as a pair key does. */
 function slotKey(group: Cell | undefined, category: Cell | undefined): string {
     return JSON.stringify([group === undefined ? null : cellKey(group), category === undefined ? null : cellKey(category)]);
@@ -1888,7 +1896,7 @@ function slotKey(group: Cell | undefined, category: Cell | undefined): string {
  * The refusal of a chart whose categories and groups give more slots than the bound, or `undefined` for a chart
  * inside the bound.
  *
- * A stacked form, a radar, a violin, and a heatmap each lay out one slot for each pair of a category and a
+ * A stacked form, a radar, a violin, a box, and a heatmap each lay out one slot for each pair of a category and a
  * group. A sparse table of many categories and many groups gives a grid that no reader reads and that the
  * memory of the render cannot hold, thus the render refuses it before it builds one slot.
  */
@@ -1954,6 +1962,8 @@ export const POINT_LABEL: EchartOption = { show: true, formatter: "{b}" };
  *
  * `column` and `transform` are the source of the channel. The name of a transformed channel carries the
  * transform, thus it names no column of the table and a page-side build needs the two source fields.
+ *
+ * `retyped` states that the channel gives the text of a number, which the page build cannot give.
  */
 interface ResolvedChannel {
     name: string;
@@ -1963,6 +1973,7 @@ interface ResolvedChannel {
     transform?: ChartTransform;
     order?: ChannelOrder;
     numeric?: true;
+    retyped?: true;
 }
 
 /**
@@ -2207,7 +2218,7 @@ function deriveComposition(
 
     const resolved: ResolvedSeries[] = [];
     for (const declared of composition.series) {
-        const series = resolveSeries(blockId, declared, rows, columns, extras.meanings);
+        const series = resolveSeries(blockId, declared, rows, columns);
         if (series.isErr()) return err(series.error);
         resolved.push(series.value);
     }
@@ -2257,17 +2268,18 @@ function deriveComposition(
     const first = resolved[0];
     const axes = compositionAxes(context, first, composition.axes);
     if (axes.isErr()) return err(axes.error);
+    const plotted = resolved.map((entry) => plottedSeries(entry, axes.value, extras.meanings));
     if (composition.facet !== undefined) {
-        return deriveFacets(context, composition.facet, columns, resolved, axes.value);
+        return deriveFacets(context, composition.facet, columns, plotted, axes.value);
     }
-    const emitted = composePanel(context, resolved, undefined, axes.value, BAND_STACK_PREFIX);
+    const emitted = composePanel(context, plotted, undefined, axes.value, BAND_STACK_PREFIX);
     if (emitted.isErr()) return err(emitted.error);
 
     const named = resolved.some((entry) => entry.label !== undefined) || labeled.value.size > 0;
-    const maps = visualMaps(context, resolved, emitted.value);
-    const series = labeledSeries(context, emitted.value, isHorizontalBar(first.declared));
-    const room = first.declared.form === "bar" ? labelRoom(series) : {};
+    const maps = visualMaps(context, plotted, emitted.value);
     const horizontal = isHorizontalBar(first.declared);
+    const series = labeledSeries(context, emitted.value, horizontal);
+    const room = first.declared.form === "bar" ? labelRoom(series, horizontal) : {};
     const colored = emitted.value.some((entry) => entry.entry?.color !== undefined);
     const grid = {
         // A horizontal bar draws its category names as y labels, thus the grid must hold them.
@@ -2348,6 +2360,9 @@ function compositionFault(composition: ChartComposition, focus: readonly string[
         if (channelOrder(facet) !== undefined) {
             return 'The "facet" channel draws no category axis, thus it takes no "orderBy".';
         }
+        if (channelTransform(facet) !== undefined) {
+            return FACET_TRANSFORM;
+        }
         const lead = composition.series[0]?.form;
         if (lead !== undefined && lead !== "scatter" && lead !== "line" && lead !== "bar") {
             return `A facet is legal on a scatter, a line, and a bar, thus the first series of a faceted composition takes one of those forms, and not the ${lead}.`;
@@ -2405,11 +2420,12 @@ function composePanel(
         }
     }
     const bars = plan.filter((item) => item.entry.declared.form === "bar" && item.entry.y0 === undefined);
+    const barPlaces = new Map(bars.map((item, place) => [item, place]));
 
     const emitted: EmittedSeries[] = [];
     for (const item of plan) {
-        const place = bars.indexOf(item);
-        const offset = place >= 0 ? slotOffset(place, bars.length) : 0;
+        const place = barPlaces.get(item);
+        const offset = place !== undefined ? slotOffset(place, bars.length) : 0;
         const built = buildSeries(context, item.entry, item.split, `${stackPrefix}${emitted.length}`, axes, offset);
         if (built.isErr()) return err(built.error);
         emitted.push(...built.value);
@@ -2460,7 +2476,9 @@ function visualMaps(context: CompositionContext, resolved: readonly ResolvedSeri
         if (declared.color !== undefined) colored.push(index);
         if (declared.size !== undefined) {
             const dimension = declared.color !== undefined ? 3 : 2;
-            sizedByDimension.set(dimension, [...(sizedByDimension.get(dimension) ?? []), index]);
+            const sized = sizedByDimension.get(dimension);
+            if (sized === undefined) sizedByDimension.set(dimension, [index]);
+            else sized.push(index);
         }
     }
 
@@ -2647,7 +2665,7 @@ function deriveFacets(
         }
     }
     const labeledPanels = labeledSeries(context, emitted, isHorizontalBar(resolved[0].declared));
-    const labeled = resolved[0].declared.form === "bar" && Object.keys(labelRoom(labeledPanels)).length > 0;
+    const labeled = resolved[0].declared.form === "bar" && Object.keys(labelRoom(labeledPanels, isHorizontalBar(resolved[0].declared))).length > 0;
     const shared = sharedAxes(context, resolved, axes, labeled);
 
     // A continuous color draws its scale at the right edge, thus the panels leave that band free.
@@ -2890,17 +2908,16 @@ function resolveSeries(
     declared: ChartSeries,
     rows: readonly ChartRow[],
     columns: readonly string[] | undefined,
-    meanings: ColumnMeanings,
 ): Result<ResolvedSeries, RenderProblem> {
-    const x = resolveChannel(blockId, declared.encoding.x, rows, columns).map((channel) => plottedChannel(channel, meanings));
+    const x = resolveChannel(blockId, declared.encoding.x, rows, columns);
     if (x.isErr()) return err(x.error);
-    const y = resolveChannel(blockId, declared.encoding.y, rows, columns).map((channel) => plottedChannel(channel, meanings));
+    const y = resolveChannel(blockId, declared.encoding.y, rows, columns);
     if (y.isErr()) return err(y.error);
     const resolved: ResolvedSeries = { declared, x: x.value, y: y.value };
 
     const declaredY0 = declared.encoding.y0;
     if (declaredY0 !== undefined) {
-        const y0 = resolveChannel(blockId, declaredY0, rows, columns).map((channel) => plottedChannel(channel, meanings));
+        const y0 = resolveChannel(blockId, declaredY0, rows, columns);
         if (y0.isErr()) return err(y0.error);
         resolved.y0 = y0.value;
     }
@@ -2927,18 +2944,50 @@ function resolveSeries(
 }
 
 /**
- * One plotted channel with its cells as numbers, where its column holds magnitudes.
+ * One resolved series with each positional channel in the form that its axis reads. A horizontal bar draws its
+ * `x` channel on the y axis and its `y` channel on the x axis.
+ */
+function plottedSeries(entry: ResolvedSeries, axes: AxisPair, meanings: ColumnMeanings): ResolvedSeries {
+    const horizontal = isHorizontalBar(entry.declared);
+    const xAxis = horizontal ? axes.yAxis : axes.xAxis;
+    const yAxis = horizontal ? axes.xAxis : axes.yAxis;
+    return {
+        ...entry,
+        x: plottedChannel(entry.x, xAxis, meanings),
+        y: plottedChannel(entry.y, yAxis, meanings),
+        ...(entry.y0 !== undefined ? { y0: plottedChannel(entry.y0, yAxis, meanings) } : {}),
+    };
+}
+
+/**
+ * One plotted channel in the form that its axis reads.
+ *
+ * A channel on a category axis keeps the text of each cell, thus the cluster `"6"` of a CSV draws at the
+ * category `6`. A cell that the table types as a number gives its text, and the channel states it, because the
+ * page build reads the payload cell as it is.
  *
  * A table that arrives as text gives each cell as a string. A column where each cell parses as a number draws
  * a value axis, thus each coordinate on it is the number of its cell. A column that holds a name keeps its
- * cells as they are: a column with a cell that is not numeric, and a column that declares the meaning of a
- * category or of an identifier, for example the cluster `01`. A transformed channel gives numbers already.
+ * cells as they are: a column with a cell that is not numeric, and a column that declares a name. A
+ * transformed channel gives numbers already.
  */
-function plottedChannel(channel: ResolvedChannel, meanings: ColumnMeanings): ResolvedChannel {
+function plottedChannel(channel: ResolvedChannel, axis: EchartOption, meanings: ColumnMeanings): ResolvedChannel {
+    if (axis.type === "category") {
+        const retyped = channel.values.some((cell) => typeof cell === "number");
+        return { ...channel, values: channel.values.map((cell) => (cell === null ? null : categoryCell(cell))), ...(retyped ? { retyped: true } : {}) };
+    }
     if (channel.transformed || channel.values.some((cell) => cell !== null && isNonNumericString(cell))) return channel;
-    const meaning = declaredForColumn(meanings, channel.column);
-    if (meaning === "category" || meaning === "identifier") return channel;
+    if (namesCategories(meanings, channel.column)) return channel;
     return { ...channel, values: channel.values.map((cell) => (cell === null ? null : toNumber(cell))), numeric: true };
+}
+
+/**
+ * True when a column declares the meaning of a category or of an identifier, for example the cluster `01`. Each
+ * cell of such a column names a thing, thus a cell that reads as a number is still a name.
+ */
+function namesCategories(meanings: ColumnMeanings, column: string): boolean {
+    const meaning = declaredForColumn(meanings, column);
+    return meaning === "category" || meaning === "identifier";
 }
 
 /** Resolve one channel: its effective name, and the value that each row gives for it. */
@@ -3165,10 +3214,13 @@ function collectSource(
     });
 }
 
-/** The payload column of one resolved channel, or `undefined` when the payload holds no such column. */
+/**
+ * The payload column of one resolved channel, or `undefined` when the payload holds no such column or when the
+ * page cannot build the cells of the channel from it.
+ */
 function columnSource(collector: SourceCollector, channel: ResolvedChannel): ChartColumnSource | undefined {
     const column = collector.columns.indexOf(channel.column);
-    if (column < 0) {
+    if (column < 0 || channel.retyped === true) {
         return undefined;
     }
     if (channel.transform !== undefined) return { column, transform: channel.transform };
@@ -3595,7 +3647,7 @@ function compositionAxis(
             ? { type: "log", ...axisNameFields(axis, titles.value) }
             : channel.transformed
               ? { type: "value", scale: true, ...axisNameFields(axis, titles.value) }
-              : inferAxis(context.rows, channel.name, axis, titles);
+              : inferAxis(context.rows, channel.name, axis, titles, namesCategories(context.meanings, channel.column));
     if (channel.order === undefined) {
         return ok(base);
     }
@@ -3667,6 +3719,14 @@ function transformedName(transform: ChartTransform, column: string): string {
     return `${transform}(${column})`;
 }
 
+/**
+ * One cell as a category axis reads it. The chart runtime reads a number on a category axis as the place of a
+ * category and never as its name, thus a number gives its text and the point draws at its own category.
+ */
+function categoryCell(cell: Cell): Cell {
+    return typeof cell === "number" ? String(cell) : cell;
+}
+
 /** True when the cell is a string that does not represent a finite number. */
 function isNonNumericString(cell: Cell | undefined): boolean {
     return typeof cell === "string" && toNumber(cell) === null;
@@ -3695,8 +3755,9 @@ function orderedAxis(
     axis: "x" | "y",
     titles: AxisTitles,
     order: ChannelOrder | undefined,
+    categorical: boolean,
 ): Result<EchartOption, RenderProblem> {
-    const inferred = inferAxis(rows, column, axis, titles);
+    const inferred = inferAxis(rows, column, axis, titles, categorical);
     if (order === undefined) {
         return ok(inferred);
     }
@@ -3782,7 +3843,7 @@ function withValueLabels(
     });
 }
 
-/** The part of the value range that a labeled bar chart adds at each end of its value axis. */
+/** The part of the value range that a labeled bar chart adds at an end of its value axis. */
 const LABEL_ROOM_PCT = 15;
 const LABEL_ROOM_SHARE = LABEL_ROOM_PCT / 100;
 const LABEL_AXIS_ROOM = `${LABEL_ROOM_PCT}%`;
@@ -3791,16 +3852,24 @@ const LABEL_AXIS_ROOM = `${LABEL_ROOM_PCT}%`;
  * The room of a value axis whose bars carry value labels, or no field for any other axis.
  *
  * A label sits past the end of its bar. The end of the longest bar lies at the end of the axis, thus without
- * room its label would stand over the category labels or past the plot.
+ * room its label would stand over the category labels or past the plot. The room pads only the end of each side
+ * that holds a labeled bar: the chart runtime widens the range before it adds the zero of a bar, thus a pad on a
+ * side with no bar would draw a range under zero that no bar reaches.
  */
-function labelRoom(series: readonly EchartOption[]): EchartOption {
-    const labeled = series.some(
-        (entry) =>
-            entry.type === "bar" &&
-            Array.isArray(entry.data) &&
-            entry.data.some((item: unknown) => typeof item === "object" && item !== null && !Array.isArray(item) && (item as EchartOption).label !== undefined),
-    );
-    return labeled ? { boundaryGap: [LABEL_AXIS_ROOM, LABEL_AXIS_ROOM] } : {};
+function labelRoom(series: readonly EchartOption[], horizontal: boolean): EchartOption {
+    let negative = false;
+    let positive = false;
+    for (const entry of series) {
+        if (entry.type !== "bar" || !Array.isArray(entry.data)) continue;
+        for (const item of entry.data as unknown[]) {
+            if (typeof item !== "object" || item === null || Array.isArray(item) || (item as EchartOption).label === undefined) continue;
+            const value = (item as EchartOption).value;
+            // The sign rule of `labelPosition`: a bar under zero puts its label at its lower end.
+            if ((toNumber(Array.isArray(value) ? (value as Cell[])[horizontal ? 0 : 1] : null) ?? 0) < 0) negative = true;
+            else positive = true;
+        }
+    }
+    return negative || positive ? { boundaryGap: [negative ? LABEL_AXIS_ROOM : 0, positive ? LABEL_AXIS_ROOM : 0] } : {};
 }
 
 /**
@@ -3871,15 +3940,16 @@ function axisTitles(labels: ColumnLabels, column: string): AxisTitles {
 }
 
 /**
- * The axis for a line or a scatter column. A column with any non-numeric string cell is a category axis
- * with its distinct values as strings. Any other column is a value axis with `scale: true`.
+ * The axis for a line or a scatter column. A column that `categorical` marks as a name, and a column with any
+ * non-numeric string cell, is a category axis with its distinct values as strings. Any other column is a value
+ * axis with `scale: true`.
  *
  * The `axis` argument names the channel that the column feeds, and the helper of the figure rules places the
  * name. The column decides the axis type, and the type decides the title: a value axis always names its
  * quantity, and a category axis names a declared title alone.
  */
-function inferAxis(rows: readonly ChartRow[], column: string, axis: "x" | "y", titles: AxisTitles): EchartOption {
-    if (rows.some((row) => isNonNumericString(row[column]))) {
+function inferAxis(rows: readonly ChartRow[], column: string, axis: "x" | "y", titles: AxisTitles, categorical: boolean): EchartOption {
+    if (categorical || rows.some((row) => isNonNumericString(row[column]))) {
         return { type: "category", data: firstAppearance(rows.map((row) => row[column])).map(String), ...axisNameFields(axis, titles.category) };
     }
     return { type: "value", scale: true, ...axisNameFields(axis, titles.value) };
@@ -3907,17 +3977,6 @@ function groupedSeries(
         );
     }
     return series;
-}
-
-/** The row groups in first-appearance order, or one unnamed group when there is no group column. */
-function splitGroups(rows: readonly ChartRow[], groupCol: string | undefined): Array<{ name: Cell | undefined; rows: readonly ChartRow[] }> {
-    if (groupCol === undefined) {
-        return [{ name: undefined, rows }];
-    }
-    return firstAppearance(rows.map((row) => row[groupCol])).map((name) => ({
-        name,
-        rows: rows.filter((row) => row[groupCol] === name),
-    }));
 }
 
 /**

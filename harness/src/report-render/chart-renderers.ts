@@ -446,6 +446,21 @@ const FACET_TITLE_SHARE = 1.6;
 const LEGEND_PADDING_PX = 5;
 
 /**
+ * The smallest share of its page height that the lowest row of facet panels keeps in an export. The single column
+ * wraps a legend of many names into more lines than its height holds, thus such a legend draws in one line that
+ * scrolls, and the panels keep their room.
+ */
+const PANEL_MIN_SHARE = 0.5;
+
+/**
+ * The height of the band of a bottom legend of some lines, in pixels: one line pitch and one item gap for each
+ * line, and one text size under the lowest line.
+ */
+function legendBand(lines: number, textPx: number): number {
+    return Math.round(lines * (textPx * LEGEND_LINE_SHARE + LEGEND_ITEM_GAP_PX) + textPx);
+}
+
+/**
  * The count of lines of a horizontal legend at one width. An entry is the icon of the text size, the gap of
  * five pixels to its text, and the text. The entries fill each line in order, one item gap apart. The names
  * are the data of the legend, or else the name of each series in order of first appearance.
@@ -485,14 +500,28 @@ function legendLines(option: Record<string, unknown>, textPx: number, widthPx: n
  * The page reserves the legend band in percent of its body, and a narrow export wraps the legend into more
  * lines than that band holds. Each panel of the lowest row then ends its box over the x title, and the x title
  * sits on the band. A panel keeps its top, thus its label stays in place, and the labels of a panel stay
- * inside its box.
+ * inside its box. A legend whose lines leave the lowest panels under `PANEL_MIN_SHARE` of their height draws in
+ * one line that scrolls.
  */
 function facetOverLegend(option: Record<string, unknown>, textPx: number, widthPx: number, heightPx: number): void {
     const grids = option.grid as unknown[];
-    const band = Math.round(legendLines(option, textPx, widthPx) * (textPx * LEGEND_LINE_SHARE + LEGEND_ITEM_GAP_PX) + textPx);
-    const floor = ((heightPx - band - Math.round(textPx * FACET_TITLE_SHARE)) / heightPx) * 100;
+    const title = Math.round(textPx * FACET_TITLE_SHARE);
     let lowest = 0;
-    for (const grid of grids) lowest = Math.max(lowest, panelBottom(grid));
+    let reserve = 0;
+    for (const grid of grids) {
+        const bottom = panelBottom(grid);
+        if (bottom <= lowest) continue;
+        const fields = grid as Record<string, unknown>;
+        lowest = bottom;
+        reserve = Number.parseFloat(String(fields.top)) + Number.parseFloat(String(fields.height)) * PANEL_MIN_SHARE;
+    }
+    const lines = legendLines(option, textPx, widthPx);
+    let band = legendBand(lines, textPx);
+    if (lines > 1 && ((heightPx - band - title) / heightPx) * 100 < reserve) {
+        option.legend = { ...(option.legend as Record<string, unknown>), type: "scroll" };
+        band = legendBand(1, textPx);
+    }
+    const floor = ((heightPx - band - title) / heightPx) * 100;
     option.grid = grids.map((grid: unknown) => {
         const bottom = panelBottom(grid);
         if (bottom < lowest || bottom <= floor) return grid;
@@ -766,14 +795,29 @@ function reportHoldsFacetLegend(option) {
   }
   return false;
 }
+function reportLegendBand(lines, textPx) {
+  return Math.round(lines * (textPx * ${LEGEND_LINE_SHARE} + ${LEGEND_ITEM_GAP_PX}) + textPx);
+}
 function reportFacetOverLegend(option, textPx, widthPx, heightPx) {
   var grids = option.grid;
-  var band = Math.round(reportLegendLines(option, textPx, widthPx) * (textPx * ${LEGEND_LINE_SHARE} + ${LEGEND_ITEM_GAP_PX}) + textPx);
-  var floor = ((heightPx - band - Math.round(textPx * ${FACET_TITLE_SHARE})) / heightPx) * 100;
+  var title = Math.round(textPx * ${FACET_TITLE_SHARE});
   var lowest = 0;
+  var reserve = 0;
   for (var g = 0; g < grids.length; g++) {
-    lowest = Math.max(lowest, reportPanelBottom(grids[g]));
+    var edge = reportPanelBottom(grids[g]);
+    if (edge <= lowest) {
+      continue;
+    }
+    lowest = edge;
+    reserve = Number.parseFloat(String(grids[g].top)) + Number.parseFloat(String(grids[g].height)) * ${PANEL_MIN_SHARE};
   }
+  var lines = reportLegendLines(option, textPx, widthPx);
+  var band = reportLegendBand(lines, textPx);
+  if (lines > 1 && ((heightPx - band - title) / heightPx) * 100 < reserve) {
+    option.legend = Object.assign({}, option.legend, { type: "scroll" });
+    band = reportLegendBand(1, textPx);
+  }
+  var floor = ((heightPx - band - title) / heightPx) * 100;
   var placed = [];
   for (var p = 0; p < grids.length; p++) {
     var bottom = reportPanelBottom(grids[p]);

@@ -18,8 +18,10 @@
 #                          (default: harness/src/report-render/gallery/data)
 #
 # A second run downloads only a raw file that is missing or whose checksum does
-# not match. The run writes the output directory only after each table matches
-# the manifest, thus a failed run leaves the old tables in place.
+# not match. The run changes the output directory only after each table matches
+# the manifest. It copies the tables into a sibling directory, and then it
+# replaces the old directory with two renames on the same filesystem. Thus a
+# failed or stopped run leaves the old tables or no tables, never a part of them.
 set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -136,9 +138,17 @@ uv run --quiet --script "$DERIVE_DIR/thin_gallery.py" "$WORK_DIR" "$STAGE_DIR" "
     fail "a table does not match the manifest. The tables are in $STAGE_DIR, and the output directory did not change."
 
 [[ -n $OUT_DIR && $OUT_DIR != "/" ]] || fail "GALLERY_DATA_OUT_DIR is not a directory that the script can replace."
-rm -rf "$OUT_DIR"
 mkdir -p "$(dirname "$OUT_DIR")"
-cp -R "$STAGE_DIR" "$OUT_DIR"
+OUT_DIR="$(cd "$(dirname "$OUT_DIR")" && pwd)/$(basename "$OUT_DIR")"
+NEW_DIR="$OUT_DIR.new"
+OLD_DIR="$OUT_DIR.old"
+rm -rf "$NEW_DIR" "$OLD_DIR"
+cp -R "$STAGE_DIR" "$NEW_DIR"
+if [[ -e $OUT_DIR ]]; then
+    mv "$OUT_DIR" "$OLD_DIR"
+fi
+mv "$NEW_DIR" "$OUT_DIR"
+rm -rf "$OLD_DIR"
 
 echo
 echo "gallery-data: raw inputs"

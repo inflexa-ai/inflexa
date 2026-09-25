@@ -115,32 +115,76 @@ export function pointNameSides(points: readonly NamedPoint[], plot: PlotRange, p
 }
 
 /**
- * The place of each category name on the data, in the order of the names.
+ * The place of each category name on the data, in the order of the names, or `undefined` for a name that
+ * finds no free place.
  *
  * A name sits centered on its anchor, for example the median of its cells. A heavier name places first, thus
  * the name of a large cluster keeps its anchor. A name that covers an earlier name moves along y by whole
- * lines, up first, until it covers none. `weights` gives the weight of each name, for example its cell count.
+ * lines, up first, while its box stays inside the y range of `plot`, until it covers none. A name that covers
+ * an earlier name at each such place draws nothing, thus no two names overlap. `weights` gives the weight of
+ * each name, for example its cell count, and the x range of `plot` gives the length that sizes a name.
  */
-export function nameAnchors(names: readonly NamedPoint[], weights: readonly number[], length: number): Array<{ readonly x: number; readonly y: number }> {
+export function nameAnchors(
+    names: readonly NamedPoint[],
+    weights: readonly number[],
+    plot: PlotRange,
+): Array<{ readonly x: number; readonly y: number } | undefined> {
+    const length = plot.x.max - plot.x.min;
     const order = names.map((_name, index) => index).sort((a, b) => weights[b] - weights[a] || a - b);
-    const placed: Box[] = [];
-    const out: Array<{ x: number; y: number }> = names.map((name) => ({ x: name.x, y: name.y }));
+    const line = nameSize("", length).height;
+    const out: Array<{ x: number; y: number } | undefined> = names.map(() => undefined);
+    // A box of no height covers nothing, and a grid of such cells has no key.
+    if (!(line > 0)) return names.map((name) => ({ x: name.x, y: name.y }));
+    const placed = boxGrid(line, plot);
+    const lines = Math.ceil((plot.y.max - plot.y.min) / line);
     for (const index of order) {
         const name = names[index];
         const { width, height } = nameSize(name.text, length);
         const boxAt = (y: number): Box => ({ left: name.x - width / 2, right: name.x + width / 2, bottom: y - height / 2, top: y + height / 2 });
-        let chosen = name.y;
-        for (const step of [0, 1, -1, 2, -2, 3, -3]) {
-            const y = name.y + step * height;
-            if (!placed.some((other) => overlaps(boxAt(y), other))) {
-                chosen = y;
-                break;
-            }
+        const free = (y: number, moved: boolean): boolean => {
+            const box = boxAt(y);
+            return (!moved || (box.bottom >= plot.y.min && box.top <= plot.y.max)) && !placed.covers(box);
+        };
+        let chosen = free(name.y, false) ? name.y : undefined;
+        for (let step = 1; chosen === undefined && step <= lines; step += 1) {
+            chosen = [name.y + step * height, name.y - step * height].find((y) => free(y, true));
         }
-        placed.push(boxAt(chosen));
+        if (chosen === undefined) continue;
+        placed.add(boxAt(chosen));
         out[index] = { x: name.x, y: Number(chosen.toPrecision(12)) };
     }
     return out;
+}
+
+/**
+ * The placed boxes of one plot, indexed by a grid of square cells of the given side from the lower left corner of
+ * the plot. A box enters each cell that it spans, thus a test of one box reads the boxes of its own cells alone,
+ * and a plot of many thousand names costs no scan of each earlier name.
+ *
+ * The cells count from the corner and not from zero. A cell number of a far coordinate loses its whole part to
+ * the float precision, and the cells of one box could then span a billion numbers.
+ */
+function boxGrid(side: number, plot: PlotRange): { readonly add: (box: Box) => void; readonly covers: (box: Box) => boolean } {
+    const cells = new Map<string, Box[]>();
+    const column = (x: number): number => Math.floor((x - plot.x.min) / side);
+    const row = (y: number): number => Math.floor((y - plot.y.min) / side);
+    const keys = (box: Box): string[] => {
+        const out: string[] = [];
+        for (let across = column(box.left); across <= column(box.right); across += 1) {
+            for (let up = row(box.bottom); up <= row(box.top); up += 1) out.push(`${across}:${up}`);
+        }
+        return out;
+    };
+    return {
+        add: (box) => {
+            for (const key of keys(box)) {
+                const cell = cells.get(key);
+                if (cell === undefined) cells.set(key, [box]);
+                else cell.push(box);
+            }
+        },
+        covers: (box) => keys(box).some((key) => cells.get(key)?.some((other) => overlaps(box, other)) ?? false),
+    };
 }
 
 /**

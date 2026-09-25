@@ -5,7 +5,15 @@ import { ok } from "neverthrow";
 import type { Block, ChartBlock, CitationBlock, FigureBlock, MetricBlock, ReportDocument, TableBlock, TextBlock } from "../contracts/report-blocks.js";
 import { AG_GRID_ASSET, ASSETS_DIR, DEPS_DIR, ECHARTS_ASSET, PAGE_ASSETS, TSPROV_ASSET, tableSidecarName } from "./assets.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption } from "./chart.js";
-import { chartToolbox, DATA_VIEW_FUNCTION, EXPORT_MENU_FUNCTION, MENU_FAULT_CLASS, MENU_FAULT_SHOWN_CLASS, MENU_OPEN_CLASS } from "./chart-toolbox.js";
+import {
+    chartToolbox,
+    DATA_VIEW_FUNCTION,
+    EXPORT_MENU_FUNCTION,
+    MENU_FAULT_CLASS,
+    MENU_FAULT_SHOWN_CLASS,
+    MENU_OPEN_CLASS,
+    TOOLBOX_ZLEVEL,
+} from "./chart-toolbox.js";
 import {
     CHART_BODY_PX,
     CHART_EXPORT_SIZES,
@@ -2732,10 +2740,18 @@ describe("the chart bootstrap under a broken chart", () => {
 });
 
 describe("the chart bootstrap binds the toolbox", () => {
-    /** Run the bootstrap over one container whose option carries the toolbox of a scatter. Give the set options and the window listeners. */
-    function bootToolbox(): { applied: Record<string, unknown>[]; listeners: Record<string, () => void> } {
+    /**
+     * Run the bootstrap over one container whose option carries the toolbox of a scatter. Give the set options, the
+     * window listeners, and the canvas layers of the chart.
+     */
+    function bootToolbox(): {
+        applied: Record<string, unknown>[];
+        listeners: Record<string, () => void>;
+        layers: { zlevel: number; dom: { style: Record<string, string> } }[];
+    } {
         const applied: Record<string, unknown>[] = [];
         const listeners: Record<string, () => void> = {};
+        const layers = [0, 1, TOOLBOX_ZLEVEL].map((zlevel) => ({ zlevel, dom: { style: {} as Record<string, string> } }));
         const win: Record<string, unknown> = {
             addEventListener: (event: string, listener: () => void) => {
                 listeners[event] = listener;
@@ -2746,13 +2762,22 @@ describe("the chart bootstrap binds the toolbox", () => {
             getAttribute: () => "chart-points",
             nextElementSibling: { getAttribute: () => "application/json", textContent: JSON.stringify(option) },
         };
-        const instance = { on: (_event: string, listener: () => void) => listener(), setOption: (given: Record<string, unknown>) => applied.push(given) };
+        const painter = {
+            eachLayer: (visit: (layer: (typeof layers)[number], zlevel: number) => void) => {
+                for (const layer of layers) visit(layer, layer.zlevel);
+            },
+        };
+        const instance = {
+            on: (_event: string, listener: () => void) => listener(),
+            setOption: (given: Record<string, unknown>) => applied.push(given),
+            getZr: () => ({ painter }),
+        };
         const doc = { querySelectorAll: () => [container], dispatchEvent: () => true, addEventListener: () => undefined };
         const echarts = { init: () => instance, getInstanceByDom: () => instance, registerCustomSeries: () => undefined };
         const errors: string[] = [];
         new Function("window", "document", "echarts", "console", CHART_BOOTSTRAP)(win, doc, echarts, { error: (line: string) => errors.push(line) });
         expect(errors).toEqual([]);
-        return { applied, listeners };
+        return { applied, listeners, layers };
     }
 
     it("binds each handler name of the toolbox to its page function before the chart reads the option", () => {
@@ -2763,12 +2788,15 @@ describe("the chart bootstrap binds the toolbox", () => {
         expect((feature.dataView.optionToContent as { name: string }).name).toBe(DATA_VIEW_FUNCTION);
     });
 
-    it("hides the toolbox of each chart for the print, and shows it again after the print", () => {
-        const { applied, listeners } = bootToolbox();
+    it("hides the canvas layer of the toolbox of each chart for the print, and shows it again after the print", () => {
+        const { applied, listeners, layers } = bootToolbox();
         listeners.beforeprint();
-        expect(applied[1]).toEqual({ toolbox: { show: false } });
+        // A new option draws each series again, and a dense series then draws in chunks, thus the print sets no option.
+        expect(applied.length).toBe(1);
+        expect(layers.map((layer) => layer.dom.style.visibility)).toEqual([undefined, undefined, "hidden"]);
         listeners.afterprint();
-        expect(applied[2]).toEqual({ toolbox: { show: true } });
+        expect(applied.length).toBe(1);
+        expect(layers.map((layer) => layer.dom.style.visibility)).toEqual([undefined, undefined, ""]);
     });
 });
 
@@ -3363,6 +3391,8 @@ describe("the PNG download of the page", () => {
         expect(drawn.dataUrl).toEqual([{ type: "png", pixelRatio: 3.125, backgroundColor: "#ffffff" }]);
         expect(drawn.setOption[0].tooltip).toBeUndefined();
         expect(drawn.setOption[0].animation).toBe(false);
+        // The script reads the PNG in the same task, thus each series draws in one pass and no chunk waits for a later frame.
+        expect((drawn.setOption[0].series as Record<string, unknown>[]).map((entry) => entry.progressive)).toEqual([0]);
         expect(drawn.downloads).toEqual([{ href: "data:image/png;base64,AAAA", download: "bars-single.png" }]);
     });
 

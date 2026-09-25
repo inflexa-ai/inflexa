@@ -6,10 +6,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import { deriveChartOption, type ChartRow, type EchartOption } from "../chart.js";
-import { CHART_INK, GUIDE_LINE_COLOR } from "../design.js";
+import { renderChartSvg } from "../chart-export.js";
+import { CHART_EXPORT_SIZES, CHART_INK, GUIDE_LINE_COLOR } from "../design.js";
 import { FOREST_FIGURE, termLines } from "./forest.js";
 import { FIGURE_MODULES } from "./index.js";
 
@@ -92,10 +94,19 @@ describe("the forest figure", () => {
             { term: "b", hr: 0.3, lower: 0.1, upper: 0.5, pvalue: 0.01 },
         ];
         const option = derive(forestBlock(), rows);
-        const axis = option.xAxis as EchartOption;
-        expect([axis.type, axis.scale]).toEqual(["value", true]);
+        expect((option.xAxis as EchartOption).type).toBe("value");
         const line = seriesOf(option).find((series) => series.markLine !== undefined)?.markLine as EchartOption;
         expect(line.data).toEqual([{ xAxis: 0 }]);
+    });
+
+    it("holds 0 inside the linear axis where every value is negative", () => {
+        const rows = [
+            { term: "a", hr: -30, lower: -50, upper: -10, pvalue: 0.01 },
+            { term: "b", hr: -20, lower: -40, upper: -15, pvalue: 0.02 },
+        ];
+        const svg = renderChartSvg(echarts, derive(forestBlock(), rows), CHART_EXPORT_SIZES.single)._unsafeUnwrap();
+        const texts = [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+        expect(texts).toContain("0");
     });
 
     it("draws a solid gray line at 1", () => {
@@ -150,6 +161,12 @@ describe("the forest figure", () => {
     it("prints a row whose smallest value sits under 0.1 with two significant digits on that value", () => {
         const [, estimates] = yAxes(derive(forestBlock(), [{ term: "a", hr: 0.052, lower: 0.0123, upper: 0.23, pvalue: 0.01 }]));
         expect(estimates.data).toEqual(["0.052 (0.012–0.230)"]);
+    });
+
+    it("prints a value under one thousandth as a power of ten, and the rest of its row at the decimals of the row", () => {
+        // A separated covariate gives a Wald bound far under any fixed count of decimals.
+        const [, estimates] = yAxes(derive(forestBlock(), [{ term: "a", hr: 3.2, lower: 1.2e-150, upper: 40, pvalue: 0.9 }]));
+        expect(estimates.data).toEqual(["3.20 (1.2 × 10⁻¹⁵⁰–40.00)"]);
     });
 
     it("prints a difference with the typographic minus, and joins a negative bound with the word to", () => {

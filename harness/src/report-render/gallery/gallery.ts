@@ -618,12 +618,12 @@ const CLINICAL_SECTION: ReportDocument["sections"][number] = {
         },
         note(
             "clinical-roc-note",
-            "The ROC plot shows how well two logistic models predict death within a year. The full model adds the Karnofsky score and the age to the ECOG score.",
+            "The ROC plot compares two logistic models of death within a year. The full model adds the Karnofsky score and the age to the ECOG score. The fit and the AUC of each model use the same patients, thus each AUC is an apparent (in-sample) value. The plot does not show how well a model predicts death for new patients.",
         ),
         {
             kind: "chart",
             id: "clinical-roc",
-            title: "Prediction of death within a year",
+            title: "In-sample ROC for death within a year",
             binding: table("data/survival/roc.csv", {
                 labels: { fpr: "False positive rate", tpr: "True positive rate", model: "Model" },
                 meanings: { model: "category" },

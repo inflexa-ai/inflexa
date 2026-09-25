@@ -798,6 +798,94 @@ describe("the bar with a wide channel", () => {
         for (let index = 0; index < 30; index += 1) busy.push({ k: `k${index}`, v: index - 10 });
         expect(asObj(derive(quick("bar", { x: "k", y: "v" }), busy).yAxis).boundaryGap).toBeUndefined();
     });
+
+    it("pads only the end of the value axis where a labeled bar ends, thus a chart of positive bars keeps its zero", () => {
+        const positive: ChartRow[] = [
+            { k: "a", v: 2 },
+            { k: "b", v: 30 },
+            { k: "c", v: 80 },
+        ];
+        const negative = positive.map((row) => ({ ...row, v: -Number(row.v) }));
+        expect(asObj(derive(quick("bar", { x: "k", y: "v" }), positive).yAxis).boundaryGap).toEqual([0, "15%"]);
+        expect(asObj(derive(quick("bar", { x: "k", y: "v" }, { orientation: "horizontal" }), positive).xAxis).boundaryGap).toEqual([0, "15%"]);
+        expect(asObj(derive(composed({ series: [{ form: "bar", encoding: { x: "k", y: "v" } }] }), positive).yAxis).boundaryGap).toEqual([0, "15%"]);
+        expect(asObj(derive(quick("bar", { x: "k", y: "v" }), negative).yAxis).boundaryGap).toEqual(["15%", 0]);
+        const horizontal = composed({ series: [{ form: "bar", orientation: "horizontal", encoding: { x: "k", y: "v" } }] });
+        expect(asObj(derive(horizontal, negative).xAxis).boundaryGap).toEqual(["15%", 0]);
+    });
+});
+
+describe("the number-like categories", () => {
+    /** A cluster table as a CSV gives it: each cell is text, and the cluster names read as numbers. */
+    const clusters: ChartRow[] = [
+        { cluster: "0", n: "4", lo: "3", hi: "5" },
+        { cluster: "6", n: "6", lo: "5", hi: "7" },
+        { cluster: "24", n: "5", lo: "4", hi: "6" },
+    ];
+
+    /** The pair of each item of the first bar series of one option. */
+    function barPairs(option: EchartOption): unknown[] {
+        return asArr(seriesOf(option).find((entry) => entry.type === "bar")?.data).map((item) => (Array.isArray(item) ? item : asObj(item).value));
+    }
+
+    it("keeps each cluster name of a bar with a wide channel as text, thus each bar and its whisker stand on their own category", () => {
+        const option = derive(quick("bar", { x: "cluster", y: "n", low: "lo", high: "hi" }), clusters);
+        expect(asObj(option.xAxis).data).toEqual(["0", "6", "24"]);
+        // The chart runtime reads a number on a category axis as the place of a category, thus each name stays text.
+        expect(barPairs(option)).toEqual([
+            ["0", 4],
+            ["6", 6],
+            ["24", 5],
+        ]);
+        const interval = seriesOf(option).find((entry) => entry.renderItem === INTERVAL_RENDERER);
+        expect(asArr(interval?.data).map((item) => asArr(item)[0])).toEqual([0, 1, 2]);
+        const plain = derive(composed({ series: [{ form: "bar", orientation: "horizontal", encoding: { x: "cluster", y: "n" } }] }), clusters);
+        expect(barPairs(plain).map((pair) => asArr(pair)[1])).toEqual(["0", "6", "24"]);
+    });
+
+    it("gives the text of a category that the table types as a number, and keeps such a dense bar inline", () => {
+        const typed: ChartRow[] = clusters.map((row) => ({ ...row, cluster: Number(row.cluster) }));
+        const option = derive(quick("bar", { x: "cluster", y: "n", label: "cluster" }), typed);
+        expect(barPairs(option).map((pair) => asArr(pair)[0])).toEqual(["0", "6", "24"]);
+        expect(barPairs(derive(quick("bar", { x: "cluster", y: "n" }), typed)).map((pair) => asArr(pair)[0])).toEqual(["0", "6", "24"]);
+
+        const block = composed({ series: [{ form: "bar", encoding: { x: "k", y: "v" } }] });
+        const columns = ["k", "v"];
+        const dense: ChartRow[] = [];
+        for (let index = 0; index < 6000; index += 1) dense.push({ k: String(index), v: index + 0.123456 });
+        // The page reads the payload cell as it is. A text cell reads as its text there too, and a number cell does not.
+        expect(deriveChartRender(block, dense, columns, { key: "c1", columns })._unsafeUnwrap().readsPayload).toBe(true);
+        const numbers = dense.map((row) => ({ ...row, k: Number(row.k) }));
+        const render = deriveChartRender(block, numbers, columns, { key: "c1", columns })._unsafeUnwrap();
+        expect(JSON.stringify(render.option).length).toBeGreaterThan(CHART_INLINE_OPTION_BOUND);
+        expect(render.readsPayload).toBe(false);
+    });
+
+    it("draws a column that declares the category meaning on a category axis, and sorts it by an order", () => {
+        const binding = { kind: "artifact-table" as const, path: "table.csv", hash: "sha256:00", columnMeanings: { cluster: "category" as const } };
+        const rows: ChartRow[] = [
+            { cluster: "01", v: "1", rank: "2" },
+            { cluster: "10", v: "2", rank: "3" },
+            { cluster: "02", v: "3", rank: "1" },
+        ];
+        const plain = derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), rows);
+        expect(asObj(plain.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["01", "10", "02"] }));
+        expect(asArr(seriesOf(plain)[0].data).map((item) => asArr(item)[0])).toEqual(["01", "10", "02"]);
+        const ordered = derive(quick("line", { x: { column: "cluster", orderBy: "rank" }, y: "v" }, { binding }), rows);
+        expect(asObj(ordered.xAxis).data).toEqual(["02", "01", "10"]);
+        const viaComposition = derive(
+            { ...composed({ series: [{ form: "scatter", encoding: { x: { column: "cluster", orderBy: "rank" }, y: "v" } }] }), binding },
+            rows,
+        );
+        expect(asObj(viaComposition.xAxis)).toEqual(expect.objectContaining({ type: "category", data: ["02", "01", "10"] }));
+        // A table that types the cluster as a number still draws each point on its own category.
+        const typed = rows.map((row) => ({ ...row, cluster: Number(row.cluster) }));
+        expect(asArr(seriesOf(derive(quick("scatter", { x: "cluster", y: "v" }, { binding }), typed))[0].data).map((item) => asArr(item)[0])).toEqual([
+            "1",
+            "10",
+            "2",
+        ]);
+    });
 });
 
 describe("the composition refusals of the wide grammar", () => {
@@ -856,9 +944,29 @@ describe("the composition refusals of the wide grammar", () => {
     it("refuses a radar whose table holds no positive value", () => {
         const flat: ChartRow[] = [
             { k: "a", g: "x", v: 0 },
-            { k: "b", g: "x", v: -2 },
+            { k: "b", g: "x", v: 0 },
         ];
         expect(refusal(quick("radar", { x: "k", y: "v", group: "g" }), flat).detail).toContain("positive");
+    });
+
+    it("refuses a radar that holds a negative value, and names the row", () => {
+        const signed: ChartRow[] = [
+            { k: "a", g: "x", v: 1.2 },
+            { k: "b", g: "x", v: -0.8 },
+            { k: "c", g: "x", v: 2 },
+        ];
+        const problem = refusal(quick("radar", { x: "k", y: "v", group: "g" }), signed);
+        expect(problem.kind).toBe("invalid-chart-input");
+        expect(problem.detail).toContain("row 2");
+        expect(problem.detail).toContain("negative");
+    });
+
+    it("refuses a transform on the facet of a composition, as the stacked forms do", () => {
+        const faceted = composed({ series: [{ form: "scatter", encoding: { x: "v", y: "w" } }], facet: { column: "rank", transform: "rank" } });
+        expect(refusal(faceted, rows).detail).toBe('The "facet" channel reads categories, thus it takes no transform.');
+        expect(refusal(quick("scatter", { x: "v", y: "w", facet: { column: "rank", transform: "rank" } }), rows).detail).toBe(
+            'The "facet" channel reads categories, thus it takes no transform.',
+        );
     });
 });
 
@@ -956,11 +1064,11 @@ describe("the third review round", () => {
         }
     });
 
-    it("refuses a stacked form, a radar, or a violin whose categories and groups pass the slot bound, and names the count", () => {
+    it("refuses a stacked form, a radar, a violin, or a box whose categories and groups pass the slot bound, and names the count", () => {
         const rows: ChartRow[] = [];
         for (let index = 0; index < 400; index += 1) rows.push({ k: `c${index}`, g: `g${index % 300}`, v: 1 });
         // 400 categories and 300 groups give 120000 slots, past the bound of 100000.
-        for (const chartType of ["stacked-bar", "normalized-bar", "radar", "violin"] as const) {
+        for (const chartType of ["stacked-bar", "normalized-bar", "radar", "violin", "box"] as const) {
             expect(refusal(quick(chartType, { x: "k", y: "v", group: "g" }), rows).detail).toContain("120000");
         }
     });

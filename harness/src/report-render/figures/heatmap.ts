@@ -28,7 +28,7 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel } from "../../contracts/report-blocks.js";
 import { declaredForColumn } from "../../contracts/report-reference.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { CHART_BODY_PX, CHART_BODY_MAX_PX, CHART_INK, CHART_PAGE_TEXT_PX, CHART_SLOT_LIMIT, COLOR_SCALE_BAND_PCT } from "../design.js";
+import { CHART_BODY_PX, CHART_BODY_MAX_PX, CHART_INK, CHART_PAGE_TEXT_PX, CHART_SLOT_LIMIT, COLOR_SCALE_BAND_PCT, MUTED_CHART_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
     axisNameFields,
@@ -304,7 +304,8 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
             selectedMode: false,
             showLabel: true,
             text: [strip.title],
-            pieces: strip.values.map((value, code) => ({ value: code, label: categoryName(value), color: palette[offset + code] })),
+            // The strips share one palette, and a value past its end takes the muted color.
+            pieces: strip.values.map((value, code) => ({ value: code, label: categoryName(value), color: palette[offset + code] ?? MUTED_CHART_COLOR })),
         });
         offset += strip.values.length;
     }
@@ -425,7 +426,8 @@ interface TrackStrip {
 
 /**
  * The strip of each track column. The categories of a strip take the order in which the x axis meets them.
- * An x category that no row gives a value draws no cell in the strip.
+ * An x category that no row gives a value draws no cell in the strip. A track with no value for any x category
+ * refuses, because its legend would hold no entry, and the runtime then draws a legend of number ranges.
  */
 function trackStrips(
     block: ChartBlock,
@@ -463,6 +465,9 @@ function trackStrips(
             if (value === null || codeOf.has(cellKey(value))) continue;
             codeOf.set(cellKey(value), values.length);
             values.push(value);
+        }
+        if (values.length === 0 && xCategories.length > 0) {
+            return err(chartProblem(block.id, `The track column "${track}" holds no value for any x category.`));
         }
         strips.push({
             title: declaredForColumn(context.labels, track) ?? categoryName(track),
