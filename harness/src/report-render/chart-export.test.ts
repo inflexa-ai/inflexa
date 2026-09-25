@@ -13,6 +13,7 @@ import {
     CHART_PRINT_TEXT_PX,
     CHART_SLIDE_TEXT_PX,
     COLOR_SCALE_BAND_PCT,
+    exportSizeFor,
     SCATTER_CROWD_ROWS,
 } from "./design.js";
 
@@ -709,6 +710,41 @@ describe("the export of a faceted chart", () => {
         const axes = exported.xAxis as EchartOption[];
         expect(axes.length).toBe(3);
         for (const axis of axes) expect([45, 90]).toContain((axis.axisLabel as EchartOption).rotate);
+    });
+
+    it("takes the room of the legend band from each row of panels, and each label moves with its row", () => {
+        const rows: ChartRow[] = [];
+        for (let panel = 1; panel <= 12; panel += 1) {
+            for (const k of ["a", "b"]) for (const g of ["Treated", "Control"]) rows.push({ panel: `p${panel}`, k, g, v: panel });
+        }
+        const block: ChartBlock = {
+            kind: "chart",
+            id: "f3",
+            binding: { kind: "artifact-table", path: "t.csv", hash: "sha256:00" },
+            chartType: "stacked-bar",
+            encoding: { x: "k", y: "v", group: "g", facet: "panel" },
+        };
+        const derived = deriveChartRender(block, rows, undefined, { key: "f3", columns: [] })._unsafeUnwrap();
+        const size = exportSizeFor(CHART_EXPORT_SIZES.single, derived.bodyPx);
+        const page = derived.inline;
+        const exported = exportOption(page, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx);
+        const percentOf = (value: unknown): number => Number.parseFloat(String(value));
+        const heights = (exported.grid as EchartOption[]).map((grid) => percentOf(grid.height));
+        // Four rows of three panels share the room of the band, thus each panel keeps one height.
+        expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1e-3);
+        expect(Math.min(...heights)).toBeGreaterThan(percentOf((page.grid as EchartOption[])[0].height) * 0.5);
+        // Each panel label keeps its gap over the top of its panel.
+        const gap = (option: EchartOption, place: number): number =>
+            percentOf((option.grid as EchartOption[])[place].top) - percentOf((option.graphic as EchartOption[])[place].top);
+        for (let place = 0; place < 12; place += 1) expect(gap(exported, place)).toBeCloseTo(gap(page, place), 4);
+        // The page builds the same export option.
+        const onThePage = new Function(`${CHART_RENDERERS_SOURCE}\nreturn reportExportOption;`)() as (
+            option: EchartOption,
+            textPx: number,
+            widthPx: number,
+            heightPx: number,
+        ) => EchartOption;
+        expect(onThePage(JSON.parse(JSON.stringify(page)) as EchartOption, CHART_PRINT_TEXT_PX, size.widthPx, size.heightPx)).toEqual(exported);
     });
 
     it("keeps the value label of the tallest faceted bar inside its panel", () => {

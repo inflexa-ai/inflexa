@@ -83,6 +83,23 @@ describe("the forest figure", () => {
         expect([axis.type, axis.min, axis.max, axis.name]).toEqual(["log", 0.25, 4, "hr"]);
     });
 
+    it("clips an interval past the widest log axis, and marks each clipped end", () => {
+        // A separated covariate gives a Wald interval of many decades.
+        const rows = [...ROWS, { term: "Separated", hr: 3.2, lower: 1.2e-150, upper: 40, pvalue: 0.9 }];
+        const option = derive(forestBlock(), rows);
+        const axis = option.xAxis as EchartOption;
+        expect(Math.log10((axis.max as number) / (axis.min as number))).toBeLessThanOrEqual(4);
+        expect(axis.max).toBe(40);
+        const items = seriesOf(option)[1].data as number[][];
+        const separated = items.find((item) => item[1] === rows.length - 1);
+        // The low bound ends at the axis and carries the clip mark of its end, and the high bound stays as it is.
+        expect(separated?.slice(2, 4)).toEqual([axis.min as number, 40]);
+        expect(separated?.[7]).toBe(1);
+        expect(items.filter((item) => item !== separated).every((item) => item[7] === 0)).toBe(true);
+        // The text column prints the bound of the table.
+        expect(yAxes(option)[1].data).toContain("3.20 (1.2 × 10⁻¹⁵⁰–40.00)");
+    });
+
     it("holds 1 inside the log axis where every interval lies on one side of it", () => {
         const axis = derive(forestBlock(), [{ term: "a", hr: 3, lower: 2.2, upper: 4.5, pvalue: 0.01 }]).xAxis as EchartOption;
         expect([axis.min, axis.max]).toEqual([1, 5]);
@@ -137,7 +154,7 @@ describe("the forest figure", () => {
     it("draws the interval of each row as a line along the x axis", () => {
         const interval = seriesOf(derive(forestBlock())).find((series) => series.type === "custom") as EchartOption;
         expect([interval.renderItem, interval.encode]).toEqual(["interval", { x: [0, 2, 3], y: 1 }]);
-        expect((interval.data as number[][])[1]).toEqual([0.531834967483113, 1, 0.375837377499962, 0.752581966485737, 0, 0, 0]);
+        expect((interval.data as number[][])[1]).toEqual([0.531834967483113, 1, 0.375837377499962, 0.752581966485737, 0, 0, 0, 0]);
     });
 
     it("prints the estimate with its interval and the p value in two columns at the right", () => {
