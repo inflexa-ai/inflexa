@@ -41,6 +41,7 @@ import {
     plainColumn,
     toNumber,
 } from "./common.js";
+import { largest } from "./dense.js";
 import type { FigureContext, FigureModule } from "./index.js";
 
 /** The opacity of a flow. A flow reads as the path of its source, and a label reads over it. */
@@ -129,7 +130,7 @@ export function sankeyStages(edges: readonly SankeyEdge[]): Result<Map<string, n
             if ((stages.get(next) ?? 0) < stage + 1) stages.set(next, stage + 1);
         }
     }
-    const last = Math.max(...stages.values());
+    const last = largest([...stages.values()]) ?? 0;
     for (const node of nodes) {
         if ((outgoing.get(node) ?? []).length === 0) stages.set(node, last);
     }
@@ -265,7 +266,9 @@ function nodeColors(nodes: readonly string[], stages: ReadonlyMap<string, number
     const byStage = new Map<number, string[]>();
     for (const node of nodes) {
         const stage = stages.get(node) ?? 0;
-        byStage.set(stage, [...(byStage.get(stage) ?? []), node]);
+        const members = byStage.get(stage);
+        if (members === undefined) byStage.set(stage, [node]);
+        else members.push(node);
     }
     const colors = new Map<string, string>();
     for (const members of byStage.values()) {
@@ -311,11 +314,11 @@ function deriveSankey(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     if (stages.isErr()) return err(chartProblem(context.blockId, stages.error));
 
     const nodes = [...stages.value.keys()];
-    const last = Math.max(...stages.value.values());
+    const last = largest([...stages.value.values()]) ?? 0;
     const colors = nodeColors(nodes, stages.value);
     const stageSizes = new Map<number, number>();
     for (const stage of stages.value.values()) stageSizes.set(stage, (stageSizes.get(stage) ?? 0) + 1);
-    const stageNodes = Math.max(...stageSizes.values());
+    const stageNodes = largest([...stageSizes.values()]) ?? 0;
     const groups = group.value === undefined ? [] : firstAppearance(flows.value.map((entry) => entry.group ?? ""));
     const groupPalette = categoricalPalette(groups.length);
     const groupColors = new Map(groups.map((name, place) => [name, groupPalette[place % groupPalette.length]]));

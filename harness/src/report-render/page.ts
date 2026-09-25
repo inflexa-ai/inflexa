@@ -9,7 +9,7 @@
 import { AG_GRID_ASSET, assetSource, ECHARTS_ASSET, TSPROV_ASSET } from "./assets.js";
 import { CHART_SOURCE_MEMBER, POINT_LABEL } from "./chart.js";
 import { CHART_RENDERERS_SOURCE } from "./chart-renderers.js";
-import { CHART_TOOLBOX_SOURCE } from "./chart-toolbox.js";
+import { CHART_TOOLBOX_SOURCE, TOOLBOX_ZLEVEL } from "./chart-toolbox.js";
 import {
     CHART_EXPORT_SIZES,
     ECHARTS_THEME_NAME,
@@ -358,13 +358,15 @@ const DOWNLOAD_URL_LIFETIME_MS = 60_000;
  *
  * The option carries the toolbox of the chart. Each handler of the toolbox is the name of a page function, and
  * the script binds each function after the parse and before the chart initializes. The download control opens
- * the download menu of the card. The print hides the toolbox of each chart, because the runtime draws it inside
- * the chart body, and the end of the print shows it again.
+ * the download menu of the card. The print hides the canvas layer of the toolbox of each chart, because the
+ * runtime draws the toolbox inside the chart body, and the end of the print shows the layer again. The print sets
+ * no option, because a new option starts the chunked draw of a dense chart again.
  *
  * A click on a PNG entry of the menu draws the kept option again on a detached element, at the CSS size of the
  * export and its pixel ratio, in the theme of its text size. The entry states the height of its export, because
- * a taller chart body grows the height of a column export. Then the script reads the PNG and downloads it
- * through an anchor. An entry that names no kept chart, or no export size, draws nothing.
+ * a taller chart body grows the height of a column export. Each series draws in one pass, because the script
+ * reads the PNG in the same task and a chunked draw ends in a later frame. Then the script reads the PNG and
+ * downloads it through an anchor. An entry that names no kept chart, or no export size, draws nothing.
  *
  * A click on a hybrid SVG entry builds the SVG of a dense chart from the kept option: the vector draw, the raster
  * draw of the point layer at 300 DPI, and the composition. Then the script downloads the text through an anchor.
@@ -482,11 +484,17 @@ export const CHART_BOOTSTRAP = `(function () {
     }
   });
   function toolboxShown(shown) {
+    function place(layer) {
+      if (layer.zlevel === ${TOOLBOX_ZLEVEL} && layer.dom) {
+        layer.dom.style.visibility = shown ? "" : "hidden";
+      }
+    }
     var nodes = document.querySelectorAll("[data-echarts-id]");
     for (var n = 0; n < nodes.length; n++) {
       var instance = echarts.getInstanceByDom(nodes[n]);
-      if (instance) {
-        instance.setOption({ toolbox: { show: shown } });
+      var painter = instance ? instance.getZr().painter : null;
+      if (painter && typeof painter.eachLayer === "function") {
+        painter.eachLayer(place);
       }
     }
   }
@@ -498,6 +506,16 @@ export const CHART_BOOTSTRAP = `(function () {
     toolboxShown(true);
   });
   var exportSizes = ${JSON.stringify(PAGE_EXPORT_SIZES)};
+  function reportOnePassOption(option) {
+    var out = Object.assign({}, option);
+    var series = reportList(option.series);
+    var drawn = [];
+    for (var s = 0; s < series.length; s++) {
+      drawn.push(Object.assign({}, series[s], { progressive: 0 }));
+    }
+    out.series = drawn;
+    return out;
+  }
   function reportExportPng(control) {
     var kind = control.getAttribute("data-export") || "";
     var chartId = control.getAttribute("data-chart") || "";
@@ -509,7 +527,7 @@ export const CHART_BOOTSTRAP = `(function () {
     var host = document.createElement("div");
     var offscreen = echarts.init(host, size.theme, { renderer: "canvas", width: size.width, height: height, devicePixelRatio: size.pixelRatio });
     try {
-      offscreen.setOption(reportExportOption(kept[chartId], size.textPx, size.width, height));
+      offscreen.setOption(reportOnePassOption(reportExportOption(kept[chartId], size.textPx, size.width, height)));
       var link = document.createElement("a");
       link.href = offscreen.getDataURL({ type: "png", pixelRatio: size.pixelRatio, backgroundColor: "#ffffff" });
       link.download = control.getAttribute("data-file") || "chart.png";

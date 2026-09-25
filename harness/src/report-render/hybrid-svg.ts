@@ -124,8 +124,8 @@ const RUNTIME_SYMBOL_PX = 10;
  *    rectangle, each axis holds its measured extent and draws nothing, and the legend, the graphics, and the
  *    color scales draw nothing. Thus each point lands on the pixel where the vector axes place it.
  * 4. The composition crops the raster to the union of the grid rectangles at 300 DPI, and it puts the PNG into
- *    the vector file. The crop reaches past each grid edge by half of the largest symbol, thus a point on an
- *    edge keeps its whole symbol, as it does on the page.
+ *    the vector file. The crop reaches past each grid edge by half of the largest symbol of a layer or of a
+ *    visual map of a layer, thus a point on an edge keeps its whole symbol, as it does on the page.
  */
 export const HYBRID_SVG_SOURCE = `function reportIsPointLayer(series) {
   if (typeof series !== "object" || series === null) {
@@ -268,31 +268,74 @@ function reportGridBox(chart, gridIndex, seed, width, height) {
   var bottom = edge(seed[1], height + 1, alongY);
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
-function reportSeed(chart, series, index, width, height) {
+function reportSeed(chart, option, series, index, width, height) {
   var data = Array.isArray(series.data) ? series.data : [];
   if (data.length === 0) {
     return null;
   }
-  // The middle of the data extent of the layer sits inside its grid, because each axis covers its data.
-  var anchors = reportExtentAnchors(data);
-  if (anchors.length === 2 && typeof anchors[0].value[0] === "number" && typeof anchors[0].value[1] === "number") {
-    var middle = [(anchors[0].value[0] + anchors[1].value[0]) / 2, (anchors[0].value[1] + anchors[1].value[1]) / 2];
-    var point = chart.convertToPixel({ seriesIndex: index }, middle);
+  var first = null;
+  for (var i = 0; i < data.length && first === null; i++) {
+    var value = reportItemValue(data[i]);
+    first = Array.isArray(value) ? value : null;
+  }
+  if (first !== null) {
+    // A continuous axis covers the extent of its data, and a category axis draws each category inside the grid.
+    // Thus the middle of the extent of a continuous dimension, and the category of the first row of a category
+    // dimension, give a point inside the grid of the layer.
+    var anchors = reportExtentAnchors(data);
+    var axes = [reportList(option.xAxis)[typeof series.xAxisIndex === "number" ? series.xAxisIndex : 0], reportList(option.yAxis)[typeof series.yAxisIndex === "number" ? series.yAxisIndex : 0]];
+    var kinds = ["xAxis", "yAxis"];
+    var place = [];
+    for (var d = 0; d < 2; d++) {
+      var least = anchors[0].value[d];
+      var most = anchors[1].value[d];
+      var continuous = axes[d] !== undefined && reportContinuousAxis(axes[d], kinds[d]);
+      place.push(continuous && typeof least === "number" && typeof most === "number" ? (least + most) / 2 : first[d]);
+    }
+    var point = chart.convertToPixel({ seriesIndex: index }, place);
     if (Array.isArray(point) && isFinite(point[0]) && isFinite(point[1])) {
       return point;
     }
   }
   return [width / 2, height / 2];
 }
-function reportSymbolReach(series) {
-  var size = series.symbolSize;
+function reportLargestSize(size) {
   if (typeof size === "number") {
-    return size / 2;
+    return size;
   }
-  if (Array.isArray(size)) {
-    return Math.max(Number(size[0]) || 0, Number(size[1]) || 0) / 2;
+  if (!Array.isArray(size)) {
+    return null;
   }
-  return ${RUNTIME_SYMBOL_PX} / 2;
+  var largest = 0;
+  for (var i = 0; i < size.length; i++) {
+    largest = Math.max(largest, Number(size[i]) || 0);
+  }
+  return largest;
+}
+function reportMapAppliesTo(map, index) {
+  var named = map.seriesIndex;
+  if (named === undefined || named === null) {
+    return true;
+  }
+  return Array.isArray(named) ? named.indexOf(index) >= 0 : named === index;
+}
+function reportSymbolReach(option, series, index) {
+  var own = reportLargestSize(series.symbolSize);
+  var largest = own === null ? ${RUNTIME_SYMBOL_PX} : own;
+  var maps = reportList(option.visualMap);
+  for (var m = 0; m < maps.length; m++) {
+    if (typeof maps[m] !== "object" || maps[m] === null || !reportMapAppliesTo(maps[m], index)) {
+      continue;
+    }
+    var visuals = [maps[m].inRange, maps[m].outOfRange].concat(reportList(maps[m].pieces));
+    for (var v = 0; v < visuals.length; v++) {
+      var mapped = typeof visuals[v] === "object" && visuals[v] !== null ? reportLargestSize(visuals[v].symbolSize) : null;
+      if (mapped !== null) {
+        largest = Math.max(largest, mapped);
+      }
+    }
+  }
+  return largest / 2;
 }
 function reportPointLayerBox(chart, option, width, height) {
   var series = reportList(option.series);
@@ -303,14 +346,14 @@ function reportPointLayerBox(chart, option, width, height) {
     if (!reportIsPointLayer(series[s])) {
       continue;
     }
-    reach = Math.max(reach, Math.ceil(reportSymbolReach(series[s])));
+    reach = Math.max(reach, Math.ceil(reportSymbolReach(option, series[s], s)));
     var grid = reportSeriesGrid(option, series[s]);
     if (boxes[grid] !== undefined) {
       continue;
     }
     // A layer with no row gives no place inside its grid. A facet panel can hold no row of one category, thus
     // the grid takes its seed from the next layer that holds rows, and a grid of empty layers draws no point.
-    var seed = reportSeed(chart, series[s], s, width, height);
+    var seed = reportSeed(chart, option, series[s], s, width, height);
     if (seed === null) {
       continue;
     }

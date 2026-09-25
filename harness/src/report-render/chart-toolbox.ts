@@ -46,6 +46,13 @@ const TOOLBOX_PADDING_PX = 5;
 const TOOLBOX_ITEM_PX = 14;
 const TOOLBOX_ITEM_GAP_PX = 12;
 
+/**
+ * The canvas layer of the toolbox. The print hides this layer, because a new option draws each series again and
+ * a dense series then draws in chunks over some frames. The runtime gives a dense series a layer of its own and
+ * lifts each later component one layer, thus the toolbox stands far above each layer that the runtime gives.
+ */
+export const TOOLBOX_ZLEVEL = 1000;
+
 /** The width of an icon stroke, in pixels. */
 const TOOLBOX_STROKE_PX = 1.25;
 
@@ -103,6 +110,7 @@ export function chartToolbox(chartType: ChartType | undefined): EchartOption {
     const dense = chartType !== undefined && DENSE_CARTESIAN_CHARTS.includes(chartType);
     return {
         show: true,
+        zlevel: TOOLBOX_ZLEVEL,
         right: TOOLBOX_RIGHT_PX,
         top: TOOLBOX_TOP_PX,
         padding: TOOLBOX_PADDING_PX,
@@ -161,7 +169,9 @@ export function pageChartOption(option: EchartOption, chartType: ChartType | und
  * and so does a click on an entry. After an entry fires, the focus goes back to the control.
  *
  * The runtime sends the click of the icon on to the document, and that click is outside the menu. Thus the menu
- * keeps the event that opened it, and the outside test skips that one event.
+ * keeps the event that opened it, and the outside test skips that one event. On a touch screen the runtime fires
+ * the click of the icon from the touch end, and the browser then sends its own click to the chart. Thus a menu that
+ * a tap opened also skips the next click inside its chart.
  *
  * `reportMenuFault` shows the fault note of the open menu and gives it the focus, when the page cannot build the
  * file of an entry. The menu then stays open, and the close hides the note again.
@@ -175,6 +185,7 @@ export function pageChartOption(option: EchartOption, chartType: ChartType | und
  */
 export const CHART_TOOLBOX_SOURCE = `var reportMenuOpen = null;
 var reportMenuEvent = null;
+var reportMenuTap = null;
 var reportMenuFocus = null;
 var reportMenuControl = null;
 var reportMenuRight = 0;
@@ -202,6 +213,7 @@ function reportCloseExportMenu(restore) {
   }
   reportMenuOpen = null;
   reportMenuEvent = null;
+  reportMenuTap = null;
   reportMenuControl = null;
   var focus = reportMenuFocus;
   reportMenuFocus = null;
@@ -228,6 +240,7 @@ function reportToggleExportMenu(container, event) {
   menu.style.top = container.offsetTop + ${TOOLBOX_TOP_PX + TOOLBOX_PADDING_PX + TOOLBOX_ITEM_PX + MENU_GAP_PX} + "px";
   reportMenuOpen = menu;
   reportMenuEvent = event;
+  reportMenuTap = event && event.type === "touchend" ? container : null;
   reportMenuControl = document.getElementById(container.id + ${JSON.stringify(MENU_CONTROL_SUFFIX)});
   reportMenuFocus = reportMenuControl || document.activeElement;
   if (reportMenuControl) {
@@ -262,6 +275,11 @@ function reportMenuClick(event) {
     return;
   }
   if (reportMenuOpen === null || event === reportMenuEvent) {
+    return;
+  }
+  var tapped = reportMenuTap;
+  reportMenuTap = null;
+  if (tapped && target && typeof tapped.contains === "function" && tapped.contains(target)) {
     return;
   }
   var inside = target && typeof target.closest === "function" ? target.closest('[role="menu"]') : null;

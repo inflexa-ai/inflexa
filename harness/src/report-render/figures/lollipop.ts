@@ -5,10 +5,11 @@
  * zero to its count and a head at the count, in the color of its class. The domains of the track draw as
  * labeled boxes on a band under the axis, over a gray backbone of the whole protein. The x axis spans the
  * protein: from zero to the length column of the track, or to the largest end and position where the track
- * names no length. The three largest counts carry the text of the label column.
+ * names no length or where one of them passes it. The three largest counts carry the text of the label column.
  *
- * The figure computes no summary. Each stem is one row, each box is one row of the track, and the lane of a
- * box is the first lane where it overlaps no earlier box, thus the lanes follow the order of the track rows.
+ * The figure computes no summary. Each stem is one row with a class where the block names a class column, each
+ * box is one row of the track, and the lane of a box is the first lane where it overlaps no earlier box, thus
+ * the lanes follow the order of the track rows.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -18,7 +19,17 @@ import { STEM_RENDERER } from "../chart-renderers.js";
 import type { ChartRow, EchartOption } from "../chart.js";
 import { CHART_INK, CHART_PALETTE, GUIDE_LINE_COLOR } from "../design.js";
 import type { RenderProblem } from "../types.js";
-import { categoricalPalette, categoryName, chartProblem, columnPresent, firstAppearance, toNumber, valueAxis, valueAxisTitle } from "./common.js";
+import {
+    categoricalPalette,
+    categoryName,
+    chartProblem,
+    columnPresent,
+    firstAppearance,
+    firstFreeLanes,
+    toNumber,
+    valueAxis,
+    valueAxisTitle,
+} from "./common.js";
 import type { FigureContext, FigureModule, FigureTrack } from "./index.js";
 import { classColors, classOf, legendClasses } from "./oncoprint.js";
 
@@ -97,7 +108,8 @@ function deriveLollipop(block: ChartBlock, rows: readonly ChartRow[], context: F
     for (const row of rows) {
         const x = toNumber(row[position.value]);
         const y = toNumber(row[count.value]);
-        if (x !== null && y !== null) stems.push({ row, x, y });
+        // A row with no class falls in no stem series, thus it takes no label and no room on the axis either.
+        if (x !== null && y !== null && (group === undefined || classOf(row, group) !== undefined)) stems.push({ row, x, y });
     }
     const boxes = context.track === undefined ? ok(undefined) : domainBoxes(context.blockId, context.track);
     if (boxes.isErr()) return err(boxes.error);
@@ -165,7 +177,7 @@ function numericChannel(block: ChartBlock, rows: readonly ChartRow[], context: F
 
 /**
  * The boxes of the track in the order of its rows, each one in the first lane where it overlaps no earlier box.
- * A row whose start or end is not numeric draws no box.
+ * A row whose start or end is not numeric draws no box, and a row whose end precedes its start refuses.
  */
 function domainBoxes(blockId: string, track: FigureTrack): Result<DomainBox[], RenderProblem> {
     for (const column of [track.start, track.end, track.label]) {
@@ -173,37 +185,36 @@ function domainBoxes(blockId: string, track: FigureTrack): Result<DomainBox[], R
             return err(chartProblem(blockId, `The track table holds no "${column}" column.`));
         }
     }
-    const laneEnds: number[] = [];
+    const laneOf = firstFreeLanes(track.rows.length);
     const boxes: DomainBox[] = [];
-    for (const row of track.rows) {
+    for (const [index, row] of track.rows.entries()) {
         const start = toNumber(row[track.start]);
         const end = toNumber(row[track.end]);
         if (start === null || end === null) continue;
-        let lane = laneEnds.findIndex((laneEnd) => laneEnd < start);
-        if (lane < 0) {
-            lane = laneEnds.length;
-            laneEnds.push(end);
-        } else {
-            laneEnds[lane] = end;
+        if (end < start) {
+            return err(chartProblem(blockId, `The track row ${index + 1} ends at ${end}, before its start at ${start}. A domain ends at or after its start.`));
         }
-        boxes.push({ start, end, name: String(row[track.label] ?? ""), lane });
+        boxes.push({ start, end, name: String(row[track.label] ?? ""), lane: laneOf(start, end) });
     }
     return ok(boxes);
 }
 
 /**
- * The end of the x axis: the length column of the first track row that holds a number, else the largest end
- * of a box and the largest position of a stem.
+ * The end of the x axis: the largest of the length column of the first track row that holds a number, the
+ * largest end of a box, and the largest position of a stem. A mutation table and a domain table of two isoforms
+ * disagree on the length, and each stem and each box stays inside the plot.
  */
 function axisLength(stems: readonly Stem[], track: FigureTrack | undefined, boxes: readonly DomainBox[] | undefined): number {
+    let largest = 0;
     const lengthColumn = track?.length;
     if (track !== undefined && lengthColumn !== undefined) {
         for (const row of track.rows) {
             const length = toNumber(row[lengthColumn]);
-            if (length !== null) return length;
+            if (length === null) continue;
+            largest = length;
+            break;
         }
     }
-    let largest = 0;
     for (const stem of stems) largest = Math.max(largest, stem.x);
     for (const box of boxes ?? []) largest = Math.max(largest, box.end);
     return largest;

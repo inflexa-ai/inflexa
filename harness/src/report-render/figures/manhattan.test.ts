@@ -251,6 +251,18 @@ describe("the Manhattan figure", () => {
         expect(shownLabels(option)).toEqual(["rsZero", "rs657452"]);
     });
 
+    it("leads a chromosome of two stored zeros by the smaller position, whatever the row order", () => {
+        const zeros: ChartRow[] = [
+            { chrom: "3", snp: "rsFar", pvalue: "0", cum_pos: "600000000" },
+            { chrom: "3", snp: "rsNear", pvalue: "0", cum_pos: "500000000" },
+        ];
+        for (const order of [zeros, [...zeros].reverse()]) {
+            const labels = shownLabels(derive(block(), [...ROWS, ...order]));
+            expect(labels).toContain("rsNear");
+            expect(labels).not.toContain("rsFar");
+        }
+    });
+
     it("refuses a block with no chromosome channel", () => {
         const problem = deriveChartOption(block({ x: "cum_pos", y: "pvalue" }), ROWS, undefined, {}, OPTS)._unsafeUnwrapErr();
         expect(problem.detail).toBe('The manhattan chart needs a column for the "group" channel.');

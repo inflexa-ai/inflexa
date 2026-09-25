@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { leaderNameBox, overlaps, placeLeaderNames, type NameFrame, type PlotRange } from "./label-room.js";
+import { CHART_PAGE_TEXT_PX } from "../design.js";
+import { leaderNameBox, nameAnchors, overlaps, placeLeaderNames, type NameFrame, type PlotRange } from "./label-room.js";
 
 /** A plot of 100 by 100 data units drawn at 200 by 100 pixels with text of 10 pixels. One pixel is half a unit on x. */
 const PLOT: PlotRange = { x: { min: 0, max: 100 }, y: { min: 0, max: 100 } };
@@ -56,5 +57,39 @@ describe("placeLeaderNames", () => {
         const placed = placeLeaderNames([{ x: 50, y: 50, text: "gas" }], { xs, ys, pointPx: 2 }, PLOT, ["right"], 100, FRAME);
         expect(placed[0]?.side).toBe("right");
         expect(placeLeaderNames([{ x: 50, y: 50, text: "gas" }], { xs, ys, pointPx: 2 }, PLOT, ["right"], 100, FRAME)).toEqual(placed);
+    });
+});
+
+describe("nameAnchors", () => {
+    /** The height of one name on the square plot: 1.3 lines of the page text, at 240 pixels for the 100 units. */
+    const LINE = (1.3 * CHART_PAGE_TEXT_PX * 100) / 240;
+
+    /** The names at one median, with their anchors, where each one found a place. */
+    function crowded(count: number): number[] {
+        const names = Array.from({ length: count }, (_name, index) => ({ x: 50, y: 50, text: `cluster ${index}` }));
+        return nameAnchors(
+            names,
+            names.map(() => 1),
+            PLOT,
+        ).flatMap((anchor) => (anchor === undefined ? [] : [anchor.y]));
+    }
+
+    /** True when no two names of one x cover each other, and each name that moved stays inside the plot. */
+    function clear(ys: readonly number[]): boolean {
+        const sorted = [...ys].sort((a, b) => a - b);
+        const apart = sorted.every((y, place) => place === 0 || y - sorted[place - 1] >= LINE - 1e-9);
+        return apart && ys.every((y) => y === 50 || (y - LINE / 2 >= 0 && y + LINE / 2 <= 100));
+    }
+
+    it("moves each name of one crowded median to its own line, thus the eighth name covers no other", () => {
+        const ys = crowded(8);
+        expect(ys.length).toBe(8);
+        expect(clear(ys)).toBe(true);
+    });
+
+    it("draws no name where no line inside the plot is free", () => {
+        const ys = crowded(40);
+        expect(ys.length).toBeLessThan(40);
+        expect(clear(ys)).toBe(true);
     });
 });
