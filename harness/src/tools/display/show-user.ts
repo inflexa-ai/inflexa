@@ -74,11 +74,13 @@ export const showUserTool = defineTool({
         "(kind=structure, by the URL `alphafold_prediction` returned). The content is inlined on the wire. " +
         "Pick this tool by what you are referencing, not by how the output looks: " +
         "NOT for an existing analysis file — never read an artifact and paste its bytes here, reference it with `show_file` " +
-        "(images, CSVs, PDFs, notebooks). NOT for a stored plan — use `show_plan`. " +
+        "(images, CSVs, PDFs, notebooks). Your own prose about the results is content you compose, so it belongs here. " +
+        "NOT for a stored plan — use `show_plan`. " +
         "NEVER put markdown image syntax pointing at a workspace file in a `markdown` body: `![](runs/.../volcano.png)` " +
-        "renders as a broken image, because the chat UI cannot resolve workspace-relative paths. To interleave figures " +
-        "with prose (a write-up, a narrative summary), emit a SEQUENCE of cards in display order — `show_user(markdown)` " +
-        "for a prose section, then `show_file` for the figures that follow it, and so on — instead of one monolithic card. " +
+        "renders as a broken image, because the chat UI cannot resolve workspace-relative paths. When an answer discusses " +
+        "two or more figures, emit a SEQUENCE of cards in one batch, in reading order — `show_user(markdown)` for a prose " +
+        "section, then the chart or the `show_file` it discusses, then the next section — instead of one monolithic card " +
+        "or reply text below all the cards. " +
         "One card per call, rendered in call order; an identical repeat call resolves to the same card, so compose the " +
         "finished content before calling rather than re-rendering a draft.",
     inputSchema: ShowUserInputSchema,

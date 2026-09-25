@@ -315,6 +315,18 @@ you are inventing or looked up that exists in no artifact, \`show_plan\` for a
 stored \`planId\`, \`show_file\` for an existing artifact path. Cards render in
 the order you emit them.
 
+Put each figure next to the prose that discusses it. Your reply text cannot
+sit between cards that you emit together: it renders above or below the whole
+batch. Thus, when an answer discusses two or more figures, write that
+discussion as \`show_user(markdown)\` sections. Emit the sections and the
+figures in one batch, in reading order: a section, then the chart or the
+\`show_file\` that it discusses, then the next section. Figures that one
+section discusses go in one \`show_file\` call, as a gallery. Figures for
+different sections go in separate calls. Your reply text
+after the batch only steers: which result matters most, and what comes next.
+An answer about one figure needs no sections. Show the figure, then write the
+answer.
+
 A predicted protein structure is shown by URL: \`show_user(kind: "structure")\`
 with the \`pdbUrl\` or \`cifUrl\` that \`alphafold_prediction\` returned. A
 \`.pdb\` or \`.cif\` a step wrote is an existing artifact — \`show_file\`.
