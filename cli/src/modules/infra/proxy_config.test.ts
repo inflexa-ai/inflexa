@@ -18,7 +18,7 @@ describe("generateApiKey", () => {
 
 describe("proxyConfig", () => {
     test("embeds the api key, the proxy port, and the container auth dir as YAML", () => {
-        const yaml = proxyConfig("sk-test-key");
+        const yaml = proxyConfig("sk-test-key", "sk-test-management-key");
         expect(yaml).toContain('api-keys:\n  - "sk-test-key"');
         expect(yaml).toContain(`port: ${env.cliproxyPort}`);
         expect(yaml).toContain('auth-dir: "/root/.cli-proxy-api"');

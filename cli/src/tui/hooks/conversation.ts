@@ -1,6 +1,6 @@
 import { randomUUIDv7 } from "bun";
 import { ResultAsync } from "neverthrow";
-import { createSignal } from "solid-js";
+import { createSignal, untrack } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import {
     createStreamingChat,
@@ -18,6 +18,7 @@ import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
+import { readCredentialVerdict } from "../../modules/infra/credential_state.ts";
 import {
     isSubAgentEvent,
     readAskPart,
@@ -902,9 +903,48 @@ export function turnFailureMessage(cause: unknown): string {
     if (connection.mode === "direct") {
         return `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then restart the chat. — ${detailsHint()}`;
     }
-    const kind = providerKindForSlug(connection.provider);
+    return deadLoginMessage(connection.provider);
+}
+
+/** The cliproxy remedy for a dead login: the launch gate signs in again, so the user restarts. */
+function deadLoginMessage(provider: string): string {
+    const kind = providerKindForSlug(provider);
     const relogin = kind ? ` (or run \`inflexa setup --provider ${kind}\`)` : "";
-    return `Your ${connection.provider} login has expired or been revoked — restart the chat to sign in again${relogin}. — ${detailsHint()}`;
+    return `Your ${provider} login has expired or been revoked — restart the chat to sign in again${relogin}. — ${detailsHint()}`;
+}
+
+/**
+ * Replace the generic banner of a failed cliproxy turn when the proxy's credential state explains the
+ * failure. A dead login and a rate limit both reach the harness as a retryable provider error, so only
+ * the proxy can tell them apart. The read is an exec round trip, so the generic banner shows first, and
+ * the swap happens only if that banner still shows: a new turn or a dismissal wins over a late answer.
+ */
+function refineProviderFailure(shown: string): void {
+    const connection = resolveModelConnection();
+    if (connection.mode !== "cliproxy") return;
+    void readCredentialVerdict().then((verdict) => {
+        if (verdict.isErr()) {
+            getLogger("chat").debug({ reason: verdict.error.type }, "credential state unavailable");
+            return;
+        }
+        if (untrack(errorMsg) !== shown) return;
+        switch (verdict.value.kind) {
+            case "login_dead":
+                setErrorMsg(deadLoginMessage(connection.provider));
+                return;
+            case "rate_limited":
+                setErrorMsg(
+                    `${connection.provider} is rate-limiting this account — the proxy retries after ${verdict.value.retryAt.toLocaleTimeString()}. Try again then. — ${detailsHint()}`,
+                );
+                return;
+            case "unknown":
+                return;
+            default: {
+                const unhandled: never = verdict.value;
+                throw new Error(`unhandled CredentialVerdict: ${JSON.stringify(unhandled)}`);
+            }
+        }
+    });
 }
 
 /**
@@ -999,7 +1039,11 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             drainOpenTools();
             stampTurnCost(assistantId, startedAt, outcome.turnUsage);
             setLastTurnFailure(outcome.cause);
-            setErrorMsg(turnFailureMessage(outcome.cause));
+            {
+                const shown = turnFailureMessage(outcome.cause);
+                setErrorMsg(shown);
+                if (!findAuthCause(outcome.cause)) refineProviderFailure(shown);
+            }
             reportAppendError(outcome.appendError);
             setChatStatus("error");
             return;
