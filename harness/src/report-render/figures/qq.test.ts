@@ -161,6 +161,32 @@ describe("the QQ figure", () => {
         expect(xs.at(-1)).toBe(400);
     });
 
+    it("refuses a transform on a band bound, because the band draws each bound in the unit of the plotted y", () => {
+        const transformed = block({ ...ENCODING, low: { column: "ci_lower", transform: "neg_log10" } });
+        const problem = deriveChartOption(transformed, ROWS, undefined, {}, OPTS)._unsafeUnwrapErr();
+        expect(problem.detail).toBe('The qq figure reads the "low" channel as a plain column, thus it takes no transform and no order.');
+    });
+
+    it("refuses a row whose upper band bound sits under its lower bound, and names the row", () => {
+        const swapped = ROWS.map((row, index) => (index === 3 ? { ...row, ci_lower: "2.12", ci_upper: "1.9" } : row));
+        const problem = deriveChartOption(block(), swapped, undefined, {}, OPTS)._unsafeUnwrapErr();
+        expect(problem.detail).toBe(
+            'The row 4 holds the band from 2.12 in "ci_lower" to 1.9 in "ci_upper". The "low" bound sits at or under the "high" bound.',
+        );
+    });
+
+    it("thins the band by place where each row holds one expected value", () => {
+        const rows: ChartRow[] = Array.from({ length: 5000 }, (_row, index) => ({
+            expected_neg_log10_p: "1",
+            observed_neg_log10_p: String(index / 1000),
+            ci_lower: "0.5",
+            ci_upper: "1.5",
+        }));
+        const [, lower, upper] = seriesOf(derive(block(), rows));
+        expect((lower.data as unknown[]).length).toBe(QQ_BAND_POINTS);
+        expect((upper.data as unknown[]).length).toBe(QQ_BAND_POINTS);
+    });
+
     it("derives the same bytes two times", () => {
         expect(JSON.stringify(derive())).toBe(JSON.stringify(derive()));
     });

@@ -35,6 +35,14 @@ const FACETED_LEGEND: EchartOption = {
     series: KANG_TYPES.flatMap((name) => [0, 1].map((index) => ({ type: "bar", name, xAxisIndex: index, yAxisIndex: index, data: [1, 2] }))),
 };
 
+/** The facet of `FACETED_LEGEND` with twenty-eight names in its legend: more lines than the single column holds. */
+const CROWDED_LEGEND: EchartOption = {
+    ...FACETED_LEGEND,
+    series: Array.from({ length: 28 }, (_, index) => `Cell type number ${index + 1}`).flatMap((name) =>
+        [0, 1].map((index) => ({ type: "bar", name, xAxisIndex: index, yAxisIndex: index, data: [1, 2] })),
+    ),
+};
+
 /** A scatter whose point names carry a series for two export widths beside the page series. */
 const SIZED_NAMES: EchartOption = {
     xAxis: { type: "value" },
@@ -301,6 +309,7 @@ describe("the export option", () => {
         },
         FACETED_LEGEND,
         SIZED_NAMES,
+        CROWDED_LEGEND,
     ];
 
     it("takes the series of the export width in place of the page series of the sized names", () => {
@@ -344,6 +353,24 @@ describe("the export option", () => {
         const slide = exportOption(FACETED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080);
         expect((slide.grid as EchartOption[])[0].height).toBe("70%");
         expect(((slide.graphic as EchartOption[])[1] as EchartOption).bottom).toBe(legendBandPx(1, CHART_SLIDE_TEXT_PX));
+        expect((print.legend as EchartOption).type).toBeUndefined();
+    });
+
+    it("draws a legend whose lines leave a panel under half its height in one line that scrolls", () => {
+        const print = exportOption(CROWDED_LEGEND, CHART_PRINT_TEXT_PX, 336, 253);
+        expect(print.legend).toEqual({ bottom: 0, type: "scroll" });
+        const band = legendBandPx(1, CHART_PRINT_TEXT_PX);
+        const room = 253 - band - Math.round(CHART_PRINT_TEXT_PX * 1.6);
+        for (const grid of print.grid as EchartOption[]) {
+            // The panel of the page is 70 percent high, thus the export keeps 35 percent of the height at least.
+            expect(Number.parseFloat(String(grid.height))).toBeGreaterThanOrEqual(35);
+            expect(((Number.parseFloat(String(grid.top)) + Number.parseFloat(String(grid.height))) * 253) / 100).toBeCloseTo(room, 1);
+        }
+        expect((print.graphic as EchartOption[]).find((element) => element.bottom !== undefined)?.bottom).toBe(band);
+        // The chart runtime draws the one line and the page count of the legend in the file.
+        expect(svgOf(CROWDED_LEGEND)).toMatch(/>1\/\d+<\/text>/);
+        // The slide holds the twenty-eight names in lines that leave each panel its room, thus its legend wraps.
+        expect((exportOption(CROWDED_LEGEND, CHART_SLIDE_TEXT_PX, 1920, 1080).legend as EchartOption).type).toBeUndefined();
     });
 
     it("drops the tooltip and the toolbox, stops the animation, and scales the name gap and the panel labels", () => {
@@ -459,6 +486,22 @@ describe("the bar of an interval through the server render", () => {
         const whiskers = verticalInk(svg).filter((segment) => segment[2] - segment[1] > 5);
         expect(centers.length).toBe(4);
         expect(whiskers.length).toBe(4);
+        for (const whisker of whiskers) {
+            expect(Math.min(...centers.map((center) => Math.abs(center - whisker[0])))).toBeLessThan(0.6);
+        }
+    });
+
+    it("stands the bar of each number-like category of a CSV on its own category, with its whisker over it", () => {
+        const rows: ChartRow[] = [
+            { cluster: "0", n: "4", lo: "3", hi: "5" },
+            { cluster: "6", n: "6", lo: "5", hi: "7" },
+            { cluster: "24", n: "5", lo: "4", hi: "6" },
+        ];
+        const svg = svgOf(barOption({ x: "cluster", y: "n", low: "lo", high: "hi" }, rows), "double");
+        const centers = boxesOf(svg, CHART_PALETTE[0]).map((box) => (box[0] + box[2]) / 2);
+        const whiskers = verticalInk(svg).filter((segment) => segment[2] - segment[1] > 5);
+        expect(centers.length).toBe(3);
+        expect(whiskers.length).toBe(3);
         for (const whisker of whiskers) {
             expect(Math.min(...centers.map((center) => Math.abs(center - whisker[0])))).toBeLessThan(0.6);
         }

@@ -195,7 +195,7 @@ function deriveDotplot(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         ...categoryAxis("y", terms ?? categories.value, { title: categoryAxisTitle(context.labels, yColumn), topDown: true }),
         ...(wraps ? { axisLabel: { lineHeight: DOTPLOT_LINE_PX } } : {}),
     };
-    const lines = terms === undefined ? 1 : Math.max(1, ...terms.map((term) => term.split("\n").length));
+    const lines = terms === undefined ? 1 : highestOf(terms.map((term) => term.split("\n").length));
     const body = (categories.value.length * (lines * DOTPLOT_LINE_PX + DOTPLOT_ROW_GAP_PX)) / DOTPLOT_PLOT_SHARE;
 
     const maps = Array.isArray(option.visualMap) ? (option.visualMap as EchartOption[]) : [];

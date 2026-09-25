@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as echarts from "echarts";
 
 import type { ChartType } from "../contracts/report-blocks.js";
 import {
@@ -17,6 +18,7 @@ import {
     pageChartOption,
     TOOLBOX_FUNCTION_MEMBERS,
     TOOLBOX_PAGE_FUNCTIONS,
+    TOOLBOX_ZLEVEL,
 } from "./chart-toolbox.js";
 
 /** The feature member of one toolbox. */
@@ -154,6 +156,43 @@ describe("the toolbox of a page chart", () => {
     });
 });
 
+describe("the canvas layer of the toolbox", () => {
+    /** The count of drawn elements on each canvas layer of one option, keyed by the layer. */
+    function layerCounts(option: Record<string, unknown>): Record<string, number> {
+        const chart = echarts.init(null, undefined, { renderer: "svg", ssr: true, width: 600, height: 400 });
+        try {
+            chart.setOption(option);
+            const counts: Record<string, number> = {};
+            for (const element of chart.getZr().storage.getDisplayList(true)) counts[element.zlevel] = (counts[element.zlevel] ?? 0) + 1;
+            return counts;
+        } finally {
+            chart.dispose();
+        }
+    }
+
+    it("holds the toolbox alone, also over the layers that the runtime gives a dense series", () => {
+        const data: number[][] = [];
+        for (let index = 0; index < 4000; index += 1) data.push([index, index % 7]);
+        const plain = {
+            xAxis: { type: "value" },
+            yAxis: { type: "value" },
+            legend: {},
+            series: [
+                { type: "scatter", name: "a", data },
+                { type: "scatter", name: "b", data: data.slice(0, 10) },
+            ],
+        };
+        const option = pageChartOption(plain, "scatter");
+        pageFunctions(stubDocument().document).bind(option);
+        const bare = layerCounts(plain);
+        const shown = layerCounts(option);
+        // A series past the chunk threshold of the runtime takes a layer of its own, and each later component rises one layer.
+        expect(Object.keys(bare).length).toBeGreaterThan(2);
+        expect(shown[TOOLBOX_ZLEVEL]).toBeGreaterThan(0);
+        expect(Object.fromEntries(Object.entries(shown).filter(([zlevel]) => Number(zlevel) !== TOOLBOX_ZLEVEL))).toEqual(bare);
+    });
+});
+
 describe("the bootstrap binding of the toolbox", () => {
     it("holds a page function for each name that a toolbox can carry", () => {
         const { document } = stubDocument();
@@ -280,8 +319,14 @@ describe("the data view", () => {
 });
 
 describe("the download menu", () => {
-    /** One open menu under a container of 600 × 400 pixels at the place 16, 16 of its card. */
-    function openMenu(): { page: ReturnType<typeof pageFunctions>; menu: StubNode; items: StubNode[]; document: Record<string, unknown>; event: object } {
+    /**
+     * One open menu under a container of 600 × 400 pixels at the place 16, 16 of its card. The event of the icon
+     * opens it, and the container holds the one node `inside`.
+     */
+    function openMenu(
+        event: { event: { type: string } } = { event: { type: "click" } },
+        inside: object = {},
+    ): { page: ReturnType<typeof pageFunctions>; menu: StubNode; items: StubNode[]; document: Record<string, unknown>; event: { event: object } } {
         const byId: Record<string, StubNode> = {};
         const { document, node } = stubDocument(byId);
         const menu = node("div", { role: "menu" });
@@ -291,8 +336,7 @@ describe("the download menu", () => {
         byId["chart-gwas-menu"] = menu;
         byId.menu = menu;
         const page = pageFunctions(document);
-        const container = { id: "chart-gwas", offsetLeft: 16, offsetTop: 16, clientWidth: 600 };
-        const event = { event: { type: "click" } };
+        const container = { id: "chart-gwas", offsetLeft: 16, offsetTop: 16, clientWidth: 600, contains: (target: unknown) => target === inside };
         page.open({}, { getDom: () => container }, "myExport", event);
         return { page, menu, items, document, event };
     }
@@ -333,6 +377,24 @@ describe("the download menu", () => {
         expect(menu.classList.contains(MENU_OPEN_CLASS)).toBe(true);
         page.click({ target: { closest: () => null } });
         expect(menu.classList.contains(MENU_OPEN_CLASS)).toBe(false);
+    });
+
+    it("stays open for the click that the browser sends after a tap on the icon, and closes on the next click", () => {
+        const chart = { closest: () => null };
+        const tap = { event: { type: "touchend" } };
+        // The runtime fires the click of the icon from the touch end, and the browser then sends its own click to the chart.
+        const tapped = openMenu(tap, chart);
+        tapped.page.click({ target: chart });
+        expect(tapped.menu.classList.contains(MENU_OPEN_CLASS)).toBe(true);
+        tapped.page.click({ target: chart });
+        expect(tapped.menu.classList.contains(MENU_OPEN_CLASS)).toBe(false);
+        const outside = openMenu(tap, chart);
+        outside.page.click({ target: { closest: () => null } });
+        expect(outside.menu.classList.contains(MENU_OPEN_CLASS)).toBe(false);
+        // A click opens the menu with no tap, thus the next click in the chart closes it.
+        const clicked = openMenu(undefined, chart);
+        clicked.page.click({ target: chart });
+        expect(clicked.menu.classList.contains(MENU_OPEN_CLASS)).toBe(false);
     });
 
     it("closes on a click on an entry, and on a second click on the icon", () => {

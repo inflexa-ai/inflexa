@@ -16,7 +16,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import type { ChartBlock } from "../../contracts/report-blocks.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { CHART_FONT_STACK, CHART_INK, CHART_PAGE_TEXT_PX } from "../design.js";
+import { CHART_BODY_MAX_PX, CHART_BODY_PX, CHART_FONT_STACK, CHART_INK, CHART_PAGE_TEXT_PX } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
     categoricalPalette,
@@ -31,6 +31,7 @@ import {
     toNumber,
     valueAxis,
     valueAxisTitle,
+    withFigureBody,
     type ChannelSource,
 } from "./common.js";
 import type { FigureContext, FigureMember, FigureModule } from "./index.js";
@@ -53,6 +54,15 @@ const MAX_TIME_TICKS = 6;
 /** The nice steps of the time axis in one decade. */
 const NICE_STEPS = [1, 2, 2.5, 5] as const;
 
+/**
+ * The tolerance, in steps, under which the end of the time axis counts as a tick. A product such as `3 × 0.2`
+ * gives `0.6000000000000001`, one unit in the last place past the end `0.6`.
+ */
+const TICK_TOLERANCE = 1e-9;
+
+/** The significant digits of a tick, thus a tick such as `3 × 0.2` reads `0.6`. */
+const TICK_DIGITS = 12;
+
 /** The opacity of a confidence band. The curve and the band of the other group stay readable through it. */
 const BAND_OPACITY = 0.2;
 
@@ -67,7 +77,8 @@ const CENSOR_TICK_PX = [1.5, 8] as const;
  *
  * The two grids share one left edge and one right edge, thus each count sits under its tick. The axis band
  * under the plot holds the tick labels and the title of the time axis, and the header band holds the title of
- * the table. Each group takes one row of the table.
+ * the table. Each group takes one row of the table. A table of more rows than the default body holds grows the
+ * body.
  */
 const PLOT_TOP = 12;
 const GRID_RIGHT = 5;
@@ -75,6 +86,7 @@ const AXIS_BAND = 14;
 const HEADER_BAND = 7;
 const RISK_ROW = 6;
 const TABLE_BOTTOM = 3;
+const RISK_ROWS_IN_BODY = 3;
 
 /** The left inset of the table title, in percent of the chart. The title sits over the group names. */
 const HEADER_LEFT = 1;
@@ -142,7 +154,7 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     const ticks = timeTicks(end, step);
     const table = columns.value.risk !== undefined;
     const left = gridLeft(curves.value);
-    const plotBottom = table ? TABLE_BOTTOM + curves.value.length * RISK_ROW + HEADER_BAND + AXIS_BAND : AXIS_BAND;
+    const layout = kmLayout(table ? curves.value.length : 0);
     const legend = curves.value.length > 1;
 
     const series: EchartOption[] = [];
@@ -159,24 +171,58 @@ function deriveKm(block: ChartBlock, rows: readonly ChartRow[], context: FigureC
     const timeAxis = {
         ...valueAxis("x", valueAxisTitle(context.labels, columns.value.time), { min: 0, max: end }),
         interval: step,
-        ...(end % step === 0 ? {} : { axisLabel: { showMaxLabel: false } }),
+        ...(onTick(end, step) ? {} : { axisLabel: { showMaxLabel: false } }),
     };
     const survivalAxis = valueAxis("y", valueAxisTitle(context.labels, columns.value.survival), { min: 0, max: 1 });
-    const plotGrid = { top: pct(PLOT_TOP), bottom: pct(plotBottom), left: pct(left), right: pct(GRID_RIGHT) };
-    const graphic = [...statisticsGraphic(context.statistics, "top-right"), ...(table ? [tableTitle(curves.value.length)] : [])];
-    return ok({
+    const plotGrid = { top: pct(layout.top), bottom: pct(layout.plotBottom), left: pct(left), right: pct(GRID_RIGHT) };
+    // The statistics text sits at the top of the plot, and the top of the plot moves with the body.
+    const statistics = statisticsGraphic(context.statistics, "top-right").map((text) => ({ ...text, top: pct(layout.top) }));
+    const graphic = [...statistics, ...(table ? [tableTitle(layout)] : [])];
+    const option: EchartOption = {
         legend: legend ? { top: 0 } : { show: false },
-        grid: table ? [plotGrid, tableGrid(curves.value.length, left)] : plotGrid,
+        grid: table ? [plotGrid, tableGrid(layout, left)] : plotGrid,
         xAxis: table ? [timeAxis, tableTimeAxis(end, step)] : timeAxis,
         yAxis: table ? [survivalAxis, tableGroupAxis(curves.value, colorOf)] : survivalAxis,
         series,
         ...(graphic.length > 0 ? { graphic } : {}),
-    });
+    };
+    return ok(layout.bodyPx > CHART_BODY_PX ? withFigureBody(option, layout.bodyPx) : option);
 }
 
-/** A number in percent of the chart. */
+/** A number in percent of the chart, rounded, thus a float residue never reaches the option. */
 function pct(value: number): string {
-    return `${value}%`;
+    return `${Math.round(value * 1e4) / 1e4}%`;
+}
+
+/** The bands of one chart in percent of its body, and the body in pixels. */
+interface KmLayout {
+    readonly top: number;
+    readonly plotBottom: number;
+    readonly tableBottom: number;
+    readonly rows: number;
+    readonly header: number;
+    readonly bodyPx: number;
+}
+
+/**
+ * The bands of a chart whose table holds some rows. A table past `RISK_ROWS_IN_BODY` rows grows the body by one
+ * row of the default body for each further row, and each band keeps its height in pixels. The body stops at the
+ * largest body, and past it the plot keeps its height and the rows share the rest of the table band.
+ */
+function kmLayout(rows: number): KmLayout {
+    const grown = Math.max(0, rows - RISK_ROWS_IN_BODY) * RISK_ROW;
+    const bodyPx = Math.min(CHART_BODY_MAX_PX, (CHART_BODY_PX * (100 + grown)) / 100);
+    const share = CHART_BODY_PX / bodyPx;
+    const fixed = rows > 0 ? PLOT_TOP + AXIS_BAND + HEADER_BAND + TABLE_BOTTOM : PLOT_TOP + AXIS_BAND;
+    const plot = (100 - fixed - Math.min(rows, RISK_ROWS_IN_BODY) * RISK_ROW) * share;
+    return {
+        top: PLOT_TOP * share,
+        plotBottom: 100 - PLOT_TOP * share - plot,
+        tableBottom: TABLE_BOTTOM * share,
+        rows: 100 - fixed * share - plot,
+        header: HEADER_BAND * share,
+        bodyPx,
+    };
 }
 
 /** The columns of one km block. The time and the survival are demanded, and each other channel is optional. */
@@ -279,9 +325,15 @@ function timeStep(end: number): number {
 
 /** The ticks of the time axis: each multiple of the step from 0 to the end. */
 function timeTicks(end: number, step: number): number[] {
+    const count = Math.floor(end / step + TICK_TOLERANCE);
     const ticks: number[] = [];
-    for (let place = 0; place * step <= end; place += 1) ticks.push(place * step);
+    for (let place = 0; place <= count; place += 1) ticks.push(Number((place * step).toPrecision(TICK_DIGITS)));
     return ticks;
+}
+
+/** Whether the end of the time axis sits at a multiple of the step. */
+function onTick(end: number, step: number): boolean {
+    return Math.abs(end / step - Math.round(end / step)) < TICK_TOLERANCE;
 }
 
 /** The left edge of both grids, wide enough for the longest group name in the table column. */
@@ -398,16 +450,16 @@ function riskSeries(curve: KmCurve, index: number, ticks: readonly number[]): Ec
 }
 
 /** The grid of the table: one row for each group at the bottom of the chart, with the left edge of the plot. */
-function tableGrid(groups: number, left: number): EchartOption {
-    return { bottom: pct(TABLE_BOTTOM), height: pct(groups * RISK_ROW), left: pct(left), right: pct(GRID_RIGHT) };
+function tableGrid(layout: KmLayout, left: number): EchartOption {
+    return { bottom: pct(layout.tableBottom), height: pct(layout.rows), left: pct(left), right: pct(GRID_RIGHT) };
 }
 
 /** The title of the table: one text over the group names, at the left edge of the chart. */
-function tableTitle(groups: number): EchartOption {
+function tableTitle(layout: KmLayout): EchartOption {
     return {
         type: "text",
         left: pct(HEADER_LEFT),
-        bottom: pct(TABLE_BOTTOM + groups * RISK_ROW + HEADER_BAND / 4),
+        bottom: pct(layout.tableBottom + layout.rows + layout.header / 4),
         silent: true,
         style: { text: TABLE_TITLE, fill: CHART_INK, fontFamily: CHART_FONT_STACK, fontSize: CHART_PAGE_TEXT_PX },
     };
