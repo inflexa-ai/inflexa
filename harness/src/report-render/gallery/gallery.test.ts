@@ -1,10 +1,14 @@
 /**
- * The gate of the figure gallery: the committed tables and their manifest, the document and its resolution,
- * the render, and the canonical elements of each preset on real data.
+ * The gate of the figure gallery: the tables and their manifest, the document and its resolution, the render,
+ * and the canonical elements of each preset on real data.
  *
  * The gallery is the visual proof and the regression set of the canonical figures. Thus the gate holds one
  * chart of each chart type that the contract declares, and a new chart type fails it until the gallery draws
  * the type from a real table.
+ *
+ * The repository does not carry the tables, and `bun run gallery:data` rebuilds them. Each group that reads
+ * the tables skips when they are absent, and its name gives that command. The groups that read only the
+ * manifest and the document run in each case.
  */
 
 import { beforeAll, describe, expect, it } from "bun:test";
@@ -13,8 +17,10 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
 import { ChartBlockSchema, type Block, type ChartBlock } from "../../contracts/report-blocks.js";
+import { computeSha256 } from "../../lib/fs-helpers.js";
 import { createFixtureResolver } from "../../report-model/fixture-resolver.js";
 import { parseDelimited } from "../../report-model/production-resolver.js";
+import { walkBlocks } from "../../report-model/block-walk.js";
 import { validateReport } from "../../report-model/validate.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "../chart.js";
 import { CHART_INLINE_OPTION_BOUND } from "../design.js";
@@ -22,9 +28,13 @@ import { statisticText } from "../figures/common.js";
 import { FIGURE_MODULES, isFigurePresetType } from "../figures/index.js";
 import { CHART_SERIES_BUILDER } from "../page.js";
 import { renderReportPage } from "../render.js";
-import { GALLERY_DIR, GALLERY_DOCUMENT, loadGallery, type GalleryLoad } from "./gallery.js";
+import { GALLERY_DATA_HINT, GALLERY_DIR, GALLERY_DOCUMENT, hasGalleryData, loadGallery, type GalleryLoad } from "./gallery.js";
 
-/** The bound on the committed bytes of the gallery tables. */
+/** The suffix of the name of each group that reads the tables. It names the command that rebuilds absent tables. */
+const NEEDS_DATA = hasGalleryData() ? "" : ` (skipped: ${GALLERY_DATA_HINT})`;
+const NO_DATA = NEEDS_DATA !== "";
+
+/** The bound on the bytes of the gallery tables. */
 const DATA_BOUND_BYTES = 4 * 1024 * 1024;
 
 /** One entry of the gallery manifest. */
@@ -34,6 +44,7 @@ interface ManifestEntry {
     path: string;
     rows: number;
     bytes: number;
+    sha256: string;
     dataset: { name: string; citation: string };
     license: { name: string; url: string; quote: string };
     source_urls: string[];
@@ -57,9 +68,11 @@ async function filesUnder(dir: string): Promise<string[]> {
 }
 
 let gallery: GalleryLoad;
+let manifest: ManifestEntry[];
 
 beforeAll(async () => {
-    gallery = (await loadGallery())._unsafeUnwrap();
+    manifest = JSON.parse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8")) as ManifestEntry[];
+    if (!NO_DATA) gallery = (await loadGallery())._unsafeUnwrap();
 });
 
 /** The render value of one gallery chart. */
@@ -115,27 +128,8 @@ function countRows(id: string, predicate: (row: ChartRow) => boolean): number {
     return valueOf(id).rows.filter(predicate).length;
 }
 
-describe("the gallery data", () => {
-    let manifest: ManifestEntry[];
-
-    beforeAll(async () => {
-        manifest = JSON.parse(await readFile(join(GALLERY_DIR, "manifest.json"), "utf8")) as ManifestEntry[];
-    });
-
-    it("names each committed table one time, and no other file", async () => {
-        const committed = (await filesUnder(join(GALLERY_DIR, "data"))).sort();
-        expect(manifest.map((entry) => entry.path).sort()).toEqual(committed);
-    });
-
-    it("states the rows and the bytes of each table as the file holds them", async () => {
-        for (const entry of manifest) {
-            const bytes = await readFile(join(GALLERY_DIR, entry.path));
-            expect({ path: entry.path, bytes: (await stat(join(GALLERY_DIR, entry.path))).size }).toEqual({ path: entry.path, bytes: entry.bytes });
-            expect({ path: entry.path, rows: parseDelimited(bytes.toString("utf8"), ",")?.length }).toEqual({ path: entry.path, rows: entry.rows });
-        }
-    });
-
-    it("keeps the committed tables under the size bound", () => {
+describe("the gallery manifest", () => {
+    it("keeps the tables under the size bound", () => {
         const total = manifest.reduce((sum, entry) => sum + entry.bytes, 0);
         expect(total).toBeLessThan(DATA_BOUND_BYTES);
     });
@@ -163,6 +157,34 @@ describe("the gallery data", () => {
         expect(thinned.de_results).toBe("None. The copy is the whole derived table.");
     });
 
+    it("states the SHA-256 of each table that the document pins, as the pin states it", () => {
+        const pins = new Map(
+            walkBlocks(GALLERY_DOCUMENT.sections).references.flatMap(({ reference }) =>
+                reference.kind === "artifact-table" || reference.kind === "artifact-value" ? [[reference.path, reference.hash] as const] : [],
+            ),
+        );
+        expect(pins.size).toBeGreaterThan(0);
+        for (const [path, hash] of pins) {
+            expect({ path, hash: `sha256:${manifest.find((entry) => entry.path === path)?.sha256}` }).toEqual({ path, hash });
+        }
+    });
+});
+
+describe.skipIf(NO_DATA)(`the gallery data${NEEDS_DATA}`, () => {
+    it("names each table one time, and no other file", async () => {
+        const written = (await filesUnder(join(GALLERY_DIR, "data"))).sort();
+        expect(manifest.map((entry) => entry.path).sort()).toEqual(written);
+    });
+
+    it("states the rows, the bytes, and the SHA-256 of each table as the file holds them", async () => {
+        for (const entry of manifest) {
+            const bytes = await readFile(join(GALLERY_DIR, entry.path));
+            expect({ path: entry.path, bytes: (await stat(join(GALLERY_DIR, entry.path))).size }).toEqual({ path: entry.path, bytes: entry.bytes });
+            expect({ path: entry.path, rows: parseDelimited(bytes.toString("utf8"), ",")?.length }).toEqual({ path: entry.path, rows: entry.rows });
+            expect({ path: entry.path, sha256: computeSha256(bytes) }).toEqual({ path: entry.path, sha256: `sha256:${entry.sha256}` });
+        }
+    });
+
     it("pins each table that the document binds to the bytes of its file", () => {
         // A statistic binds a cell of a small table, and each binding reads the same snapshot, thus a stale pin
         // fails the load with a hash mismatch and never reaches this point.
@@ -172,7 +194,7 @@ describe("the gallery data", () => {
     });
 });
 
-describe("the gallery document", () => {
+describe.skipIf(NO_DATA)(`the gallery document on the data${NEEDS_DATA}`, () => {
     it("validates, resolves each reference, and carries no prose warning", async () => {
         expect(await validateReport(GALLERY_DOCUMENT, gallery.snapshot, createFixtureResolver())).toEqual({ valid: true, warnings: [] });
     });
@@ -190,7 +212,9 @@ describe("the gallery document", () => {
             await rm(dir, { recursive: true, force: true });
         }
     });
+});
 
+describe("the gallery document", () => {
     it("holds one chart of each chart type that the contract declares and the renderer draws", () => {
         // The type list reads the contract, thus a new chart form fails this gate until the gallery draws it. A
         // figure preset draws through its module alone, thus it joins the gate when its module registers.
@@ -216,7 +240,7 @@ describe("the gallery document", () => {
     });
 });
 
-describe("the gallery render", () => {
+describe.skipIf(NO_DATA)(`the gallery render${NEEDS_DATA}`, () => {
     it("renders each chart with no problem, and two renders give the same bytes", () => {
         const first = renderReportPage(GALLERY_DOCUMENT, gallery.values);
         expect(first.isOk() ? [] : first.error).toEqual([]);
@@ -228,7 +252,7 @@ describe("the gallery render", () => {
     });
 });
 
-describe("the page build of each dense chart", () => {
+describe.skipIf(NO_DATA)(`the page build of each dense chart${NEEDS_DATA}`, () => {
     const seriesDataOnThePage = new Function(`${CHART_SERIES_BUILDER}\nreturn reportSeriesData;`)() as (
         payload: { columns: readonly string[]; rows: readonly ChartRow[] },
         source: ChartDataSource["series"][number],
@@ -269,7 +293,7 @@ describe("the page build of each dense chart", () => {
     });
 });
 
-describe("the canonical elements of each preset on the gallery data", () => {
+describe.skipIf(NO_DATA)(`the canonical elements of each preset on the gallery data${NEEDS_DATA}`, () => {
     it("volcano: names each side with its count and holds a symmetric effect axis", () => {
         const option = optionOf("bulk-volcano");
         // A gene with no adjusted p drops, thus an empty cell is never significant.
@@ -344,7 +368,7 @@ describe("the canonical elements of each preset on the gallery data", () => {
         const largest = rows.reduce((best, row) => (Number(row.gene_ratio) > Number(best.gene_ratio) ? row : best));
         // A long term wraps to two lines and ends with an ellipsis, thus the first category reads the head of the term.
         const first = String((axisOf(option, "yAxis").data as unknown[])[0]);
-        expect(largest.term.startsWith(first.replaceAll("\n", " ").replace(/…$/, ""))).toBe(true);
+        expect(String(largest.term).startsWith(first.replaceAll("\n", " ").replace(/…$/, ""))).toBe(true);
         expect(option.visualMap).toBeDefined();
     });
 

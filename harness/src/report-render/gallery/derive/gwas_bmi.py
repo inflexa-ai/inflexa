@@ -1,10 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["pandas>=2.0", "numpy>=1.24", "scipy>=1.11"]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """
 Build GWAS chart-gallery tables from the Locke et al. 2015 BMI GIANT
 consortium GWAS (GWAS Catalog GCST002783, harmonised summary statistics).
+
+Usage: uv run gwas_bmi.py <gallery-data work dir>
 
 Reads raw/gwas/25673413-GCST002783-EFO_0004340.h.tsv.gz (streamed in chunks)
 and writes derived/gwas/manhattan.csv, derived/gwas/qq.csv,
@@ -13,6 +17,7 @@ and derived statistics (thinning counts, genomic inflation lambda, clump
 counts) to stdout for the manifest fragment.
 """
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +40,7 @@ GENOME_WIDE_SIGNIFICANCE = 5e-8
 CLUMP_WINDOW_BP = 1_000_000
 CHROM_ORDER = [str(i) for i in range(1, 23)] + ["X"]
 
-BASE = Path(__file__).resolve().parent.parent
+BASE = Path(sys.argv[1])
 RAW_FILE = BASE / "raw" / "gwas" / "25673413-GCST002783-EFO_0004340.h.tsv.gz"
 OUT_DIR = BASE / "derived" / "gwas"
 OUT_DIR.mkdir(parents=True, exist_ok=True)

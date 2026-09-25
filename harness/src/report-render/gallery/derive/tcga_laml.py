@@ -1,10 +1,20 @@
 # /// script
-# dependencies = ["pandas", "numpy", "requests"]
+# dependencies = ["pandas", "numpy"]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """
 Build derived/cancer_mut/*.csv from the maftools tcga_laml example MAF
-(TCGA LAML, Ley et al. NEJM 2013) and from the UniProt REST API (protein
-domain/region boundaries for the two picked genes).
+(TCGA LAML, Ley et al. NEJM 2013) and from UniProtKB (protein domain/region
+boundaries for the two picked genes).
+
+Usage: uv run tcga_laml.py <gallery-data work dir>
+
+The UniProtKB input of each gene is one pinned version of its entry, in the
+flat-file text form that the UniSave REST API serves
+(https://rest.uniprot.org/unisave/<accession>?format=txt&versions=<version>).
+scripts/gallery-data.sh downloads it to raw/cancer_mut/. A pinned version
+never changes, whereas the live entry changes with each UniProt release.
 
 Deterministic: no random sampling is performed. Tie-breaks in the gene and
 sample ranking below are explicit (alphabetical gene symbol, then sample
@@ -15,11 +25,11 @@ import gzip
 import json
 import pathlib
 import re
+import sys
 
 import pandas as pd
-import requests
 
-BASE = pathlib.Path("gallery-data")
+BASE = pathlib.Path(sys.argv[1])
 RAW = BASE / "raw" / "cancer_mut"
 DERIVED = BASE / "derived" / "cancer_mut"
 DERIVED.mkdir(parents=True, exist_ok=True)
@@ -29,6 +39,13 @@ TOP_N_GENES = 20
 SECOND_GENE = "FLT3"  # more frequent than NPM1 in this cohort (52 vs 33 mutated samples); see report
 
 AA_POS_RE = re.compile(r"p\.\D*?(\d+)")
+
+# gene -> (reviewed human UniProtKB accession, pinned entry version). The
+# versions are the current entries of UniProt release 2026_03.
+UNIPROT_ENTRIES = {"DNMT3A": ("Q9Y6K1", 213), SECOND_GENE: ("P36888", 226)}
+# The flat-file keys of the Domain and the Region features of the JSON form.
+FEATURE_KEYS = {"DOMAIN", "REGION"}
+LOCATION_RE = re.compile(r"(\d+)(?:\.\.(\d+))?")
 
 
 def load_maf() -> pd.DataFrame:
@@ -134,39 +151,44 @@ def build_lollipop(maf: pd.DataFrame, gene: str) -> tuple[pd.DataFrame, int]:
     return grouped, dropped
 
 
-def resolve_uniprot_accession(gene: str) -> str:
-    resp = requests.get(
-        "https://rest.uniprot.org/uniprotkb/search",
-        params={
-            "query": f"gene:{gene} AND organism_id:9606 AND reviewed:true",
-            "format": "json",
-            "fields": "accession,gene_names",
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    results = resp.json()["results"]
-    if not results:
-        raise RuntimeError(f"no reviewed human UniProt entry found for gene {gene}")
-    return results[0]["primaryAccession"]
+def uniprot_entry_path(gene: str) -> pathlib.Path:
+    accession, version = UNIPROT_ENTRIES[gene]
+    return RAW / f"uniprot_{accession}_v{version}.txt"
 
 
-def fetch_uniprot_domains(accession: str) -> tuple[pd.DataFrame, int]:
-    resp = requests.get(
-        f"https://rest.uniprot.org/uniprotkb/{accession}.json", timeout=30
-    )
-    resp.raise_for_status()
-    entry = resp.json()
-    length = entry["sequence"]["length"]
-    rows = []
-    for feat in entry.get("features", []):
-        if feat["type"] not in ("Domain", "Region"):
+def read_uniprot_domains(path: pathlib.Path) -> tuple[pd.DataFrame, int]:
+    """The Domain and Region features and the sequence length of one UniProtKB
+    flat-file entry. A qualifier that wraps continues on the next FT line, and
+    the lines join with one space, as the JSON form of the entry gives it."""
+    features: list[dict] = []
+    length = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("SQ   SEQUENCE"):
+            length = int(line.split()[2])
+        if not line.startswith("FT   "):
             continue
+        key, body = line[5:21].strip(), line[21:].strip()
+        if key:
+            features.append({"key": key, "location": body, "qualifiers": []})
+        elif body.startswith("/"):
+            features[-1]["qualifiers"].append(body)
+        else:
+            features[-1]["qualifiers"][-1] += " " + body
+    if length is None:
+        raise RuntimeError(f"{path} holds no SQ line")
+    rows = []
+    for feat in features:
+        if feat["key"] not in FEATURE_KEYS:
+            continue
+        match = LOCATION_RE.fullmatch(feat["location"])
+        if match is None:
+            raise RuntimeError(f"{path}: the location {feat['location']!r} is not an exact range")
+        notes = [q[len('/note="') : -1] for q in feat["qualifiers"] if q.startswith('/note="')]
         rows.append(
             {
-                "start": feat["location"]["start"]["value"],
-                "end": feat["location"]["end"]["value"],
-                "name": feat.get("description", ""),
+                "start": int(match.group(1)),
+                "end": int(match.group(2) or match.group(1)),
+                "name": notes[0] if notes else "",
             }
         )
     domains = pd.DataFrame(rows, columns=["start", "end", "name"]).sort_values(
@@ -198,8 +220,8 @@ def main() -> None:
         write_csv(lollipop, f"lollipop_{gene}.csv")
         stats[f"{gene}_dropped_unparseable"] = dropped
 
-        accession = resolve_uniprot_accession(gene)
-        domains, length = fetch_uniprot_domains(accession)
+        accession, _version = UNIPROT_ENTRIES[gene]
+        domains, length = read_uniprot_domains(uniprot_entry_path(gene))
         write_csv(domains, f"domains_{gene}.csv")
         stats[f"{gene}_uniprot_accession"] = accession
         stats[f"{gene}_protein_length"] = length

@@ -6,16 +6,22 @@
 #   "scipy",
 #   "gseapy",
 # ]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """GO Biological Process enrichment for the pasilla DE results.
 
+Usage: uv run enrichment_pasilla.py <gallery-data work dir>
+
 Input: derived/bulk_rnaseq/de_results.csv (written by bulk_rnaseq_pasilla.py).
-Gene sets: GO_Biological_Process_2018, Drosophila melanogaster, fetched with
-gseapy.get_library(name="GO_Biological_Process_2018", organism="Fly"), which
-pulls from the FlyEnrichr gene-set-library API
-(https://maayanlab.cloud/FlyEnrichr/geneSetLibrary). GO_Biological_Process_2018
-is the newest GO BP library FlyEnrichr hosts (its human Enrichr mirror has a
-newer 2023 edition, but that one is human-only).
+Gene sets: GO_Biological_Process_2018, Drosophila melanogaster, the text export
+of the FlyEnrichr gene-set-library API
+(https://maayanlab.cloud/FlyEnrichr/geneSetLibrary?mode=text&libraryName=GO_Biological_Process_2018)
+that scripts/gallery-data.sh downloads to raw/enrichment/. read_library parses
+it as gseapy.get_library(name="GO_Biological_Process_2018", organism="Fly")
+parses the same response. GO_Biological_Process_2018 is the newest GO BP
+library FlyEnrichr hosts (its human Enrichr mirror has a newer 2023 edition,
+but that one is human-only).
 
 Two tests are run on the same gene universe:
   1. gseapy.prerank (GSEA) on the DESeq2 Wald `stat` column.
@@ -25,6 +31,9 @@ Two tests are run on the same gene universe:
 Fixed seed (0) makes the GSEA permutation p-values reproducible run to run.
 """
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from scipy.stats import hypergeom
@@ -33,16 +42,33 @@ import gseapy
 
 np.random.seed(0)
 
-DE_RESULTS_PATH = "gallery-data/derived/bulk_rnaseq/de_results.csv"
-OUT_DIR = "gallery-data/derived/enrichment"
+WORK_DIR = Path(sys.argv[1])
+DE_RESULTS_PATH = WORK_DIR / "derived/bulk_rnaseq/de_results.csv"
+LIBRARY_PATH = WORK_DIR / "raw/enrichment/GO_Biological_Process_2018_Fly.txt"
+OUT_DIR = WORK_DIR / "derived/enrichment"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-GENE_SET_LIBRARY = "GO_Biological_Process_2018"
-ORGANISM = "Fly"
+# gseapy.get_library drops a set with more genes than its default max_size.
+LIBRARY_MAX_SIZE = 2000
 GSEA_MIN_SIZE = 15
 GSEA_MAX_SIZE = 500
 GSEA_PERM_NUM = 1000  # gseapy's own default permutation count
 ORA_MIN_OVERLAP_WITH_BACKGROUND = 3  # minimum term-vs-background overlap to test
 PADJ_SIG_THRESHOLD = 0.05
+
+
+def read_library(path):
+    """term -> genes, as gseapy's Enrichr download parses a library line:
+    tab-separated, the term, one ignored field, then each gene with an
+    optional ",weight" suffix that the parse strips."""
+    gene_sets = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.strip().split("\t")
+        if len(fields) < 2:
+            continue
+        genes = [g.split(",")[0] for g in fields[2:]]
+        gene_sets[fields[0]] = [g for g in genes if g]
+    return {term: genes for term, genes in gene_sets.items() if len(genes) <= LIBRARY_MAX_SIZE}
 
 
 def build_ranking(de):
@@ -180,7 +206,7 @@ def main():
     de = pd.read_csv(DE_RESULTS_PATH)
     rnk, mapped = build_ranking(de)
 
-    gene_sets = gseapy.get_library(name=GENE_SET_LIBRARY, organism=ORGANISM)
+    gene_sets = read_library(LIBRARY_PATH)
 
     pre = run_gsea(rnk, gene_sets)
     gsea_df = build_gsea_results(pre)

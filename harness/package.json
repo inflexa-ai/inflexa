@@ -38,6 +38,7 @@
         "design:gallery": "bun scripts/render-gallery.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
+        "gallery:data": "bash scripts/gallery-data.sh",
         "lint": "eslint .",
         "lint:python": "ruff check src/input-scan/decoder && ruff format --check src/input-scan/decoder",
         "prepare": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",

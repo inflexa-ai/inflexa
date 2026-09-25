@@ -1,23 +1,32 @@
 # /// script
 # dependencies = ["scanpy", "anndata", "pandas", "numpy", "h5py", "scipy"]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """
 Build derived/singlecell/cells.csv and derived/singlecell/marker_dotplot.csv
 from scanpy's pbmc3k_processed() dataset (2,638 PBMCs, 10x Genomics 2016,
 reprocessed by the scanpy project per the pbmc3k clustering tutorial).
 
+Usage: uv run pbmc3k.py <gallery-data work dir>
+
+scripts/gallery-data.sh downloads the file that pbmc3k_processed() reads to
+raw/singlecell/pbmc3k_processed.h5ad, thus scanpy reads it in place and
+downloads nothing.
+
 Deterministic: no random sampling is performed (whole dataset, 2,638 cells,
 fits well under the 2 MB per-table bound), so no seed is needed.
 """
 
 import pathlib
+import sys
 
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import scipy.sparse as sp
 
-BASE = pathlib.Path("gallery-data")
+BASE = pathlib.Path(sys.argv[1])
 RAW_DIR = BASE / "raw" / "singlecell"
 DERIVED_DIR = BASE / "derived" / "singlecell"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,9 +62,6 @@ RENAME = {
 
 sc.settings.datasetdir = str(RAW_DIR)
 adata = sc.datasets.pbmc3k_processed()
-
-h5ad_path = RAW_DIR / "pbmc3k_processed.h5ad"
-adata.write(h5ad_path)
 
 cluster_order = [RENAME[c] for c in adata.obs["louvain"].cat.categories]
 cluster = adata.obs["louvain"].map(RENAME).astype(
@@ -117,6 +123,5 @@ for gene in MARKERS:
 dotplot = pd.DataFrame(long_rows)
 dotplot.to_csv(DERIVED_DIR / "marker_dotplot.csv", index=False)
 
-print("wrote", h5ad_path, h5ad_path.stat().st_size, "bytes")
 print("cells.csv rows:", len(cells))
 print("marker_dotplot.csv rows:", len(dotplot))

@@ -4,7 +4,7 @@
 
 suppressPackageStartupMessages(library(survival))
 
-out_dir <- "gallery-data/derived/survival"
+out_dir <- file.path(commandArgs(trailingOnly = TRUE)[1], "derived", "survival")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 set.seed(20260925)
