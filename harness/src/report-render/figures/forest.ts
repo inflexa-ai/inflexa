@@ -6,6 +6,8 @@
  * A ratio reads on a log axis, thus the axis is logarithmic when each value is positive, and its line of no
  * effect sits at 1. A table with a value at or under zero holds differences, thus its axis is linear and the
  * line sits at 0. The log axis ends at the nice ratios just past the data and 1, thus it spans no empty decade.
+ * An interval past the widest log axis ends at the axis with an arrow, as `forestplot` clips it, and its text
+ * prints the bound of the table.
  */
 
 import { err, ok, type Result } from "neverthrow";
@@ -39,6 +41,16 @@ export const FOREST_FIGURE: FigureModule = { reads: FOREST_READS, derive: derive
 
 /** The nice ratios of one decade. The ends of the log axis sit at one of them times a power of ten. */
 const NICE_RATIOS = [1, 2, 2.5, 4, 5] as const;
+
+/**
+ * The widest span of the log axis, in decades. A separated covariate gives a Wald interval of many decades, and
+ * an axis that holds it squeezes each other row into one narrow band.
+ */
+const LOG_AXIS_DECADES = 4;
+
+/** The clip marks of an interval item: its low end, and its high end, at an end of the axis. */
+const CLIPPED_LOW = 1;
+const CLIPPED_HIGH = 2;
 
 /** The side of a square in pixels where the block names no size, and the least and the most side of a sized square. */
 const SQUARE_PX = 9;
@@ -129,7 +141,8 @@ function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     const reference = positive ? 1 : 0;
     const xTitle = valueAxisTitle(context.labels, columns.value.estimate);
     // A linear axis without `scale` holds zero in its range, thus the line of no effect always shows.
-    const xAxis = positive ? valueAxis("x", xTitle, { log: true, ...logRange(forest) }) : valueAxis("x", xTitle);
+    const range = positive ? logRange(forest) : undefined;
+    const xAxis = range !== undefined ? valueAxis("x", xTitle, { log: true, ...range }) : valueAxis("x", xTitle);
 
     const estimates = forest.map((entry) => estimateText(entry));
     const textAxes: EchartOption[] = [textAxis(estimates, xTitle, TEXT_MARGIN_PX)];
@@ -141,7 +154,7 @@ function deriveForest(block: ChartBlock, rows: readonly ChartRow[], context: Fig
     }
 
     const series: EchartOption[] = [squareSeries(forest, columns.value.size, reference)];
-    if (columns.value.low !== undefined && columns.value.high !== undefined) series.push(intervalSeries(forest));
+    if (columns.value.low !== undefined && columns.value.high !== undefined) series.push(intervalSeries(forest, range));
     return ok({
         legend: { show: false },
         grid: { top: CHART_EDGE, bottom: CHART_EDGE, left: CHART_EDGE, right: CHART_EDGE, outerBoundsMode: "same", outerBoundsContain: "all" },
@@ -233,21 +246,46 @@ function forestRows(rows: readonly ChartRow[], columns: ForestColumns, blockId: 
     return ok(forest);
 }
 
+/** The two ends of one axis. */
+interface AxisRange {
+    readonly min: number;
+    readonly max: number;
+}
+
 /**
  * The ends of the log axis: the largest nice ratio at or under the smallest value, and the smallest nice ratio
  * at or over the largest value. Both ends reach 1, thus the line of no effect always shows.
+ *
+ * The axis spans `LOG_AXIS_DECADES` at most, and it always holds each estimate and 1. Where the bounds need a
+ * wider axis, each side takes half of the free decades, and a side that needs less gives the rest to the other
+ * side.
  */
-function logRange(forest: readonly ForestRow[]): { min: number; max: number } {
+function logRange(forest: readonly ForestRow[]): AxisRange {
     let least = 1;
     let most = 1;
+    let lowest = 1;
+    let highest = 1;
     for (const entry of forest) {
+        least = Math.min(least, entry.estimate);
+        most = Math.max(most, entry.estimate);
         for (const value of [entry.estimate, entry.low, entry.high]) {
             if (value === null) continue;
-            least = Math.min(least, value);
-            most = Math.max(most, value);
+            lowest = Math.min(lowest, value);
+            highest = Math.max(highest, value);
         }
     }
-    return { min: niceRatio(least, "under"), max: niceRatio(most, "over") };
+    const full = { min: niceRatio(lowest, "under"), max: niceRatio(highest, "over") };
+    if (Math.log10(full.max / full.min) <= LOG_AXIS_DECADES) return full;
+    const core = { min: niceRatio(least, "under"), max: niceRatio(most, "over") };
+    const room = Math.max(0, LOG_AXIS_DECADES - Math.log10(core.max / core.min));
+    const below = Math.log10(core.min / full.min);
+    const above = Math.log10(full.max / core.max);
+    const under = Math.min(below, Math.max(room / 2, room - above));
+    const over = Math.min(above, room - under);
+    return {
+        min: under >= below ? full.min : niceRatio(core.min / 10 ** under, "over"),
+        max: over >= above ? full.max : niceRatio(core.max * 10 ** over, "under"),
+    };
 }
 
 /** The nearest nice ratio at or under, or at or over, one positive value. */
@@ -400,11 +438,19 @@ function squareSeries(forest: readonly ForestRow[], sizeColumn: string | undefin
     };
 }
 
-/** The interval of each row as a line along the x axis, through the named interval renderer. */
-function intervalSeries(forest: readonly ForestRow[]): EchartOption {
+/**
+ * The interval of each row as a line along the x axis, through the named interval renderer. A bound past an end
+ * of `range` ends at that end, and the item marks the clipped end.
+ */
+function intervalSeries(forest: readonly ForestRow[], range: AxisRange | undefined): EchartOption {
     const items: number[][] = [];
     for (const [place, entry] of forest.entries()) {
-        if (entry.low !== null && entry.high !== null) items.push([entry.estimate, place, entry.low, entry.high, 0, 0, 0]);
+        if (entry.low === null || entry.high === null) continue;
+        const clipsLow = range !== undefined && entry.low < range.min;
+        const clipsHigh = range !== undefined && entry.high > range.max;
+        const low = clipsLow ? range.min : entry.low;
+        const high = clipsHigh ? range.max : entry.high;
+        items.push([entry.estimate, place, low, high, 0, 0, 0, (clipsLow ? CLIPPED_LOW : 0) + (clipsHigh ? CLIPPED_HIGH : 0)]);
     }
     return { type: "custom", renderItem: INTERVAL_RENDERER, silent: true, z: INTERVAL_Z, encode: { x: [0, 2, 3], y: 1 }, data: items };
 }

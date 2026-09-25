@@ -8,6 +8,7 @@ import {
     cellGlyphRenderer,
     CHART_RENDERERS,
     CHART_RENDERERS_SOURCE,
+    INTERVAL_ARROW_PX,
     INTERVAL_CAP_PX,
     intervalRenderer,
     outlineRenderer,
@@ -60,6 +61,8 @@ const INTERVAL_ITEMS: readonly number[][] = [
     [1.5, 3, 0.8, 2.2, 0, 0.2, 0],
     // The inner mark of a grouped violin: the quartiles and the median point.
     [0, 10, 8, 12, 1, -0.2, 1],
+    // A forest interval that the axis clips at both ends, thus each end draws an arrow.
+    [1.5, 3, 0.8, 2.2, 0, 0, 0, 3],
 ];
 
 const OUTLINE_ITEMS: readonly number[][] = [outlineItem(0, 0), outlineItem(3, -0.2), outlineItem(1, 0.2)];
@@ -110,6 +113,19 @@ describe("the named renderers", () => {
         const line = (element.children ?? [])[0];
         // The offset is a fraction of one band, thus 0.2 of a band of 16 pixels moves the line 3.2 pixels.
         expect(line.shape).toEqual({ x1: 0.8, y1: 3 + 0.2 * BAND_Y, x2: 2.2, y2: 3 + 0.2 * BAND_Y });
+    });
+
+    it("draws an arrow in place of the cap at each clipped end of an interval", () => {
+        // The low end is clipped and the high end is not.
+        const element = intervalRenderer({}, stubApi([1.5, 3, 0.8, 2.2, 0, 0, 0, 1]));
+        const [line, ...ends] = element.children ?? [];
+        expect(line.shape).toEqual({ x1: 0.8, y1: 3, x2: 2.2, y2: 3 });
+        // The two strokes of the arrow meet at the low end and open toward the high end.
+        expect(ends.map((end) => end.shape)).toEqual([
+            { x1: 0.8 + INTERVAL_ARROW_PX, y1: 3 - INTERVAL_CAP_PX, x2: 0.8, y2: 3 },
+            { x1: 0.8 + INTERVAL_ARROW_PX, y1: 3 + INTERVAL_CAP_PX, x2: 0.8, y2: 3 },
+            { x1: 2.2, y1: 3 - INTERVAL_CAP_PX, x2: 2.2, y2: 3 + INTERVAL_CAP_PX },
+        ]);
     });
 
     it("draws the inner mark of a violin as a line and one point at the median, with no cap", () => {

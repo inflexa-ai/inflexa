@@ -52,8 +52,11 @@ export const STEM_HEAD_RADIUS_PX = 3.5;
 /** The count of grid points of one violin outline. Each item of an outline holds one pair for each point. */
 export const VIOLIN_GRID_POINTS = 64;
 
-/** The half length of the cap at each bound of an error bar, in pixels. */
+/** The half length of the cap at each bound of an error bar, in pixels. It is the half width of an arrow too. */
 export const INTERVAL_CAP_PX = 4;
+
+/** The length of the arrow at a clipped end of an interval, in pixels. */
+export const INTERVAL_ARROW_PX = 6;
 
 /** The stroke width of an error bar and of its caps, in pixels. */
 const INTERVAL_STROKE_PX = 1.5;
@@ -99,10 +102,12 @@ function segment(x1: number, y1: number, x2: number, y2: number, width: number):
 /**
  * Draw one interval.
  *
- * An item is `[x, y, low, high, axis, offset, mark]`. `axis` is `0` for an interval along x and `1` for one
- * along y. `offset` is a fraction of one category band, and it moves the interval over its own bar in a
+ * An item is `[x, y, low, high, axis, offset, mark, clipped]`. `axis` is `0` for an interval along x and `1`
+ * for one along y. `offset` is a fraction of one category band, and it moves the interval over its own bar in a
  * grouped chart. `mark` is `0` for an error bar with two caps, and `1` for the inner mark of a violin: a
- * thick quartile line and one point at the median, which is the anchor `y`.
+ * thick quartile line and one point at the median, which is the anchor `y`. `clipped` is optional: its bit `1`
+ * marks a `low` that the axis clipped and its bit `2` a clipped `high`, and a clipped end draws an arrow in
+ * place of its cap, as `forestplot` draws it.
  */
 export function intervalRenderer(_params: RenderParams, api: RenderApi): RenderedElement {
     const x = api.value(0);
@@ -112,6 +117,7 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
     const alongX = api.value(4) === 0;
     const offset = api.value(5);
     const inner = api.value(6) === 1;
+    const clipped = Number(api.value(7)) || 0;
     const band = alongX ? api.size([0, 1])[1] : api.size([1, 0])[0];
     const shift = offset * band;
     const from = api.coord(alongX ? [low, y] : [x, low]);
@@ -135,10 +141,14 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
         };
     }
     const children = [segment(fromX, fromY, toX, toY, INTERVAL_STROKE_PX)];
-    for (const [endX, endY] of [
-        [fromX, fromY],
-        [toX, toY],
+    for (const [bit, endX, endY, otherX, otherY] of [
+        [1, fromX, fromY, toX, toY],
+        [2, toX, toY, fromX, fromY],
     ]) {
+        if ((clipped & bit) !== 0) {
+            children.push(...arrowHead(endX, endY, otherX, otherY));
+            continue;
+        }
         children.push(
             alongX
                 ? segment(endX, endY - INTERVAL_CAP_PX, endX, endY + INTERVAL_CAP_PX, INTERVAL_STROKE_PX)
@@ -146,6 +156,19 @@ export function intervalRenderer(_params: RenderParams, api: RenderApi): Rendere
         );
     }
     return { type: "group", children };
+}
+
+/** The two strokes of an arrow at one end of an interval, open toward its other end. */
+function arrowHead(endX: number, endY: number, otherX: number, otherY: number): RenderedElement[] {
+    const length = Math.hypot(endX - otherX, endY - otherY) || 1;
+    const unitX = (endX - otherX) / length;
+    const unitY = (endY - otherY) / length;
+    const backX = endX - unitX * INTERVAL_ARROW_PX;
+    const backY = endY - unitY * INTERVAL_ARROW_PX;
+    return [
+        segment(backX - unitY * INTERVAL_CAP_PX, backY + unitX * INTERVAL_CAP_PX, endX, endY, INTERVAL_STROKE_PX),
+        segment(backX + unitY * INTERVAL_CAP_PX, backY - unitX * INTERVAL_CAP_PX, endX, endY, INTERVAL_STROKE_PX),
+    ];
 }
 
 /**
@@ -498,43 +521,57 @@ function legendLines(option: Record<string, unknown>, textPx: number, widthPx: n
  * A facet with its lowest row of panels and its x title held above the band of a bottom legend.
  *
  * The page reserves the legend band in percent of its body, and a narrow export wraps the legend into more
- * lines than that band holds. Each panel of the lowest row then ends its box over the x title, and the x title
- * sits on the band. A panel keeps its top, thus its label stays in place, and the labels of a panel stay
- * inside its box. A legend whose lines leave the lowest panels under `PANEL_MIN_SHARE` of their height draws in
- * one line that scrolls.
+ * lines than that band holds. The lowest row of panels then ends its boxes over the x title, and the x title
+ * sits on the band. Each row of panels gives an equal part of the lost height, thus each panel keeps one
+ * height. A row moves up by the parts of the rows over it, and the label of each panel moves with its row, thus
+ * the label keeps its gap over the panel. A legend whose lines leave each panel under `PANEL_MIN_SHARE` of its
+ * height draws in one line that scrolls.
  */
 function facetOverLegend(option: Record<string, unknown>, textPx: number, widthPx: number, heightPx: number): void {
     const grids = option.grid as unknown[];
     const title = Math.round(textPx * FACET_TITLE_SHARE);
+    const tops: number[] = [];
     let lowest = 0;
-    let reserve = 0;
+    let height = 0;
     for (const grid of grids) {
         const bottom = panelBottom(grid);
-        if (bottom <= lowest) continue;
+        if (bottom <= 0) continue;
         const fields = grid as Record<string, unknown>;
+        const top = Number.parseFloat(String(fields.top));
+        if (tops.indexOf(top) < 0) tops.push(top);
+        if (bottom <= lowest) continue;
         lowest = bottom;
-        reserve = Number.parseFloat(String(fields.top)) + Number.parseFloat(String(fields.height)) * PANEL_MIN_SHARE;
+        height = Number.parseFloat(String(fields.height));
     }
+    tops.sort((a, b) => a - b);
+    const partOf = (legendPx: number): number => Math.max(0, lowest - ((heightPx - legendPx - title) / heightPx) * 100) / tops.length;
     const lines = legendLines(option, textPx, widthPx);
     let band = legendBand(lines, textPx);
-    if (lines > 1 && ((heightPx - band - title) / heightPx) * 100 < reserve) {
+    if (lines > 1 && partOf(band) > height * (1 - PANEL_MIN_SHARE)) {
         option.legend = { ...(option.legend as Record<string, unknown>), type: "scroll" };
         band = legendBand(1, textPx);
     }
-    const floor = ((heightPx - band - title) / heightPx) * 100;
-    option.grid = grids.map((grid: unknown) => {
-        const bottom = panelBottom(grid);
-        if (bottom < lowest || bottom <= floor) return grid;
-        const fields = grid as Record<string, unknown>;
-        const top = Number.parseFloat(String(fields.top));
-        return { ...fields, height: `${Math.round((floor - top) * 1e4) / 1e4}%` };
-    });
+    const part = partOf(band);
+    // The row of a panel label is the first row whose panels start at or under the label.
+    const rowOf = (top: number): number => tops.findIndex((rowTop) => rowTop >= top);
+    const moved = (value: number, row: number): string => `${Math.round((value - row * part) * 1e4) / 1e4}%`;
+    if (part > 0) {
+        option.grid = grids.map((grid: unknown) => {
+            if (panelBottom(grid) <= 0) return grid;
+            const fields = grid as Record<string, unknown>;
+            const top = Number.parseFloat(String(fields.top));
+            return { ...fields, top: moved(top, tops.indexOf(top)), height: `${Math.round((Number.parseFloat(String(fields.height)) - part) * 1e4) / 1e4}%` };
+        });
+    }
     if (Array.isArray(option.graphic)) {
-        option.graphic = option.graphic.map((element: unknown) =>
-            typeof element === "object" && element !== null && (element as Record<string, unknown>).bottom !== undefined
-                ? { ...(element as Record<string, unknown>), bottom: band }
-                : element,
-        );
+        option.graphic = option.graphic.map((element: unknown) => {
+            if (typeof element !== "object" || element === null) return element;
+            const fields = element as Record<string, unknown>;
+            if (fields.bottom !== undefined) return { ...fields, bottom: band };
+            const top = typeof fields.top === "string" && fields.top.endsWith("%") ? Number.parseFloat(fields.top) : Number.NaN;
+            const row = Number.isFinite(top) && part > 0 ? rowOf(top) : -1;
+            return row > 0 ? { ...fields, top: moved(top, row) } : element;
+        });
     }
 }
 
@@ -616,6 +653,7 @@ function reportIntervalRenderer(params, api) {
   var alongX = api.value(4) === 0;
   var offset = api.value(5);
   var inner = api.value(6) === 1;
+  var clipped = Number(api.value(7)) || 0;
   var band = alongX ? api.size([0, 1])[1] : api.size([1, 0])[0];
   var shift = offset * band;
   var from = api.coord(alongX ? [low, y] : [x, low]);
@@ -639,10 +677,15 @@ function reportIntervalRenderer(params, api) {
     };
   }
   var children = [reportSegment(fromX, fromY, toX, toY, ${INTERVAL_STROKE_PX})];
-  var ends = [[fromX, fromY], [toX, toY]];
+  var ends = [[1, fromX, fromY, toX, toY], [2, toX, toY, fromX, fromY]];
   for (var e = 0; e < ends.length; e++) {
-    var endX = ends[e][0];
-    var endY = ends[e][1];
+    var endX = ends[e][1];
+    var endY = ends[e][2];
+    if ((clipped & ends[e][0]) !== 0) {
+      var arrow = reportArrowHead(endX, endY, ends[e][3], ends[e][4]);
+      children.push(arrow[0], arrow[1]);
+      continue;
+    }
     children.push(
       alongX
         ? reportSegment(endX, endY - ${INTERVAL_CAP_PX}, endX, endY + ${INTERVAL_CAP_PX}, ${INTERVAL_STROKE_PX})
@@ -650,6 +693,17 @@ function reportIntervalRenderer(params, api) {
     );
   }
   return { type: "group", children: children };
+}
+function reportArrowHead(endX, endY, otherX, otherY) {
+  var length = Math.hypot(endX - otherX, endY - otherY) || 1;
+  var unitX = (endX - otherX) / length;
+  var unitY = (endY - otherY) / length;
+  var backX = endX - unitX * ${INTERVAL_ARROW_PX};
+  var backY = endY - unitY * ${INTERVAL_ARROW_PX};
+  return [
+    reportSegment(backX - unitY * ${INTERVAL_CAP_PX}, backY + unitX * ${INTERVAL_CAP_PX}, endX, endY, ${INTERVAL_STROKE_PX}),
+    reportSegment(backX + unitY * ${INTERVAL_CAP_PX}, backY - unitX * ${INTERVAL_CAP_PX}, endX, endY, ${INTERVAL_STROKE_PX})
+  ];
 }
 function reportOutlineRenderer(params, api) {
   var category = api.value(0);
@@ -801,39 +855,75 @@ function reportLegendBand(lines, textPx) {
 function reportFacetOverLegend(option, textPx, widthPx, heightPx) {
   var grids = option.grid;
   var title = Math.round(textPx * ${FACET_TITLE_SHARE});
+  var tops = [];
   var lowest = 0;
-  var reserve = 0;
+  var height = 0;
   for (var g = 0; g < grids.length; g++) {
     var edge = reportPanelBottom(grids[g]);
+    if (edge <= 0) {
+      continue;
+    }
+    var gridTop = Number.parseFloat(String(grids[g].top));
+    if (tops.indexOf(gridTop) < 0) {
+      tops.push(gridTop);
+    }
     if (edge <= lowest) {
       continue;
     }
     lowest = edge;
-    reserve = Number.parseFloat(String(grids[g].top)) + Number.parseFloat(String(grids[g].height)) * ${PANEL_MIN_SHARE};
+    height = Number.parseFloat(String(grids[g].height));
+  }
+  tops.sort(function (a, b) {
+    return a - b;
+  });
+  function partOf(legendPx) {
+    return Math.max(0, lowest - ((heightPx - legendPx - title) / heightPx) * 100) / tops.length;
   }
   var lines = reportLegendLines(option, textPx, widthPx);
   var band = reportLegendBand(lines, textPx);
-  if (lines > 1 && ((heightPx - band - title) / heightPx) * 100 < reserve) {
+  if (lines > 1 && partOf(band) > height * (1 - ${PANEL_MIN_SHARE})) {
     option.legend = Object.assign({}, option.legend, { type: "scroll" });
     band = reportLegendBand(1, textPx);
   }
-  var floor = ((heightPx - band - title) / heightPx) * 100;
-  var placed = [];
-  for (var p = 0; p < grids.length; p++) {
-    var bottom = reportPanelBottom(grids[p]);
-    if (bottom < lowest || bottom <= floor) {
-      placed.push(grids[p]);
-      continue;
+  var part = partOf(band);
+  function rowOf(top) {
+    for (var r = 0; r < tops.length; r++) {
+      if (tops[r] >= top) {
+        return r;
+      }
     }
-    var top = Number.parseFloat(String(grids[p].top));
-    placed.push(Object.assign({}, grids[p], { height: Math.round((floor - top) * 1e4) / 1e4 + "%" }));
+    return -1;
   }
-  option.grid = placed;
+  function moved(value, row) {
+    return Math.round((value - row * part) * 1e4) / 1e4 + "%";
+  }
+  if (part > 0) {
+    var placed = [];
+    for (var p = 0; p < grids.length; p++) {
+      if (reportPanelBottom(grids[p]) <= 0) {
+        placed.push(grids[p]);
+        continue;
+      }
+      var top = Number.parseFloat(String(grids[p].top));
+      placed.push(Object.assign({}, grids[p], { top: moved(top, tops.indexOf(top)), height: Math.round((Number.parseFloat(String(grids[p].height)) - part) * 1e4) / 1e4 + "%" }));
+    }
+    option.grid = placed;
+  }
   if (Array.isArray(option.graphic)) {
     var graphic = [];
     for (var e = 0; e < option.graphic.length; e++) {
       var element = option.graphic[e];
-      graphic.push(typeof element === "object" && element !== null && element.bottom !== undefined ? Object.assign({}, element, { bottom: band }) : element);
+      if (typeof element !== "object" || element === null) {
+        graphic.push(element);
+        continue;
+      }
+      if (element.bottom !== undefined) {
+        graphic.push(Object.assign({}, element, { bottom: band }));
+        continue;
+      }
+      var labelTop = typeof element.top === "string" && element.top.endsWith("%") ? Number.parseFloat(element.top) : Number.NaN;
+      var row = Number.isFinite(labelTop) && part > 0 ? rowOf(labelTop) : -1;
+      graphic.push(row > 0 ? Object.assign({}, element, { top: moved(labelTop, row) }) : element);
     }
     option.graphic = graphic;
   }
