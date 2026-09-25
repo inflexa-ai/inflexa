@@ -9,6 +9,9 @@
  * The output directory is a stable path under the system temp directory. Thus a second run overwrites the
  * same page, and no file lands inside the repository.
  *
+ * The repository does not carry the gallery tables. Without them the script prints the command that rebuilds
+ * them, `bun run gallery:data`, and exits with status 1.
+ *
  * The script is a development tool. It sits outside `src/`, thus the build never emits it into `dist/`.
  */
 
@@ -17,10 +20,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
-import { GALLERY_DOCUMENT, loadGallery } from "../src/report-render/gallery/gallery.js";
+import { GALLERY_DATA_HINT, GALLERY_DOCUMENT, hasGalleryData, loadGallery } from "../src/report-render/gallery/gallery.js";
 import { renderReportPage } from "../src/report-render/render.js";
 import { resolvePageAssetFromInstallation } from "../src/report-render/asset-lookup.js";
 
+if (!hasGalleryData()) {
+    console.error(GALLERY_DATA_HINT);
+    process.exit(1);
+}
 const loaded = await loadGallery();
 if (loaded.isErr()) {
     throw new Error(`The gallery did not load: ${JSON.stringify(loaded.error)}`);

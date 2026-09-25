@@ -1,29 +1,35 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["numpy>=1.24"]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """
-Copy the derived tables that the report gallery binds into the gallery data
-directory, thin the dense ones by the rule of their field, and write the
-gallery manifest.
+Copy the derived tables that the report gallery binds into a gallery data
+directory, thin the dense ones by the rule of their field, and check each
+table against the gallery manifest.
 
 Usage:
-    uv run thin_gallery.py <gallery-data dir> <gallery dir>
+    uv run thin_gallery.py <work dir> <data dir> <manifest> [--write-manifest]
 
-<gallery-data dir> holds manifest.json and derived/<field>/<table>.csv, the
-output of the other scripts in this directory. <gallery dir> is
-harness/src/report-render/gallery; the script writes data/<field>/<table>.csv
-and manifest.json there.
+<work dir> holds derived/<field>/<table>.csv, the output of the other scripts
+in this directory. The script writes <data dir>/<field>/<table>.csv. Then it
+compares the rows, the bytes, the SHA-256, and the thinning rule of each table
+with its entry in <manifest>, prints each difference, and exits 1 if one
+exists. With --write-manifest, it writes these values into <manifest> instead,
+and keeps the dataset, the license, the sources, and the derivation of each
+entry.
 
 Each kept cell keeps the exact text of its source cell, so a thinned table
 holds no re-serialized number. Each random choice uses a fixed seed, so a
 second run writes the same bytes.
 
-The other scripts in this directory read raw/<field>/ and write
-derived/<field>/ under one gallery-data directory, and each one names that
-directory as the relative path gallery-data.
+scripts/gallery-data.sh runs the other scripts of this directory and then this
+one. Each other script takes the work dir as its one argument, reads
+raw/<field>/, and writes derived/<field>/ under it.
 """
 import csv
+import hashlib
 import io
 import json
 import sys
@@ -199,34 +205,23 @@ TABLES = [
 ]
 
 
-def qq_summary_entry(qq: dict) -> dict:
-    """The source manifest predates the one-row inflation table, thus its entry derives from the QQ entry."""
-    entry = {key: qq[key] for key in ("field", "dataset", "license", "source_urls", "script")}
-    entry["table"] = "qq_summary"
-    entry["columns"] = {
-        "lambda_gc": "genomic inflation factor: median(chi-square from p, 1 df) / qchisq(0.5, 1)",
-        "n_pvalues": "number of p-values in the full summary statistics that the factor reads",
-    }
-    entry["derivation"] = (
-        "Genomic inflation factor lambda_GC over ALL p-values of the full summary statistics file (no "
-        "thinning): chi-square with 1 df from each p (scipy.stats.chi2.isf), median divided by "
-        "scipy.stats.chi2.ppf(0.5, 1). Written with %.6g formatting."
-    )
-    entry["plots"] = ["qq_plot"]
-    return entry
+CHECKED_KEYS = ("rows", "bytes", "sha256", "thinning")
 
 
 def main() -> None:
-    source_dir = Path(sys.argv[1]).resolve()
-    gallery_dir = Path(sys.argv[2]).resolve()
-    source_manifest = {(e["field"], e["table"]): e for e in json.loads((source_dir / "manifest.json").read_text(encoding="utf-8"))}
-    source_manifest[("gwas", "qq_summary")] = qq_summary_entry(source_manifest[("gwas", "qq")])
+    args = [arg for arg in sys.argv[1:] if arg != "--write-manifest"]
+    write_manifest = len(args) != len(sys.argv) - 1
+    if len(args) != 3:
+        sys.exit(__doc__)
+    work_dir, data_dir, manifest_path = (Path(arg).resolve() for arg in args)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_key = {(e["field"], e["table"]): e for e in manifest}
 
     entries = []
     total = 0
     for field, table, script, thin in TABLES:
-        source = source_manifest[(field, table)]
-        header_line, lines = read_lines(source_dir / "derived" / field / f"{table}.csv")
+        source = by_key[(field, table)]
+        header_line, lines = read_lines(work_dir / "derived" / field / f"{table}.csv")
         columns = source["columns"]
         cut = COLUMN_CUTS.get((field, table))
         if cut is not None:
@@ -238,18 +233,19 @@ def main() -> None:
             names = ", ".join(dropped)
             column_rule = f"The copy drops the column{'s' if len(dropped) > 1 else ''} {names}, which no gallery chart reads."
             rule = column_rule if rule is None else f"{rule} {column_rule}"
-        out_path = gallery_dir / "data" / field / f"{table}.csv"
+        out_path = data_dir / field / f"{table}.csv"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(header_line + "".join(kept), encoding="utf-8")
-        size = out_path.stat().st_size
-        total += size
+        content = out_path.read_bytes()
+        total += len(content)
         entries.append(
             {
                 "field": field,
                 "table": table,
                 "path": f"data/{field}/{table}.csv",
                 "rows": len(kept),
-                "bytes": size,
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
                 "columns": columns,
                 "dataset": source["dataset"],
                 "license": source["license"],
@@ -261,8 +257,24 @@ def main() -> None:
                 else "None. The copy is the whole derived table.",
             }
         )
-    (gallery_dir / "manifest.json").write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(json.dumps({"tables": len(entries), "total_bytes": total}, indent=2))
+
+    if write_manifest:
+        manifest_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(json.dumps({"tables": len(entries), "total_bytes": total, "manifest": "written"}, indent=2))
+        return
+
+    produced = {(e["field"], e["table"]) for e in entries}
+    mismatches = [f"{field}/{table}: the manifest names it, and no script makes it" for field, table in by_key if (field, table) not in produced]
+    for entry in entries:
+        expected = by_key[(entry["field"], entry["table"])]
+        for key in CHECKED_KEYS:
+            if entry[key] != expected.get(key):
+                mismatches.append(f"{entry['path']}: {key} is {entry[key]!r}, the manifest states {expected.get(key)!r}")
+    for mismatch in mismatches:
+        print(f"MISMATCH {mismatch}", file=sys.stderr)
+    print(json.dumps({"tables": len(entries), "total_bytes": total, "mismatches": len(mismatches)}, indent=2))
+    if mismatches:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

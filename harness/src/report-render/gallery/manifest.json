@@ -5,6 +5,7 @@
     "path": "data/bulk_rnaseq/de_results.csv",
     "rows": 9921,
     "bytes": 1317573,
+    "sha256": "d38557788fc083093a648572f89fafceb4aba4f34b78464b994aa7f783f22ea2",
     "columns": {
       "gene_id": "FlyBase gene identifier (FBgn)",
       "gene_symbol": "gene symbol from FlyBase's fbgn_annotation_ID table; empty for 36 of 9921 genes with no resolved mapping",
@@ -26,7 +27,7 @@
       "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21). gene_symbol is a separate, additional layer sourced from FlyBase, whose own data license is CC BY 4.0: \"All annotations and data produced by FlyBase that are accessible from flybase.org are distributed under a Creative Commons Attribution 4.0 International License (CC BY 4.0).\" (https://wiki.flybase.org/wiki/FlyBase:About)"
     },
     "source_urls": [
-      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
+      "https://bioconductor.org/packages/3.23/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
       "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE18508",
       "https://s3ftp.flybase.org/releases/FB2026_03/precomputed_files/genes/fbgn_annotation_ID_fb_2026_03.tsv.gz",
       "https://wiki.flybase.org/wiki/FlyBase:About"
@@ -41,6 +42,7 @@
     "path": "data/bulk_rnaseq/pca_samples.csv",
     "rows": 7,
     "bytes": 509,
+    "sha256": "81c8dae8e3a1c03fb36d008129bdda233656751fcc44bf4ecd6c55e3560ae3db",
     "columns": {
       "sample": "sample name (untreated1-4, treated1-3)",
       "PC1": "principal component 1 score",
@@ -59,7 +61,7 @@
       "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21)"
     },
     "source_urls": [
-      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz"
+      "https://bioconductor.org/packages/3.23/data/experiment/src/contrib/pasilla_1.40.0.tar.gz"
     ],
     "script": "derive/bulk_rnaseq_pasilla.py",
     "derivation": "VST (dds.vst(use_design=False), pydeseq2's DESeq2-equivalent variance-stabilizing transform) on the 9921 low-count-filtered genes, restricted to the top 500 most-variable genes by sample variance (ddof=1), matching DESeq2::plotPCA's convention. PCA via numpy SVD on the mean-centered (not scaled) samples x top-500-genes matrix. PC1 explains 56.53% and PC2 30.40% of variance among those 500 genes (not of the whole transcriptome) -- recorded here per SPEC.md rather than in the CSV.",
@@ -71,6 +73,7 @@
     "path": "data/bulk_rnaseq/sample_distances.csv",
     "rows": 49,
     "bytes": 2045,
+    "sha256": "32f705e994d3763d86a1191a9f3ff4a55f306d9c267d57f30cf22cc74c870ae9",
     "columns": {
       "sample_a": "sample name (row)",
       "sample_b": "sample name (column)",
@@ -89,7 +92,7 @@
       "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21)"
     },
     "source_urls": [
-      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz"
+      "https://bioconductor.org/packages/3.23/data/experiment/src/contrib/pasilla_1.40.0.tar.gz"
     ],
     "script": "derive/bulk_rnaseq_pasilla.py",
     "derivation": "Euclidean distance (scipy.spatial.distance.pdist/squareform) between samples on the full VST matrix (all 9921 filtered genes, not restricted to the top-500 used for PCA -- this matches DESeq2's own sample-distance-heatmap vignette, which also uses the full vst matrix). Row/column order from hierarchical clustering, complete linkage (scipy.cluster.hierarchy.linkage(method='complete')), leaf order via leaves_list. All 7x7=49 pairs included, no thinning (tiny table).",
@@ -101,6 +104,7 @@
     "path": "data/bulk_rnaseq/heatmap_top_genes.csv",
     "rows": 280,
     "bytes": 17148,
+    "sha256": "8566d9d03f1c906e4d4fb51b135e0f4bbd72e53fc37fdcc361b5d97cd97d72de",
     "columns": {
       "gene_symbol": "gene symbol (top-40 DE gene); falls back to the FBgn gene_id string when the gene has no FlyBase symbol mapping (none of the top 40 currently need the fallback -- see derivation)",
       "sample": "sample name",
@@ -121,7 +125,7 @@
       "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21). gene_symbol sourced from FlyBase, CC BY 4.0 (see de_results license note)."
     },
     "source_urls": [
-      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
+      "https://bioconductor.org/packages/3.23/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
       "https://s3ftp.flybase.org/releases/FB2026_03/precomputed_files/genes/fbgn_annotation_ID_fb_2026_03.tsv.gz"
     ],
     "script": "derive/bulk_rnaseq_pasilla.py",
@@ -134,6 +138,7 @@
     "path": "data/bulk_rnaseq/top_gene_counts.csv",
     "rows": 42,
     "bytes": 2332,
+    "sha256": "b7bdb5252546f8d02eb9182476868944ac1a50a949133b1ea01b31f0dd7db8d6",
     "columns": {
       "gene_symbol": "gene symbol (one of the top-6 DE genes by padj); falls back to the FBgn gene_id string when the gene has no FlyBase symbol mapping (none of the top 6 currently need the fallback -- see derivation)",
       "sample": "sample name",
@@ -152,7 +157,7 @@
       "quote": "License: LGPL (from raw/bulk_rnaseq/pasilla/DESCRIPTION, line 21). gene_symbol sourced from FlyBase, CC BY 4.0 (see de_results license note)."
     },
     "source_urls": [
-      "https://bioconductor.org/packages/release/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
+      "https://bioconductor.org/packages/3.23/data/experiment/src/contrib/pasilla_1.40.0.tar.gz",
       "https://s3ftp.flybase.org/releases/FB2026_03/precomputed_files/genes/fbgn_annotation_ID_fb_2026_03.tsv.gz"
     ],
     "script": "derive/bulk_rnaseq_pasilla.py",
@@ -165,6 +170,7 @@
     "path": "data/enrichment/ora_results.csv",
     "rows": 1638,
     "bytes": 205355,
+    "sha256": "309d8110fd02d150bc4ddb4de1e8fa9faa5a66c910d8df4c07757de4e4e09f17",
     "columns": {
       "term": "GO Biological Process term (name and GO ID)",
       "overlap": "number of padj<0.05 genes in this term",
@@ -199,6 +205,7 @@
     "path": "data/enrichment/gsea_results.csv",
     "rows": 973,
     "bytes": 124720,
+    "sha256": "ca842f4622c865ea4cac38bf4036b03696c130dbc9d3f8454942456d3f0d91d0",
     "columns": {
       "term": "GO Biological Process term (name and GO ID)",
       "NES": "normalized enrichment score",
@@ -223,7 +230,7 @@
       "https://bioconductor.org/packages/release/data/experiment/html/pasilla.html"
     ],
     "script": "derive/enrichment_pasilla.py",
-    "derivation": "gseapy 1.3.1 prerank on gene_symbol -> DESeq2 stat (from derived/bulk_rnaseq/de_results.csv), ranking built by dropping the 36 unmapped genes and, for the 215 rows / ~89 symbols where more than one FBgn ID mapped to the same symbol, keeping only the row with the larger |stat| (9790 unique ranked genes). Gene sets: GO_Biological_Process_2018, organism Fly, via gseapy.get_library (FlyEnrichr gene-set-library API; this is FlyEnrichr's newest GO BP library -- the 2023 edition on the human Enrichr mirror is human-only). min_size=15, max_size=500 (gseapy defaults), permutation_num=1000 (gseapy's own default), seed=0; 973 of 2621 fly GO BP terms passed the size filter and were tested. set_size = size of the term's gene set intersected with the 9790-gene ranked list (pre.results[term]['matched_genes']); leading_edge_size/leading_edge_genes from gseapy's own Lead_genes output. Re-running the script reproduces this file byte-for-byte (verified).",
+    "derivation": "gseapy 1.3.1 prerank on gene_symbol -> DESeq2 stat (from derived/bulk_rnaseq/de_results.csv), ranking built by dropping the 36 unmapped genes and, for the 215 rows / ~89 symbols where more than one FBgn ID mapped to the same symbol, keeping only the row with the larger |stat| (9790 unique ranked genes). Gene sets: GO_Biological_Process_2018, organism Fly, from the text export of the FlyEnrichr gene-set-library API, parsed as gseapy.get_library parses it (this is FlyEnrichr's newest GO BP library -- the 2023 edition on the human Enrichr mirror is human-only). min_size=15, max_size=500 (gseapy defaults), permutation_num=1000 (gseapy's own default), seed=0; 973 of 2621 fly GO BP terms passed the size filter and were tested. set_size = size of the term's gene set intersected with the 9790-gene ranked list (pre.results[term]['matched_genes']); leading_edge_size/leading_edge_genes from gseapy's own Lead_genes output. Re-running the script reproduces this file byte-for-byte (verified).",
     "thinning": "The copy drops the columns set_size, leading_edge_genes, which no gallery chart reads."
   },
   {
@@ -232,6 +239,7 @@
     "path": "data/enrichment/gsea_running_score.csv",
     "rows": 1420,
     "bytes": 91493,
+    "sha256": "d4d3f1a08664bccaa74feac3061b1226ffb27efa2c5d6990fbd9d80cd7428eda",
     "columns": {
       "term": "GO Biological Process term (one of the top 3 by |NES| in gsea_results.csv)",
       "rank": "position in the DESeq2-stat-ranked gene list (1 = most positive stat)",
@@ -264,6 +272,7 @@
     "path": "data/singlecell/cells.csv",
     "rows": 2638,
     "bytes": 387907,
+    "sha256": "c26f13189d5b95f512227a2063701231e27041dc501265b0515f64cbeff105e2",
     "columns": {
       "cell_id": "10x cell barcode",
       "UMAP_1": "UMAP embedding coordinate 1, from adata.obsm['X_umap'] as stored by scanpy.datasets.pbmc3k_processed()",
@@ -296,12 +305,13 @@
       "quote": "This dataset is licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) license. 10x citation guidelines available here. [10x dataset page, archived https://web.archive.org/web/20260613180851/https://www.10xgenomics.com/datasets/3-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0]. scanpy license (github.com/scverse/scanpy/blob/main/LICENSE): 'Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met' (BSD 3-Clause)."
     },
     "source_urls": [
+      "https://raw.githubusercontent.com/chanzuckerberg/cellxgene/68dfbcc2eb675e96c6a5e2a6b7a0d3465ccf46bc/example-dataset/pbmc3k.h5ad",
       "https://www.10xgenomics.com/datasets/3-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0",
       "https://scanpy.readthedocs.io/en/1.10.x/tutorials/basics/clustering-2017.html",
       "https://github.com/scverse/scanpy/blob/main/LICENSE"
     ],
     "script": "derive/pbmc3k.py",
-    "derivation": "Loaded scanpy.datasets.pbmc3k_processed() (downloads/reads raw/singlecell/pbmc3k_processed.h5ad, the exact processed AnnData the scanpy project ships for its pbmc3k tutorial: 2,638 cells x 1,838 HVGs in .X, plus .raw with all 13,714 genes log1p-normalized, X_pca/X_tsne/X_umap/X_draw_graph_fr in obsm, louvain clustering in obs). Cluster names come straight from obs['louvain'] categories, which the object already ships as cell-type names in the exact order the task specifies (CD4 T cells, CD14+ Monocytes, B cells, CD8 T cells, NK cells, FCGR3A+ Monocytes, Dendritic cells, Megakaryocytes); shortened to the task's requested labels (e.g. 'CD14+ Monocytes' -> 'CD14 Monocytes'). Verified against marker expression computed in this same script: for every one of the 12 marker genes, the cluster with the highest mean adata.raw expression is the cluster the tutorial names for it (IL7R -> CD4 T, CD14 -> CD14 Monocytes, MS4A1 -> B, CD8A -> CD8 T, GNLY & NKG7 -> NK, FCGR3A & MS4A7 -> FCGR3A Monocytes, FCER1A -> Dendritic, PPBP -> Megakaryocytes); LYZ and CST3 (pan-myeloid markers, not cell-type-specific) peak in the Dendritic cluster rather than a monocyte cluster, consistent with that cluster's overall high myeloid-marker profile. No reordering was needed. Marker-gene values use adata.raw (log1p-normalized, all genes), not adata.X, because .X is z-scored/clipped and restricted to the 1,838 HVGs and is missing 5 of the 12 requested marker genes (IL7R, CD14, LYZ, CD8A, MS4A7 are not HVGs here); adata.raw is also what scanpy's own marker-gene plots read by default. pct_counts_mt is obs['percent_mito'] (a 0-1 fraction as scanpy stored it) multiplied by 100. Whole dataset kept, no thinning (2,638 cells, well under the 2 MB bound). No random sampling, so no seed needed.",
+    "derivation": "Loaded scanpy.datasets.pbmc3k_processed() (reads raw/singlecell/pbmc3k_processed.h5ad, the exact processed AnnData the scanpy project ships for its pbmc3k tutorial: 2,638 cells x 1,838 HVGs in .X, plus .raw with all 13,714 genes log1p-normalized, X_pca/X_tsne/X_umap/X_draw_graph_fr in obsm, louvain clustering in obs). Cluster names come straight from obs['louvain'] categories, which the object already ships as cell-type names in the exact order the task specifies (CD4 T cells, CD14+ Monocytes, B cells, CD8 T cells, NK cells, FCGR3A+ Monocytes, Dendritic cells, Megakaryocytes); shortened to the task's requested labels (e.g. 'CD14+ Monocytes' -> 'CD14 Monocytes'). Verified against marker expression computed in this same script: for every one of the 12 marker genes, the cluster with the highest mean adata.raw expression is the cluster the tutorial names for it (IL7R -> CD4 T, CD14 -> CD14 Monocytes, MS4A1 -> B, CD8A -> CD8 T, GNLY & NKG7 -> NK, FCGR3A & MS4A7 -> FCGR3A Monocytes, FCER1A -> Dendritic, PPBP -> Megakaryocytes); LYZ and CST3 (pan-myeloid markers, not cell-type-specific) peak in the Dendritic cluster rather than a monocyte cluster, consistent with that cluster's overall high myeloid-marker profile. No reordering was needed. Marker-gene values use adata.raw (log1p-normalized, all genes), not adata.X, because .X is z-scored/clipped and restricted to the 1,838 HVGs and is missing 5 of the 12 requested marker genes (IL7R, CD14, LYZ, CD8A, MS4A7 are not HVGs here); adata.raw is also what scanpy's own marker-gene plots read by default. pct_counts_mt is obs['percent_mito'] (a 0-1 fraction as scanpy stored it) multiplied by 100. Whole dataset kept, no thinning (2,638 cells, well under the 2 MB bound). No random sampling, so no seed needed.",
     "thinning": "None. The copy is the whole derived table."
   },
   {
@@ -310,6 +320,7 @@
     "path": "data/singlecell/marker_dotplot.csv",
     "rows": 96,
     "bytes": 5130,
+    "sha256": "34959c80f988b1bd7ef19416f1f34febfaf39509aa96b51ebced33331a560345",
     "columns": {
       "cluster": "cell type name (see cells.csv derivation for the mapping/verification)",
       "gene": "one of the 12 canonical PBMC marker genes",
@@ -328,6 +339,7 @@
       "quote": "This dataset is licensed under the Creative Commons Attribution 4.0 International (CC BY 4.0) license."
     },
     "source_urls": [
+      "https://raw.githubusercontent.com/chanzuckerberg/cellxgene/68dfbcc2eb675e96c6a5e2a6b7a0d3465ccf46bc/example-dataset/pbmc3k.h5ad",
       "https://www.10xgenomics.com/datasets/3-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0",
       "https://scanpy.readthedocs.io/en/1.10.x/tutorials/basics/clustering-2017.html",
       "https://github.com/scverse/scanpy/blob/main/LICENSE"
@@ -342,6 +354,7 @@
     "path": "data/singlecell/composition.csv",
     "rows": 124,
     "bytes": 7345,
+    "sha256": "2f0c8a36d2240d16964b20436e90e86fa6ae5453a553b806320c285f2479617d",
     "columns": {
       "sample": "donor id (obs['replicate']), one of 8 lupus-study donors",
       "condition": "control or stimulated (obs['label']: ctrl -> control, stim -> stimulated with IFN-beta)",
@@ -366,7 +379,7 @@
       "https://github.com/scverse/pertpy/blob/main/LICENSE"
     ],
     "script": "derive/kang_composition.py",
-    "derivation": "pertpy.data.kang_2018() reads (or, on first run, downloads to) raw/singlecell/kang_2018.h5ad, a pre-processed AnnData (Seurat SCTransform pipeline outputs) hosted by the scverse project: 24,673 cells x 15,706 genes, obs columns include replicate (donor id, 8 donors), label (ctrl/stim), cell_type (8 types), and obsm['X_umap']. Requested exact dataset (Kang et al. 2018 GSE96583) was obtainable via pertpy.data.kang_2018() as specified in priority order (a); no substitution was needed. Grouped by (sample=donor, condition, cell_type); n_cells is a direct count, proportion is normalized within each (sample, condition) pair. 7 of the 16 donor x condition groups are missing 1 of the 8 cell types (0 cells recovered); those rows are simply absent rather than filled with a synthetic 0, so row counts differ slightly per group (16 groups x 7 or 8 rows = 124 rows total).",
+    "derivation": "pertpy.data.kang_2018() reads raw/singlecell/kang_2018.h5ad, a pre-processed AnnData (Seurat SCTransform pipeline outputs) hosted by the scverse project: 24,673 cells x 15,706 genes, obs columns include replicate (donor id, 8 donors), label (ctrl/stim), cell_type (8 types), and obsm['X_umap']. Requested exact dataset (Kang et al. 2018 GSE96583) was obtainable via pertpy.data.kang_2018() as specified in priority order (a); no substitution was needed. Grouped by (sample=donor, condition, cell_type); n_cells is a direct count, proportion is normalized within each (sample, condition) pair. 7 of the 16 donor x condition groups are missing 1 of the 8 cell types (0 cells recovered); those rows are simply absent rather than filled with a synthetic 0, so row counts differ slightly per group (16 groups x 7 or 8 rows = 124 rows total).",
     "thinning": "None. The copy is the whole derived table."
   },
   {
@@ -375,6 +388,7 @@
     "path": "data/singlecell/cells_by_condition_umap.csv",
     "rows": 6000,
     "bytes": 507254,
+    "sha256": "c3434d4425ac92306c67da966847db0014193b1973c46b54bb2bc12625cb8a90",
     "columns": {
       "cell_id": "10x cell barcode",
       "UMAP_1": "UMAP embedding coordinate 1, adata.obsm['X_umap'] as shipped with pertpy's kang_2018() AnnData",
@@ -409,6 +423,7 @@
     "path": "data/survival/km_curve.csv",
     "rows": 208,
     "bytes": 15083,
+    "sha256": "e907cec595367a913503c3daac21ffd3c4fa2032f11ec1bffb93f889c9daf203",
     "columns": {
       "strata": "sex group, Male or Female",
       "time": "days from study entry",
@@ -442,6 +457,7 @@
     "path": "data/survival/km_risk_table.csv",
     "rows": 22,
     "bytes": 347,
+    "sha256": "3e9889f31c9f48d433374eaeffd2d88e80611420918657f89c9e3e9681a745f0",
     "columns": {
       "strata": "sex group, Male or Female",
       "time": "days from study entry, 0 to 1000 by 100",
@@ -470,6 +486,7 @@
     "path": "data/survival/km_summary.csv",
     "rows": 2,
     "bytes": 234,
+    "sha256": "28a5fb766bad49fefaf87d526afa7debd9c801c3c93b1e72d9670e8539d2d160",
     "columns": {
       "strata": "sex group, Male or Female",
       "n": "number of subjects in the stratum",
@@ -504,6 +521,7 @@
     "path": "data/survival/logrank.csv",
     "rows": 1,
     "bytes": 61,
+    "sha256": "e2a180342c97aa188cb953d533f0d375e61dda15e9899d5dd66703ef33849529",
     "columns": {
       "chisq": "log-rank chi-square statistic (sex, 1 df)",
       "df": "degrees of freedom",
@@ -532,6 +550,7 @@
     "path": "data/survival/cox_forest.csv",
     "rows": 5,
     "bytes": 524,
+    "sha256": "ed02ea350b6384a7083b37a8c8a5b8fec7f219c202a6c7790e24526918b85946",
     "columns": {
       "term": "reader-facing label of the Cox model covariate",
       "hr": "hazard ratio, exp(coef)",
@@ -563,6 +582,7 @@
     "path": "data/survival/roc.csv",
     "rows": 137,
     "bytes": 10483,
+    "sha256": "34f1d88624f8f19bfbf7efcef18cd3894e48f5d42179ca16f19f483597d9b74b",
     "columns": {
       "fpr": "false positive rate (1 - specificity) of the empirical ROC curve",
       "tpr": "true positive rate (sensitivity) of the empirical ROC curve",
@@ -592,6 +612,7 @@
     "path": "data/survival/roc_auc.csv",
     "rows": 2,
     "bytes": 184,
+    "sha256": "18786d8c99a9d05b42cd3332e76eaccdbeb396669f3a6bb5948de936d234a467",
     "columns": {
       "model": "'ECOG + Karnofsky + age' or 'ECOG alone'",
       "auc": "area under the empirical ROC curve (trapezoid rule)",
@@ -621,6 +642,7 @@
     "path": "data/gwas/manhattan.csv",
     "rows": 25813,
     "bytes": 1077343,
+    "sha256": "bd0cb9d64d071a87d4e0adc18e3940fac57c4553a69d4a5200f98e470d329c48",
     "columns": {
       "chrom": "chromosome, 1-22 or X, from hm_chrom (harmonised)",
       "pos": "base pair position on GRCh38, from hm_pos (harmonised)",
@@ -639,7 +661,7 @@
       "quote": "Summary statistics: GWAS Catalog summary statistics are released under the Creative Commons CC0 1.0 Public Domain Dedication, unless otherwise specified on the individual study page and summary statistics download page. [...] Data submitted before March 2021 remains under the EBI Terms of Use, which already allow open reuse but are less explicit."
     },
     "source_urls": [
-      "http://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
+      "https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
       "https://www.ebi.ac.uk/gwas/studies/GCST002783",
       "https://www.ebi.ac.uk/gwas/docs/faq",
       "https://www.ebi.ac.uk/about/terms-of-use/"
@@ -654,6 +676,7 @@
     "path": "data/gwas/qq.csv",
     "rows": 3498,
     "bytes": 97745,
+    "sha256": "1054cc76490d3b061b5ce80106542c57f4bc7cddcb4ee2bc20d951ce5f9d464b",
     "columns": {
       "expected_neg_log10_p": "expected -log10(p) under the null: -log10(rank/(n+1)), ranked over all 2,555,085 p-values in the file sorted ascending, rounded to 4 decimal places",
       "observed_neg_log10_p": "observed -log10(p) for the corresponding sorted p-value, rounded to 4 decimal places",
@@ -671,7 +694,7 @@
       "quote": "Summary statistics: GWAS Catalog summary statistics are released under the Creative Commons CC0 1.0 Public Domain Dedication, unless otherwise specified on the individual study page and summary statistics download page. [...] Data submitted before March 2021 remains under the EBI Terms of Use, which already allow open reuse but are less explicit."
     },
     "source_urls": [
-      "http://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
+      "https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
       "https://www.ebi.ac.uk/gwas/studies/GCST002783",
       "https://www.ebi.ac.uk/gwas/docs/faq",
       "https://www.ebi.ac.uk/about/terms-of-use/"
@@ -686,6 +709,7 @@
     "path": "data/gwas/qq_summary.csv",
     "rows": 1,
     "bytes": 36,
+    "sha256": "b34865f87de5946965b7bcc9bc392d7b8a7690199e3b489b741547ffc6fd2628",
     "columns": {
       "lambda_gc": "genomic inflation factor: median(chi-square from p, 1 df) / qchisq(0.5, 1)",
       "n_pvalues": "number of p-values in the full summary statistics that the factor reads"
@@ -701,7 +725,7 @@
       "quote": "Summary statistics: GWAS Catalog summary statistics are released under the Creative Commons CC0 1.0 Public Domain Dedication, unless otherwise specified on the individual study page and summary statistics download page. [...] Data submitted before March 2021 remains under the EBI Terms of Use, which already allow open reuse but are less explicit."
     },
     "source_urls": [
-      "http://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
+      "https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST002001-GCST003000/GCST002783/harmonised/25673413-GCST002783-EFO_0004340.h.tsv.gz",
       "https://www.ebi.ac.uk/gwas/studies/GCST002783",
       "https://www.ebi.ac.uk/gwas/docs/faq",
       "https://www.ebi.ac.uk/about/terms-of-use/"
@@ -716,6 +740,7 @@
     "path": "data/cancer_mut/oncoprint.csv",
     "rows": 359,
     "bytes": 13864,
+    "sha256": "c733319c357281e3bf0e5bee1809855dced7e9fe971d0628836e30bc578f7cd5",
     "columns": {
       "gene": "HUGO gene symbol, restricted to the 20 most-frequently-mutated genes by distinct-sample count; for a sample with none of the top-20 genes mutated, this is set to the rank-1 gene (FLT3) as a placeholder, not an actual mutation",
       "sample": "TCGA Tumor_Sample_Barcode",
@@ -734,7 +759,7 @@
       "quote": "MIT License / Copyright (c) 2018 Anand Mayakonda / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software... The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."
     },
     "source_urls": [
-      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/inst/extdata/tcga_laml.maf.gz",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/0d61807f9a9863adb9335cb45f4c771b1f4c69e3/inst/extdata/tcga_laml.maf.gz",
       "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE"
     ],
     "script": "derive/tcga_laml.py",
@@ -747,6 +772,7 @@
     "path": "data/cancer_mut/mutation_burden.csv",
     "rows": 193,
     "bytes": 3035,
+    "sha256": "893f4feab876331a6d23ef9ac0a4fcdffc96b9db37f6fbcf50a5cee0e5c37502",
     "columns": {
       "sample": "TCGA Tumor_Sample_Barcode",
       "n_mutations": "total number of mutation rows (all genes) attributed to this sample in the MAF"
@@ -762,7 +788,7 @@
       "quote": "MIT License / Copyright (c) 2018 Anand Mayakonda / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software... The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."
     },
     "source_urls": [
-      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/inst/extdata/tcga_laml.maf.gz",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/0d61807f9a9863adb9335cb45f4c771b1f4c69e3/inst/extdata/tcga_laml.maf.gz",
       "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE"
     ],
     "script": "derive/tcga_laml.py",
@@ -775,6 +801,7 @@
     "path": "data/cancer_mut/lollipop_DNMT3A.csv",
     "rows": 26,
     "bytes": 867,
+    "sha256": "2aba5d19d15edd53aeec4debbf7c26f820f6736a75df829f17608e12f6aa84db",
     "columns": {
       "aa_position": "amino-acid position in the DNMT3A canonical isoform (UniProt Q9Y6K1, 912 aa), parsed from the leading digits of Protein_Change",
       "protein_change": "MAF Protein_Change field, verbatim (for example p.R882H)",
@@ -792,7 +819,7 @@
       "quote": "MIT License / Copyright (c) 2018 Anand Mayakonda / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software... The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."
     },
     "source_urls": [
-      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/inst/extdata/tcga_laml.maf.gz",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/0d61807f9a9863adb9335cb45f4c771b1f4c69e3/inst/extdata/tcga_laml.maf.gz",
       "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE"
     ],
     "script": "derive/tcga_laml.py",
@@ -805,6 +832,7 @@
     "path": "data/cancer_mut/domains_DNMT3A.csv",
     "rows": 8,
     "bytes": 271,
+    "sha256": "4c4e5c135fe62246ffc64a5fbb34ea6ef588605a2d0c2f777fde08ad28f1f460",
     "columns": {
       "start": "1-based start residue of the domain/region on the UniProt canonical sequence",
       "end": "1-based end residue of the domain/region on the UniProt canonical sequence",
@@ -822,11 +850,11 @@
       "quote": "We have chosen to apply the Creative Commons Attribution 4.0 International (CC BY 4.0) License (https://creativecommons.org/licenses/by/4.0/) to all copyrightable parts of our databases."
     },
     "source_urls": [
-      "https://rest.uniprot.org/uniprotkb/search?query=gene:DNMT3A+AND+organism_id:9606+AND+reviewed:true&format=json&fields=accession,gene_names",
-      "https://rest.uniprot.org/uniprotkb/Q9Y6K1.json"
+      "https://rest.uniprot.org/unisave/Q9Y6K1?format=txt&versions=213",
+      "https://www.uniprot.org/uniprotkb/Q9Y6K1/entry"
     ],
     "script": "derive/tcga_laml.py",
-    "derivation": "Resolved the reviewed human accession for gene DNMT3A (Q9Y6K1) via the UniProt search API, then fetched https://rest.uniprot.org/uniprotkb/Q9Y6K1.json and kept features with type Domain or Region (8 found: PWWP, ADD, SAM-dependent MTase C5-type domains, and 5 Region entries including 3 Disordered segments). Canonical sequence length (sequence.length) = 912 aa.",
+    "derivation": "Read version 213 of the reviewed human UniProtKB entry Q9Y6K1 for gene DNMT3A (the current entry of UniProt release 2026_03), in the flat-file form of the UniSave REST API, and kept the DOMAIN and REGION features (8 found: PWWP, ADD, SAM-dependent MTase C5-type domains, and 5 Region entries including 3 Disordered segments). Canonical sequence length (the SQ line) = 912 aa.",
     "thinning": "None. The copy is the whole derived table."
   },
   {
@@ -835,6 +863,7 @@
     "path": "data/cancer_mut/lollipop_FLT3.csv",
     "rows": 35,
     "bytes": 1582,
+    "sha256": "3f307ba4d663e79a23b35471562adfbf5ba24e3ef970bbf45da2d1d217bd0272",
     "columns": {
       "aa_position": "amino-acid position in the FLT3 canonical isoform (UniProt P36888, 993 aa), parsed from the leading digits of Protein_Change",
       "protein_change": "MAF Protein_Change field, verbatim (for example p.D835Y, or an internal-tandem-duplication insertion string such as p.599_600insDFREYEY)",
@@ -852,7 +881,7 @@
       "quote": "MIT License / Copyright (c) 2018 Anand Mayakonda / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software... The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software."
     },
     "source_urls": [
-      "https://raw.githubusercontent.com/PoisonAlien/maftools/master/inst/extdata/tcga_laml.maf.gz",
+      "https://raw.githubusercontent.com/PoisonAlien/maftools/0d61807f9a9863adb9335cb45f4c771b1f4c69e3/inst/extdata/tcga_laml.maf.gz",
       "https://raw.githubusercontent.com/PoisonAlien/maftools/master/LICENSE"
     ],
     "script": "derive/tcga_laml.py",
@@ -865,6 +894,7 @@
     "path": "data/cancer_mut/domains_FLT3.csv",
     "rows": 3,
     "bytes": 235,
+    "sha256": "7b95261a8f15a068dea096cd6ad08acc5bbd42f7f23450d581bca68e4aec4dd6",
     "columns": {
       "start": "1-based start residue of the domain/region on the UniProt canonical sequence",
       "end": "1-based end residue of the domain/region on the UniProt canonical sequence",
@@ -882,11 +912,11 @@
       "quote": "We have chosen to apply the Creative Commons Attribution 4.0 International (CC BY 4.0) License (https://creativecommons.org/licenses/by/4.0/) to all copyrightable parts of our databases."
     },
     "source_urls": [
-      "https://rest.uniprot.org/uniprotkb/search?query=gene:FLT3+AND+organism_id:9606+AND+reviewed:true&format=json&fields=accession,gene_names",
-      "https://rest.uniprot.org/uniprotkb/P36888.json"
+      "https://rest.uniprot.org/unisave/P36888?format=txt&versions=226",
+      "https://www.uniprot.org/uniprotkb/P36888/entry"
     ],
     "script": "derive/tcga_laml.py",
-    "derivation": "Resolved the reviewed human accession for gene FLT3 (P36888) via the UniProt search API, then fetched https://rest.uniprot.org/uniprotkb/P36888.json and kept features with type Domain or Region (3 found: Ig-like C2-type and Protein kinase domains, plus one Region covering the juxtamembrane autoinhibitory segment 591-597). Canonical sequence length (sequence.length) = 993 aa. Note the juxtamembrane ITD hotspot in lollipop_FLT3.csv (residues ~593-611) falls just outside this single narrow Region feature and between the two Domain features (343-610 has no domain/region annotation), so a chart author should not expect ITDs to land inside a labeled band.",
+    "derivation": "Read version 226 of the reviewed human UniProtKB entry P36888 for gene FLT3 (the current entry of UniProt release 2026_03), in the flat-file form of the UniSave REST API, and kept the DOMAIN and REGION features (3 found: Ig-like C2-type and Protein kinase domains, plus one Region covering the juxtamembrane autoinhibitory segment 591-597). Canonical sequence length (the SQ line) = 993 aa. Note the juxtamembrane ITD hotspot in lollipop_FLT3.csv (residues ~593-611) falls just outside this single narrow Region feature and between the two Domain features (343-610 has no domain/region annotation), so a chart author should not expect ITDs to land inside a labeled band.",
     "thinning": "None. The copy is the whole derived table."
   }
 ]

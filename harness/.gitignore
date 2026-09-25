@@ -1,0 +1,4 @@
+# The gallery tables and their work directory. `bun run gallery:data` rebuilds
+# them from the public sources.
+/src/report-render/gallery/data/
+/.gallery-data/
