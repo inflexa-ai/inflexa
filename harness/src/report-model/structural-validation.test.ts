@@ -330,6 +330,35 @@ describe("validateReferenceStructure", () => {
             expect(validateReferenceStructure(bound.reference, withTrack, bound.encodingColumns).isOk()).toBe(true);
         });
 
+        it("refuses a tree column that the tree table does not hold, against the rows of the tree table", () => {
+            const TREE_PATH = "runs/run-1/step-d/output/gene_tree.csv";
+            const TREE_HASH = `sha256:${"9".repeat(64)}`;
+            const withTree: ReportSnapshot = {
+                artifacts: {
+                    ...rowSnapshot.artifacts,
+                    [TREE_PATH]: { hash: TREE_HASH, fileType: "output", rows: [{ parent: "n1", child: "TP53", height: 0.4 }] },
+                },
+            };
+            const block: ChartBlock = {
+                kind: "chart",
+                id: "c1",
+                binding: tableReference(ROWS_PATH, ROWS_HASH),
+                chartType: "heatmap",
+                encoding: { x: "log2FoldChange", y: "padj" },
+                trees: { y: { binding: tableReference(TREE_PATH, TREE_HASH), parent: "parent", child: "child", height: "invented_height" } },
+            };
+            const tree = walkBlocks([block]).references.find((entry) => entry.slot === "tree:y");
+            const failure = validateReferenceStructure(tree?.reference ?? tableReference(TREE_PATH, TREE_HASH), withTree, tree?.encodingColumns).match(
+                () => undefined,
+                (refusal) => refusal,
+            );
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("invented_height");
+            // The binding of the chart reads its own table, thus the tree columns never reach its match.
+            const bound = walkBlocks([block]).references[0];
+            expect(validateReferenceStructure(bound.reference, withTree, bound.encodingColumns).isOk()).toBe(true);
+        });
+
         it("refuses a chart column that names an inherited member of a plain object", () => {
             const failure = columnFailure(["constructor"]);
             expect(failure?.reason).toBe("locator-out-of-range");

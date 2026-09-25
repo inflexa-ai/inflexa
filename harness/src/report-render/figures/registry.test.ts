@@ -200,6 +200,34 @@ describe("the members that a module reads", () => {
         expect(missingTrack).toEqual({ blockId: "f1", kind: "missing-value", detail: "The chart declares a track, and its value entry carries no track." });
     });
 
+    it("hands the tree of each axis with its columns to a module that reads the trees, and refuses a tree that the entry does not carry", () => {
+        const { module, seen } = echoModule(["x", "y", "trees"]);
+        const tree = (path: string) => ({
+            binding: { kind: "artifact-table" as const, path, hash: HASH, columnLabels: { height: "Distance" } },
+            parent: "parent",
+            child: "child",
+            height: "height",
+        });
+        const chart = block("heatmap", { x: "x", y: "y" }, { trees: { x: tree("sample_tree.csv"), y: tree("gene_tree.csv") } });
+        const edges = [{ parent: "n1", child: "a", height: 1 }];
+        const inputs: ChartInputs = { trees: { x: { rows: edges, columns: ["parent", "child", "height"] }, y: { rows: edges } } };
+        deriveChartOption(chart, ROWS, undefined, inputs, withFigure("heatmap", module))._unsafeUnwrap();
+        expect(seen[0].trees).toEqual({
+            x: {
+                rows: edges,
+                columns: ["parent", "child", "height"],
+                parent: "parent",
+                child: "child",
+                height: "height",
+                labels: { height: "Distance" },
+                meanings: undefined,
+            },
+            y: { rows: edges, parent: "parent", child: "child", height: "height", labels: { height: "Distance" }, meanings: undefined },
+        });
+        const missing = deriveChartOption(chart, ROWS, undefined, { trees: { x: { rows: edges } } }, withFigure("heatmap", module))._unsafeUnwrapErr();
+        expect(missing).toEqual({ blockId: "f1", kind: "missing-value", detail: "The chart declares a tree of y, and its value entry carries no tree of y." });
+    });
+
     it("gives a module the composition machinery, which reads the shared payload past the inline bound", () => {
         const dense: ChartRow[] = [];
         for (let index = 0; index < 6000; index += 1) dense.push({ x: index * 0.001, y: 1 / (index + 2) });
@@ -228,7 +256,11 @@ describe("the members of the canonical figures on a chart type with no module", 
             ["bar", { x: "g", y: "y", censor: "x" }, 'The bar chart takes no "censor" channel. The "censor" channel is legal on the km charts.'],
             ["line", { x: "x", y: "y", risk: "x" }, 'The line chart takes no "risk" channel. The "risk" channel is legal on the km charts.'],
             ["volcano", { x: "x", y: "y", hit: "x" }, 'The volcano chart takes no "hit" channel. The "hit" channel is legal on the gsea charts.'],
-            ["manhattan", { x: "x", y: "y", metric: "x" }, 'The manhattan chart takes no "metric" channel. The "metric" channel is legal on the gsea charts.'],
+            [
+                "manhattan",
+                { x: "x", y: "y", metric: "x" },
+                'The manhattan chart takes no "metric" channel. The "metric" channel is legal on the gsea and locuszoom charts.',
+            ],
             [
                 "box",
                 { x: "g", y: "y", tracks: ["g"] },
@@ -246,7 +278,7 @@ describe("the members of the canonical figures on a chart type with no module", 
             "The scatter chart prints no statistics. The statistics are legal on the km, roc, qq, and gsea charts.",
         );
         expect(deriveChartOption(block("volcano", { x: "x", y: "y" }, { track }), ROWS)._unsafeUnwrapErr().detail).toBe(
-            "The volcano chart draws no track. A track is legal on the lollipop charts.",
+            "The volcano chart draws no track. A track is legal on the lollipop and locuszoom charts.",
         );
     });
 
@@ -264,7 +296,29 @@ describe("the members of the canonical figures on a chart type with no module", 
         );
         const track = { binding: { kind: "artifact-table" as const, path: "domains.csv", hash: HASH }, start: "s", end: "e", label: "l" };
         expect(deriveChartOption({ ...base, track }, ROWS)._unsafeUnwrapErr().detail).toBe(
-            "A composition reads no track. A track is legal on the lollipop charts.",
+            "A composition reads no track. A track is legal on the lollipop and locuszoom charts.",
         );
+        const trees = { y: { binding: { kind: "artifact-table" as const, path: "tree.csv", hash: HASH }, parent: "p", child: "c", height: "h" } };
+        expect(deriveChartOption({ ...base, trees }, ROWS)._unsafeUnwrapErr().detail).toBe(
+            "A composition reads no trees. The trees are legal on the heatmap charts.",
+        );
+    });
+
+    it("refuses the trees on a chart type that draws no dendrogram, and names the charts that read them", () => {
+        const trees = { x: { binding: { kind: "artifact-table" as const, path: "tree.csv", hash: HASH }, parent: "p", child: "c", height: "h" } };
+        expect(deriveChartOption(block("bar", { x: "g", y: "y" }, { trees }), ROWS)._unsafeUnwrapErr().detail).toBe(
+            "The bar chart draws no tree. The trees are legal on the heatmap charts.",
+        );
+        expect(deriveChartOption(block("volcano", { x: "x", y: "y" }, { trees }), ROWS)._unsafeUnwrapErr().detail).toBe(
+            "The volcano chart draws no tree. The trees are legal on the heatmap charts.",
+        );
+    });
+
+    it("refuses each preset of the figure extensions until its module registers", () => {
+        for (const chartType of ["upset", "sankey", "locuszoom"] as const) {
+            expect(deriveChartOption(block(chartType, { x: "x", y: "y" }), ROWS, undefined, {}, { figures: {} })._unsafeUnwrapErr().detail).toBe(
+                `The ${chartType} figure is not available yet. Draw the table with a base chart type or a composition.`,
+            );
+        }
     });
 });

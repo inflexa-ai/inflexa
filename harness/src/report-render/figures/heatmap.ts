@@ -10,8 +10,9 @@
  * A distance matrix draws on the sequential ramp, whose dark end is the low value. Thus the diagonal of zero
  * distance draws dark, and two far samples draw light, as the DESeq2 sample-distance figure draws them.
  *
- * The run gives the order of each axis through the `orderBy` of its channel, for example the leaf order of a
- * clustering. The figure draws no dendrogram.
+ * The run gives the order of each axis through the `orderBy` of its channel, or through the tree of the axis.
+ * A tree is the edge table of a clustering. The axis takes its depth-first leaf order, and the figure draws it
+ * as a dendrogram of elbows: the tree of x above the strips, and the tree of y at the left of the row names.
  *
  * A pair of categories holds one value. A repeated pair is a refusal, and never a silent sum. A track column
  * holds one value for each x category, and a category with two values is a refusal.
@@ -27,7 +28,7 @@ import { err, ok, type Result } from "neverthrow";
 import { channelColumn, channelOrder, channelTransform, type ChartBlock, type ChartChannel } from "../../contracts/report-blocks.js";
 import { declaredForColumn } from "../../contracts/report-reference.js";
 import type { Cell, ChartRow, EchartOption } from "../chart.js";
-import { CHART_BODY_PX, CHART_BODY_MAX_PX, CHART_PAGE_TEXT_PX, CHART_SLOT_LIMIT, COLOR_SCALE_BAND_PCT } from "../design.js";
+import { CHART_BODY_PX, CHART_BODY_MAX_PX, CHART_INK, CHART_PAGE_TEXT_PX, CHART_SLOT_LIMIT, COLOR_SCALE_BAND_PCT } from "../design.js";
 import type { RenderProblem } from "../types.js";
 import {
     axisNameFields,
@@ -43,7 +44,9 @@ import {
     transformColumn,
     valueAxisTitle,
     withFigureBody,
+    Y_AXIS_NAME_GAP,
 } from "./common.js";
+import { checkTree, type CheckedTree } from "./dendrogram.js";
 import type { FigureContext, FigureModule } from "./index.js";
 
 /** The count of x categories past which the matrix hides the x labels and states the count in the axis title. */
@@ -93,12 +96,25 @@ const LABEL_MARGIN_PAD_PX = 16;
 /** The size of one entry of a strip legend, in pixels. */
 const TRACK_LEGEND_ITEM_PX = 10;
 
+/** The depth of the band of one dendrogram, in pixels: the height of the tree of x, and the width of the tree of y. */
+export const DENDROGRAM_BAND_PX = 48;
+
+/** The gap between the leaves of a dendrogram and the strips, the matrix, or the row names, in pixels. */
+const DENDROGRAM_GAP_PX = 4;
+
+/** The top margin over the tree of x where no strip legend sits above it, and the margin at the left of the tree of y, in pixels. */
+const DENDROGRAM_TOP_PX = 12;
+const DENDROGRAM_SIDE_PX = 8;
+
+/** The width of a dendrogram branch, in pixels. */
+const DENDROGRAM_LINE_PX = 1;
+
 /** The axis parts that the matrix hides: the line and the ticks. */
 const LINELESS_AXIS: EchartOption = { axisLine: { show: false }, axisTick: { show: false } };
 
 /** The heatmap. */
 export const HEATMAP_FIGURE: FigureModule = {
-    reads: new Set(["x", "y", "value", "tracks"]),
+    reads: new Set(["x", "y", "value", "tracks", "trees"]),
     derive: deriveHeatmap,
 };
 
@@ -157,12 +173,14 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const valueName = transform === undefined ? valueColumn.value : `${transform}(${valueColumn.value})`;
     const values = transform === undefined ? rows.map((row) => toNumber(row[valueColumn.value])) : transformColumn(rows, valueColumn.value, transform);
 
-    const xOrdered = orderQuickCategories(block.id, rows, x.value, channelOrder(xChannel));
+    const xOrdered = axisOrder(block, rows, context, "x", x.value, xChannel);
     if (xOrdered.isErr()) return err(xOrdered.error);
-    const yOrdered = orderQuickCategories(block.id, rows, y.value, channelOrder(yChannel));
+    const yOrdered = axisOrder(block, rows, context, "y", y.value, yChannel);
     if (yOrdered.isErr()) return err(yOrdered.error);
-    const xCategories = xOrdered.value;
-    const yCategories = yOrdered.value;
+    const xCategories = xOrdered.value.order;
+    const yCategories = yOrdered.value.order;
+    const xTree = xOrdered.value.tree;
+    const yTree = yOrdered.value.tree;
     const slots = xCategories.length * yCategories.length;
     if (slots > CHART_SLOT_LIMIT) {
         return err(
@@ -222,7 +240,7 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
 
     const tracks = encoding.tracks ?? [];
     const band = underBand(xCategories, hidden);
-    if (tracks.length === 0) {
+    if (tracks.length === 0 && xTree === undefined && yTree === undefined) {
         const body = PLAIN_TOP_PX + yCategories.length * HEATMAP_ROW_PX + band;
         if (body <= CHART_BODY_PX) {
             return ok({ xAxis, yAxis, visualMap: scaleMap, series: [matrix], grid: { right: COLOR_SCALE_GRID_RIGHT } });
@@ -246,9 +264,16 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
     const titles = strips.value.map((strip) => strip.title);
     let longest = 0;
     for (const name of [...yCategories.map(String), ...titles]) longest = Math.max(longest, name.length);
-    const left = Math.max(LABEL_MARGIN_MIN_PX, Math.round(longest * CHART_PAGE_TEXT_PX * LABEL_CHARACTER_SHARE) + LABEL_MARGIN_PAD_PX);
-    const stripTop = TRACK_GAP_PX + tracks.length * TRACK_LEGEND_LINE_PX + TRACK_BAND_GAP_PX;
-    const matrixTop = stripTop + tracks.length * HEATMAP_STRIP_PX + TRACK_GAP_PX;
+    const labelMargin = Math.max(LABEL_MARGIN_MIN_PX, Math.round(longest * CHART_PAGE_TEXT_PX * LABEL_CHARACTER_SHARE) + LABEL_MARGIN_PAD_PX);
+    // The tree of y sits at the left of the row names, and a y title sits between the tree and the names.
+    const yTitled = yAxis.name !== undefined;
+    const yTreeBand =
+        yTree === undefined ? 0 : DENDROGRAM_SIDE_PX + DENDROGRAM_BAND_PX + DENDROGRAM_GAP_PX + (yTitled ? CHART_PAGE_TEXT_PX + Y_AXIS_NAME_GAP : 0);
+    const left = yTreeBand + labelMargin;
+    const headTop =
+        tracks.length > 0 ? TRACK_GAP_PX + tracks.length * TRACK_LEGEND_LINE_PX + TRACK_BAND_GAP_PX : xTree !== undefined ? DENDROGRAM_TOP_PX : PLAIN_TOP_PX;
+    const stripTop = headTop + (xTree === undefined ? 0 : DENDROGRAM_BAND_PX + DENDROGRAM_GAP_PX);
+    const matrixTop = tracks.length > 0 ? stripTop + tracks.length * HEATMAP_STRIP_PX + TRACK_GAP_PX : stripTop;
     const body = matrixTop + yCategories.length * HEATMAP_ROW_PX + band;
     const tall = body > CHART_BODY_PX;
     const bottom = tall ? bandShare(band, body) : hidden ? "12%" : xCategories.length > TURN_45_COUNT ? "25%" : "20%";
@@ -271,7 +296,8 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
             seriesIndex: 1 + place,
             dimension: 2,
             orient: "horizontal",
-            left,
+            // Beside a tree of y, the legends start over the row names, thus a column export holds each entry.
+            left: yTree === undefined ? left : yTreeBand,
             top: TRACK_GAP_PX + place * TRACK_LEGEND_LINE_PX,
             itemWidth: TRACK_LEGEND_ITEM_PX,
             itemHeight: TRACK_LEGEND_ITEM_PX,
@@ -282,18 +308,94 @@ function deriveHeatmap(block: ChartBlock, rows: readonly ChartRow[], context: Fi
         });
         offset += strip.values.length;
     }
-    const tracked: EchartOption = {
-        grid: [
-            { left, right: COLOR_SCALE_GRID_RIGHT, top: matrixTop, bottom },
-            { left, right: COLOR_SCALE_GRID_RIGHT, top: stripTop, height: tracks.length * HEATMAP_STRIP_PX },
-        ],
-        xAxis: [xAxis, { type: "category", gridIndex: 1, data: xCategories.map(String), ...LINELESS_AXIS, axisLabel: { show: false } }],
-        yAxis: [yAxis, { type: "category", gridIndex: 1, inverse: true, data: titles, ...LINELESS_AXIS }],
+    // Beside a tree of y, each row name starts at the leaves. An export draws its text smaller than the page,
+    // thus a name that ends at the matrix would leave a gap between the leaves and the names.
+    const leafLabels: EchartOption = yTree === undefined ? {} : { axisLabel: { hideOverlap: true, align: "left", margin: labelMargin } };
+    const grid: EchartOption[] = [{ left, right: COLOR_SCALE_GRID_RIGHT, top: matrixTop, bottom }];
+    const xAxes: EchartOption[] = [xAxis];
+    const yAxes: EchartOption[] = [{ ...yAxis, ...leafLabels }];
+    if (tracks.length > 0) {
+        grid.push({ left, right: COLOR_SCALE_GRID_RIGHT, top: stripTop, height: tracks.length * HEATMAP_STRIP_PX });
+        xAxes.push({ type: "category", gridIndex: 1, data: xCategories.map(String), ...LINELESS_AXIS, axisLabel: { show: false } });
+        yAxes.push({ type: "category", gridIndex: 1, inverse: true, data: titles, ...LINELESS_AXIS, ...leafLabels });
+    }
+    const treeSeries: EchartOption[] = [];
+    if (xTree !== undefined) {
+        const index = grid.length;
+        grid.push({ left, right: COLOR_SCALE_GRID_RIGHT, top: headTop, height: DENDROGRAM_BAND_PX });
+        xAxes.push(leafAxis(index, xCategories.length, false));
+        yAxes.push(heightAxis(index, xTree.height, false));
+        treeSeries.push(dendrogramSeries(index, xTree, "x"));
+    }
+    if (yTree !== undefined) {
+        const index = grid.length;
+        grid.push({ left: DENDROGRAM_SIDE_PX, width: DENDROGRAM_BAND_PX, top: matrixTop, bottom });
+        xAxes.push(heightAxis(index, yTree.height, true));
+        yAxes.push(leafAxis(index, yCategories.length, true));
+        treeSeries.push(dendrogramSeries(index, yTree, "y"));
+    }
+    const framed: EchartOption = {
+        grid,
+        xAxis: xAxes,
+        yAxis: yAxes,
         visualMap: [{ ...scaleMap, seriesIndex: 0 }, ...legends],
-        series: [matrix, ...stripSeries],
+        series: [matrix, ...stripSeries, ...treeSeries],
         legend: { show: false },
     };
-    return ok(tall ? withFigureBody(tracked, body) : tracked);
+    return ok(tall ? withFigureBody(framed, body) : framed);
+}
+
+/**
+ * The categories of one axis in their order, and the checked tree of the axis where the block binds one.
+ *
+ * A tree gives the leaf order, thus an `orderBy` on the same axis names a second order, and it refuses.
+ */
+function axisOrder(
+    block: ChartBlock,
+    rows: readonly ChartRow[],
+    context: FigureContext,
+    axis: "x" | "y",
+    column: string,
+    channel: ChartChannel,
+): Result<{ order: readonly Cell[]; tree?: CheckedTree }, RenderProblem> {
+    const tree = context.trees?.[axis];
+    const declared = channelOrder(channel);
+    if (tree !== undefined && declared !== undefined) {
+        return err(chartProblem(block.id, `The ${axis} axis takes the leaf order of its tree, thus the "${axis}" channel takes no "orderBy".`));
+    }
+    const categories = orderQuickCategories(block.id, rows, column, declared);
+    if (categories.isErr()) return err(categories.error);
+    if (tree === undefined) return ok({ order: categories.value });
+    return checkTree(block.id, axis, tree, categories.value).map((checked) => ({ order: checked.order, tree: checked }));
+}
+
+/**
+ * The hidden value axis of a dendrogram along the categories of the matrix. A category axis draws category `i`
+ * at the middle of band `i`, thus a range of half a band past each end puts each leaf under its column or
+ * beside its row. The tree of y reads down, as the matrix reads down.
+ */
+function leafAxis(gridIndex: number, count: number, inverse: boolean): EchartOption {
+    return { type: "value", gridIndex, min: -0.5, max: count - 0.5, ...(inverse ? { inverse: true } : {}), show: false };
+}
+
+/** The hidden value axis of the heights of a dendrogram. The tree of y turns it, thus the root sits at the left and the leaves face the row names. */
+function heightAxis(gridIndex: number, height: number, inverse: boolean): EchartOption {
+    return { type: "value", gridIndex, min: 0, max: height > 0 ? height : 1, ...(inverse ? { inverse: true } : {}), show: false };
+}
+
+/** The branches of one dendrogram: one elbow of lines for each edge, in the order of the tree table. */
+function dendrogramSeries(gridIndex: number, tree: CheckedTree, axis: "x" | "y"): EchartOption {
+    return {
+        type: "lines",
+        coordinateSystem: "cartesian2d",
+        xAxisIndex: gridIndex,
+        yAxisIndex: gridIndex,
+        polyline: true,
+        silent: true,
+        clip: false,
+        lineStyle: { color: CHART_INK, width: DENDROGRAM_LINE_PX, opacity: 1 },
+        data: tree.elbows.map((elbow) => ({ coords: axis === "x" ? elbow.map((point) => [point[0], point[1]]) : elbow.map((point) => [point[1], point[0]]) })),
+    };
 }
 
 /**

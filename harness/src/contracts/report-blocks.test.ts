@@ -595,3 +595,50 @@ describe("the canonical figures", () => {
         }
     });
 });
+
+/** One tree of a heatmap axis: the edge list of the linkage, bound as a whole table. */
+function tree(path = "runs/run-1/step-a/output/gene_tree.csv"): Record<string, unknown> {
+    return { binding: { kind: "artifact-table", path, hash: HASH }, parent: "parent", child: "child", height: "height" };
+}
+
+describe("the figure extensions", () => {
+    it("takes each of the three new presets", () => {
+        for (const chartType of ["upset", "sankey", "locuszoom"]) {
+            expect(parses({ chartType, encoding: { x: "a", y: "b" } })).toBe(true);
+        }
+    });
+
+    it("takes a tree on either axis, or on both, and each tree rides the parsed block", () => {
+        const both = ChartBlockSchema.safeParse(
+            chart({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z" }, trees: { x: tree("sample_tree.csv"), y: tree() } }),
+        );
+        expect(both.success).toBe(true);
+        expect(both.success && both.data.trees?.x?.binding.path).toBe("sample_tree.csv");
+        expect(both.success && both.data.trees?.y?.height).toBe("height");
+        expect(parses({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z" }, trees: { y: tree() } })).toBe(true);
+    });
+
+    it("refuses an empty tree member, a tree with no height column, a literal edge list, and an axis the grammar does not declare", () => {
+        const encoding = { x: "sample", y: "gene", value: "z" };
+        expect(parses({ chartType: "heatmap", encoding, trees: {} })).toBe(false);
+        const { height: _height, ...open } = tree();
+        expect(parses({ chartType: "heatmap", encoding, trees: { y: open } })).toBe(false);
+        expect(parses({ chartType: "heatmap", encoding, trees: { y: { ...tree(), edges: [["a", "b", 1]] } } })).toBe(false);
+        expect(parses({ chartType: "heatmap", encoding, trees: { z: tree() } })).toBe(false);
+        // A tree binds a whole table, thus one cell is no tree.
+        const cell = { kind: "artifact-value", path: "tree.csv", hash: HASH, locator: { column: "parent", row: 0 } };
+        expect(parses({ chartType: "heatmap", encoding, trees: { y: { ...tree(), binding: cell } } })).toBe(false);
+    });
+
+    it("names the readers of each member that the new presets read in its teaching text", () => {
+        const quickPath = ChartBlockSchema.shape.encoding.unwrap().shape as Record<string, { description?: string }>;
+        for (const member of ["metric", "color", "label"]) expect(quickPath[member]?.description).toContain("`locuszoom`");
+        for (const member of ["x", "group"]) expect(quickPath[member]?.description).toContain("`upset`");
+        for (const member of ["x", "y", "value", "group"]) expect(quickPath[member]?.description).toContain("`sankey`");
+        expect(ChartBlockSchema.shape.track.description).toContain("`locuszoom`");
+        expect(ChartBlockSchema.shape.trees.description).toContain("`heatmap`");
+        for (const preset of ["upset", "sankey", "locuszoom"]) {
+            expect(ChartBlockSchema.shape.chartType.description).toContain(`\`${preset}\``);
+        }
+    });
+});

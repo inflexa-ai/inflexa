@@ -11,11 +11,12 @@ import { err, ok, type Result } from "neverthrow";
 
 import { channelColumn, channelTransform, type ChartChannel, type ChartEncoding, type ChartType } from "../../contracts/report-blocks.js";
 import type { ChartRow, EchartOption } from "../chart.js";
-import { CHART_INK } from "../design.js";
+import { SIZED_SERIES_MEMBER, type SizedSeries } from "../chart-renderers.js";
+import { CHART_EXPORT_SIZES, CHART_INK } from "../design.js";
 import { formatNumberCell } from "../number-format.js";
 import type { RenderProblem } from "../types.js";
 import { chartProblem, toNumber, transformColumn } from "./common.js";
-import type { LeaderName, NamedPoint } from "./label-room.js";
+import { EXPORT_PLOT_FRAMES, PAGE_PLOT_FRAME, type LeaderName, type NamedPoint, type NameFrame } from "./label-room.js";
 
 /**
  * The symbol sizes in pixels of a dense figure: a signal point, and a point that states no finding.
@@ -83,6 +84,9 @@ const LEADER_LINE_WIDTH_PX = 0.5;
  * The derivation places each name, because the chart runtime moves no label that sits on its point. The series
  * follows the points in the series list and keeps its rows inline, thus the points still read the shared
  * payload, and the names draw over them.
+ *
+ * The page frame reads a window 1280 pixels wide. On a narrower window the plot is smaller than its frame and the
+ * text keeps its size, thus the runtime also hides a name that overlaps another.
  */
 export function pointNameSeries(names: readonly NamedPoint[], placed: readonly (LeaderName | undefined)[]): EchartOption[] {
     const items: EchartOption[] = [];
@@ -102,6 +106,7 @@ export function pointNameSeries(names: readonly NamedPoint[], placed: readonly (
             symbolSize: 0,
             tooltip: { show: false },
             label: { show: true, distance: 0, color: CHART_INK, formatter: "{b}" },
+            labelLayout: { hideOverlap: true },
             data: items,
             markLine: {
                 silent: true,
@@ -112,6 +117,26 @@ export function pointNameSeries(names: readonly NamedPoint[], placed: readonly (
             },
         },
     ];
+}
+
+/**
+ * The series of the text that a figure places itself, for the page and for each export.
+ *
+ * `build` places the text in one frame and gives the series that carry it. The page takes the series of the page
+ * frame, and each export takes the series of the frame of its size, under its width in the member that
+ * `exportOption` reads. `names` are the names of the series that `build` can give, thus an export drops each page
+ * series of those names, and a size where no text finds a place draws none.
+ */
+export function sizedSeries(
+    names: readonly string[],
+    build: (frame: NameFrame) => EchartOption[],
+): { readonly page: EchartOption[]; readonly member: EchartOption } {
+    const widths: Record<string, EchartOption[]> = {};
+    for (const [kind, size] of Object.entries(CHART_EXPORT_SIZES)) {
+        widths[String(size.widthPx)] = build(EXPORT_PLOT_FRAMES[kind as keyof typeof CHART_EXPORT_SIZES]);
+    }
+    const sized: SizedSeries = { names, widths };
+    return { page: build(PAGE_PLOT_FRAME), member: { [SIZED_SERIES_MEMBER]: sized } };
 }
 
 /** The channel of the quick path that a dense figure demands. An absent channel refuses. */

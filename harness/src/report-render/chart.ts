@@ -104,10 +104,11 @@ import {
     type ModuleOnlyType,
     type FigureRegistry,
     type FigureTrack,
+    type FigureTree,
 } from "./figures/index.js";
 import { SHAPED_SCATTER_FIGURE } from "./figures/pca.js";
 import { formatNumberCell, selectNumberKind } from "./number-format.js";
-import type { RenderProblem, RenderStatistic, RenderTrack } from "./types.js";
+import type { RenderProblem, RenderStatistic, RenderTrack, RenderTrees } from "./types.js";
 
 export { transformColumn };
 
@@ -277,11 +278,13 @@ export function deriveChartOption(
 
 /**
  * The resolved parts of a chart beside the rows of its binding: the value of each statistic, in block order,
- * and the rows of the track. A block that declares neither takes no input.
+ * the rows of the track, and the rows of the tree of each axis. A block that declares none of them takes no
+ * input.
  */
 export interface ChartInputs {
     readonly statistics?: readonly RenderStatistic[];
     readonly track?: RenderTrack;
+    readonly trees?: RenderTrees;
 }
 
 /** The options of the chart derivation: the figure modules that the dispatch asks first. */
@@ -539,11 +542,11 @@ function deriveRaw(
     }
     const meanings = block.binding.columnMeanings;
     if (block.composition !== undefined) {
-        const unread = block.statistics !== undefined ? "statistics" : block.track !== undefined ? "track" : undefined;
+        const unread = (["statistics", "track", "trees"] as const).find((member) => declaresMember(block, member));
         if (unread !== undefined) {
             // A composition draws the series of one grid over one table, thus it places no statistic and it
             // draws no second table.
-            return err(problem(block.id, `A composition reads no ${unread === "statistics" ? "statistics" : "track"}. ${readersSentence(unread)}`));
+            return err(problem(block.id, `A composition reads no ${unread}. ${readersSentence(unread)}`));
         }
         return deriveComposition(block.id, block.composition, rows, columns, labels, { collector, focus: block.focus, meanings });
     }
@@ -602,7 +605,7 @@ function deriveRaw(
 }
 
 /** The members that the canonical figures add. A chart type with no figure module reads none of them. */
-const FIGURE_ONLY_MEMBERS = ["shape", "p", "censor", "risk", "hit", "metric", "tracks", "statistics", "track"] as const;
+const FIGURE_ONLY_MEMBERS = ["shape", "p", "censor", "risk", "hit", "metric", "tracks", "statistics", "track", "trees"] as const;
 
 /** One member that the canonical figures add. */
 type FigureOnlyMember = (typeof FIGURE_ONLY_MEMBERS)[number];
@@ -612,13 +615,15 @@ function unreadFigureMember(block: ChartBlock): FigureOnlyMember | undefined {
     return FIGURE_ONLY_MEMBERS.find((member) => declaresMember(block, member));
 }
 
-/** True when the block declares one member: a channel of its encoding, the statistics, the track, or the focus. */
+/** True when the block declares one member: a channel of its encoding, the statistics, the track, the trees, or the focus. */
 function declaresMember(block: ChartBlock, member: FigureMember): boolean {
     switch (member) {
         case "statistics":
             return block.statistics !== undefined;
         case "track":
             return block.track !== undefined;
+        case "trees":
+            return block.trees !== undefined;
         case "focus":
             return block.focus !== undefined;
         default:
@@ -632,7 +637,7 @@ function declaredMembers(block: ChartBlock): FigureMember[] {
     for (const key of Object.keys(block.encoding ?? {}) as Array<keyof ChartEncoding>) {
         if (block.encoding?.[key] !== undefined) members.push(key);
     }
-    for (const member of ["statistics", "track", "focus"] as const) {
+    for (const member of ["statistics", "track", "trees", "focus"] as const) {
         if (declaresMember(block, member)) members.push(member);
     }
     return members;
@@ -647,6 +652,8 @@ function readersSentence(member: FigureOnlyMember): string {
             return `The statistics are legal on the ${list} charts.`;
         case "track":
             return `A track is legal on the ${list} charts.`;
+        case "trees":
+            return `The trees are legal on the ${list} charts.`;
         default:
             return `The "${member}" channel is legal on the ${list} charts.`;
     }
@@ -662,6 +669,8 @@ function memberFault(chartType: ChartType, member: FigureMember): string {
             return `The ${chartType} chart prints no statistics. ${readersSentence(member)}`;
         case "track":
             return `The ${chartType} chart draws no track. ${readersSentence(member)}`;
+        case "trees":
+            return `The ${chartType} chart draws no tree. ${readersSentence(member)}`;
         case "focus":
             return `The ${chartType} chart takes no focus.`;
         case "shape":
@@ -702,6 +711,8 @@ function deriveFigure(
     if (statistics.isErr()) return err(statistics.error);
     const track = figureTrack(block, inputs.track);
     if (track.isErr()) return err(track.error);
+    const trees = figureTrees(block, inputs.trees);
+    if (trees.isErr()) return err(trees.error);
     const labels = block.binding.columnLabels;
     const meanings = block.binding.columnMeanings;
     const context: FigureContext = {
@@ -711,6 +722,7 @@ function deriveFigure(
         ...(columns !== undefined ? { columns } : {}),
         statistics: statistics.value,
         ...(track.value !== undefined ? { track: track.value } : {}),
+        ...(trees.value !== undefined ? { trees: trees.value } : {}),
         textPx: CHART_PAGE_TEXT_PX,
         compose: (composition, { keepsRowsInline, ...extras } = {}) => {
             // A composition with no collector describes no page build, thus the chart keeps its rows inline.
@@ -770,6 +782,34 @@ function figureTrack(block: ChartBlock, value: RenderTrack | undefined): Result<
         labels: declared.binding.columnLabels,
         meanings: declared.binding.columnMeanings,
     });
+}
+
+/**
+ * The resolved tree of each axis of one block, or `undefined` for a block that declares none. An entry that
+ * carries no tree for a declared axis refuses.
+ */
+function figureTrees(block: ChartBlock, values: RenderTrees | undefined): Result<{ x?: FigureTree; y?: FigureTree } | undefined, RenderProblem> {
+    const declared = block.trees;
+    if (declared === undefined) return ok(undefined);
+    const trees: { x?: FigureTree; y?: FigureTree } = {};
+    for (const axis of ["x", "y"] as const) {
+        const tree = declared[axis];
+        if (tree === undefined) continue;
+        const value = values?.[axis];
+        if (value === undefined) {
+            return err(missingPart(block.id, `The chart declares a tree of ${axis}, and its value entry carries no tree of ${axis}.`));
+        }
+        trees[axis] = {
+            rows: value.rows,
+            ...(value.columns !== undefined ? { columns: value.columns } : {}),
+            parent: tree.parent,
+            child: tree.child,
+            height: tree.height,
+            labels: tree.binding.columnLabels,
+            meanings: tree.binding.columnMeanings,
+        };
+    }
+    return ok(trees);
 }
 
 /** The two stacked forms. Each one draws the facet panels of its own rule. */

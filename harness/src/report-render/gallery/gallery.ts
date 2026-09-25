@@ -8,7 +8,7 @@
  * the SHA-256 of each table. No build and no test runs the scripts.
  *
  * Each block uses the report grammar alone, as the Report Builder agent writes it: a binding with its pinned
- * hash, the column declarations, the quick path of one chart type, and each statistic and track as a
+ * hash, the column declarations, the quick path of one chart type, and each statistic, track, and tree as a
  * reference. The loader reads each pinned table, parses it as the production resolver parses a CSV (each cell
  * is text), and runs the resolution pass of the preview over an in-memory snapshot. Thus a hash that no
  * longer matches its file, a column that a table does not hold, and a statistic cell that does not resolve
@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ArtifactTableReference, ArtifactValueReference, ColumnMeaning } from "../../contracts/report-reference.js";
-import type { ChartBlock, ReportDocument, TextBlock } from "../../contracts/report-blocks.js";
+import type { ChartBlock, ChartTree, ReportDocument, TextBlock } from "../../contracts/report-blocks.js";
 import { describeFsError, tryFs } from "../../lib/fs-result.js";
 import { computeSha256 } from "../../lib/fs-helpers.js";
 import { referencedPaths, walkBlocks } from "../../report-model/block-walk.js";
@@ -64,15 +64,22 @@ const PINS = {
     "data/bulk_rnaseq/pca_samples.csv": "sha256:81c8dae8e3a1c03fb36d008129bdda233656751fcc44bf4ecd6c55e3560ae3db",
     "data/bulk_rnaseq/sample_distances.csv": "sha256:32f705e994d3763d86a1191a9f3ff4a55f306d9c267d57f30cf22cc74c870ae9",
     "data/bulk_rnaseq/top_gene_counts.csv": "sha256:b7bdb5252546f8d02eb9182476868944ac1a50a949133b1ea01b31f0dd7db8d6",
+    "data/bulk_rnaseq/tree_samples.csv": "sha256:597d66e8d246debc159d975413659d35eb4eaf18e900aefe17ab9df2436bdf90",
+    "data/bulk_rnaseq/tree_top_genes_cols.csv": "sha256:5557f29433ec595b8dd0fb3c7a7c705845407b155ff279a7bb3f58621e3644c5",
+    "data/bulk_rnaseq/tree_top_genes_rows.csv": "sha256:00442be06720a0c2053ec958c3a3201db17aed6237bd1b756e7e6de4c5fc9898",
     "data/cancer_mut/domains_DNMT3A.csv": "sha256:4c4e5c135fe62246ffc64a5fbb34ea6ef588605a2d0c2f777fde08ad28f1f460",
     "data/cancer_mut/domains_FLT3.csv": "sha256:7b95261a8f15a068dea096cd6ad08acc5bbd42f7f23450d581bca68e4aec4dd6",
     "data/cancer_mut/lollipop_DNMT3A.csv": "sha256:2aba5d19d15edd53aeec4debbf7c26f820f6736a75df829f17608e12f6aa84db",
     "data/cancer_mut/lollipop_FLT3.csv": "sha256:3f307ba4d663e79a23b35471562adfbf5ba24e3ef970bbf45da2d1d217bd0272",
     "data/cancer_mut/mutation_burden.csv": "sha256:893f4feab876331a6d23ef9ac0a4fcdffc96b9db37f6fbcf50a5cee0e5c37502",
     "data/cancer_mut/oncoprint.csv": "sha256:c733319c357281e3bf0e5bee1809855dced7e9fe971d0628836e30bc578f7cd5",
+    "data/cancer_mut/sankey_flows.csv": "sha256:5e687a61fe333c19914cec9d268e6a41e2967d47135baea80d7c2a8d34c20412",
+    "data/cancer_mut/upset_membership.csv": "sha256:71e96e7cef54a132f52db62279a4e921aad3981e4a6fcc5d56a9204ad7d2d1c4",
     "data/enrichment/gsea_results.csv": "sha256:ca842f4622c865ea4cac38bf4036b03696c130dbc9d3f8454942456d3f0d91d0",
     "data/enrichment/gsea_running_score.csv": "sha256:d4d3f1a08664bccaa74feac3061b1226ffb27efa2c5d6990fbd9d80cd7428eda",
     "data/enrichment/ora_results.csv": "sha256:309d8110fd02d150bc4ddb4de1e8fa9faa5a66c910d8df4c07757de4e4e09f17",
+    "data/gwas/locus_fto.csv": "sha256:07a7f3bfea733ca0cd342275d8dd84f31881d4841f622f60b905072f99f74859",
+    "data/gwas/locus_fto_genes.csv": "sha256:a63774a403e5154c373d637cb86b1909c2656a83a3ff4c9501e75a3e49f788f7",
     "data/gwas/manhattan.csv": "sha256:bd0cb9d64d071a87d4e0adc18e3940fac57c4553a69d4a5200f98e470d329c48",
     "data/gwas/qq.csv": "sha256:1054cc76490d3b061b5ce80106542c57f4bc7cddcb4ee2bc20d951ce5f9d464b",
     "data/gwas/qq_summary.csv": "sha256:b34865f87de5946965b7bcc9bc392d7b8a7690199e3b489b741547ffc6fd2628",
@@ -110,6 +117,11 @@ function cell(path: PinnedPath, column: string, where: { column: string; value: 
     return { kind: "artifact-value", path, hash: PINS[path], locator };
 }
 
+/** The tree of one heatmap axis: an edge table of the clustering, with the parent, the child, and the merge height of each edge. */
+function tree(path: PinnedPath): ChartTree {
+    return { binding: table(path), parent: "parent", child: "child", height: "height" };
+}
+
 /** One text block that tells the reader what the next chart shows. */
 function note(id: string, prose: string): TextBlock {
     return { kind: "text", id, content: { prose } };
@@ -126,6 +138,11 @@ const LUNG = "Data: NCCTG lung cancer data (Loprinzi et al., Journal of Clinical
 const BMI =
     "Data: body mass index GWAS of the GIANT consortium (Locke et al., Nature, 2015), GWAS Catalog GCST002783, harmonised summary statistics under the EBI Terms of Use.";
 const LAML = "Data: TCGA acute myeloid leukemia somatic mutations (Ley et al., NEJM, 2013), from the maftools example MAF, MIT.";
+const LAML_CLINICAL =
+    "Data: TCGA acute myeloid leukemia somatic mutations and clinical annotation (Ley et al., NEJM, 2013), from the maftools example MAF and its annotation, MIT.";
+const FTO_LOCUS =
+    "Data: body mass index GWAS of the GIANT consortium (Locke et al., Nature, 2015), GWAS Catalog GCST002783, EBI Terms of Use. " +
+    "r² with rs1421085 from the 1000 Genomes EUR haplotypes (open reuse), recombination rate from the HapMap GRCh38 map of Beagle (GPL), genes from NCBI RefSeq through the UCSC Genome Browser (public domain).";
 const UNIPROT = "Protein domains: UniProtKB (UniProt Consortium, Nucleic Acids Research, 2025), CC BY 4.0.";
 
 /** The declarations of the differential expression table, shared by the volcano and the MA plot. */
@@ -252,7 +269,7 @@ const BULK_SECTION: ReportDocument["sections"][number] = {
         },
         note(
             "bulk-distance-note",
-            "The sample-distance heatmap shows the Euclidean distance between each pair of samples, in the order of a hierarchical clustering. The treated samples group together.",
+            "The sample-distance heatmap shows the Euclidean distance between each pair of samples. One dendrogram of a hierarchical clustering orders both axes, and the treated samples group together.",
         ),
         {
             kind: "chart",
@@ -263,12 +280,13 @@ const BULK_SECTION: ReportDocument["sections"][number] = {
                 meanings: { sample_a: "category", sample_b: "category" },
             }),
             chartType: "heatmap",
-            encoding: { x: { column: "sample_b", orderBy: "col_order" }, y: { column: "sample_a", orderBy: "row_order" }, value: "distance" },
+            encoding: { x: "sample_b", y: "sample_a", value: "distance" },
+            trees: { x: tree("data/bulk_rnaseq/tree_samples.csv"), y: tree("data/bulk_rnaseq/tree_samples.csv") },
             caption: PASILLA,
         },
         note(
             "bulk-heatmap-note",
-            "The heatmap shows the row z-score of the most significant genes in each sample, in the order of a hierarchical clustering. The strips over the matrix name the condition and the library type of each sample.",
+            "The heatmap shows the row z-score of the most significant genes in each sample. The dendrograms of a hierarchical clustering order the genes and the samples, and the strips over the matrix name the condition and the library type of each sample.",
         ),
         {
             kind: "chart",
@@ -279,12 +297,8 @@ const BULK_SECTION: ReportDocument["sections"][number] = {
                 meanings: { gene_symbol: "category", sample: "category", condition: "category", type: "category" },
             }),
             chartType: "heatmap",
-            encoding: {
-                x: { column: "sample", orderBy: "sample_order" },
-                y: { column: "gene_symbol", orderBy: "gene_order" },
-                value: "zscore",
-                tracks: ["condition", "type"],
-            },
+            encoding: { x: "sample", y: "gene_symbol", value: "zscore", tracks: ["condition", "type"] },
+            trees: { x: tree("data/bulk_rnaseq/tree_top_genes_cols.csv"), y: tree("data/bulk_rnaseq/tree_top_genes_rows.csv") },
             caption: PASILLA,
         },
         note(
@@ -663,6 +677,34 @@ const GWAS_SECTION: ReportDocument["sections"][number] = {
             statistics: [{ label: "λ", value: cell("data/gwas/qq_summary.csv", "lambda_gc", 0) }],
             caption: BMI,
         },
+        note(
+            "gwas-locuszoom-note",
+            "The regional association plot zooms into the FTO locus, the strongest signal of the study. The color of each variant gives its linkage disequilibrium with the lead variant, the blue line gives the recombination rate, and the genes of the region sit under the plot.",
+        ),
+        {
+            kind: "chart",
+            id: "gwas-locuszoom",
+            title: "Association at the FTO locus",
+            binding: table("data/gwas/locus_fto.csv", {
+                labels: {
+                    position: "Position on chr16 (bp)",
+                    pvalue: "p-value",
+                    r2: "r² with rs1421085",
+                    recomb_rate: "Recombination rate (cM/Mb)",
+                    variant: "Variant",
+                },
+                meanings: { pvalue: "p-value", variant: "identifier", position: "identifier" },
+            }),
+            chartType: "locuszoom",
+            encoding: { x: "position", y: "pvalue", color: "r2", label: "variant", metric: "recomb_rate" },
+            track: {
+                binding: table("data/gwas/locus_fto_genes.csv", { labels: { gene: "Gene" }, meanings: { start: "identifier", end: "identifier" } }),
+                start: "start",
+                end: "end",
+                label: "gene",
+            },
+            caption: FTO_LOCUS,
+        },
     ],
 };
 
@@ -673,7 +715,7 @@ const MUTATION_SECTION: ReportDocument["sections"][number] = {
     blocks: [
         note(
             "mutations-intro",
-            "The TCGA acute myeloid leukemia cohort gives the somatic mutations of each tumor. The charts show the most mutated genes, the mutation burden, and the hotspots of two genes.",
+            "The TCGA acute myeloid leukemia cohort gives the somatic mutations of each tumor. The charts show the most mutated genes, their co-mutation, the path of the patients from the subtype to the outcome, the mutation burden, and the hotspots of two genes.",
         ),
         note(
             "mutations-oncoprint-note",
@@ -690,6 +732,38 @@ const MUTATION_SECTION: ReportDocument["sections"][number] = {
             chartType: "oncoprint",
             encoding: { x: { column: "sample", orderBy: "sample_rank" }, y: { column: "gene", orderBy: "gene_rank" }, value: "variant_classification" },
             caption: LAML,
+        },
+        note(
+            "mutations-upset-note",
+            "The UpSet plot counts the tumors of each exact combination of the most mutated genes. The bars over the matrix give the size of each combination, and the bars at the left give the tumors of each gene.",
+        ),
+        {
+            kind: "chart",
+            id: "mutations-upset",
+            title: "Co-mutation of the most mutated genes",
+            binding: table("data/cancer_mut/upset_membership.csv", {
+                labels: { sample: "Tumor", gene: "Gene" },
+                meanings: { sample: "identifier", gene: "category" },
+            }),
+            chartType: "upset",
+            encoding: { x: "sample", group: "gene" },
+            caption: LAML,
+        },
+        note(
+            "mutations-sankey-note",
+            "The Sankey diagram follows each patient from the FAB subtype of the leukemia to the FLT3 status of the tumor, and then to the vital status at the last follow-up.",
+        ),
+        {
+            kind: "chart",
+            id: "mutations-sankey",
+            title: "Patients by FAB subtype, FLT3 status, and vital status",
+            binding: table("data/cancer_mut/sankey_flows.csv", {
+                labels: { source: "From", target: "To", value: "Patients" },
+                meanings: { source: "category", target: "category", value: "count" },
+            }),
+            chartType: "sankey",
+            encoding: { x: "source", y: "target", value: "value" },
+            caption: LAML_CLINICAL,
         },
         note("mutations-burden-note", "The histogram shows the count of somatic mutations in each tumor. Most tumors carry few mutations."),
         {

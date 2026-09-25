@@ -42,19 +42,28 @@ DOWNLOADS=(
     "cancer_mut/tcga_laml.maf.gz d102b071a052265b6f8ad7947bad1d58d3e3036fd17d6b274f7ea09a376cd6a0 https://raw.githubusercontent.com/PoisonAlien/maftools/0d61807f9a9863adb9335cb45f4c771b1f4c69e3/inst/extdata/tcga_laml.maf.gz"
     "cancer_mut/uniprot_Q9Y6K1_v213.txt 349a417e948db4893fd1593ec41f7fc3361fd2519147f5e77891c57bc4fe27ec https://rest.uniprot.org/unisave/Q9Y6K1?format=txt&versions=213"
     "cancer_mut/uniprot_P36888_v226.txt e35ca4ff20352705ed40f7549752b460b2ca39d830904135b9bae70be7eb0a28 https://rest.uniprot.org/unisave/P36888?format=txt&versions=226"
+    "cancer_mut/tcga_laml_annot.tsv 7033030d52868e9a0f35ffd78f45a9d7a126c2edef90cf9e74e4f5d78990a710 https://raw.githubusercontent.com/PoisonAlien/maftools/370258173301700aae282c70d725e5c59c02cdfe/inst/extdata/tcga_laml_annot.tsv"
+    "gwas/integrated_call_samples_v3.20130502.ALL.panel b4023dc6ee2d62ee89c8d4d347db4d348e65518d66d346574cdae7a4bbd76858 http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20130502.ALL.panel"
+    "gwas/genetic_map/plink.GRCh38.map.zip 521549889b9ce0236142a4fb7db45d3f00035ec645e01465490d55f5b8ef26d6 https://bochet.gcc.biostat.washington.edu/beagle/genetic_maps/plink.GRCh38.map.zip"
 )
 
 # The derivation scripts, in order: the enrichment reads the output of the bulk
-# RNA-seq script.
+# RNA-seq script, trees_bulk_rnaseq.py re-derives the clustering behind its
+# heatmap/sample-distance order columns, and upset/sankey/locuszoom each read
+# the raw cancer_mut or gwas inputs directly.
 STEPS=(
     bulk_rnaseq_pasilla.py
+    trees_bulk_rnaseq.py
     enrichment_pasilla.py
     pbmc3k.py
     kang_composition.py
     survival_lung.R
     survival_roc.R
     gwas_bmi.py
+    locuszoom_gwas.py
     tcga_laml.py
+    upset_cancer_mut.py
+    sankey_cancer_mut.py
 )
 
 fail() {
@@ -70,6 +79,7 @@ need curl "Install curl."
 need tar "Install tar."
 need uv "Install uv from https://docs.astral.sh/uv/."
 need Rscript "Install R from https://www.r-project.org/."
+need bcftools "Install bcftools (htslib) from https://www.htslib.org/, or with Homebrew: brew install bcftools."
 if command -v sha256sum >/dev/null 2>&1; then
     sha256() { sha256sum "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then

@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock } from "../contracts/report-blocks.js";
 import { deriveChartRender, type ChartRow, type EchartOption } from "./chart.js";
 import { chartSvgAssets, renderChartSvg } from "./chart-export.js";
-import { CHART_RENDERERS_SOURCE, exportOption } from "./chart-renderers.js";
+import { CHART_RENDERERS_SOURCE, exportOption, SIZED_SERIES_MEMBER } from "./chart-renderers.js";
 import {
     CHART_EXPORT_SIZES,
     CHART_INK,
@@ -32,6 +32,20 @@ const FACETED_LEGEND: EchartOption = {
     ],
     legend: { bottom: 0 },
     series: KANG_TYPES.flatMap((name) => [0, 1].map((index) => ({ type: "bar", name, xAxisIndex: index, yAxisIndex: index, data: [1, 2] }))),
+};
+
+/** A scatter whose point names carry a series for two export widths beside the page series. */
+const SIZED_NAMES: EchartOption = {
+    xAxis: { type: "value" },
+    yAxis: { type: "value" },
+    series: [
+        { type: "scatter", name: "Points", data: [[1, 2]] },
+        { type: "scatter", name: "Point names", symbolSize: 0, data: [{ name: "a", value: [1.5, 2] }] },
+    ],
+    [SIZED_SERIES_MEMBER]: {
+        names: ["Point names"],
+        widths: { "336": [{ type: "scatter", name: "Point names", symbolSize: 0, data: [{ name: "a", value: [1, 3] }] }], "692": [] },
+    },
 };
 
 /**
@@ -285,7 +299,22 @@ describe("the export option", () => {
             series: [],
         },
         FACETED_LEGEND,
+        SIZED_NAMES,
     ];
+
+    it("takes the series of the export width in place of the page series of the sized names", () => {
+        const names = (option: EchartOption): unknown[] => (option.series as EchartOption[]).map((series) => [series.name, series.data]);
+        const single = exportOption(SIZED_NAMES, CHART_PRINT_TEXT_PX, 336, 253);
+        expect(names(single)).toEqual([
+            ["Points", [[1, 2]]],
+            ["Point names", [{ name: "a", value: [1, 3] }]],
+        ]);
+        expect(single[SIZED_SERIES_MEMBER]).toBeUndefined();
+        // No name finds a place at the double column, thus the export drops the page series of the names.
+        expect(names(exportOption(SIZED_NAMES, CHART_PRINT_TEXT_PX, 692, 348))).toEqual([["Points", [[1, 2]]]]);
+        // The member holds no series of the slide width, thus the slide keeps the page series.
+        expect(names(exportOption(SIZED_NAMES, CHART_SLIDE_TEXT_PX, 1920, 1080))).toEqual(names(SIZED_NAMES));
+    });
 
     it("scales the text of each child of a graphic group, thus a size legend prints at the export text size", () => {
         const print = exportOption(VECTOR[8], CHART_PRINT_TEXT_PX, 336, 253);

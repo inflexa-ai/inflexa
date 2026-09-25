@@ -22,6 +22,12 @@ export interface RenderTrack {
     columns?: string[];
 }
 
+/** The trees of the category axes of a chart: the rows of the tree binding of each axis, with its optional column order. */
+export interface RenderTrees {
+    x?: RenderTrack;
+    y?: RenderTrack;
+}
+
 /**
  * The value that one block resolves to, as a closed union. A `scalar` gives one number or one string. A
  * `table` gives the rows and the optional column order. A `figure` gives a ready source string. A
@@ -30,8 +36,8 @@ export interface RenderTrack {
  * A `table` carries `total` when a row bound cut the rows of the artifact. The renderer states the shown
  * count against it. A table with no bound carries none, and the row count answers for it.
  *
- * The `table` of a chart also carries the value of each statistic, in block order, and the track, where the
- * block declares them. A table block declares neither.
+ * The `table` of a chart also carries the value of each statistic, in block order, the track, and the tree of
+ * each axis, where the block declares them. A table block declares none of them.
  */
 export type RenderValue =
     | { type: "scalar"; value: string | number }
@@ -42,6 +48,7 @@ export type RenderValue =
           total?: number;
           statistics?: RenderStatistic[];
           track?: RenderTrack;
+          trees?: RenderTrees;
       }
     | { type: "figure"; src: string }
     | { type: "citation"; id: string };
