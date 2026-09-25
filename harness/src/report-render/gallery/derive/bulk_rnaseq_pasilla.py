@@ -6,8 +6,12 @@
 #   "numpy",
 #   "scipy",
 # ]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """Pasilla (Brooks et al. 2011) bulk RNA-seq DE analysis with pydeseq2.
+
+Usage: uv run bulk_rnaseq_pasilla.py <gallery-data work dir>
 
 Source: Bioconductor `pasilla` experiment-data package, extracted at
 raw/bulk_rnaseq/pasilla/inst/extdata/. Design: ~condition, contrast
@@ -15,8 +19,8 @@ treated vs untreated (Drosophila melanogaster Pasilla RNAi knock-down).
 
 Gene symbols come from FlyBase's own bulk correspondence table
 (raw/bulk_rnaseq/fbgn_annotation_ID_fb_2026_03.tsv.gz, release FB2026_03),
-downloaded once from https://s3ftp.flybase.org/releases/FB2026_03/
-precomputed_files/genes/fbgn_annotation_ID_fb_2026_03.tsv.gz. Ensembl
+that scripts/gallery-data.sh downloads from https://s3ftp.flybase.org/releases/
+FB2026_03/precomputed_files/genes/fbgn_annotation_ID_fb_2026_03.tsv.gz. Ensembl
 BioMart (www.ensembl.org/biomart, which currently 308-redirects to
 jun2026.archive.ensembl.org) and the Ensembl REST /lookup/id bulk
 endpoint were tried first, as the task suggests, but both returned
@@ -34,6 +38,8 @@ A seed is still set for numpy for defense in depth.
 """
 
 import gzip
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -45,12 +51,11 @@ from pydeseq2.ds import DeseqStats
 
 np.random.seed(0)
 
-RAW_DIR = "gallery-data/raw/bulk_rnaseq/pasilla/inst/extdata"
-FLYBASE_MAP_PATH = (
-    "gallery-data/raw/bulk_rnaseq/"
-    "fbgn_annotation_ID_fb_2026_03.tsv.gz"
-)
-OUT_DIR = "gallery-data/derived/bulk_rnaseq"
+WORK_DIR = Path(sys.argv[1])
+RAW_DIR = WORK_DIR / "raw/bulk_rnaseq/pasilla/inst/extdata"
+FLYBASE_MAP_PATH = WORK_DIR / "raw/bulk_rnaseq/fbgn_annotation_ID_fb_2026_03.tsv.gz"
+OUT_DIR = WORK_DIR / "derived/bulk_rnaseq"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_counts_and_metadata():

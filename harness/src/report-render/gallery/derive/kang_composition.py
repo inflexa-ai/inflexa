@@ -1,5 +1,7 @@
 # /// script
 # dependencies = ["pertpy", "scanpy", "anndata", "pandas", "numpy", "h5py", "filelock", "statsmodels<0.15"]
+# [tool.uv]
+# exclude-newer = "2026-09-25T00:00:00Z"
 # ///
 """
 Build derived/singlecell/composition.csv and
@@ -9,19 +11,22 @@ samples, each split into an unstimulated control and an IFN-beta-stimulated
 half (GSE96583). pertpy serves a pre-processed AnnData (Seurat SCTransform
 pipeline outputs plus a PCA/UMAP embedding) from a scverse-hosted S3 bucket.
 
-sc.settings.datasetdir is pointed at raw/singlecell/ so a fresh run
-downloads (or re-reads, if already present) kang_2018.h5ad in place, never
-outside this scratch directory.
+Usage: uv run kang_composition.py <gallery-data work dir>
+
+sc.settings.datasetdir is pointed at raw/singlecell/, where
+scripts/gallery-data.sh downloads kang_2018.h5ad, thus pertpy reads it in
+place and downloads nothing.
 """
 
 import pathlib
+import sys
 
 import numpy as np
 import pandas as pd
 import pertpy as pt
 import scanpy as sc
 
-BASE = pathlib.Path("gallery-data")
+BASE = pathlib.Path(sys.argv[1])
 RAW_DIR = BASE / "raw" / "singlecell"
 DERIVED_DIR = BASE / "derived" / "singlecell"
 RAW_DIR.mkdir(parents=True, exist_ok=True)

@@ -179,6 +179,8 @@ A loader MUST read each table that the document binds, and it MUST parse each ce
 
 The package script `design:gallery` MUST render the gallery into a stable directory under the system temp directory. The script MUST stage each page asset and each data asset beside the page, and it MUST print the path of the page. The build MUST NOT emit the gallery.
 
+The repository does not hold the gallery tables. When the tables are absent, `design:gallery` MUST print the command `bun run gallery:data` and exit with a status that is not zero. Each test that reads the tables MUST skip, and the name of its group MUST give the same command. Each test that reads only the manifest or the document MUST run.
+
 A test MUST hold these gates:
 
 - The gallery holds one chart of each chart type that the contract declares and that the renderer draws.
@@ -206,8 +208,14 @@ A test MUST hold these gates:
 - **WHEN** a person runs `design:gallery`
 - **THEN** the script writes the gallery page with its assets, and it prints the path
 
+#### Scenario: The gallery tables are absent
+- **WHEN** a person runs the gallery test or `design:gallery` in a checkout with no gallery tables
+- **THEN** each test that reads the tables skips, and the name of its group gives `bun run gallery:data`
+- **AND** the tests of the manifest and of the document run
+- **AND** `design:gallery` prints `bun run gallery:data` and exits with a status that is not zero
+
 ### Requirement: The gallery states the source and the license of each table
-The gallery tables MUST sit under `gallery/data/<field>/`, and their total MUST stay under 4 MB. A dense table MUST thin by the rule of its field, with a fixed seed where the rule samples:
+The gallery tables MUST sit under `gallery/data/<field>/`, and their total MUST stay under 4 MB. The repository MUST NOT hold the tables, and an ignore rule of the harness MUST keep them out of Git. A dense table MUST thin by the rule of its field, with a fixed seed where the rule samples:
 
 - A single-cell embedding keeps a sample of equal size from each condition.
 - A Manhattan table keeps each variant with a p under 0.001, and a sample of the other variants.
@@ -222,13 +230,36 @@ The manifest MUST give these facts for each table:
 - the license: the name, the URL, and a quote of the license text.
 - the source URLs.
 - the derivation and the thinning rule.
-- the count of rows and the count of bytes.
+- the count of rows, the count of bytes, and the SHA-256 of the bytes.
 
-The derivation scripts MUST sit under `gallery/derive/` as reference material. No build and no test runs them.
+The derivation scripts MUST sit under `gallery/derive/`. No build and no test runs them.
+
+The package script `gallery:data` MUST rebuild the tables from the public sources. The script MUST do these steps in this sequence:
+
+1. Download each raw input into a work directory. Stop each download over 500 MB.
+2. Compare the SHA-256 of each download with the value that the script pins. A difference MUST fail the run.
+3. Run each derivation script, and then thin the derived tables.
+4. Compare the rows, the bytes, the SHA-256, and the thinning rule of each table with its manifest entry. A difference MUST fail the run.
+5. Replace the data directory with the tables.
+
+Each source URL of the script MUST name a fixed version of its source, thus a second run gets the same bytes. A second run MUST NOT download a raw file again when its SHA-256 matches. An environment variable MUST set the work directory, and another MUST set the data directory. Each derivation script MUST give the same bytes on each run, thus it MUST set a fixed seed where it samples.
 
 #### Scenario: The manifest agrees with the files
 - **WHEN** the test reads the manifest and each table
-- **THEN** each table has one entry, and the rows and the bytes of each entry match the file
+- **THEN** each table has one entry, and the rows, the bytes, and the SHA-256 of each entry match the file
+- **AND** the SHA-256 of each entry matches the pin of the document
+
+#### Scenario: The script rebuilds the tables
+- **WHEN** a person runs `gallery:data` in a checkout with no gallery tables
+- **THEN** the script writes each table of the manifest, and each table matches its manifest entry byte for byte
+
+#### Scenario: A rebuilt table does not match the manifest
+- **WHEN** `gallery:data` makes a table whose SHA-256 is not the SHA-256 of its manifest entry
+- **THEN** the script names the table and fails, and the data directory does not change
+
+#### Scenario: A source changes
+- **WHEN** a download does not match the SHA-256 that the script pins
+- **THEN** the script fails before it runs a derivation script
 
 #### Scenario: The data stays under the bound
 - **WHEN** the test adds the bytes of each table

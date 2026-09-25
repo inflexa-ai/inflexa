@@ -2,9 +2,10 @@
  * The figure gallery: one report document that draws each figure preset from a table of public data, and the
  * loader that resolves its references into the render values.
  *
- * The tables sit under `data/<field>/`. `manifest.json` names the dataset, the citation, the license, the
- * source, the derivation, and the thinning of each table, and `derive/` holds the scripts that made them. The
- * scripts are reference material, and no build and no test runs them.
+ * The tables sit under `data/<field>/`, and the repository does not carry them. `bun run gallery:data`
+ * (`scripts/gallery-data.sh`) downloads the public sources, runs the scripts of `derive/`, and writes the tables.
+ * `manifest.json` names the dataset, the citation, the license, the source, the derivation, the thinning, and
+ * the SHA-256 of each table. No build and no test runs the scripts.
  *
  * Each block uses the report grammar alone, as the Report Builder agent writes it: a binding with its pinned
  * hash, the column declarations, the quick path of one chart type, and each statistic and track as a
@@ -18,6 +19,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +39,14 @@ import { bridgeValues, collectResolutions, type BridgeMismatch } from "../value-
 /** The directory of the gallery: the data tables and the manifest sit under it. */
 export const GALLERY_DIR = fileURLToPath(new URL(".", import.meta.url));
 
+/** The message for an absent data directory: the tables are not in the repository, and a script rebuilds them. */
+export const GALLERY_DATA_HINT = "The gallery tables are missing. Run `bun run gallery:data` to download the sources and rebuild them.";
+
+/** Whether the data directory of the gallery exists. The repository does not carry it. */
+export function hasGalleryData(dir: string = GALLERY_DIR): boolean {
+    return existsSync(join(dir, "data"));
+}
+
 /** The declarations of one binding: the display name and the meaning of each column that the page shows. */
 interface Declarations {
     readonly labels?: Record<string, string>;
@@ -45,7 +55,8 @@ interface Declarations {
 
 /**
  * The pinned tables of the gallery, keyed by the path under the gallery directory. The hash is the SHA-256 of
- * the bytes of the committed file, thus a regenerated table fails the load until its pin moves with it.
+ * the bytes of the table, the same value as its manifest entry, thus a changed table fails the load until its pin
+ * moves with it.
  */
 const PINS = {
     "data/bulk_rnaseq/de_results.csv": "sha256:d38557788fc083093a648572f89fafceb4aba4f34b78464b994aa7f783f22ea2",
@@ -752,8 +763,8 @@ async function readSnapshot(dir: string): Promise<Result<ReportSnapshot, Gallery
  * Load the gallery: read each pinned table, resolve each reference of the document, and bridge the resolved
  * values into the render values of `renderReportPage`.
  *
- * The pass is the resolution pass of the preview with the in-memory resolver, thus each statistic and each
- * track resolves as it resolves in a session. The document binds no figure, thus the figure policy never
+ * The pass is the resolution pass of the preview with the in-memory resolver, thus each statistic, each
+ * track, and each tree resolves as it resolves in a session. The document binds no figure, thus the figure policy never
  * runs.
  */
 export async function loadGallery(dir: string = GALLERY_DIR): Promise<Result<GalleryLoad, GalleryFault[]>> {
