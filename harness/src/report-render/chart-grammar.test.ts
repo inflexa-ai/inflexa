@@ -8,7 +8,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChartBlock, ChartComposition } from "../contracts/report-blocks.js";
 import { CHART_SOURCE_MEMBER, deriveChartOption, deriveChartRender, type ChartDataSource, type ChartRow, type EchartOption } from "./chart.js";
 import { INTERVAL_RENDERER, OUTLINE_RENDERER, VIOLIN_GRID_POINTS } from "./chart-renderers.js";
-import { CHART_INLINE_OPTION_BOUND, DIVERGING_RAMP, FOCUS_CHART_COLOR, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "./design.js";
+import { CHART_BODY_PX, CHART_INLINE_OPTION_BOUND, DIVERGING_RAMP, FACET_ROW_PX, FOCUS_CHART_COLOR, MUTED_CHART_COLOR, SEQUENTIAL_RAMP } from "./design.js";
 import { CHART_SERIES_BUILDER } from "./page.js";
 import type { RenderProblem } from "./types.js";
 
@@ -118,8 +118,10 @@ describe("the continuous color and the size", () => {
         const map = mapsOf(option)[0];
         expect(map.inRange).toEqual({ color: [...DIVERGING_RAMP] });
         expect([map.min, map.max]).toEqual([-2, 2]);
-        // The scale stands at the right edge, thus it never covers the name of the x axis.
-        expect([map.orient, map.right, map.precision]).toEqual(["vertical", 0, 1]);
+        // The scale stands at the right edge, thus it never covers the name of the x axis. It shows no drag
+        // control, and the number helper prints its two ends under the title.
+        expect([map.orient, map.right, map.calculable]).toEqual(["vertical", 0, false]);
+        expect(map.text).toEqual(["z\n2", "−2"]);
         expect(asObj(option.grid).right).toBe("18%");
     });
 
@@ -145,8 +147,8 @@ describe("the continuous color and the size", () => {
         const color = maps.find((map) => asObj(map.inRange).color !== undefined);
 
         expect(size).toEqual(expect.objectContaining({ show: false, dimension: 3, min: 12, max: 40 }));
-        // The runtime prints the ends with no decimal by default, thus the map states the decimals of 0.001.
-        expect(color).toEqual(expect.objectContaining({ dimension: 2, min: 0.001, max: 0.04, precision: 4, text: ["padj", ""] }));
+        // The number helper prints each end in the form of its column, thus a small p reads in the exponent form.
+        expect(color).toEqual(expect.objectContaining({ dimension: 2, min: 0.001, max: 0.04, calculable: false, text: ["padj\n0.04", "1 × 10⁻³"] }));
         expect(asArr(seriesOf(option)[0].data)[0]).toEqual([0.3, "Hypoxia", 0.001, 40]);
     });
 
@@ -285,7 +287,10 @@ describe("the interval", () => {
         expect(offsets).toEqual([-0.2, 0.2]);
         // The interval of a group carries the name of the group, thus the legend names each group one time.
         expect(intervals.map((entry) => entry.name)).toEqual(["low", "high"]);
-        expect(asObj(derive(quick("bar", { x: "arm", y: "mean", group: "dose", low: "lo", high: "hi" }), rows).legend).data).toEqual(["low", "high"]);
+        expect(asObj(derive(quick("bar", { x: "arm", y: "mean", group: "dose", low: "lo", high: "hi" }), rows).legend).data).toEqual([
+            { name: "low", icon: "rect" },
+            { name: "high", icon: "rect" },
+        ]);
     });
 
     it("refuses a bound on the wrong side of its value, and names the row", () => {
@@ -631,6 +636,26 @@ describe("the facet", () => {
         expect(titles).toEqual(["x", "y"]);
     });
 
+    it("prints each category label of a panel, and turns the labels that do not fit their band", () => {
+        const donors = ["patient_101", "patient_1015", "patient_1016", "patient_1039", "patient_107", "patient_1244", "patient_1256", "patient_1488"];
+        const rows: ChartRow[] = [];
+        for (const condition of ["control", "stimulated"]) for (const [index, sample] of donors.entries()) rows.push({ condition, sample, n: index + 1 });
+        const option = derive(quick("bar", { x: "sample", y: "n", facet: "condition" }), rows);
+        for (const axis of asArr(option.xAxis).map(asObj)) {
+            const label = asObj(axis.axisLabel);
+            expect(label.hideOverlap).toBeUndefined();
+            expect(label.interval).toBe(0);
+            // Two panels share 900 pixels less the bands, thus each donor takes about 52 pixels, and a name of
+            // twelve characters needs 86: the label turns 45 degrees.
+            expect(label.rotate).toBe(45);
+        }
+        const short = derive(
+            quick("bar", { x: "sample", y: "n", facet: "condition" }),
+            rows.map((row) => ({ ...row, sample: String(row.sample).slice(-3) })),
+        );
+        expect(asObj(asObj(asArr(short.xAxis)[0]).axisLabel).rotate).toBeUndefined();
+    });
+
     it("gives one facet the full width", () => {
         const grids = asArr(derive(quick("bar", { x: "sample", y: "y", facet: "sample" }), facetRows(1)).grid).map(asObj);
         expect(grids.length).toBe(1);
@@ -654,16 +679,34 @@ describe("the facet", () => {
             columns: ["x", "y", "sample"],
         })._unsafeUnwrap();
         expect(render.readsPayload).toBe(false);
-        expect(render.panelRows).toBe(1);
+        expect(render.bodyPx).toBe(CHART_BODY_PX);
         expect(asArr(seriesOf(render.option)[0].data).length).toBe(4000);
     });
 
-    it("reports the panel row count of the facet", () => {
+    it("grows the chart body one row of height for each further row of facet panels", () => {
         const render = deriveChartRender(quick("scatter", { x: "x", y: "y", facet: "sample" }), facetRows(7), undefined, {
             key: "c1",
             columns: [],
         })._unsafeUnwrap();
-        expect(render.panelRows).toBe(3);
+        expect(render.bodyPx).toBe(CHART_BODY_PX + 2 * FACET_ROW_PX);
+    });
+});
+
+describe("the title of an axis", () => {
+    const TERMS = ["proteasomal ubiquitin-independent protein catabolic process (GO:0010499)", "cell-cell junction assembly (GO:0007043)"];
+    const rows: ChartRow[] = TERMS.map((term, index) => ({ term, nes: index === 0 ? 1.9 : -1.2 }));
+    const binding = { kind: "artifact-table" as const, path: "table.csv", hash: "sha256:00", columnLabels: { term: "GO biological process" } };
+
+    it("moves each axis title off its labels, and leaves an axis with no title as it is", () => {
+        const option = derive(quick("bar", { x: "term", y: "nes" }, { orientation: "horizontal", binding }), rows);
+        const axis = asObj(option.yAxis);
+        expect(axis.name).toBe("GO biological process");
+        // The grid of a horizontal bar holds its labels, and such a grid turns the move off by default.
+        expect(asObj(option.grid).containLabel).toBe(true);
+        expect(axis.nameMoveOverlap).toBe(true);
+        expect(asObj(option.xAxis).nameMoveOverlap).toBe(true);
+        const plain = derive(quick("bar", { x: "term", y: "nes" }, { orientation: "horizontal" }), rows);
+        expect(asObj(plain.yAxis).nameMoveOverlap).toBeUndefined();
     });
 });
 
@@ -675,7 +718,13 @@ describe("the report chart carries no toolbox", () => {
         ];
         const option = derive(quick("bar", { x: "k", y: "v", group: "g" }), rows);
         expect(option.toolbox).toBeUndefined();
-        expect(option.legend).toEqual({ bottom: 0 });
+        expect(option.legend).toEqual({
+            bottom: 0,
+            data: [
+                { name: "x", icon: "rect" },
+                { name: "y", icon: "rect" },
+            ],
+        });
         expect(asObj(asObj(option.xAxis).axisLabel).interval).toBe(0);
         const render = deriveChartRender(quick("bar", { x: "k", y: "v", group: "g" }), rows, undefined, { key: "c1", columns: [] })._unsafeUnwrap();
         expect(render.option.toolbox).toBeUndefined();

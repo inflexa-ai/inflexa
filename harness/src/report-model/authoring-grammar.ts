@@ -18,6 +18,8 @@ import { z } from "zod";
 
 import {
     ChartBlockSchema,
+    ChartStatisticSchema,
+    ChartTrackSchema,
     CitationBlockSchema,
     ClaimBlockSchema,
     FigureBlockSchema,
@@ -66,13 +68,23 @@ const AuthoringScalarReferenceSchema = z.discriminatedUnion("kind", [AuthoringVa
  * The chart block of the authoring surface.
  *
  * A chart carries a rule over its own fields, and a schema with a rule refuses a replacement of one field.
- * Thus this schema spreads the fields of the contract chart, and it replaces the binding. The rule itself
- * stays out: the core parses each payload with the draft grammar, and that grammar carries the rule. This
- * schema publishes the shape, and it types the read.
+ * Thus this schema spreads the fields of the contract chart, and it replaces each field that carries a pin:
+ * the binding, the value of each statistic, and the binding of the track. The rule itself stays out: the core
+ * parses each payload with the draft grammar, and that grammar carries the rule. This schema publishes the
+ * shape, and it types the read.
  */
 const AuthoringChartBlockSchema = z.strictObject({
     ...ChartBlockSchema.shape,
     binding: AuthoringTableReferenceSchema.describe("The whole-table artifact to plot."),
+    statistics: z
+        .array(ChartStatisticSchema.extend({ value: AuthoringValueReferenceSchema.describe(ChartStatisticSchema.shape.value.description ?? "") }))
+        .min(1)
+        .max(4)
+        .optional()
+        .describe(ChartBlockSchema.shape.statistics.description ?? ""),
+    track: ChartTrackSchema.extend({ binding: AuthoringTableReferenceSchema.describe(ChartTrackSchema.shape.binding.description ?? "") })
+        .optional()
+        .describe(ChartBlockSchema.shape.track.description ?? ""),
 });
 
 /**

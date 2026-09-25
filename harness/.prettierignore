@@ -12,3 +12,8 @@ src/__tests__/fixtures/report-session-res.json
 # would report as drift on the next replay. The manifest and the runner are
 # source, thus only the captured data is ignored.
 src/tools/lib/__fixtures__/*/
+
+# The gallery tables and their manifest. `derive/thin_gallery.py` writes these
+# files, and the manifest states the byte count of each table.
+src/report-render/gallery/data/
+src/report-render/gallery/manifest.json

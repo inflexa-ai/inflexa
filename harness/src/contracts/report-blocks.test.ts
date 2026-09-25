@@ -66,7 +66,7 @@ describe("the quick path", () => {
     });
 
     it("refuses a channel that the encoding does not declare", () => {
-        expect(parses({ chartType: "scatter", encoding: { x: "gene", y: "padj", shape: "baseMean" } })).toBe(false);
+        expect(parses({ chartType: "scatter", encoding: { x: "gene", y: "padj", hue: "baseMean" } })).toBe(false);
     });
 });
 
@@ -127,8 +127,8 @@ describe("the preset thresholds", () => {
     });
 
     it("refuses a pair beside a type that reads none", () => {
-        // The pair states a significance cut and an effect cut. Every other type reads neither.
-        for (const chartType of ["bar", "scatter", "manhattan", "ma", "km"]) {
+        // The pair states a significance cut and an effect cut. Every type but the volcano and the ma reads neither.
+        for (const chartType of ["bar", "scatter", "manhattan", "km"]) {
             expect(parses({ chartType, encoding: { x: "pathway", y: "nes" }, thresholds: { significance: 0.05, effect: 1 } })).toBe(false);
         }
     });
@@ -138,8 +138,30 @@ describe("the preset thresholds", () => {
         expect(parses({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0.05, effect: -1 } })).toBe(false);
     });
 
-    it("refuses a pair that names one value alone, because the member moves both surfaces", () => {
-        expect(parses({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0.1 } })).toBe(false);
+    it("refuses a volcano pair that names one value alone, because the member moves both surfaces", () => {
+        const parsed = ChartBlockSchema.safeParse(
+            chart({ chartType: "volcano", encoding: { x: "log2FoldChange", y: "padj" }, thresholds: { significance: 0.1 } }),
+        );
+        expect(parsed.success).toBe(false);
+        expect(parsed.error?.issues.map((issue) => issue.message)).toEqual([
+            "The thresholds of a `volcano` are a pair. Give the `effect` cut beside the `significance` cut.",
+        ]);
+    });
+
+    it("takes the significance cut alone beside an ma", () => {
+        const parsed = ChartBlockSchema.safeParse(
+            chart({ chartType: "ma", encoding: { x: "baseMean", y: "log2FoldChange", p: "padj" }, thresholds: { significance: 0.05 } }),
+        );
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.thresholds).toEqual({ significance: 0.05 });
+    });
+
+    it("refuses an effect cut beside an ma, because an ma splits its rows by the p column alone", () => {
+        const parsed = ChartBlockSchema.safeParse(
+            chart({ chartType: "ma", encoding: { x: "baseMean", y: "log2FoldChange", p: "padj" }, thresholds: { significance: 0.05, effect: 1 } }),
+        );
+        expect(parsed.success).toBe(false);
+        expect(parsed.error?.issues.map((issue) => issue.message)).toEqual(["An `ma` reads the `significance` cut alone. Omit the `effect` cut."]);
     });
 
     it("refuses a pair beside a composition, because a composition draws its own guides", () => {
@@ -458,6 +480,16 @@ describe("the teaching text of the wide grammar", () => {
         expect(describedMember(composition, "facet")?.length ?? 0).toBeGreaterThan(40);
     });
 
+    it("names the channels of each base chart type, and the pie slices by group and value", () => {
+        const text = ChartBlockSchema.shape.chartType.description ?? "";
+        for (const chartType of ["bar", "line", "scatter", "histogram", "box", "heatmap", "pie", "violin", "stacked-bar", "normalized-bar", "radar"]) {
+            expect(text).toContain(`\`${chartType}\``);
+        }
+        expect(text).toContain("A `pie` reads no `x` and no `y`. Its `group` column names the slices, and its `value` column sizes them.");
+        expect(describedMember(quickPath, "group")).toContain("On a `pie` it names the slices.");
+        expect(describedMember(quickPath, "value")).toContain("On a `pie` it sizes each slice");
+    });
+
     it("describes the focus, the order members, and the new chart types", () => {
         expect(ChartBlockSchema.shape.focus.description).toContain("category");
         expect(ChartBlockSchema.shape.chartType.description).toContain("violin");
@@ -465,5 +497,101 @@ describe("the teaching text of the wide grammar", () => {
         const objectForm = ChartBlockSchema.shape.encoding.unwrap().shape.x.unwrap().options[1];
         expect(objectForm.shape.orderBy.description).toContain("column");
         expect(objectForm.shape.order.description).toContain("desc");
+    });
+});
+
+/** One statistic that binds one cell of the pinned artifact. */
+function statistic(label: string, column = "pvalue"): Record<string, unknown> {
+    return { label, value: { kind: "artifact-value", path: "runs/run-1/step-a/output/logrank.csv", hash: HASH, locator: { column, row: 0 } } };
+}
+
+/** The track of a lollipop: the protein domains of the gene. */
+const TRACK = {
+    binding: { kind: "artifact-table", path: "runs/run-1/step-a/output/domains.csv", hash: HASH },
+    start: "start",
+    end: "end",
+    label: "domain",
+    length: "protein_length",
+};
+
+describe("the canonical figures", () => {
+    it("takes each of the nine figure presets", () => {
+        for (const chartType of ["pca", "embedding", "dotplot", "forest", "roc", "qq", "gsea", "oncoprint", "lollipop"]) {
+            expect(parses({ chartType, encoding: { x: "a", y: "b" } })).toBe(true);
+        }
+    });
+
+    it("takes each of the six new column channels, in either channel form", () => {
+        for (const member of ["shape", "p", "censor", "risk", "hit", "metric"]) {
+            expect(parses({ chartType: "scatter", encoding: { x: "a", y: "b", [member]: "c" } })).toBe(true);
+            expect(parses({ chartType: "scatter", encoding: { x: "a", y: "b", [member]: { column: "c", transform: "neg_log10" } } })).toBe(true);
+        }
+    });
+
+    it("takes one to four track columns, and refuses an empty list, a fifth column, and an empty name", () => {
+        expect(parses({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z", tracks: ["condition"] } })).toBe(true);
+        expect(parses({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z", tracks: ["a", "b", "c", "d"] } })).toBe(true);
+        expect(parses({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z", tracks: [] } })).toBe(false);
+        expect(parses({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z", tracks: ["a", "b", "c", "d", "e"] } })).toBe(false);
+        expect(parses({ chartType: "heatmap", encoding: { x: "sample", y: "gene", value: "z", tracks: [""] } })).toBe(false);
+    });
+
+    it("takes one to four statistics, and the statistics ride the parsed block", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "km", encoding: { x: "time", y: "survival" }, statistics: [statistic("Log-rank p")] }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.statistics?.[0].label).toBe("Log-rank p");
+        const four = [statistic("A"), statistic("B"), statistic("C"), statistic("D")];
+        expect(parses({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: four })).toBe(true);
+    });
+
+    it("refuses five statistics, and an empty list", () => {
+        const five = [statistic("A"), statistic("B"), statistic("C"), statistic("D"), statistic("E")];
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: five }));
+        expect(parsed.success).toBe(false);
+        expect(parsed.error?.issues[0]).toEqual(expect.objectContaining({ code: "too_big", path: ["statistics"] }));
+        expect(parses({ chartType: "roc", encoding: { x: "fpr", y: "tpr" }, statistics: [] })).toBe(false);
+    });
+
+    it("refuses a statistic that carries a literal value in place of a reference, or no label", () => {
+        expect(parses({ chartType: "km", encoding: { x: "t", y: "s" }, statistics: [{ label: "Log-rank p", value: 0.003 }] })).toBe(false);
+        expect(parses({ chartType: "km", encoding: { x: "t", y: "s" }, statistics: [{ ...statistic(""), label: "" }] })).toBe(false);
+        // A statistic binds one cell, thus a whole table is no statistic.
+        expect(parses({ chartType: "km", encoding: { x: "t", y: "s" }, statistics: [{ label: "p", value: BINDING }] })).toBe(false);
+    });
+
+    it("takes a track that binds a second table, with or without a length column", () => {
+        const parsed = ChartBlockSchema.safeParse(chart({ chartType: "lollipop", encoding: { x: "position", y: "count" }, track: TRACK }));
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.track?.label).toBe("domain");
+        const { length: _length, ...short } = TRACK;
+        expect(parses({ chartType: "lollipop", encoding: { x: "position", y: "count" }, track: short })).toBe(true);
+    });
+
+    it("refuses a track that names no end column, or that carries a field the grammar does not declare", () => {
+        const { end: _end, ...open } = TRACK;
+        expect(parses({ chartType: "lollipop", encoding: { x: "position", y: "count" }, track: open })).toBe(false);
+        expect(parses({ chartType: "lollipop", encoding: { x: "position", y: "count" }, track: { ...TRACK, rows: [[1, 2]] } })).toBe(false);
+    });
+
+    it("names the charts that read each new member in its teaching text", () => {
+        const quickPath = ChartBlockSchema.shape.encoding.unwrap().shape;
+        const readers: Record<string, string[]> = {
+            shape: ["`pca`"],
+            p: ["`ma`", "`forest`"],
+            censor: ["`km`"],
+            risk: ["`km`"],
+            hit: ["`gsea`"],
+            metric: ["`gsea`"],
+            tracks: ["`heatmap`", "`oncoprint`"],
+        };
+        for (const [member, names] of Object.entries(readers)) {
+            const text = (quickPath as Record<string, { description?: string }>)[member]?.description ?? "";
+            for (const name of names) expect(text).toContain(name);
+        }
+        for (const name of ["`km`", "`roc`", "`qq`", "`gsea`"]) expect(ChartBlockSchema.shape.statistics.description).toContain(name);
+        expect(ChartBlockSchema.shape.track.description).toContain("`lollipop`");
+        for (const preset of ["pca", "embedding", "dotplot", "forest", "roc", "qq", "gsea", "oncoprint", "lollipop"]) {
+            expect(ChartBlockSchema.shape.chartType.description).toContain(`\`${preset}\``);
+        }
     });
 });

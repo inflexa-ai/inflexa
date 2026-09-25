@@ -82,6 +82,9 @@ const TOKEN = {
     fontMono: `"IBM Plex Mono", ui-monospace, monospace`,
 } as const;
 
+/** The height of the chart body on the page, in pixels, for a chart that states no height of its own. */
+export const CHART_BODY_PX = 400;
+
 /** The style rules of the page. The renderer inlines them in one `<style>` block. */
 export const DESIGN_CSS = `${FONT_FACES}
 
@@ -835,21 +838,11 @@ a.report-citation-source:hover {
 .report-chart-card {
   padding: 16px;
 }
-/* The chart runtime measures the container. A container with no height shows no chart. */
+/* The chart runtime measures the container. A container with no height shows no chart. A chart that needs a
+   taller body, or a narrower one, states its own box on the element. */
 .chart-container {
   width: 100%;
-  height: 400px;
-}
-/* A faceted chart lays out three panels to a row, and each further row of panels adds the height of one
-   row. Twelve panels at most give four rows. */
-.chart-container-rows-2 {
-  height: 760px;
-}
-.chart-container-rows-3 {
-  height: 1120px;
-}
-.chart-container-rows-4 {
-  height: 1480px;
+  height: ${CHART_BODY_PX}px;
 }
 /* The export row of a chart card: the two SVG files and the three PNG controls, under the chart body. */
 .report-chart-export {
@@ -1232,11 +1225,12 @@ export const CHART_FONT_STACK = "Helvetica, Arial, sans-serif";
 /**
  * The text sizes of a chart, in pixels: on the page, in the SVG and the column PNG, and in the slide PNG.
  *
- * The print size is 7.5 points at the column width, which a journal accepts. The slide size reads from the
- * back of a room at the full width of a slide.
+ * The print size is 7 points at the column width, which is the upper bound of the Nature guide (5 to 7
+ * points), at 96 pixels for each inch. The slide size reads from the back of a room at the full width of a
+ * slide.
  */
 export const CHART_PAGE_TEXT_PX = 12;
-export const CHART_PRINT_TEXT_PX = 10;
+export const CHART_PRINT_TEXT_PX = 9.33;
 export const CHART_SLIDE_TEXT_PX = 24;
 
 /** The names of the two export themes. The registration script and the export read the same names. */
@@ -1290,6 +1284,37 @@ export const CHART_EXPORT_SIZES = {
     slide: { theme: CHART_SLIDE_THEME_NAME, textPx: CHART_SLIDE_TEXT_PX, widthPx: 1920, heightPx: 1080, pixelRatio: 1, label: "16:9" },
 } as const satisfies Record<string, ChartExportSize>;
 
+/** The height that each further row of facet panels adds to the chart body, in pixels. */
+export const FACET_ROW_PX = 360;
+
+/** The largest chart body, in pixels. A figure of more rows than this height holds hides a name that overlaps its neighbor. */
+export const CHART_BODY_MAX_PX = 1480;
+
+/**
+ * The width of the chart body on a page at a window 1280 pixels wide, in pixels. A derivation that fits its
+ * category labels to the page measures them against this width.
+ */
+export const CHART_PAGE_WIDTH_PX = 900;
+
+/** The largest height of a journal figure: 170 mm, the full page depth of the Nature guide. */
+export const CHART_EXPORT_MAX_HEIGHT_MM = 170;
+
+/** The CSS pixels of one millimeter, at 96 pixels for each inch. */
+const PX_PER_MM = 96 / 25.4;
+
+/**
+ * The export size of a chart whose body is taller than the default body.
+ *
+ * A column export keeps its width, and its height grows in the ratio of the body to the default body, thus a
+ * row of the figure keeps its share of the height in the export. The height stops at the journal maximum. A
+ * slide keeps its 16:9 box, and a chart of the default body keeps each size.
+ */
+export function exportSizeFor(size: ChartExportSize, bodyPx: number): ChartExportSize {
+    if (bodyPx <= CHART_BODY_PX || size.heightMm === undefined) return size;
+    const heightPx = Math.min(Math.floor(CHART_EXPORT_MAX_HEIGHT_MM * PX_PER_MM), Math.round((size.heightPx * bodyPx) / CHART_BODY_PX));
+    return { ...size, heightPx, heightMm: Math.round(heightPx / PX_PER_MM) };
+}
+
 /**
  * The near-black ink of a chart: the text, the two axis lines, and the stroke of an interval.
  *
@@ -1305,6 +1330,41 @@ export const CHART_INK = "#222222";
  * names no color takes the next hue of this order.
  */
 export const CHART_PALETTE = ["#0072b2", "#d55e00", "#009e73", "#e69f00", "#cc79a7", "#56b4e9", "#f0e442", "#000000"] as const;
+
+/**
+ * The categorical palette of a chart that draws more than eight categories: the eight hues of the Okabe-Ito
+ * set in their order, then sixteen more hues. Each hue differs from its neighbors in hue or in lightness, and
+ * no hue is near white. The order is fixed, thus one category count gives one set of colors on every chart.
+ *
+ * Past eight categories no palette stays safe for each color-vision deficiency, thus the colors carry the
+ * categories and the legend names them.
+ */
+export const CHART_WIDE_PALETTE = [
+    ...CHART_PALETTE,
+    "#875692",
+    "#8db600",
+    "#be0032",
+    "#a1caf1",
+    "#882d17",
+    "#17becf",
+    "#f99379",
+    "#604e97",
+    "#dcd300",
+    "#b3446c",
+    "#2b3d26",
+    "#e68fac",
+    "#654522",
+    "#c2b280",
+    "#e7298a",
+    "#7fc97f",
+] as const;
+
+/**
+ * The stroke of a guide line: a thin gray dash. A guide is a reference and never a plotted value, thus it
+ * reads behind the data.
+ */
+export const GUIDE_LINE_COLOR = "#8c8c8c";
+export const GUIDE_LINE_WIDTH_PX = 1;
 
 /** The one focus color of a chart. It is the first hue of the palette, thus a focus reads as the lead series. */
 export const FOCUS_CHART_COLOR = CHART_PALETTE[0];

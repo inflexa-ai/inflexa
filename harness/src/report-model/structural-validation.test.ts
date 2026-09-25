@@ -294,6 +294,42 @@ describe("validateReferenceStructure", () => {
             expect(order?.detail).toContain("invented_rank");
         });
 
+        it("refuses an invented column in a channel of the canonical figures and in the track columns", () => {
+            const shape = columnFailure(walkedColumns({ x: "log2FoldChange", y: "padj", shape: "invented_shape" }));
+            expect(shape?.reason).toBe("locator-out-of-range");
+            expect(shape?.detail).toContain("invented_shape");
+
+            const tracks = columnFailure(walkedColumns({ x: "gene", y: "padj", tracks: ["log2FoldChange", "invented_track"] }));
+            expect(tracks?.reason).toBe("locator-out-of-range");
+            expect(tracks?.detail).toContain("invented_track");
+        });
+
+        it("refuses a track column that the track table does not hold, against the rows of the track table", () => {
+            const TRACK_PATH = "runs/run-1/step-d/output/domains.csv";
+            const TRACK_HASH = `sha256:${"8".repeat(64)}`;
+            const withTrack: ReportSnapshot = {
+                artifacts: { ...rowSnapshot.artifacts, [TRACK_PATH]: { hash: TRACK_HASH, fileType: "output", rows: [{ start: 1, end: 90, domain: "PWWP" }] } },
+            };
+            const block: ChartBlock = {
+                kind: "chart",
+                id: "c1",
+                binding: tableReference(ROWS_PATH, ROWS_HASH),
+                chartType: "lollipop",
+                encoding: { x: "log2FoldChange", y: "padj" },
+                track: { binding: tableReference(TRACK_PATH, TRACK_HASH), start: "start", end: "end", label: "domain", length: "invented_length" },
+            };
+            const track = walkBlocks([block]).references.find((entry) => entry.slot === "track");
+            const failure = validateReferenceStructure(track?.reference ?? tableReference(TRACK_PATH, TRACK_HASH), withTrack, track?.encodingColumns).match(
+                () => undefined,
+                (refusal) => refusal,
+            );
+            expect(failure?.reason).toBe("locator-out-of-range");
+            expect(failure?.detail).toContain("invented_length");
+            // The binding of the chart reads its own table, thus the track columns never reach its match.
+            const bound = walkBlocks([block]).references[0];
+            expect(validateReferenceStructure(bound.reference, withTrack, bound.encodingColumns).isOk()).toBe(true);
+        });
+
         it("refuses a chart column that names an inherited member of a plain object", () => {
             const failure = columnFailure(["constructor"]);
             expect(failure?.reason).toBe("locator-out-of-range");

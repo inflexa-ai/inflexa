@@ -118,4 +118,65 @@ describe("the columns of a chart grammar", () => {
 
         expect(columnsOf(block)).toEqual(["arm", "arm_rank", "mean", "score", "lo", "hi", "cohort"]);
     });
+
+    it("names each channel of the canonical figures and each track column of the quick path", () => {
+        const block: Block = {
+            kind: "chart",
+            id: "ch1",
+            binding,
+            chartType: "km",
+            encoding: {
+                x: "time",
+                y: "survival",
+                shape: "batch",
+                p: "pvalue",
+                censor: "n_censor",
+                risk: "n_risk",
+                hit: "in_set",
+                metric: "stat",
+                tracks: ["condition", "lane"],
+            },
+        };
+
+        expect(columnsOf(block)).toEqual(["time", "survival", "batch", "pvalue", "n_censor", "n_risk", "in_set", "stat", "condition", "lane"]);
+    });
+});
+
+describe("the references of a chart", () => {
+    const binding = { kind: "artifact-table" as const, path: CHART_PATH, hash: HASH };
+    const TRACK_PATH = "runs/run-1/step-d/output/domains.csv";
+    const STAT_PATH = "runs/run-1/step-d/output/logrank.csv";
+
+    const block: Block = {
+        kind: "chart",
+        id: "ch1",
+        binding,
+        chartType: "lollipop",
+        encoding: { x: "position", y: "count" },
+        track: { binding: { kind: "artifact-table", path: TRACK_PATH, hash: HASH }, start: "start", end: "end", label: "domain", length: "aa_length" },
+        statistics: [
+            { label: "Log-rank p", value: { kind: "artifact-value", path: STAT_PATH, hash: HASH, locator: { column: "p", row: 0 } } },
+            { label: "HR", value: { kind: "artifact-value", path: STAT_PATH, hash: HASH, locator: { column: "hr", row: 0 } } },
+        ],
+    };
+
+    it("collects the binding, the track, and each statistic in block order, each with its slot", () => {
+        const references = walkBlocks([block]).references;
+        expect(references.map((entry) => [entry.blockId, entry.slot, entry.reference.kind])).toEqual([
+            ["ch1", "binding", "artifact-table"],
+            ["ch1", "track", "artifact-table"],
+            ["ch1", "statistic:0", "artifact-value"],
+            ["ch1", "statistic:1", "artifact-value"],
+        ]);
+    });
+
+    it("matches the track against its own columns, and each statistic against none", () => {
+        const references = walkBlocks([block]).references;
+        expect(references[1].encodingColumns).toEqual(["start", "end", "domain", "aa_length"]);
+        expect(references[2].encodingColumns).toBeUndefined();
+    });
+
+    it("names the path of the track and of each statistic as a used path", () => {
+        expect([...referencedPaths(walkBlocks([block]).references)].sort()).toEqual([CHART_PATH, STAT_PATH, TRACK_PATH].sort());
+    });
 });
