@@ -65,7 +65,8 @@ import {
     PROXY_IMAGE,
     type ConnectionMode,
 } from "./compose.ts";
-import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
+import { enforceClaudeCloak, formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
+import { readCredentialVerdict } from "./credential_state.ts";
 import {
     answerOf,
     answerSpelling,
@@ -2710,6 +2711,12 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
                 () => {},
                 (e) => log.warn(`Could not record the model connection provider: ${e.type}`),
             );
+            // A fresh login writes a new credential file without the cloak field. The callers restart a
+            // running proxy after a login, so the field takes effect with the new credential.
+            (await enforceClaudeCloak(env.cliproxyAuthDir)).match(
+                () => {},
+                (e) => log.warn(`Could not set the Claude cloak mode: ${formatInfraStateError(e)}`),
+            );
         }
     }
     return isAuthenticated();
@@ -3019,7 +3026,13 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<vo
         probe: async () => {
             const s = clackSpinner();
             s.start("Verifying provider login");
-            const outcome = await retryWhileUnreachable(probeOnce);
+            const probed = await retryWhileUnreachable(probeOnce);
+            // A dead login can reach the probe as a cooldown, an empty list, or a 429, and those never
+            // prompt. The proxy's own credential state is the tie-breaker. A read that fails keeps the probe
+            // verdict.
+            const ambiguous = probed.kind === "cooling_down" || probed.kind === "empty_at_deadline" || probed.kind === "unobservable";
+            const verdict = ambiguous ? await readCredentialVerdict() : null;
+            const outcome: CredentialProbe = verdict?.isOk() && verdict.value.kind === "login_dead" ? { kind: "unauthorized" } : probed;
             if (outcome.kind === "ok") s.stop("Provider login verified");
             else if (outcome.kind === "unauthorized") s.stop("Provider login expired or revoked");
             else if (outcome.kind === "cooling_down") s.stop("Provider credential cooling down");
@@ -3146,13 +3159,17 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     // Proxy config + provider OAuth are only meaningful when chat targets the managed
     // proxy. A direct connection has neither, so both are skipped — the Postgres/compose
     // and embedder steps below still run as mode-independent prerequisites.
-    let proxyPredatesLogin = false;
+    let proxyIsStale = false;
     if (mode === "cliproxy") {
         const writeResult = await writeProxyConfig();
         if (writeResult.isErr()) {
             // Known filesystem-state faults surface with their diagnosis + remediation naming the path,
             // not a raw errno — the launch gate must tell the user exactly how to unwedge.
             return err(new ProxyError(formatInfraStateError(writeResult.error)));
+        }
+        // A running proxy reads config.yaml only at boot, so a new management key needs the bounce below.
+        if (!writeResult.value.created && writeResult.value.managementAdded) {
+            proxyIsStale = (await composeProxyRunning(rt)).unwrapOr(false);
         }
 
         if (!(await isAuthenticated())) {
@@ -3175,7 +3192,16 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
             // file for this run has been regenerated (composeRestartProxy's contract). An
             // unanswerable engine skips the bounce: the probe below still reads the truth and can
             // recover interactively.
-            proxyPredatesLogin = (await composeProxyRunning(rt)).unwrapOr(false);
+            proxyIsStale = (await composeProxyRunning(rt)).unwrapOr(false);
+        }
+
+        // A credential from before the cloak default, or one a failed write left without it. The same
+        // bounce as a fresh login makes a running proxy load the changed file.
+        const cloaked = await enforceClaudeCloak(env.cliproxyAuthDir);
+        if (cloaked.isErr()) {
+            log.warn(`Could not set the Claude cloak mode: ${formatInfraStateError(cloaked.error)}`);
+        } else if (cloaked.value && !proxyIsStale) {
+            proxyIsStale = (await composeProxyRunning(rt)).unwrapOr(false);
         }
     }
 
@@ -3209,12 +3235,13 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     // so the probe has a serving proxy; cliproxy mode only — a direct connection is the user's own
     // endpoint and key, never probed.
     if (mode === "cliproxy") {
-        if (proxyPredatesLogin) {
+        if (proxyIsStale) {
             // Without this bounce the probe below would read the pre-login emptiness, call the
-            // credential rejected, and drive a SECOND login the user's first one already earned.
+            // credential rejected, and drive a SECOND login the user's first one already earned. The
+            // same bounce loads a new management key or cloak field.
             const restarted = await composeRestartProxy(rt);
             if (restarted.isErr()) {
-                return err(new ProxyError(`Could not restart the proxy to pick up the fresh login: ${restarted.error.message}`));
+                return err(new ProxyError(`Could not restart the proxy to pick up the changed config or login: ${restarted.error.message}`));
             }
         }
         const live = await verifyCredentialAtLaunch(rt);
